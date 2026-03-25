@@ -232,7 +232,24 @@ def _create_marts(conn):
         ORDER BY 1, 2
     """)
     
-    logger.info("✅ Mart tables created: fct_daily_returns, dim_companies, agg_monthly_performance")
+    # DIMENSION: Historical Annual Financials
+    conn.execute("""
+        CREATE OR REPLACE TABLE marts.dim_annual_financials AS
+        SELECT
+            ticker,
+            EXTRACT(YEAR FROM date) AS year,
+            date AS report_date,
+            revenue,
+            eps,
+            eps_diluted,
+            -- Calculate YoY Growth
+            ROUND((revenue - LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(revenue) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS revenue_growth_pct,
+            ROUND((eps - LAG(eps) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(eps) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS eps_growth_pct
+        FROM raw.historical_financials
+        ORDER BY ticker, year
+    """)
+    
+    logger.info("✅ Mart tables created: fct_daily_returns, dim_companies, agg_monthly_performance, dim_annual_financials")
 
 
 def _run_data_quality_checks(conn):

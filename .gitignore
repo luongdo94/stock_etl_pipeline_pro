@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+.DS_Store
+.vscode/
+airflow/logs/
+airflow/*.db
+# warehouse/*.duckdb  # Keeping this for now if the user explicitly tracked it
+/tmp/

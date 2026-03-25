@@ -134,8 +134,58 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
-if __name__ == "__main__":
-    # Test extract
-    prices_df = extract_stock_prices(lookback_days=30)
-    print(prices_df.head())
-    print(prices_df.dtypes)
+def extract_historical_financials(tickers: dict = TICKERS) -> pd.DataFrame:
+    """
+    Extract historical annual income statement data (Revenue, EPS).
+    Limited to the last 4 years provided by yfinance.
+    """
+    all_data = []
+    for ticker in tickers.keys():
+        try:
+            logger.info(f"Extracting historical financials for {ticker}...")
+            t = yf.Ticker(ticker)
+            
+            # Annual Financials (Income Statement)
+            fin = t.financials
+            if fin.empty:
+                logger.warning(f"  ⚠️ No financial statement for {ticker}")
+                continue
+            
+            # Identify relevant rows (names can vary slightly)
+            # We want 'Total Revenue' and 'Basic EPS' or 'Diluted EPS'
+            row_map = {
+                "total revenue": "revenue",
+                "basic eps": "eps",
+                "diluted eps": "eps_diluted"
+            }
+            
+            # Transpose so dates are rows
+            df_fin = fin.T
+            # Standardize column names to lowercase for easier lookup later
+            df_fin.columns = [str(c).lower() for c in df_fin.columns]
+            
+            found_rows = [c for c in df_fin.columns if c in row_map.keys()]
+            if not found_rows:
+                logger.warning(f"  ⚠️ Could not find Revenue/EPS rows for {ticker}")
+                continue
+                
+            df_filtered = df_fin[found_rows].copy()
+            df_filtered.index.name = "date"
+            df_filtered = df_filtered.reset_index()
+            
+            # Rename columns based on our map
+            df_filtered = df_filtered.rename(columns=row_map)
+            df_filtered["ticker"] = ticker
+            
+            all_data.append(df_filtered)
+            logger.info(f"  ✅ {ticker}: Found {len(df_filtered)} years of history")
+            
+        except Exception as e:
+            logger.error(f"  ❌ {ticker} financials: {e}")
+            
+    if not all_data:
+        return pd.DataFrame()
+        
+    final_df = pd.concat(all_data, ignore_index=True)
+    final_df["date"] = pd.to_datetime(final_df["date"])
+    return final_df

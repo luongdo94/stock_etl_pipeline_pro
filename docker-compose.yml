@@ -1,0 +1,39 @@
+version: "3.9"
+services:
+  pipeline:
+    image: python:3.11-slim
+    working_dir: /app
+    volumes:
+      - .:/app
+      - ./warehouse:/app/warehouse
+    command: >
+      bash -c "
+        pip install -r requirements.txt -q &&
+        python run.py
+      "
+    environment:
+      - PYTHONPATH=/app
+
+  airflow:
+    image: apache/airflow:2.9.0-python3.11
+    ports:
+      - "8080:8080"
+    volumes:
+      - .:/opt/project
+      - ./airflow/dags:/opt/airflow/dags
+      - ./airflow/start_airflow.sh:/start_airflow.sh
+      - ./warehouse:/opt/airflow/warehouse
+    environment:
+      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////opt/airflow/airflow.db
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      PYTHONPATH: /opt/project
+      # Gmail SMTP configuration
+      AIRFLOW__SMTP__SMTP_HOST: smtp.gmail.com
+      AIRFLOW__SMTP__SMTP_STARTTLS: "true"
+      AIRFLOW__SMTP__SMTP_SSL: "false"
+      AIRFLOW__SMTP__SMTP_PORT: "587"
+      AIRFLOW__SMTP__SMTP_USER: "dgl.rocketmail94@gmail.com"
+      AIRFLOW__SMTP__SMTP_PASSWORD: "njfc dghk axtv vnrd"
+      AIRFLOW__SMTP__SMTP_MAIL_FROM: "dgl.rocketmail94@gmail.com"
+    command: bash /start_airflow.sh

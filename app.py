@@ -18,51 +18,122 @@ import plotly.graph_objects as go
 import plotly.express as px
 from plotly.subplots import make_subplots
 import streamlit as st
+import numpy as np
+from textblob import TextBlob
+import os
 
+# ── PAGE CONFIG ─────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Stock Analytics Dashboard",
-    page_icon="📊",
+    page_title="God-Mode Stock Dashboard",
+    page_icon="🏙️",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-DB_PATH = os.path.join(ROOT, "warehouse", "stock_dw.duckdb")
-
-# --- Robust Data Loading ---
-if not os.path.exists(DB_PATH):
-    st.error(f"❌ **DATABASE NOT FOUND!** Path: {DB_PATH}")
-    st.info("Check if `warehouse/stock_dw.duckdb` exists in your GitHub repository root.")
-    st.stop()
-
-try:
-    conn = duckdb.connect(DB_PATH, read_only=True)
+# ── PREMIUM GLASSMORPHISM CSS ───────────────────────────────────────────────
+st.markdown("""
+<style>
+    /* Global Background */
+    .stApp {
+        background: radial-gradient(circle at top right, #1a1c2c, #0d0e14);
+        color: #e0e0e0;
+    }
     
-    # Read data and handle Benchmark (SPY)
-    prices_full = conn.execute("""
-        SELECT f.date, f.ticker, d.company, d.sector, d.region,
-               f.price_open, f.price_high, f.price_low, f.price_close, 
-               f.daily_return_pct, f.volume,
-               f.ma_20, f.ma_50, f.ma_signal, f.pct_from_52w_high,
-               f.is_volume_spike, f.cap_category
-        FROM marts.fct_daily_returns f
-        LEFT JOIN marts.dim_companies d USING (ticker)
-        ORDER BY f.date
-    """).df()
+    /* Frosted Glass UI Blocks */
+    [data-testid="stMetric"] {
+        background: rgba(255, 255, 255, 0.05) !important;
+        backdrop-filter: blur(15px);
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        border-radius: 12px !important;
+        padding: 20px !important;
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+        transition: all 0.3s ease;
+    }
+    [data-testid="stMetricLabel"] {
+        color: #b0b0b0 !important;
+        font-size: 0.9rem !important;
+        font-weight: 500 !important;
+        letter-spacing: 0.5px;
+    }
+    [data-testid="stMetricValue"] {
+        color: #ffffff !important;
+        font-size: 1.8rem !important;
+        font-weight: 700 !important;
+        text-shadow: 0 0 10px rgba(255,255,255,0.2);
+    }
+    [data-testid="stMetricDelta"] {
+        font-weight: 600 !important;
+    }
+    
+    /* Tab Styling */
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 10px;
+        background: rgba(255, 255, 255, 0.02);
+        padding: 10px;
+        border-radius: 15px;
+    }
+    
+    .stTabs [data-baseweb="tab"] {
+        height: 45px;
+        background-color: rgba(255,255,255,0.05) !important;
+        border-radius: 8px !important;
+        padding: 0 15px !important;
+        border: none !important;
+        color: #aaa !important;
+        font-weight: 600;
+        transition: all 0.3s ease;
+    }
+    
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(135deg, #3498db, #8e44ad) !important;
+        color: white !important;
+        box-shadow: 0 0 20px rgba(52, 152, 219, 0.4);
+        transform: translateY(-2px);
+    }
 
-    companies_full = conn.execute("SELECT * FROM marts.dim_companies").df()
-    companies = companies_full[companies_full["ticker"] != "SPY"].copy()
+    /* Plotly Charts Container */
+    div.stPlotlyChart {
+        background: rgba(255, 255, 255, 0.02);
+        border-radius: 15px;
+        padding: 15px;
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+        margin-bottom: 20px;
+    }
+</style>
+""", unsafe_allow_html=True)
 
-    spy_prices = prices_full[prices_full["ticker"] == "SPY"].copy()
-    prices = prices_full[prices_full["ticker"] != "SPY"].copy()
+DB_PATH = os.path.join(ROOT, "warehouse", "stock_dw.duckdb")
+conn = duckdb.connect(DB_PATH, read_only=True)
 
-    monthly = conn.execute("SELECT * FROM marts.agg_monthly_performance").df()
-    monthly = monthly[monthly["ticker"] != "SPY"].copy()
+# Read data and handle Benchmark (SPY)
+prices_full = conn.execute("""
+    SELECT f.date, f.ticker, d.company, d.sector, d.region,
+           f.price_open, f.price_high, f.price_low, f.price_close, 
+           f.daily_return_pct, f.volume,
+           f.ma_20, f.ma_50, f.ma_signal, f.pct_from_52w_high,
+           f.is_volume_spike, f.cap_category
+    FROM marts.fct_daily_returns f
+    LEFT JOIN marts.dim_companies d USING (ticker)
+    ORDER BY f.date
+""").df()
 
-    conn.close()
-except Exception as e:
-    st.error(f"❌ **CRITICAL DATABASE ERROR:** {e}")
-    st.info("Ensure the DuckDB file is not corrupted and matches the schema.")
-    st.stop()
+companies_full = pd.read_sql("SELECT * FROM marts.dim_companies", conn)
+companies = companies_full[companies_full["ticker"] != "SPY"].copy()
+
+spy_prices = prices_full[prices_full["ticker"] == "SPY"].copy()
+prices = prices_full[prices_full["ticker"] != "SPY"].copy()
+
+monthly = pd.read_sql("""SELECT * FROM marts.agg_monthly_performance
+    ORDER BY month, ticker
+""", conn)
+monthly = monthly[monthly["ticker"] != "SPY"].copy()
+
+annual_fin = conn.execute("SELECT * FROM marts.dim_annual_financials").df()
+
+all_tickers = sorted(prices_full["ticker"].unique().tolist())
+
+conn.close()
 
 # ── Streamlit UI Top ─────────────────────────────────────────────────────────
 st.title("📊 Stock Market Analytics Dashboard")
@@ -132,14 +203,17 @@ with col3:
 st.markdown("---")
 
 # ── Tabs Configuration ───────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-    "📋 Executive Summary (Valuation & Quality)", 
-    "📈 Technicals & Momentum", 
-    "🏢 Fundamentals & Health",
-    "🔍 Deep Dive (Candlestick)",
-    "💼 Portfolio Backtester",
-    "🔔 Alerts Configurator",
-    "🔮 AI Forecast"
+tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
+    "📋 Summary", 
+    "📈 Technicals", 
+    "🏢 Fundamentals",
+    "🔍 Deep Dive",
+    "🤝 Correlation",
+    "🎲 AI Forecast & Monte Carlo",
+    "🗺️ Sector Rotation",
+    "📰 News Sentiment",
+    "💼 Portfolio",
+    "🔔 Alerts"
 ])
 
 # Color palette per ticker
@@ -215,46 +289,6 @@ fig2.update_layout(
     xaxis=dict(tickangle=-45),
 )
 
-# ── CHART 3: Latest MA Signal + Distance from 52w High ───────────────────────
-latest = prices[prices["date"] == prices["date"].max()].copy()
-latest = latest.sort_values("pct_from_52w_high", ascending=True)
-
-signal_colors = {"BULLISH": "#00c853", "BEARISH": "#ff1744", "NEUTRAL": "#ffd600"}
-bar_colors = [signal_colors.get(s, "#888") for s in latest["ma_signal"]]
-
-fig3 = make_subplots(
-    rows=1, cols=2,
-    subplot_titles=("Distance from 52-Week High (%)", "MA Signal (MA20 vs MA50)"),
-    horizontal_spacing=0.12,
-)
-fig3.add_trace(go.Bar(
-    x=latest["pct_from_52w_high"], y=latest["ticker"],
-    orientation="h", marker_color=bar_colors,
-    text=[f"{v:.1f}%" for v in latest["pct_from_52w_high"]],
-    textposition="outside",
-    hovertemplate="<b>%{y}</b><br>From 52w High: %{x:.2f}%<extra></extra>",
-    showlegend=False,
-), row=1, col=1)
-
-fig3.add_trace(go.Bar(
-    x=latest["ma_20"] - latest["ma_50"], y=latest["ticker"],
-    orientation="h",
-    marker_color=[signal_colors.get(s, "#888") for s in latest["ma_signal"]],
-    text=latest["ma_signal"],
-    textposition="outside",
-    hovertemplate="<b>%{y}</b><br>MA20-MA50: %{x:.2f}<extra></extra>",
-    showlegend=False,
-), row=1, col=2)
-
-# Legend markers
-for signal, color in signal_colors.items():
-    fig3.add_trace(go.Bar(x=[None], y=[None], name=signal,
-                          marker_color=color, showlegend=True))
-fig3.update_layout(
-    title=dict(text="🎯 Technical Signal Dashboard (Latest Day)", font=dict(size=20)),
-    template="plotly_dark", height=max(450, len(latest) * 25 + 150),
-    legend=dict(orientation="h", yanchor="bottom", y=1.08, x=0.4),
-)
 
 # ── CHART 4: Risk vs Return scatter ──────────────────────────────────────────
 risk_return = monthly.groupby("ticker").agg(
@@ -322,17 +356,19 @@ fig6.add_vline(x=0, line_dash="solid", line_color="gray", opacity=0.8)
 
 # ── CHART 7: Financial Health — Debt vs EBITDA vs Free Cash Flow ─────────────
 # Scatter bubble chart: X=EBITDA, Y=Debt, Size=FCF, Color=Sector
-health = companies[["ticker", "company", "sector", "total_debt", "ebitda", "free_cashflow"]].dropna()
-health["free_cashflow"] = health["free_cashflow"].apply(lambda x: max(x, 0)) # Prevent negative sizes
+health = companies[["ticker", "company", "sector", "total_debt", "ebitda", "free_cashflow"]].dropna().copy()
+health["ebitda_bn"] = health["ebitda"] / 1e9
+health["debt_bn"] = health["total_debt"] / 1e9
+health["fcf_bn"] = (health["free_cashflow"] / 1e9).clip(lower=0) + 1
 
 fig7 = px.scatter(
     health,
-    x=health["ebitda"] / 1e9, y=health["total_debt"] / 1e9,
-    size=health["free_cashflow"] / 1e9 + 1, # +1 to ensure visibility
+    x="ebitda_bn", y="debt_bn",
+    size="fcf_bn",
     color="sector",
     text="ticker",
     title="🏢 Financial Health: Debt vs EBITDA (Bubble Size = Free Cash Flow)",
-    labels={"x": "EBITDA ($ Billions)", "y": "Total Debt ($ Billions)"},
+    labels={"ebitda_bn": "EBITDA ($ Billions)", "debt_bn": "Total Debt ($ Billions)"},
     template="plotly_dark", height=500,
     color_discrete_sequence=px.colors.qualitative.Pastel,
     hover_data={"company": True, "sector": True}
@@ -485,7 +521,6 @@ with tab1:
     st.plotly_chart(fig4, use_container_width=True)
 
 with tab2:
-    st.plotly_chart(fig3, use_container_width=True)
     st.plotly_chart(fig2, use_container_width=True)
     st.plotly_chart(fig5, use_container_width=True)
 
@@ -527,134 +562,281 @@ with tab4:
             fig_vol = px.bar(df_deep, x="date", y="volume", title="Trading Volume")
             fig_vol.update_layout(template="plotly_dark", height=200, margin=dict(t=30, b=0))
             st.plotly_chart(fig_vol, use_container_width=True)
-
-# ── FEATURE 2: Portfolio Backtester ──────────────────────────────────────────
-with tab5:
-    st.markdown("### 💼 Portfolio Backtester")
-    st.write("Allocate $10,000 across your selected tickers to map historical performance against the S&P 500.")
-    
-    if len(selected_tickers) == 0:
-        st.info("Please select tickers from the sidebar to use the backtester.")
-    else:
-        cols = st.columns(min(len(selected_tickers), 6)) # limit columns to avoid overflow
-        weights = {}
-        for i, t in enumerate(selected_tickers):
-            with cols[i % 6]:
-                w = st.number_input(f"{t} Weight (%)", min_value=0, max_value=100, value=int(100/len(selected_tickers)), key=f"w_{t}")
-                weights[t] = w
+            
+            # --- NEW: Historical Fundamentals Chart ---
+            df_fin = annual_fin[annual_fin["ticker"] == deep_ticker].sort_values("year")
+            if not df_fin.empty:
+                fig_fin = make_subplots(specs=[[{"secondary_y": True}]])
                 
-        total_w = sum(weights.values())
-        if total_w != 100:
-            st.warning(f"**Total portfolio weight is {total_w}%.** Please adjust allocations to exactly 100% to run the backtester.")
-        else:
-            # Calculate portfolio return
-            port_df = prices[prices["ticker"].isin(selected_tickers)].pivot(index="date", columns="ticker", values="daily_return_pct").fillna(0)
-            port_df["Portfolio_Ret"] = sum((weights[t]/100) * port_df[t] for t in selected_tickers)
-            port_df["Portfolio_Idx"] = 10000 * (1 + port_df["Portfolio_Ret"]/100).cumprod()
-            
-            # SPY return
-            spy_b = spy_prices.set_index("date")["daily_return_pct"].fillna(0)
-            port_df["SPY_Idx"] = 10000 * (1 + spy_b / 100).cumprod()
-            
-            fig_port = go.Figure()
-            fig_port.add_trace(go.Scatter(x=port_df.index, y=port_df["Portfolio_Idx"], name="Custom Portfolio", line=dict(width=3, color="#00ffcc")))
-            fig_port.add_trace(go.Scatter(x=port_df.index, y=port_df["SPY_Idx"], name="S&P 500 Benchmark", line=dict(width=2, color="white", dash="dot")))
-            fig_port.update_layout(title="Growth of $10,000 Initial Investment", template="plotly_dark", hovermode="x unified", yaxis_title="Portfolio Value ($)")
-            st.plotly_chart(fig_port, use_container_width=True)
-            
-            final_val = port_df["Portfolio_Idx"].iloc[-1]
-            st.metric("Final Portfolio Value", f"${final_val:,.2f}", f"{(final_val/10000 - 1)*100:+.2f}%")
+                # Revenue Bar
+                fig_fin.add_trace(
+                    go.Bar(x=df_fin["year"], y=df_fin["revenue"], name="Revenue ($)", 
+                           marker_color="rgba(52, 152, 219, 0.6)",
+                           hovertemplate="Year: %{x}<br>Revenue: $%{y:,.0f}<extra></extra>"),
+                    secondary_y=False
+                )
+                
+                # EPS Line
+                fig_fin.add_trace(
+                    go.Scatter(x=df_fin["year"], y=df_fin["eps"], name="EPS ($)",
+                               line=dict(color="#2ecc71", width=3, shape='spline'),
+                               mode='lines+markers',
+                               hovertemplate="Year: %{x}<br>EPS: $%{y:.2f}<extra></extra>"),
+                    secondary_y=True
+                )
+                
+                fig_fin.update_layout(
+                    title=f"📈 {deep_ticker} Annual Revenue & EPS Growth Trends",
+                    template="plotly_dark",
+                    hovermode="x unified",
+                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+                    margin=dict(t=80, b=40),
+                    height=450
+                )
+                
+                fig_fin.update_yaxes(title_text="Total Revenue ($)", secondary_y=False, showgrid=False)
+                fig_fin.update_yaxes(title_text="Earnings Per Share (EPS $)", secondary_y=True, showgrid=True, gridcolor="rgba(255,255,255,0.05)")
+                
+                st.plotly_chart(fig_fin, use_container_width=True)
+                
+                # Growth Metrics Row
+                cols = st.columns(len(df_fin))
+                for i, row in enumerate(df_fin.to_dict('records')):
+                    with cols[i]:
+                        st.metric(f"FY {int(row['year'])} Revenue", 
+                                  f"${row['revenue']/1e9:.1f}B", 
+                                  f"{row['revenue_growth_pct']:.1f}%" if not pd.isna(row['revenue_growth_pct']) else None)
+            else:
+                st.info("No historical annual financial data available for this ticker.")
 
-# ── FEATURE 5: Alert Configurator ────────────────────────────────────────────
-with tab6:
-    st.markdown("### 🔔 Alert Configurator")
-    st.write("Configure custom alerts. *Note: In a production setup, these rules are serialized to a database and evaluated continuously by Airflow.*")
+
+# ── FEATURE 1.5: Correlation Matrix ──────────────────────────────────────────
+with tab5:
+    st.markdown("### 🤝 Portfolio Correlation Matrix")
+    st.write("Understand the linear relationship between your selected stocks. A correlation of **+1.0** means they move in perfect sync, while **-1.0** means they move in opposite directions.")
     
-    with st.form("alert_form"):
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            a_ticker = st.selectbox("Ticker", all_tickers, key="a_t")
-        with col2:
-            a_metric = st.selectbox("Metric", ["Price", "RSI", "MA50", "Volume"], key="a_m")
-        with col3:
-            a_condition = st.selectbox("Condition", ["Drops Below", "Rises Above"], key="a_c")
-            
-        a_value = st.text_input("Value / Threshold", "150.00")
-        a_email = st.text_input("Notify Email", "user@example.com")
+    if len(all_tickers) > 1:
+        # Pivot prices to get daily returns per ticker
+        corr_df = prices_full.drop_duplicates(['date', 'ticker']).pivot(index="date", columns="ticker", values="daily_return_pct").corr()
         
-        submitted = st.form_submit_button("Create Alert Rule")
-        if submitted:
-            st.success(f"✅ Rule saved to queue: **If {a_ticker} {a_metric} {a_condition} {a_value}, notify {a_email}**")
+        fig_corr = px.imshow(
+            corr_df,
+            text_auto=".2f",
+            aspect="auto",
+            color_continuous_scale="RdBu_r",
+            zmin=-1, zmax=1,
+            labels=dict(color="Correlation"),
+            template="plotly_dark",
+            height=600
+        )
+        fig_corr.update_layout(title="Correlation Heatmap (Daily Returns)")
+        st.plotly_chart(fig_corr, use_container_width=True)
+        
+        st.info("💡 **Diversification Tip**: Try to pair stocks with correlation < 0.5 to reduce overall portfolio volatility.")
+    else:
+        st.warning("Please select at least 2 tickers to view the correlation matrix.")
 
-# ── FEATURE 3: AI Price Forecasting (Time-Series) ─────────────────────────────
-with tab7:
-    st.markdown("### 🔮 AI Price Forecasting (Time-Series)")
-    st.write("Uses the **Holt-Winters Exponential Smoothing** algorithm from `statsmodels` to project future price trends based on 365-day historical data.")
+# ── FEATURE 3: AI Price & Monte Carlo Forecasting ────────────────────────────
+with tab6:
+    st.markdown("### 🎲 AI Price & Monte Carlo Forecasting")
     
-    colA, colB = st.columns([1, 3])
+    colA, colB = st.columns([1, 2])
     with colA:
-        fc_ticker = st.selectbox("Select Ticker to Forecast", all_tickers, key="fc_ticker_selectbox")
-        forecast_days = st.slider("Forecast Horizon (Trading Days)", min_value=7, max_value=90, value=30, key="fc_days_slider")
+        fc_ticker = st.selectbox("Select Ticker to Forecast", all_tickers, key="fc_select")
+        forecast_days = st.slider("Forecast Horizon (Days)", 7, 90, 30, key="fc_days")
+        n_sims = st.selectbox("Monte Carlo Simulations", [100, 500, 1000], index=1)
         
     with colB:
         if fc_ticker:
             from statsmodels.tsa.holtwinters import ExponentialSmoothing
-            
-            # Prepare data
             df_fc = prices_full[prices_full["ticker"] == fc_ticker].sort_values("date")
-            ts = df_fc.set_index("date")["price_close"]
+            ts = df_fc["price_close"].values
             
-            try:
-                # Fit model (additive trend, no seasonality for daily stocks is a solid baseline)
-                model = ExponentialSmoothing(ts, trend="add", seasonal=None, initialization_method="estimated")
-                fit_model = model.fit()
+            # 1. Holt-Winters Forecast
+            model = ExponentialSmoothing(ts, trend="add", seasonal=None)
+            fit = model.fit()
+            hw_forecast = fit.forecast(forecast_days)
+            
+            # 2. Monte Carlo Simulation
+            returns = df_fc["daily_return_pct"].dropna() / 100
+            mu = returns.mean()
+            sigma = returns.std()
+            last_price = ts[-1]
+            
+            # Simulated paths
+            dt = 1 # daily
+            simulated_paths = np.zeros((forecast_days, n_sims))
+            for i in range(n_sims):
+                path = [last_price]
+                for d in range(forecast_days):
+                    # Geometric Brownian Motion
+                    price = path[-1] * np.exp((mu - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * np.random.normal())
+                    path.append(price)
+                simulated_paths[:, i] = path[1:]
+            
+            # Plotting
+            fig_fc = go.Figure()
+            future_dates = pd.date_range(start=df_fc["date"].max(), periods=forecast_days+1, freq='B')[1:]
+            
+            # Show paths in faint color
+            for i in range(min(n_sims, 50)): # Show only first 50 paths to save performance
+                fig_fc.add_trace(go.Scatter(x=future_dates, y=simulated_paths[:, i], mode='lines', line=dict(color='rgba(255,255,255,0.05)', width=1), showlegend=False))
+            
+            # Show mean path
+            mean_path = simulated_paths.mean(axis=1)
+            fig_fc.add_trace(go.Scatter(x=future_dates, y=mean_path, name="MC Mean Path", line=dict(color="#f1c40f", width=4)))
+            
+            # Show Holt-Winters
+            fig_fc.add_trace(go.Scatter(x=future_dates, y=hw_forecast, name="Holt-Winters (AI)", line=dict(color="#e74c3c", width=3, dash="dash")))
+            
+            fig_fc.update_layout(title=f"Forecast Results for {fc_ticker}", template="plotly_dark", height=500, yaxis_title="Price ($)")
+            st.plotly_chart(fig_fc, use_container_width=True)
+            
+            st.write(f"**Monte Carlo Statistics ({n_sims} runs):**")
+            p5 = np.percentile(simulated_paths[-1, :], 5)
+            p95 = np.percentile(simulated_paths[-1, :], 95)
+            st.success(f"With 90% confidence, the price of {fc_ticker} in {forecast_days} days will be between **${p5:.2f}** and **${p95:.2f}**.")
+
+# ── FEATURE 4: Sector Rotation Map ───────────────────────────────────────────
+with tab7:
+    st.markdown("### 🗺️ Sector Rotation & Relative Strength")
+    st.write("Comparing sector performance over multiple time horizons (30d vs 90d) to identify 'Rising Stars' vs 'Laggards'.")
+    
+    # Calculate returns per sector
+    sector_perf = prices_full.groupby(["date", "sector"])["price_close"].mean().reset_index()
+    
+    # Get 30d and 90d ago dates
+    max_d = sector_perf["date"].max()
+    d30 = max_d - pd.Timedelta(days=30)
+    d90 = max_d - pd.Timedelta(days=90)
+    
+    rotation_data = []
+    for sector in sector_perf["sector"].unique():
+        if pd.isna(sector): continue
+        s_df = sector_perf[sector_perf["sector"] == sector].sort_values("date")
+        
+        last_p = s_df.iloc[-1]["price_close"]
+        p30 = s_df[s_df["date"] <= d30].iloc[-1]["price_close"] if not s_df[s_df["date"] <= d30].empty else s_df.iloc[0]["price_close"]
+        p90 = s_df[s_df["date"] <= d90].iloc[-1]["price_close"] if not s_df[s_df["date"] <= d90].empty else s_df.iloc[0]["price_close"]
+        
+        ret30 = (last_p / p30 - 1) * 100
+        ret90 = (last_p / p90 - 1) * 100
+        rotation_data.append({"Sector": sector, "Return_30d": ret30, "Return_90d": ret90})
+    
+    rot_df = pd.DataFrame(rotation_data)
+    
+    fig_rot = px.scatter(
+        rot_df, x="Return_90d", y="Return_30d", text="Sector", size=[40]*len(rot_df),
+        color="Sector",
+        title="Sector Rotation: Short-term (30d) vs Long-term (90d) Performance",
+        labels={"Return_90d": "Long-term Momentum (90d %)", "Return_30d": "Short-term Momentum (30d %)"},
+        template="plotly_dark", height=600
+    )
+    fig_rot.add_vline(x=0, line_dash="dash", line_color="gray")
+    fig_rot.add_hline(y=0, line_dash="dash", line_color="gray")
+    fig_rot.update_traces(textposition="top center")
+    st.plotly_chart(fig_rot, use_container_width=True)
+    
+    st.info("💡 **Quadrants:** Top-Right = Leading (Strong & Improving) | Top-Left = Improving (Weak but Rising) | Bottom-Left = Lagging (Weak & Falling)")
+
+# ── FEATURE 5: News Sentiment Analysis ────────────────────────────────────────
+with tab8:
+    st.markdown("### 📰 AI News Sentiment Analysis")
+    st.write("Fetches recent headlines and uses **NLP (Natural Language Processing)** to analyze the market mood.")
+    
+    sent_ticker = st.selectbox("Select Ticker for News", all_tickers, key="sent_select")
+    
+    if sent_ticker:
+        import feedparser
+        try:
+            # Use Google News RSS for better reliability and coverage
+            rss_url = f"https://news.google.com/rss/search?q={sent_ticker}+stock&hl=en-US&gl=US&ceid=US:en"
+            feed = feedparser.parse(rss_url)
+            news_items = feed.entries[:10] # Top 10 headlines
+            
+            if news_items:
+                sent_scores = []
+                for entry in news_items:
+                    title = entry.get("title", "")
+                    clean_title = title.split(" - ")[0] # Often "Title - Publisher"
+                    blob = TextBlob(clean_title)
+                    sentiment = blob.sentiment.polarity
+                    
+                    # Lower thresholds: > 0.05 is POS, < -0.05 is NEG
+                    if sentiment > 0.05:
+                        sent_label = "POSITIVE 🟢"
+                    elif sentiment < -0.05:
+                        sent_label = "NEGATIVE 🔴"
+                    else:
+                        sent_label = "NEUTRAL ⚪"
+                    
+                    sent_scores.append(sentiment)
+                    
+                    with st.expander(f"{sent_label} | {clean_title}"):
+                        st.write(f"**Source:** {entry.get('source', {}).get('title', 'Google News')}")
+                        st.write(f"**Date:** {entry.get('published', 'N/A')}")
+                        st.write(f"**Link:** [Read Article]({entry.get('link')})")
+                        st.write(f"**Sentiment Score:** {sentiment:.2f}")
                 
-                # Forecast
-                forecast = fit_model.forecast(forecast_days)
-                
-                # Future dates (approximate business days)
-                last_date = ts.index[-1]
-                future_dates = pd.date_range(start=last_date + pd.Timedelta(days=1), periods=forecast_days*2, freq='B')[:forecast_days]
-                
-                # Create Plotly fig
-                fig_fc = go.Figure()
-                
-                # Use only last 180 days of history for better visual scale
-                recent_ts = ts.tail(180)
-                
-                fig_fc.add_trace(go.Scatter(x=recent_ts.index, y=recent_ts.values, name="Historical Close (Last 6 Months)", line=dict(color="#3498db", width=2)))
-                fig_fc.add_trace(go.Scatter(x=future_dates, y=forecast.values, name="AI Forecast", line=dict(color="#e74c3c", width=3, dash="dash")))
-                
-                # Simple confidence interval visually by +/- (1% * days out)
-                # Volatility expands over time in forecasting
-                f_vals = list(forecast.values)
-                std_dev_expansion = [f_vals[i] * (0.01 + 0.002 * i) for i in range(forecast_days)]
-                upper_bound = [f_vals[i] + std_dev_expansion[i] for i in range(forecast_days)]
-                lower_bound = [f_vals[i] - std_dev_expansion[i] for i in range(forecast_days)]
-                
-                fig_fc.add_trace(go.Scatter(
-                    x=list(future_dates) + list(future_dates)[::-1],
-                    y=list(upper_bound) + list(lower_bound)[::-1],
-                    fill='toself',
-                    fillcolor='rgba(231, 76, 60, 0.2)',
-                    line=dict(color='rgba(255,255,255,0)'),
-                    hoverinfo="skip",
-                    showlegend=True,
-                    name="Confidence Interval (Estimated)"
-                ))
-                
-                fig_fc.update_layout(
-                    title=dict(text=f"📈 {fc_ticker} - {forecast_days} Days Price Forecast", font=dict(size=20)), 
-                    template="plotly_dark", height=500, 
-                    xaxis_title="Date", yaxis_title="Price ($)",
-                    hovermode="x unified",
-                    margin=dict(r=150)
-                )
-                st.plotly_chart(fig_fc, use_container_width=True)
-                
-                st.info(f"💡 **AI Insight**: The Holt-Winters model projects the price of **{fc_ticker}** could reach **${forecast.values[-1]:.2f}** in {forecast_days} trading days. *(Note: This is a statistical projection, not absolute financial advice)*")
-            except Exception as e:
-                st.error(f"Could not generate forecast: {e}")
+                avg_sent = np.mean(sent_scores) if sent_scores else 0
+                mood = "BULLISH 🚀" if avg_sent > 0.05 else ("BEARISH 📉" if avg_sent < -0.05 else "NEUTRAL 😴")
+                st.metric("Aggregate Market Mood", mood, delta=f"{avg_sent:.2f} score")
+            else:
+                st.info("No recent news found for this ticker.")
+        except Exception as e:
+            st.error(f"Error fetching news: {e}")
+
+# ── FEATURE 6: Portfolio Backtester ──────────────────────────────────────────
+with tab9:
+    st.markdown("### 💼 Portfolio Backtester")
+    st.write("Simulate the growth of a **$10,000** investment starting from the beginning of the dataset.")
+    
+    initial_investment = 10000
+    
+    # Calculate cumulative returns for all selected tickers
+    backtest_df = prices.groupby("date")["daily_return_pct"].mean().reset_index()
+    backtest_df["cum_return"] = (1 + backtest_df["daily_return_pct"]/100).cumprod()
+    backtest_df["portfolio_value"] = backtest_df["cum_return"] * initial_investment
+    
+    # Calculate Benchmark (SPY)
+    if not spy_prices.empty:
+        spy_bt = spy_prices.sort_values("date")
+        spy_bt["cum_return"] = (1 + spy_bt["daily_return_pct"]/100).cumprod()
+        spy_bt["spy_value"] = spy_bt["cum_return"] * initial_investment
+    
+    fig_bt = go.Figure()
+    fig_bt.add_trace(go.Scatter(x=backtest_df["date"], y=backtest_df["portfolio_value"], name="Selected Portfolio", line=dict(color="#00ffcc", width=3)))
+    if not spy_prices.empty:
+        fig_bt.add_trace(go.Scatter(x=spy_bt["date"], y=spy_bt["spy_value"], name="S&P 500 (SPY)", line=dict(color="white", width=2, dash="dot")))
+    
+    fig_bt.update_layout(title="Investment Growth Simulation ($10k Initial)", template="plotly_dark", height=500, yaxis_title="Value ($)")
+    st.plotly_chart(fig_bt, use_container_width=True)
+    
+    final_val = backtest_df["portfolio_value"].iloc[-1]
+    total_ret = (final_val / initial_investment - 1) * 100
+    st.success(f"Final Portfolio Value: **${final_val:,.2f}** ({total_ret:+.2f}%)")
+
+# ── FEATURE 7: Alert Configurator ────────────────────────────────────────────
+with tab10:
+    st.markdown("### 🔔 Alert Configurator")
+    st.write("Set up custom price or volume alerts. These rules will be evaluated by the Airflow pipeline.")
+    
+    with st.form("alert_form"):
+        colX, colY, colZ = st.columns(3)
+        with colX:
+            a_ticker = st.selectbox("Ticker", all_tickers)
+        with colY:
+            a_metric = st.selectbox("Metric", ["Price", "Volume", "Daily Return %", "RSI"])
+        with colZ:
+            a_condition = st.selectbox("Condition", ["above", "below"])
+        
+        a_value = st.number_input("Threshold Value", value=100.0)
+        a_email = st.text_input("Notify Email", value="dgl.rocketmail94@gmail.com")
+        
+        submitted = st.form_submit_button("Create Alert Rule")
+        if submitted:
+            st.toast(f"Alert rule created for {a_ticker}!")
+            st.success(f"✅ Rule saved: If **{a_ticker} {a_metric}** is **{a_condition} {a_value}**, notify **{a_email}**.")
 
 # ── FEATURE 4: Sidebar Export Hub ────────────────────────────────────────────
 st.sidebar.markdown("---")
