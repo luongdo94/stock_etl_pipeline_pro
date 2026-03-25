@@ -126,6 +126,17 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
                 "beta":            info.get("beta"),
                 "target_mean_price": info.get("targetMeanPrice"),
                 "recommendation_key": info.get("recommendationKey"),
+                "peg_ratio":       info.get("pegRatio"),
+                "price_to_sales":  info.get("priceToSalesTrailing12Months"),
+                "ev_to_ebitda":    info.get("enterpriseToEbitda"),
+                "revenue_growth":  info.get("revenueGrowth"),
+                "earnings_growth": info.get("earningsGrowth"),
+                "current_ratio":   info.get("currentRatio"),
+                "quick_ratio":     info.get("quickRatio"),
+                "debt_to_equity":  info.get("debtToEquity"),
+                "short_ratio":     info.get("shortRatio"),
+                "inst_ownership":  info.get("heldPercentInstitutions"),
+                "insider_ownership":info.get("heldPercentInsiders"),
                 "_extracted_at":   datetime.now(),
             })
             logger.info(f"  ✅ {ticker} fundamentals extracted")
