@@ -17,7 +17,7 @@ TICKERS = {
     "SAP":   {"name": "SAP SE",      "sector": "Enterprise SW",   "region": "EU"},
     "ASML":  {"name": "ASML",        "sector": "Semiconductors",  "region": "EU"},
     "BABA":  {"name": "Alibaba",     "sector": "Ecommerce",       "region": "CN"},
-    "BAIDU": {"name": "Baidu",       "sector": "Cloud/AI",        "region": "CN"},
+    "BIDU":  {"name": "Baidu",       "sector": "Cloud/AI",        "region": "CN"},
     # New additions
     "ADBE":  {"name": "Adobe",       "sector": "Cloud/Software",  "region": "US"},
     "NVO":   {"name": "Novo Nordisk","sector": "Healthcare",      "region": "EU"},

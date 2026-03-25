@@ -156,12 +156,13 @@ else:
     filtered_companies = companies
 
 # Ticker Search / Dropdown
-all_tickers = sorted(filtered_companies["ticker"].unique().tolist())
-selected_tickers = st.sidebar.multiselect(
+ticker_options = sorted(filtered_companies.apply(lambda x: f"{x['ticker']}: {x['company']}", axis=1).tolist())
+selected_display_names = st.sidebar.multiselect(
     "Search Tickers (Leave empty to show all)", 
-    options=all_tickers, 
+    options=ticker_options, 
     default=[]
 )
+selected_tickers = [name.split(":")[0] for name in selected_display_names]
 
 # Apply filters
 if len(selected_tickers) > 0:
