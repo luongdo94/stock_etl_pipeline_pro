@@ -79,7 +79,7 @@ def get_rich_email_content(db_path, dashboard_url="http://localhost:8501"):
                 </tr>
         """
         
-    html += """
+    html += f"""
             </tbody>
         </table>
         <p style="margin-top: 20px; font-size: 14px; color: #777;">
