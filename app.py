@@ -174,6 +174,23 @@ else:
     prices = prices[prices["ticker"].isin(all_tickers)]
     monthly = monthly[monthly["ticker"].isin(all_tickers)]
 
+# Date Range Filter
+if not prices_full.empty:
+    min_db_date = prices_full["date"].min().date()
+    max_db_date = prices_full["date"].max().date()
+    
+    date_range = st.sidebar.date_input(
+        "Select Date Range",
+        value=(min_db_date, max_db_date),
+        min_value=min_db_date,
+        max_value=max_db_date
+    )
+    
+    if len(date_range) == 2:
+        start_date, end_date = date_range
+        prices = prices[(prices["date"].dt.date >= start_date) & (prices["date"].dt.date <= end_date)]
+        spy_prices = spy_prices[(spy_prices["date"].dt.date >= start_date) & (spy_prices["date"].dt.date <= end_date)]
+
 st.sidebar.markdown("---")
 st.sidebar.title("🛡️ Elite Pro Navigation")
 page = st.sidebar.radio("Analysis Layer:", [
