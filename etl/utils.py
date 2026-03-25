@@ -3,7 +3,7 @@ import pandas as pd
 import duckdb
 import os
 
-def get_rich_email_content(db_path):
+def get_rich_email_content(db_path, dashboard_url="http://localhost:8501"):
     """
     Query DuckDB and generate a mobile-friendly HTML table for the success email.
     """
@@ -83,7 +83,7 @@ def get_rich_email_content(db_path):
             </tbody>
         </table>
         <p style="margin-top: 20px; font-size: 14px; color: #777;">
-            Xem chi tiết biểu đồ tại: <a href="http://localhost:8501">Dashboard Streamlit Layer</a>
+            Xem chi tiết biểu đồ tại: <a href="{dashboard_url}">{dashboard_url}</a>
         </p>
     </div>
     """
