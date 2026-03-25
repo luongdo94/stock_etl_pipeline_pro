@@ -29,6 +29,23 @@ TICKERS = {
     "AMD":   {"name": "AMD",         "sector": "Semiconductors",  "region": "US"},
     "ORCL":  {"name": "Oracle",      "sector": "Cloud/Software",  "region": "US"},
     "SIE.DE":{"name": "Siemens",     "sector": "Industrials",     "region": "EU"},
+    # New Universe Expansion
+    "COIN":  {"name": "Coinbase",    "sector": "Fintech",         "region": "US"},
+    "PANW":  {"name": "Palo Alto",    "sector": "Cybersecurity",   "region": "US"},
+    "8035.T":{"name": "Tokyo Electron", "sector": "Semiconductors", "region": "JP"},
+    "SAN.PA":{"name": "Sanofi",      "sector": "Healthcare",      "region": "EU"},
+    "INGA.AS":{"name": "ING Group",   "sector": "Financials",      "region": "EU"},
+    "JD":    {"name": "JD.com",      "sector": "Ecommerce",       "region": "CN"},
+    "ELV":   {"name": "Elevance Health", "sector": "Healthcare",  "region": "US"},
+    "HOOD":  {"name": "Robinhood",    "sector": "Fintech",         "region": "US"},
+    "UNH":   {"name": "UnitedHealth", "sector": "Healthcare",      "region": "US"},
+    "ADYEN.AS":{"name": "Adyen",     "sector": "Fintech",         "region": "EU"},
+    "UPS":   {"name": "UPS",          "sector": "Industrials",     "region": "US"},
+    "LULU":  {"name": "Lululemon",    "sector": "Consumer Retail", "region": "US"},
+    "BITF":  {"name": "Bitfarms",    "sector": "Crypto/Mining",   "region": "US"},
+    "SOFI":  {"name": "SoFi",        "sector": "Fintech",         "region": "US"},
+    "SNPS":  {"name": "Synopsys",    "sector": "Software/Design",  "region": "US"},
+    "RWE.DE":{"name": "RWE",         "sector": "Utilities",       "region": "EU"},
     "SPY":   {"name": "S&P 500 ETF", "sector": "Benchmark",       "region": "US"},
 }
 
