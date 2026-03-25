@@ -27,30 +27,42 @@ st.set_page_config(
 )
 
 DB_PATH = os.path.join(ROOT, "warehouse", "stock_dw.duckdb")
-conn = duckdb.connect(DB_PATH, read_only=True)
 
-# Read data and handle Benchmark (SPY)
-prices_full = conn.execute("""
-    SELECT f.date, f.ticker, d.company, d.sector, d.region,
-           f.price_open, f.price_high, f.price_low, f.price_close, 
-           f.daily_return_pct, f.volume,
-           f.ma_20, f.ma_50, f.ma_signal, f.pct_from_52w_high,
-           f.is_volume_spike, f.cap_category
-    FROM marts.fct_daily_returns f
-    LEFT JOIN marts.dim_companies d USING (ticker)
-    ORDER BY f.date
-""").df()
+# --- Robust Data Loading ---
+if not os.path.exists(DB_PATH):
+    st.error(f"❌ **DATABASE NOT FOUND!** Path: {DB_PATH}")
+    st.info("Check if `warehouse/stock_dw.duckdb` exists in your GitHub repository root.")
+    st.stop()
 
-companies_full = conn.execute("SELECT * FROM marts.dim_companies").df()
-companies = companies_full[companies_full["ticker"] != "SPY"].copy()
+try:
+    conn = duckdb.connect(DB_PATH, read_only=True)
+    
+    # Read data and handle Benchmark (SPY)
+    prices_full = conn.execute("""
+        SELECT f.date, f.ticker, d.company, d.sector, d.region,
+               f.price_open, f.price_high, f.price_low, f.price_close, 
+               f.daily_return_pct, f.volume,
+               f.ma_20, f.ma_50, f.ma_signal, f.pct_from_52w_high,
+               f.is_volume_spike, f.cap_category
+        FROM marts.fct_daily_returns f
+        LEFT JOIN marts.dim_companies d USING (ticker)
+        ORDER BY f.date
+    """).df()
 
-spy_prices = prices_full[prices_full["ticker"] == "SPY"].copy()
-prices = prices_full[prices_full["ticker"] != "SPY"].copy()
+    companies_full = conn.execute("SELECT * FROM marts.dim_companies").df()
+    companies = companies_full[companies_full["ticker"] != "SPY"].copy()
 
-monthly = conn.execute("SELECT * FROM marts.agg_monthly_performance").df()
-monthly = monthly[monthly["ticker"] != "SPY"].copy()
+    spy_prices = prices_full[prices_full["ticker"] == "SPY"].copy()
+    prices = prices_full[prices_full["ticker"] != "SPY"].copy()
 
-conn.close()
+    monthly = conn.execute("SELECT * FROM marts.agg_monthly_performance").df()
+    monthly = monthly[monthly["ticker"] != "SPY"].copy()
+
+    conn.close()
+except Exception as e:
+    st.error(f"❌ **CRITICAL DATABASE ERROR:** {e}")
+    st.info("Ensure the DuckDB file is not corrupted and matches the schema.")
+    st.stop()
 
 # ── Streamlit UI Top ─────────────────────────────────────────────────────────
 st.title("📊 Stock Market Analytics Dashboard")
