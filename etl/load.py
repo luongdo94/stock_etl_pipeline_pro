@@ -64,6 +64,17 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
             _loaded_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS raw.historical_financials (
+            ticker          VARCHAR,
+            date            DATE,
+            revenue         DOUBLE,
+            eps             DOUBLE,
+            eps_diluted     DOUBLE,
+            _loaded_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (ticker, date)
+        )
+    """)
     logger.info("✅ Raw schema created")
 
 
@@ -116,3 +127,29 @@ def load_company_info(
         SELECT *, CURRENT_TIMESTAMP FROM df
     """)
     logger.info(f"✅ Loaded {len(df)} companies → raw.company_info")
+def load_historical_financials(
+    conn: duckdb.DuckDBPyConnection,
+    df: pd.DataFrame
+):
+    """Load historical annual financials (upsert)."""
+    if df.empty:
+        logger.info("  ⚠️ No historical financials to load")
+        return
+        
+    # Upsert: Delete existing dates for these tickers
+    tickers = df["ticker"].unique().tolist()
+    ticker_list = ",".join([f"'{t}'" for t in tickers])
+    conn.execute(f"DELETE FROM raw.historical_financials WHERE ticker IN ({ticker_list})")
+    
+    conn.execute("""
+        INSERT INTO raw.historical_financials
+        SELECT 
+            ticker, 
+            CAST(date AS DATE), 
+            revenue, 
+            eps, 
+            eps_diluted, 
+            CURRENT_TIMESTAMP 
+        FROM df
+    """)
+    logger.info(f"✅ Loaded {len(df)} financial records → raw.historical_financials")

@@ -3,7 +3,7 @@ import pandas as pd
 import duckdb
 import os
 
-def get_rich_email_content(db_path, dashboard_url="http://localhost:8501"):
+def get_rich_email_content(db_path):
     """
     Query DuckDB and generate a mobile-friendly HTML table for the success email.
     """
@@ -56,7 +56,7 @@ def get_rich_email_content(db_path, dashboard_url="http://localhost:8501"):
     html = f"""
     <div style="font-family: sans-serif; color: #333; max-width: 600px;">
         <h2 style="color: #2c3e50;">📊 AI Market Report (Mobile Snapshot)</h2>
-        <p>Đã cập nhật dữ liệu ngày <b>{pd.Timestamp.now().strftime('%d/%m/%Y')}</b>. Dưới đây là các khuyến nghị AI hàng đầu:</p>
+        <p>Data has been updated on <b>{pd.Timestamp.now().strftime('%d/%m/%Y')}</b>. Here are the top AI recommendations:</p>
         <table style="width: 100%; border-collapse: collapse; margin-top: 10px;">
             <thead>
                 <tr style="background-color: #f8f9fa; border-bottom: 2px solid #dee2e6;">
@@ -79,11 +79,11 @@ def get_rich_email_content(db_path, dashboard_url="http://localhost:8501"):
                 </tr>
         """
         
-    html += f"""
+    html += """
             </tbody>
         </table>
         <p style="margin-top: 20px; font-size: 14px; color: #777;">
-            Xem chi tiết biểu đồ tại: <a href="{dashboard_url}">{dashboard_url}</a>
+            View details at: <a href="http://localhost:8501">Dashboard Streamlit Layer</a>
         </p>
     </div>
     """

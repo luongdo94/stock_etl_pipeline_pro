@@ -1,8 +1,8 @@
 # etl/pipeline.py
 import logging, time, duckdb
-from etl.extract   import extract_stock_prices, extract_company_info
+from etl.extract   import extract_stock_prices, extract_company_info, extract_historical_financials
 from etl.load      import get_connection, create_raw_schema, \
-                          load_stock_prices, load_company_info
+                          load_stock_prices, load_company_info, load_historical_financials
 from etl.transform import run_transforms
 
 logging.basicConfig(
@@ -24,6 +24,7 @@ def run_pipeline(lookback_days: int = 365):
         t0 = time.time()
         prices_df = extract_stock_prices(lookback_days=lookback_days)
         company_df = extract_company_info()
+        financials_df = extract_historical_financials()
         logger.info(f"   ⏱  {time.time()-t0:.1f}s")
         
         # ── STEP 2: VALIDATE (pre-load checks) ───────────
@@ -39,6 +40,7 @@ def run_pipeline(lookback_days: int = 365):
         create_raw_schema(conn)
         load_stock_prices(conn, prices_df, mode="upsert")
         load_company_info(conn, company_df)
+        load_historical_financials(conn, financials_df)
         logger.info(f"   ⏱  {time.time()-t0:.1f}s")
         
         # ── STEP 4: TRANSFORM ─────────────────────────────
@@ -61,6 +63,7 @@ def run_pipeline(lookback_days: int = 365):
             ("marts",        "fct_daily_returns"),
             ("marts",        "dim_companies"),
             ("marts",        "agg_monthly_performance"),
+            ("marts",        "dim_annual_financials"),
         ]:
             try:
                 n = conn.execute(f"SELECT COUNT(*) FROM {schema}.{table}").fetchone()[0]
