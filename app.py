@@ -184,34 +184,33 @@ page = st.sidebar.radio("Analysis Layer:", [
 st.sidebar.markdown("---")
 
 
-# ── KPI Metric Cards ─────────────────────────────────────────────────────────
+# ── Global Diagnostic Header ─────────────────────────────────────────────────
 latest_date = prices["date"].max()
+latest_prices = prices[prices["date"] == latest_date]
 
-col1, col2, col3 = st.columns(3)
-with col1:
+hcol1, hcol2, hcol3, hcol4 = st.columns(4)
+with hcol1:
+    # 1. Market Mood (Aggregate Sentiment)
+    st.metric("Market Mood", "NEUTRAL 😴", delta="0.00")
+with hcol2:
+    # 2. S&P 500 (SPY)
     if not spy_prices.empty:
         spy_latest = spy_prices[spy_prices["date"] == spy_prices["date"].max()].iloc[0]
         spy_prev = spy_prices[spy_prices["date"] < spy_prices["date"].max()].sort_values("date")
         spy_prev_val = spy_prev.iloc[-1]["price_close"] if not spy_prev.empty else spy_latest["price_close"]
         spy_pct = (spy_latest["price_close"] / spy_prev_val - 1) * 100
         st.metric("S&P 500 (SPY)", f"${spy_latest['price_close']:.2f}", f"{spy_pct:+.2f}%")
-    else:
-        st.metric("S&P 500 (SPY)", "N/A")
-
-with col2:
-    latest_prices = prices[prices["date"] == latest_date]
+with hcol3:
+    # 3. Top Portfolio Mover
     if not latest_prices.empty:
-        top_gainer = latest_prices.sort_values("daily_return_pct", ascending=False).iloc[0]
-        st.metric(f"🚀 Top Gainer ({top_gainer['ticker']})", f"${top_gainer['price_close']:.2f}", f"{top_gainer['daily_return_pct']:+.2f}%")
-    else:
-        st.metric("Top Gainer", "N/A")
-
-with col3:
+        top_g = latest_prices.sort_values("daily_return_pct", ascending=False).iloc[0]
+        st.metric(f"🚀 Top Mover ({top_g['ticker']})", f"${top_g['price_close']:.2f}", f"{top_g['daily_return_pct']:+.2f}%")
+with hcol4:
+    # 4. Volume Alert
     if not latest_prices.empty:
-        top_loser = latest_prices.sort_values("daily_return_pct", ascending=True).iloc[0]
-        st.metric(f"📉 Top Loser ({top_loser['ticker']})", f"${top_loser['price_close']:.2f}", f"{top_loser['daily_return_pct']:+.2f}%")
-    else:
-        st.metric("Top Loser", "N/A")
+        vol_s = latest_prices.sort_values("is_volume_spike", ascending=False).iloc[0]
+        v_val = "Volume Spike" if vol_s['is_volume_spike'] else "Normal Vol"
+        st.metric(f"🔔 Vol Alert ({vol_s['ticker']})", v_val)
 
 st.markdown("---")
 
@@ -563,28 +562,6 @@ fig10.update_traces(textposition="top center", marker=dict(opacity=0.7, line=dic
 if page == "🛡️ Strategic Overview":
     st.markdown("## 🛡️ Strategic Control Room (Diagnostic Hub)")
     
-    # ── TIER 0: MARKET STATUS RIBBON ─────────────────────────────────────────    
-    rcol1, rcol2, rcol3, rcol4 = st.columns([1, 1, 1, 1])
-    with rcol1:
-        # Aggregate Mood (Placeholder logic as it was in Tab 8 logic previously)
-        # We'll use a neutral default or calculate if possible.
-        st.metric("Market Mood", "NEUTRAL 😴", delta="0.00")
-    with rcol2:
-        if not spy_prices.empty:
-            spy_latest = spy_prices[spy_prices["date"] == spy_prices["date"].max()].iloc[0]
-            st.metric("S&P 500 (SPY)", f"${spy_latest['price_close']:.2f}", f"{spy_latest['daily_return_pct']:+.2f}%")
-    with rcol3:
-        latest = prices[prices["date"] == prices["date"].max()].copy()
-        if not latest.empty:
-            top_g = latest.sort_values("daily_return_pct", ascending=False).iloc[0]
-            st.metric("Top Mover", top_g['ticker'], f"{top_g['daily_return_pct']:+.2f}%")
-    with rcol4:
-        if not latest.empty:
-            vol_s = latest.sort_values("is_volume_spike", ascending=False).iloc[0]
-            v_val = "Volume Spike" if vol_s['is_volume_spike'] else "Normal Vol"
-            st.metric("Vol Alert", vol_s['ticker'], v_val)
-
-    st.markdown("---")
 
     # ── TIER 1: PERFORMANCE & ACTION MATRIX ──────────────────────────────────
     mcol1, mcol2 = st.columns([1.6, 1])
