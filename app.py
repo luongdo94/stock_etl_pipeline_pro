@@ -145,9 +145,20 @@ st.markdown("---")
 # ── Sidebar Filters ──────────────────────────────────────────────────────────
 st.sidebar.header("🔍 Dashboard Filters")
 
+if not prices_full.empty:
+    min_db_date = prices_full["date"].min().date()
+    max_db_date = prices_full["date"].max().date()
+
+    def clear_filters():
+        st.session_state.sector_dropdown = "All Sectors"
+        st.session_state.ticker_multiselect = []
+        st.session_state.date_range_picker = (min_db_date, max_db_date)
+
+    st.sidebar.button("🗑️ Clear Filters", on_click=clear_filters)
+
 # Sector Dropdown
 all_sectors = ["All Sectors"] + sorted(companies["sector"].dropna().unique().tolist())
-selected_sector = st.sidebar.selectbox("Filter by Sector (Dropdown)", all_sectors, index=0)
+selected_sector = st.sidebar.selectbox("Filter by Sector (Dropdown)", all_sectors, key="sector_dropdown")
 
 # Filter companies by sector to cascade the ticker filter
 if selected_sector != "All Sectors":
@@ -160,7 +171,7 @@ ticker_options = sorted(filtered_companies.apply(lambda x: f"{x['ticker']}: {x['
 selected_display_names = st.sidebar.multiselect(
     "Search Tickers (Leave empty to show all)", 
     options=ticker_options, 
-    default=[]
+    key="ticker_multiselect"
 )
 selected_tickers = [name.split(":")[0] for name in selected_display_names]
 
@@ -176,14 +187,15 @@ else:
 
 # Date Range Filter
 if not prices_full.empty:
-    min_db_date = prices_full["date"].min().date()
-    max_db_date = prices_full["date"].max().date()
-    
+    # Initialize the date pick state if not set, since date_input key is tricky without initial value
+    if "date_range_picker" not in st.session_state:
+        st.session_state.date_range_picker = (min_db_date, max_db_date)
+        
     date_range = st.sidebar.date_input(
         "Select Date Range",
-        value=(min_db_date, max_db_date),
         min_value=min_db_date,
-        max_value=max_db_date
+        max_value=max_db_date,
+        key="date_range_picker"
     )
     
     if len(date_range) == 2:
