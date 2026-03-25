@@ -1,0 +1,8 @@
+pandas
+duckdb
+plotly
+streamlit
+yfinance
+statsmodels
+scipy
+patsy
