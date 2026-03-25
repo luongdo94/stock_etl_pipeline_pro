@@ -499,48 +499,77 @@ def compute_score(row):
     
     return min(score, 100)
 
-# ── ML HELPERS ─────────────────────────────────────────────────────────────
-def prepare_ml_data(df):
-    """Create technical features for ML model."""
-    df = df.copy().sort_values("date")
-    # 1. Technical Indicators
-    df["ma_20"] = df["price_close"].rolling(20).mean()
-    df["ma_50"] = df["price_close"].rolling(50).mean()
-    df["std_20"] = df["price_close"].rolling(20).std()
-    
-    # 2. RSI (Simplified)
-    delta = df["price_close"].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
-    rs = gain / loss
-    df["rsi"] = 100 - (100 / (1 + rs))
-    
-    # 3. Target: Next 7-day return
-    df["target"] = df["price_close"].shift(-7) / df["price_close"] - 1
-    
-    # 4. Cleanup
-    df = df.dropna()
-    features = ["daily_return_pct", "ma_20", "ma_50", "std_20", "rsi"]
-    return df[features], df["target"], features
+import torch
+import torch.nn as nn
+from sklearn.preprocessing import MinMaxScaler
+import numpy as np
 
-def train_ml_model(df_ticker):
-    """Train a Random Forest to predict next 7-day returns."""
-    X, y, feature_names = prepare_ml_data(df_ticker)
-    if len(X) < 50: return None, None, None # Not enough data
+# ── DEEP LEARNING (LSTM) HELPERS ─────────────────────────────────────────────
+class StockLSTM(nn.Module):
+    def __init__(self, input_size=1, hidden_size=32, num_layers=1, output_size=1):
+        super().__init__()
+        self.lstm = nn.LSTM(input_size, hidden_size, num_layers, batch_first=True)
+        self.fc = nn.Linear(hidden_size, output_size)
+        
+    def forward(self, x):
+        out, _ = self.lstm(x)
+        out = self.fc(out[:, -1, :])
+        return out
+
+@st.cache_data(show_spinner="Training Deep Learning LSTM Core...")
+def train_predict_lstm(df_ticker, lookback=15, forecast_days=30):
+    """Train a Deep Learning LSTM dynamically and auto-regressively predict the future."""
+    df = df_ticker.copy().sort_values("date").reset_index(drop=True)
+    if len(df) < lookback * 2: 
+        return None, None
+        
+    data = df[["price_close"]].values.astype(np.float32)
+    scaler = MinMaxScaler(feature_range=(-1, 1))
+    scaled_data = scaler.fit_transform(data)
     
-    model = RandomForestRegressor(n_estimators=100, random_state=42)
-    model.fit(X, y)
+    X, y = [], []
+    for i in range(len(scaled_data) - lookback):
+        X.append(scaled_data[i:(i + lookback), 0])
+        y.append(scaled_data[i + lookback, 0])
+        
+    X = np.array(X).reshape(-1, lookback, 1)
+    y = np.array(y).reshape(-1, 1)
     
-    # Predict for the most recent data point
-    latest_x = X.iloc[[-1]]
-    prediction = model.predict(latest_x)[0]
+    X_t = torch.FloatTensor(X)
+    y_t = torch.FloatTensor(y)
     
-    importances = pd.DataFrame({
-        "Feature": feature_names,
-        "Importance": model.feature_importances_
-    }).sort_values("Importance", ascending=True)
+    model = StockLSTM(input_size=1)
+    criterion = nn.MSELoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
     
-    return prediction, importances, model
+    epochs = 40
+    model.train()
+    for _ in range(epochs):
+        optimizer.zero_grad()
+        out = model(X_t)
+        loss = criterion(out, y_t)
+        loss.backward()
+        optimizer.step()
+        
+    model.eval()
+    future_preds = []
+    current_seq = scaled_data[-lookback:].reshape(1, lookback, 1)
+    current_seq_t = torch.FloatTensor(current_seq)
+    
+    with torch.no_grad():
+        for _ in range(forecast_days):
+            pred = model(current_seq_t)
+            future_preds.append(pred.item())
+            pred_t = pred.view(1, 1, 1)
+            current_seq_t = torch.cat((current_seq_t[:, 1:, :], pred_t), dim=1)
+            
+    future_preds = np.array(future_preds).reshape(-1, 1)
+    predicted_prices = scaler.inverse_transform(future_preds).flatten()
+    
+    current_price = data[-1][0]
+    expected_return = (predicted_prices[-1] - current_price) / current_price
+    
+    return predicted_prices, expected_return
 
 reco_df["score"] = reco_df.apply(compute_score, axis=1)
 
@@ -758,8 +787,8 @@ elif page == "🎲 AI Predictive Suite":
         df_fc = prices_full[prices_full["ticker"] == fc_ticker].sort_values("date")
         ts = df_fc["price_close"].values
         
-        # 1. ML Prediction
-        ml_pred, ml_imp, _ = train_ml_model(df_fc)
+        # 1. ML Prediction (LSTM)
+        lstm_path, lstm_return = train_predict_lstm(df_fc, forecast_days=forecast_days)
         
         # 2. News Sentiment
         import feedparser
@@ -783,6 +812,7 @@ elif page == "🎲 AI Predictive Suite":
         if drift_score >= 75: drift_bias += 0.0005 
         elif drift_score <= 40: drift_bias -= 0.0005 
         drift_bias += (avg_sent * 0.001) 
+        if lstm_return is not None and lstm_return > 0.05: drift_bias += 0.0005
         
         dt = 1 
         simulated_paths = np.zeros((forecast_days, n_sims))
@@ -796,12 +826,12 @@ elif page == "🎲 AI Predictive Suite":
         # ── ROW 2: AI Metrics (Horizontal Cards) ─────────────────────────────
         mcol1, mcol2, mcol3 = st.columns(3)
         with mcol1:
-            st.metric("🤖 ML 7-Day Prediction", f"{ml_pred*100:.2f}%" if ml_pred else "N/A", help="Predicted return for the next 7 business days.")
+            st.metric("🧠 Deep Learning (LSTM) Target", f"${lstm_path[-1]:.2f}" if lstm_path is not None else "N/A", delta=f"{lstm_return*100:.2f}%" if lstm_return else "N/A")
         with mcol2:
             sent_label = "Positive" if avg_sent > 0.1 else "Negative" if avg_sent < -0.1 else "Neutral"
             st.metric("📰 News Sentiment Spirit", sent_label, delta=f"{avg_sent:.2f}")
         with mcol3:
-            st.metric("🎯 AI Confidence Score", f"{drift_score}/100", delta=int(drift_score-50))
+            st.metric("🎯 Institutional AI Score", f"{drift_score}/100", delta=int(drift_score-50))
 
         # ── ROW 3: Main Chart (Full Width) ───────────────────────────────────
         fig_fc = go.Figure()
@@ -811,34 +841,31 @@ elif page == "🎲 AI Predictive Suite":
             fig_fc.add_trace(go.Scatter(x=future_dates, y=simulated_paths[:, i], mode='lines', line=dict(color='rgba(255,255,255,0.05)', width=1), showlegend=False))
         
         mean_path = simulated_paths.mean(axis=1)
-        fig_fc.add_trace(go.Scatter(x=future_dates, y=mean_path, name="AI-Enhanced Mean Path", line=dict(color="#f1c40f", width=4)))
+        fig_fc.add_trace(go.Scatter(x=future_dates, y=mean_path, name="Monte Carlo Mean Path", line=dict(color="rgba(241, 196, 15, 0.5)", width=2, dash="dash")))
+        
+        if lstm_path is not None:
+            fig_fc.add_trace(go.Scatter(x=future_dates, y=lstm_path, name="🧠 LSTM Most Likely Path", line=dict(color="#00E5FF", width=4)))
         
         p10 = np.percentile(simulated_paths, 10, axis=1)
         p90 = np.percentile(simulated_paths, 90, axis=1)
-        fig_fc.add_trace(go.Scatter(x=future_dates, y=p10, name="Lower Bound (90%)", line=dict(color="rgba(255,0,0,0.3)", width=1, dash="dot")))
-        fig_fc.add_trace(go.Scatter(x=future_dates, y=p90, name="Upper Bound (90%)", line=dict(color="rgba(0,255,0,0.3)", width=1, dash="dot")))
+        fig_fc.add_trace(go.Scatter(x=future_dates, y=p10, name="Lower Risk Bound (90%)", line=dict(color="rgba(255,0,0,0.5)", width=2, dash="dot")))
+        fig_fc.add_trace(go.Scatter(x=future_dates, y=p90, name="Upper Reward Bound (90%)", line=dict(color="rgba(0,255,0,0.5)", width=2, dash="dot")))
 
-        fig_fc.update_layout(title=dict(text=f"Advanced AI Multi-Path Forecast: {fc_ticker}", font=dict(size=24)), template="plotly_dark", height=600, yaxis_title="Price ($)")
+        fig_fc.update_layout(title=dict(text=f"Deep Learning vs Stochastic Monte Carlo: {fc_ticker}", font=dict(size=24)), template="plotly_dark", height=600, yaxis_title="Price ($)")
         st.plotly_chart(fig_fc, use_container_width=True)
         
         # ── ROW 4: Analysis & Feature Importance ─────────────────────────────
-        acol1, acol2 = st.columns([1.2, 1])
-        with acol1:
-            st.markdown("#### 📡 AI Reasoning Logic")
-            if ml_pred is not None:
-                bias_text = "Bullish" if ml_pred > 0.01 else "Bearish" if ml_pred < -0.01 else "Neutral"
-                st.write(f"The simulation is currently **{bias_text}**. This is driven by a combination of current technical indicators and a news sentiment score of **{avg_sent:.2f}**.")
-                st.write(f"The **AI Score ({drift_score}/100)** provides a long-term anchor, while ML return predictions focus on short-term momentum.")
-                
-            p5_final = np.percentile(simulated_paths[-1, :], 5)
-            p95_final = np.percentile(simulated_paths[-1, :], 95)
-            st.info(f"✨ **Stat Check**: With 90% confidence, at the end of {forecast_days} days, the price is expected to settle between **${p5_final:.2f}** and **${p95_final:.2f}**.")
-            
-        with acol2:
-            if ml_imp is not None:
-                fig_imp = px.bar(ml_imp, x="Importance", y="Feature", orientation='h', title="Feature Importance (Drivers)", template="plotly_dark", height=300)
-                fig_imp.update_layout(margin=dict(l=0, r=0, t=30, b=0))
-                st.plotly_chart(fig_imp, use_container_width=True)
+        st.markdown("#### 📡 AI Synergy & Reasoning Logic")
+        bias_text = "Bullish" if (lstm_return and lstm_return > 0.02) else "Bearish" if (lstm_return and lstm_return < -0.02) else "Neutral"
+        st.write(f"The combined Deep Learning model is currently **{bias_text}**.")
+        st.write("This institutional-grade dashboard merges two distinct mathematical philosophies:")
+        st.info("1. **Deterministic Path (Blue Line)**: A PyTorch LSTM Neural Network learns the temporal sequential 'memory' of price action to predict the single most likely path.\n\n"
+                  "2. **Probabilistic Bounds (Grey Shadows)**: Monte Carlo simulations stress-test the volatility thousands of times to establish the strict top and bottom bands of risk.")
+        
+        p5_final = np.percentile(simulated_paths[-1, :], 5)
+        p95_final = np.percentile(simulated_paths[-1, :], 95)
+        st.success(f"✨ **Risk/Reward Check**: With 90% confidence, at the end of {forecast_days} days, the price bounded by Monte Carlo is between **${p5_final:.2f}** and **${p95_final:.2f}**. "
+                   f"The LSTM specifically targets **${lstm_path[-1]:.2f}**.")
 
     # Sector Rotation removed to streamline dashboard.
 
