@@ -559,20 +559,65 @@ fig10.update_traces(textposition="top center", marker=dict(opacity=0.7, line=dic
 
 # ── Render to Streamlit ──────────────────────────────────────────────────────
 # ── Render to Streamlit Tabs ─────────────────────────────────────────────────
+# ── Strategic Redesign: Control Room (What, Why, How) ─────────────────────────
 with tab1:
-    st.plotly_chart(fig9, use_container_width=True)
-    st.plotly_chart(fig1, use_container_width=True)
-    st.plotly_chart(fig10, use_container_width=True)
-    st.plotly_chart(fig4, use_container_width=True)
+    st.markdown("## 🛡️ Strategic Control Room (3-Question Analysis)")
+    
+    # --- 1. WHAT HAPPENED? (The Snapshot) ---
+    st.markdown("### 🔍 1. What Happened? (Market Pulse)")
+    
+    # Calculate Gainer/Loser
+    latest = prices[prices["date"] == prices["date"].max()].copy()
+    if not latest.empty:
+        top_g = latest.sort_values("daily_return_pct", ascending=False).iloc[0]
+        top_l = latest.sort_values("daily_return_pct", ascending=True).iloc[0]
+        vol_s = latest.sort_values("is_volume_spike", ascending=False).iloc[0]
+        
+        wcol1, wcol2, wcol3 = st.columns(3)
+        with wcol1: st.metric("Top Gainer", top_g['ticker'], f"{top_g['daily_return_pct']:.2f}%")
+        with wcol2: st.metric("Top Loser", top_l['ticker'], f"{top_l['daily_return_pct']:.2f}%")
+        with wcol3: 
+            v_val = "Volume Spike" if vol_s['is_volume_spike'] else "Normal Vol"
+            st.metric("Vol Alert", vol_s['ticker'], v_val)
+    
+    st.plotly_chart(fig1, use_container_width=True) # Performance Table
+    st.plotly_chart(fig4, use_container_width=True) # 1-Month Trend
+    
+    st.markdown("---")
+    
+    # --- 2. WHY DID IT HAPPEN? (Diagnostic Drivers) ---
+    st.markdown("### 📊 2. Why it Happened? (Analytical Drivers)")
+    ycol1, ycol2 = st.columns([1, 1])
+    with ycol1:
+        st.plotly_chart(fig2, use_container_width=True) # Sector Rotation
+    with ycol2:
+        st.plotly_chart(fig5, use_container_width=True) # Monthly Heatmap (as a proxy for sentiment/breakouts)
+
+    st.plotly_chart(fig10, use_container_width=True) # Quality vs Valuation (The 'Why' for Long-term)
+    
+    st.markdown("---")
+    
+    # --- 3. HOW TO REACT? (Prescriptive Action) ---
+    st.markdown("### 🎯 3. How to React? (AI Action Plan)")
+    st.plotly_chart(fig9, use_container_width=True) # AI Recommendations
+    
+    with st.expander("💡 Tactical Interpretation Guide"):
+        st.write("""
+        - **If Bullish Signal + High AI Score**: Consider Scaling In.
+        - **If High Upside but Neutral MA**: Potential Bottom/Value Trap. Wait for MA20 breakout.
+        - **If Volume Spike + High Score**: Institutional Accumulation likely.
+        """)
 
 with tab2:
-    st.plotly_chart(fig2, use_container_width=True)
-    st.plotly_chart(fig5, use_container_width=True)
+    st.markdown("### 💸 Valuation & Income (Trailing vs Forward)")
+    st.plotly_chart(fig8, use_container_width=True)
+    st.info("Use this tab to identify if the current P/E is justified by forward earnings projections.")
 
 with tab3:
-    st.plotly_chart(fig8, use_container_width=True)
+    st.markdown("### 📊 Technical & Fundamental Performance Matrix")
     st.plotly_chart(fig6, use_container_width=True)
     st.plotly_chart(fig7, use_container_width=True)
+
 
 # ── FEATURE 1: Single Stock Deep Dive ─────────────────────────────────────────
 with tab4:
