@@ -81,6 +81,7 @@ def extract_stock_prices(
             continue
     
     raw_df = pd.concat(frames, ignore_index=True)
+    raw_df = raw_df.dropna(subset=["close", "high", "low", "open"])
     raw_df["date"] = pd.to_datetime(raw_df["date"])
     
     logger.info(f"\n{'='*50}")
