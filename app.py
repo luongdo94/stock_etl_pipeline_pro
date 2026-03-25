@@ -41,13 +41,13 @@ prices_full = conn.execute("""
     ORDER BY f.date
 """).df()
 
-companies_full = pd.read_sql("SELECT * FROM marts.dim_companies", conn)
+companies_full = conn.execute("SELECT * FROM marts.dim_companies").df()
 companies = companies_full[companies_full["ticker"] != "SPY"].copy()
 
 spy_prices = prices_full[prices_full["ticker"] == "SPY"].copy()
 prices = prices_full[prices_full["ticker"] != "SPY"].copy()
 
-monthly = pd.read_sql("SELECT * FROM marts.agg_monthly_performance", conn)
+monthly = conn.execute("SELECT * FROM marts.agg_monthly_performance").df()
 monthly = monthly[monthly["ticker"] != "SPY"].copy()
 
 conn.close()
