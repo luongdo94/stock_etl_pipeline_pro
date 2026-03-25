@@ -34,8 +34,11 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
         )
     """)
     
+    # --- SCHEMA RESET (Required for the new 11 institutional indicators) ---
+    conn.execute("DROP TABLE IF EXISTS raw.company_info")
+    
     conn.execute("""
-        CREATE TABLE IF NOT EXISTS raw.company_info (
+        CREATE TABLE raw.company_info (
             ticker          VARCHAR PRIMARY KEY,
             company         VARCHAR,
             sector          VARCHAR,
@@ -60,6 +63,17 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
             beta            DOUBLE,
             target_mean_price DOUBLE,
             recommendation_key VARCHAR,
+            peg_ratio       DOUBLE,
+            price_to_sales  DOUBLE,
+            ev_to_ebitda    DOUBLE,
+            revenue_growth  DOUBLE,
+            earnings_growth DOUBLE,
+            current_ratio   DOUBLE,
+            quick_ratio     DOUBLE,
+            debt_to_equity  DOUBLE,
+            short_ratio     DOUBLE,
+            inst_ownership  DOUBLE,
+            insider_ownership DOUBLE,
             _extracted_at   TIMESTAMP,
             _loaded_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
