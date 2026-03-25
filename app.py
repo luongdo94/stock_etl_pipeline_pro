@@ -671,23 +671,26 @@ elif page == "🔍 Single Stock Analysis":
             with hcol5: st.metric("Upside (%)", f"{upside:.1f}%", delta=f"{upside:.1f}%")
 
             # --- ROW 2: FUNDAMENTAL & MOMENTUM KPIs ---
-            mcol1, mcol2, mcol3, mcol4, mcol5 = st.columns(5)
-            with mcol1: st.metric("P/E Ratio", f"{meta['pe_ratio']:.1f}" if pd.notnull(meta['pe_ratio']) else "N/A")
-            with mcol2: st.metric("ROE (%)", f"{meta['roe']*100:.1f}%" if pd.notnull(meta['roe']) else "N/A")
+            st.markdown("##### 🏛️ Institutional Valuation & Growth")
+            vcol1, vcol2, vcol3, vcol4, vcol5 = st.columns(5)
+            with vcol1: st.metric("P/E (Fwd)", f"{meta['pe_ratio']:.1f} ({meta['forward_pe']:.1f})" if pd.notnull(meta['pe_ratio']) else "N/A")
+            with vcol2: st.metric("PEG Ratio", f"{meta.get('peg_ratio', 0):.2f}" if pd.notnull(meta.get('peg_ratio')) else "N/A", help="Price/Earnings-to-Growth (Valuation vs Growth rate)")
+            with vcol3: st.metric("EV / EBITDA", f"{meta.get('ev_to_ebitda', 0):.2f}" if pd.notnull(meta.get('ev_to_ebitda')) else "N/A", help="Enterprise Value to EBITDA (M&A Valuation metric)")
+            with vcol4: st.metric("Price / Sales", f"{meta.get('price_to_sales', 0):.2f}" if pd.notnull(meta.get('price_to_sales')) else "N/A", help="Price to Sales (Good for unprofitable growth companies)")
+            with vcol5: st.metric("Revenue Growth", f"{meta.get('revenue_growth', 0)*100:.1f}%" if pd.notnull(meta.get('revenue_growth')) else "N/A", help="Year-over-Year Revenue Growth")
+
+            # --- ROW 3: LIQUIDITY, HEALTH & SENTIMENT ---
+            st.markdown("##### 🛡️ Liquidity, Risk & Smart Money Sentiment")
+            rcol1, rcol2, rcol3, rcol4, rcol5 = st.columns(5)
+            with rcol1: st.metric("Current Ratio", f"{meta.get('current_ratio', 0):.2f}" if pd.notnull(meta.get('current_ratio')) else "N/A", help="Short-term solvency (Assets / Liabilities)")
+            with rcol2: st.metric("Debt-to-Equity", f"{meta.get('debt_to_equity', 0):.1f}%" if pd.notnull(meta.get('debt_to_equity')) else "N/A", help="Leverage risk multiplier")
+            with rcol3: st.metric("Short Interest", f"{meta.get('short_ratio', 0):.2f}%" if pd.notnull(meta.get('short_ratio')) else "N/A", help="Percentage of float shorted (Short Squeeze potential)")
+            with rcol4: st.metric("Inst. Ownership", f"{meta.get('inst_ownership', 0)*100:.1f}%" if pd.notnull(meta.get('inst_ownership')) else "N/A", help="Smart Money conviction (Funds & Institutions)")
             
             vol_avg = df_deep['volume'].tail(20).mean()
             vol_last = df_deep['volume'].iloc[-1]
-            vol_ratio = vol_last / vol_avg
-            with mcol3: st.metric("Vol Momentum", f"{vol_ratio:.2f}x", delta="Above Avg" if vol_ratio > 1 else "Below Avg")
-            
-            if not df_fin.empty:
-                latest_rev = df_fin.iloc[0]['revenue']
-                rev_growth = df_fin.iloc[0].get('revenue_growth_pct', 0)
-                with mcol4: st.metric("Latest Revenue", f"${latest_rev/1e9:.1f}B")
-                with mcol5: st.metric("Rev Growth", f"{rev_growth:.1f}%")
-            else:
-                with mcol4: st.metric("Latest Revenue", "N/A")
-                with mcol5: st.metric("Rev Growth", "N/A")
+            vol_ratio = vol_last / (vol_avg if vol_avg > 0 else 1)
+            with rcol5: st.metric("Vol Momentum", f"{vol_ratio:.1f}x", delta="Accumulation" if vol_ratio > 1.2 else "Normal", help="Today's volume vs 20-day average")
 
             st.markdown("---")
             
