@@ -18,38 +18,67 @@ def get_rich_email_content(db_path):
     """).df()
     conn.close()
     
-    # 2. Merge and Score (Simplified version of app.py logic)
-    df = companies.merge(latest_prices, on="ticker", how="inner")
+    # 2. Pre-process for scoring
+    df["upside_pct"] = (df["target_mean_price"] / df["price_close"] - 1) * 100
+    df["upside_pct"] = df["upside_pct"].fillna(0)
+    df["recommendation_key"] = df["recommendation_key"].fillna("none").astype(str).str.replace("_", " ").str.title()
     
     def compute_score(row):
         score = 0
-        pe = row.get("pe_ratio", 999)
+        # 1. Valuation (P/E & P/B) - 20 pts
+        pe = row.get("pe_ratio", 999) if not pd.isna(row.get("pe_ratio")) else 999
+        pb = row.get("price_to_book", 99) if not pd.isna(row.get("price_to_book")) else 99
         if pe < 15: score += 10
         elif pe < 25: score += 5
+        if pb < 3: score += 10
+        elif pb < 5: score += 5
         
-        roe = row.get("roe", 0) * 100
-        if roe > 15: score += 15
-        elif roe > 8: score += 7
+        # 2. Profitability (FCF Margin & ROE) - 30 pts
+        fcf = row.get("fcf_margin", 0) if not pd.isna(row.get("fcf_margin")) else 0
+        roe = row.get("roe", 0) if not pd.isna(row.get("roe")) else 0
+        roe_pct = roe * 100
+        if fcf > 20: score += 15
+        elif fcf > 10: score += 7
+        if roe_pct > 15: score += 15
+        elif roe_pct > 8: score += 7
         
-        fcf = row.get("fcf_margin", 0)
-        if fcf > 15: score += 15
+        # 3. Health (Debt/EBITDA) - 15 pts
+        debt = row.get("total_debt", 0) if not pd.isna(row.get("total_debt")) else 0
+        ebitda = row.get("ebitda", 0) if not pd.isna(row.get("ebitda")) else 0
+        ratio = debt / ebitda if ebitda > 0 else 999
+        if ratio < 2: score += 15
+        elif ratio < 4: score += 7
         
+        # 4. Dividends - 15 pts
+        yld = row.get("dividend_yield_pct", 0) if not pd.isna(row.get("dividend_yield_pct")) else 0
+        if yld > 3: score += 15
+        elif yld > 1: score += 7
+
+        # 5. Technical Trend & Beta - 15 pts
         sig = row.get("ma_signal", "NEUTRAL")
+        beta = row.get("beta", 99) if not pd.isna(row.get("beta")) else 99
         if sig == "BULLISH": score += 10
+        elif sig == "NEUTRAL": score += 5
+        if beta < 1.2: score += 5
         
+        # 6. Wall St Consensus & Target - 20 pts
+        upside = row.get("upside_pct", 0)
         consensus = str(row.get("recommendation_key", "")).lower()
-        if "buy" in consensus: score += 15
-        
-        # Upside
-        price = row.get("price_close", 1)
-        target = row.get("target_mean_price", 0)
-        upside = (target / price - 1) * 100 if target > 0 else 0
-        if upside > 10: score += 20
+        if upside > 15: score += 10
+        elif upside > 5: score += 5
+        if "buy" in consensus: score += 10
         
         return min(score, 100)
 
     df["score"] = df.apply(compute_score, axis=1)
-    df["action"] = df["score"].apply(lambda s: "🚀 STRONG BUY" if s >= 75 else ("✅ BUY" if s >= 60 else ("🟡 HOLD" if s >= 40 else "🔴 SELL")))
+    
+    def get_action(score):
+        if score >= 75: return "🚀 STRONG BUY"
+        if score >= 60: return "✅ BUY"
+        if score >= 40: return "🟡 HOLD"
+        return "🔴 SELL"
+        
+    df["action"] = df["score"].apply(get_action)
     df = df.sort_values("score", ascending=False).head(10) # Top 10 for email
 
     # 3. Build HTML Table
