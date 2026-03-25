@@ -20,6 +20,8 @@ from plotly.subplots import make_subplots
 import streamlit as st
 import numpy as np
 from textblob import TextBlob
+from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import train_test_split
 import os
 
 # ── PAGE CONFIG ─────────────────────────────────────────────────────────────
@@ -468,6 +470,49 @@ def compute_score(row):
     
     return min(score, 100)
 
+# ── ML HELPERS ─────────────────────────────────────────────────────────────
+def prepare_ml_data(df):
+    """Create technical features for ML model."""
+    df = df.copy().sort_values("date")
+    # 1. Technical Indicators
+    df["ma_20"] = df["price_close"].rolling(20).mean()
+    df["ma_50"] = df["price_close"].rolling(50).mean()
+    df["std_20"] = df["price_close"].rolling(20).std()
+    
+    # 2. RSI (Simplified)
+    delta = df["price_close"].diff()
+    gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+    rs = gain / loss
+    df["rsi"] = 100 - (100 / (1 + rs))
+    
+    # 3. Target: Next 7-day return
+    df["target"] = df["price_close"].shift(-7) / df["price_close"] - 1
+    
+    # 4. Cleanup
+    df = df.dropna()
+    features = ["daily_return_pct", "ma_20", "ma_50", "std_20", "rsi"]
+    return df[features], df["target"], features
+
+def train_ml_model(df_ticker):
+    """Train a Random Forest to predict next 7-day returns."""
+    X, y, feature_names = prepare_ml_data(df_ticker)
+    if len(X) < 50: return None, None, None # Not enough data
+    
+    model = RandomForestRegressor(n_estimators=100, random_state=42)
+    model.fit(X, y)
+    
+    # Predict for the most recent data point
+    latest_x = X.iloc[[-1]]
+    prediction = model.predict(latest_x)[0]
+    
+    importances = pd.DataFrame({
+        "Feature": feature_names,
+        "Importance": model.feature_importances_
+    }).sort_values("Importance", ascending=True)
+    
+    return prediction, importances, model
+
 reco_df["score"] = reco_df.apply(compute_score, axis=1)
 
 def get_action(score):
@@ -646,56 +691,85 @@ with tab6:
         forecast_days = st.slider("Forecast Horizon (Days)", 7, 90, 30, key="fc_days")
         n_sims = st.selectbox("Monte Carlo Simulations", [100, 500, 1000], index=1)
         
-    with colB:
         if fc_ticker:
-            from statsmodels.tsa.holtwinters import ExponentialSmoothing
             df_fc = prices_full[prices_full["ticker"] == fc_ticker].sort_values("date")
             ts = df_fc["price_close"].values
             
-            # 1. Holt-Winters Forecast
-            model = ExponentialSmoothing(ts, trend="add", seasonal=None)
-            fit = model.fit()
-            hw_forecast = fit.forecast(forecast_days)
+            # 1. ML Prediction
+            ml_pred, ml_imp, _ = train_ml_model(df_fc)
             
-            # 2. Monte Carlo Simulation
+            # 2. News Sentiment for logic
+            import feedparser
+            feed = feedparser.parse(f"https://finance.yahoo.com/rss/headline?s={fc_ticker}")
+            sentiments = []
+            for entry in feed.entries[:10]:
+                sentiments.append(TextBlob(entry.title).sentiment.polarity)
+            avg_sent = np.mean(sentiments) if sentiments else 0
+            
+            # 3. AI Score for Drift
+            co_data = companies_full[companies_full["ticker"] == fc_ticker].iloc[0] if not companies_full[companies_full["ticker"] == fc_ticker].empty else None
+            drift_score = compute_score(co_data) if co_data is not None else 50
+            
+            # 4. Monte Carlo Simulation (AI-Enhanced)
             returns = df_fc["daily_return_pct"].dropna() / 100
             mu = returns.mean()
             sigma = returns.std()
             last_price = ts[-1]
             
-            # Simulated paths
-            dt = 1 # daily
+            drift_bias = 0
+            if drift_score >= 75: drift_bias += 0.0005 
+            elif drift_score <= 40: drift_bias -= 0.0005 
+            drift_bias += (avg_sent * 0.001) 
+            
+            dt = 1 
             simulated_paths = np.zeros((forecast_days, n_sims))
             for i in range(n_sims):
                 path = [last_price]
                 for d in range(forecast_days):
-                    # Geometric Brownian Motion
-                    price = path[-1] * np.exp((mu - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * np.random.normal())
+                    price = path[-1] * np.exp((mu + drift_bias - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * np.random.normal())
                     path.append(price)
                 simulated_paths[:, i] = path[1:]
             
-            # Plotting
+            # UI: Show ML Insights first
+            if ml_pred is not None:
+                mcol1, mcol2 = st.columns(2)
+                with mcol1:
+                    st.metric("🤖 ML 7-Day Prediction", f"{ml_pred*100:.2f}%", help="Predicted return for the next 7 business days based on Technicals.")
+                    sent_label = "Positive" if avg_sent > 0 else "Negative" if avg_sent < 0 else "Neutral"
+                    st.metric("📰 News Sentiment Mood", sent_label, delta=f"{avg_sent:.2f}")
+                with mcol2:
+                    fig_imp = px.bar(ml_imp, x="Importance", y="Feature", orientation='h', title="Feature Importance", template="plotly_dark", height=200)
+                    fig_imp.update_layout(margin=dict(l=0, r=0, t=30, b=0))
+                    st.plotly_chart(fig_imp, use_container_width=True)
+            
+            # 5. Plotting
             fig_fc = go.Figure()
             future_dates = pd.date_range(start=df_fc["date"].max(), periods=forecast_days+1, freq='B')[1:]
             
-            # Show paths in faint color
-            for i in range(min(n_sims, 50)): # Show only first 50 paths to save performance
+            for i in range(min(n_sims, 50)): 
                 fig_fc.add_trace(go.Scatter(x=future_dates, y=simulated_paths[:, i], mode='lines', line=dict(color='rgba(255,255,255,0.05)', width=1), showlegend=False))
             
-            # Show mean path
             mean_path = simulated_paths.mean(axis=1)
-            fig_fc.add_trace(go.Scatter(x=future_dates, y=mean_path, name="MC Mean Path", line=dict(color="#f1c40f", width=4)))
+            fig_fc.add_trace(go.Scatter(x=future_dates, y=mean_path, name="AI-Enhanced Mean Path", line=dict(color="#f1c40f", width=4)))
             
-            # Show Holt-Winters
-            fig_fc.add_trace(go.Scatter(x=future_dates, y=hw_forecast, name="Holt-Winters (AI)", line=dict(color="#e74c3c", width=3, dash="dash")))
-            
-            fig_fc.update_layout(title=f"Forecast Results for {fc_ticker}", template="plotly_dark", height=500, yaxis_title="Price ($)")
+            p10 = np.percentile(simulated_paths, 10, axis=1)
+            p90 = np.percentile(simulated_paths, 90, axis=1)
+            fig_fc.add_trace(go.Scatter(x=future_dates, y=p10, name="Lower Bound (90%)", line=dict(color="rgba(255,0,0,0.3)", width=1, dash="dot")))
+            fig_fc.add_trace(go.Scatter(x=future_dates, y=p90, name="Upper Bound (90%)", line=dict(color="rgba(0,255,0,0.3)", width=1, dash="dot")))
+
+            fig_fc.update_layout(title=f"Advanced AI Forecast for {fc_ticker}", template="plotly_dark", height=500, yaxis_title="Price ($)")
             st.plotly_chart(fig_fc, use_container_width=True)
             
             st.write(f"**Monte Carlo Statistics ({n_sims} runs):**")
-            p5 = np.percentile(simulated_paths[-1, :], 5)
-            p95 = np.percentile(simulated_paths[-1, :], 95)
-            st.success(f"With 90% confidence, the price of {fc_ticker} in {forecast_days} days will be between **${p5:.2f}** and **${p95:.2f}**.")
+            p5_final = np.percentile(simulated_paths[-1, :], 5)
+            p95_final = np.percentile(simulated_paths[-1, :], 95)
+            st.success(f"With 90% confidence, the price of {fc_ticker} in {forecast_days} days will be between **${p5_final:.2f}** and **${p95_final:.2f}**.")
+            
+            if ml_pred is not None:
+                if ml_pred > 0.02:
+                    st.info(f"💡 **AI Logic**: The simulation is leaning **Bullish** due to positive sentiment (+{avg_sent:.2f}) and strong ML indicators.")
+                elif ml_pred < -0.02:
+                    st.warning(f"⚠️ **AI Logic**: The simulation is leaning **Bearish** due to negative momentum and ML data patterns.")
 
 # ── FEATURE 4: Sector Rotation Map ───────────────────────────────────────────
 with tab7:
