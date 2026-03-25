@@ -561,69 +561,64 @@ fig10.update_traces(textposition="top center", marker=dict(opacity=0.7, line=dic
 
 # ── Strategic Redesign: Control Room (What, Why, How) ─────────────────────────
 if page == "🛡️ Strategic Overview":
-    st.markdown("## 🛡️ Strategic Control Room (3-Question Analysis)")
+    st.markdown("## 🛡️ Strategic Control Room (Diagnostic Hub)")
     
-    # --- 1. WHAT HAPPENED? (The Snapshot) ---
-    st.markdown("### 🔍 1. What Happened? (Market Pulse)")
-    
-    # Calculate Gainer/Loser
-    latest = prices[prices["date"] == prices["date"].max()].copy()
-    if not latest.empty:
-        top_g = latest.sort_values("daily_return_pct", ascending=False).iloc[0]
-        top_l = latest.sort_values("daily_return_pct", ascending=True).iloc[0]
-        vol_s = latest.sort_values("is_volume_spike", ascending=False).iloc[0]
-        
-        wcol1, wcol2, wcol3 = st.columns(3)
-        with wcol1: st.metric("Top Gainer", top_g['ticker'], f"{top_g['daily_return_pct']:.2f}%")
-        with wcol2: st.metric("Top Loser", top_l['ticker'], f"{top_l['daily_return_pct']:.2f}%")
-        with wcol3: 
+    # ── TIER 0: MARKET STATUS RIBBON ─────────────────────────────────────────    
+    rcol1, rcol2, rcol3, rcol4 = st.columns([1, 1, 1, 1])
+    with rcol1:
+        # Aggregate Mood (Placeholder logic as it was in Tab 8 logic previously)
+        # We'll use a neutral default or calculate if possible.
+        st.metric("Market Mood", "NEUTRAL 😴", delta="0.00")
+    with rcol2:
+        if not spy_prices.empty:
+            spy_latest = spy_prices[spy_prices["date"] == spy_prices["date"].max()].iloc[0]
+            st.metric("S&P 500 (SPY)", f"${spy_latest['price_close']:.2f}", f"{spy_latest['daily_return_pct']:+.2f}%")
+    with rcol3:
+        latest = prices[prices["date"] == prices["date"].max()].copy()
+        if not latest.empty:
+            top_g = latest.sort_values("daily_return_pct", ascending=False).iloc[0]
+            st.metric("Top Mover", top_g['ticker'], f"{top_g['daily_return_pct']:+.2f}%")
+    with rcol4:
+        if not latest.empty:
+            vol_s = latest.sort_values("is_volume_spike", ascending=False).iloc[0]
             v_val = "Volume Spike" if vol_s['is_volume_spike'] else "Normal Vol"
             st.metric("Vol Alert", vol_s['ticker'], v_val)
-    
-    st.plotly_chart(fig1, use_container_width=True) # Performance Table
-    st.plotly_chart(fig4, use_container_width=True) # 1-Month Trend
-    
-    st.markdown("---")
-    
-    # --- 2. WHY DID IT HAPPEN? (Diagnostic Drivers) ---
-    st.markdown("### 📊 2. Why it Happened? (Analytical Drivers)")
-    ycol1, ycol2 = st.columns([1, 1])
-    with ycol1:
-        st.plotly_chart(fig2, use_container_width=True) # Sector Rotation
-    with ycol2:
-        st.plotly_chart(fig5, use_container_width=True) # Monthly Heatmap (as a proxy for sentiment/breakouts)
 
-    st.plotly_chart(fig10, use_container_width=True) # Quality vs Valuation (The 'Why' for Long-term)
-    
     st.markdown("---")
-    
-    # --- 3. HOW TO REACT? (Prescriptive Action) ---
-    st.markdown("### 🎯 3. How to React? (AI Action Plan)")
-    st.plotly_chart(fig9, use_container_width=True) # AI Recommendations
-    
+
+    # ── TIER 1: PERFORMANCE & ACTION MATRIX ──────────────────────────────────
+    mcol1, mcol2 = st.columns([1.6, 1])
+    with mcol1:
+        st.plotly_chart(fig1, use_container_width=True) # Normalized Price
+    with mcol2:
+        st.plotly_chart(fig9, use_container_width=True) # AI Table
+
+    st.markdown("---")
+
+    # ── TIER 2: SECTOR & MOMENTUM DIAGNOSTICS ────────────────────────────────
+    dcol1, dcol2 = st.columns([1, 1])
+    with dcol1:
+        # Check if fig_rot exists (calculated in previous turns)
+        try: st.plotly_chart(fig_rot, use_container_width=True) 
+        except: st.info("Sector Rotation mapping in progress...")
+    with dcol2:
+        st.plotly_chart(fig2, use_container_width=True) # Monthly Heatmap
+
+    st.markdown("---")
+
+    # ── TIER 3: FUNDAMENTAL & RISK MATRICES ──────────────────────────────────
+    fcol1, fcol2 = st.columns([1, 1])
+    with fcol1:
+        st.plotly_chart(fig10, use_container_width=True) # Quality vs Valuation
+    with fcol2:
+        st.plotly_chart(fig4, use_container_width=True) # Risk vs Return
+
     with st.expander("💡 Tactical Interpretation Guide"):
         st.write("""
         - **If Bullish Signal + High AI Score**: Consider Scaling In.
-        - **If High Upside but Neutral MA**: Potential Bottom/Value Trap. Wait for MA20 breakout.
+        - **If High Upside but Neutral MA**: Potential Value Trap. Wait for MA20 breakout.
         - **If Volume Spike + High Score**: Institutional Accumulation likely.
         """)
-
-    st.divider()
-    # Technicals Group
-    
-    st.markdown("### 💸 Valuation & Income (Trailing vs Forward)")
-    st.plotly_chart(fig8, use_container_width=True)
-    st.info("Use this tab to identify if the current P/E is justified by forward earnings projections.")
-
-    st.divider()
-    # Fundamentals Group
-    
-    st.markdown("### 📊 Technical & Fundamental Performance Matrix")
-    st.plotly_chart(fig6, use_container_width=True)
-    st.plotly_chart(fig7, use_container_width=True)
-
-
-# ── FEATURE 1: Single Stock Deep Dive ─────────────────────────────────────────
 elif page == "🔍 Single Stock Analysis":
     st.markdown("### 🔍 Single Stock Deep Dive")
     if all_tickers:
