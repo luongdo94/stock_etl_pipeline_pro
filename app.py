@@ -685,91 +685,100 @@ with tab5:
 with tab6:
     st.markdown("### 🎲 AI Price & Monte Carlo Forecasting")
     
-    colA, colB = st.columns([1, 2])
-    with colA:
+    # ── ROW 1: Filters (Horizontal) ───────────────────────────────────────────
+    fcol1, fcol2, fcol3 = st.columns(3)
+    with fcol1:
         fc_ticker = st.selectbox("Select Ticker to Forecast", all_tickers, key="fc_select")
+    with fcol2:
         forecast_days = st.slider("Forecast Horizon (Days)", 7, 90, 30, key="fc_days")
+    with fcol3:
         n_sims = st.selectbox("Monte Carlo Simulations", [100, 500, 1000], index=1)
+    
+    if fc_ticker:
+        df_fc = prices_full[prices_full["ticker"] == fc_ticker].sort_values("date")
+        ts = df_fc["price_close"].values
         
-        if fc_ticker:
-            df_fc = prices_full[prices_full["ticker"] == fc_ticker].sort_values("date")
-            ts = df_fc["price_close"].values
-            
-            # 1. ML Prediction
-            ml_pred, ml_imp, _ = train_ml_model(df_fc)
-            
-            # 2. News Sentiment for logic
-            import feedparser
-            feed = feedparser.parse(f"https://finance.yahoo.com/rss/headline?s={fc_ticker}")
-            sentiments = []
-            for entry in feed.entries[:10]:
-                sentiments.append(TextBlob(entry.title).sentiment.polarity)
-            avg_sent = np.mean(sentiments) if sentiments else 0
-            
-            # 3. AI Score for Drift
-            co_data = companies_full[companies_full["ticker"] == fc_ticker].iloc[0] if not companies_full[companies_full["ticker"] == fc_ticker].empty else None
-            drift_score = compute_score(co_data) if co_data is not None else 50
-            
-            # 4. Monte Carlo Simulation (AI-Enhanced)
-            returns = df_fc["daily_return_pct"].dropna() / 100
-            mu = returns.mean()
-            sigma = returns.std()
-            last_price = ts[-1]
-            
-            drift_bias = 0
-            if drift_score >= 75: drift_bias += 0.0005 
-            elif drift_score <= 40: drift_bias -= 0.0005 
-            drift_bias += (avg_sent * 0.001) 
-            
-            dt = 1 
-            simulated_paths = np.zeros((forecast_days, n_sims))
-            for i in range(n_sims):
-                path = [last_price]
-                for d in range(forecast_days):
-                    price = path[-1] * np.exp((mu + drift_bias - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * np.random.normal())
-                    path.append(price)
-                simulated_paths[:, i] = path[1:]
-            
-            # UI: Show ML Insights first
-            if ml_pred is not None:
-                mcol1, mcol2 = st.columns(2)
-                with mcol1:
-                    st.metric("🤖 ML 7-Day Prediction", f"{ml_pred*100:.2f}%", help="Predicted return for the next 7 business days based on Technicals.")
-                    sent_label = "Positive" if avg_sent > 0 else "Negative" if avg_sent < 0 else "Neutral"
-                    st.metric("📰 News Sentiment Mood", sent_label, delta=f"{avg_sent:.2f}")
-                with mcol2:
-                    fig_imp = px.bar(ml_imp, x="Importance", y="Feature", orientation='h', title="Feature Importance", template="plotly_dark", height=200)
-                    fig_imp.update_layout(margin=dict(l=0, r=0, t=30, b=0))
-                    st.plotly_chart(fig_imp, use_container_width=True)
-            
-            # 5. Plotting
-            fig_fc = go.Figure()
-            future_dates = pd.date_range(start=df_fc["date"].max(), periods=forecast_days+1, freq='B')[1:]
-            
-            for i in range(min(n_sims, 50)): 
-                fig_fc.add_trace(go.Scatter(x=future_dates, y=simulated_paths[:, i], mode='lines', line=dict(color='rgba(255,255,255,0.05)', width=1), showlegend=False))
-            
-            mean_path = simulated_paths.mean(axis=1)
-            fig_fc.add_trace(go.Scatter(x=future_dates, y=mean_path, name="AI-Enhanced Mean Path", line=dict(color="#f1c40f", width=4)))
-            
-            p10 = np.percentile(simulated_paths, 10, axis=1)
-            p90 = np.percentile(simulated_paths, 90, axis=1)
-            fig_fc.add_trace(go.Scatter(x=future_dates, y=p10, name="Lower Bound (90%)", line=dict(color="rgba(255,0,0,0.3)", width=1, dash="dot")))
-            fig_fc.add_trace(go.Scatter(x=future_dates, y=p90, name="Upper Bound (90%)", line=dict(color="rgba(0,255,0,0.3)", width=1, dash="dot")))
+        # 1. ML Prediction
+        ml_pred, ml_imp, _ = train_ml_model(df_fc)
+        
+        # 2. News Sentiment
+        import feedparser
+        feed = feedparser.parse(f"https://finance.yahoo.com/rss/headline?s={fc_ticker}")
+        sentiments = []
+        for entry in feed.entries[:10]:
+            sentiments.append(TextBlob(entry.title).sentiment.polarity)
+        avg_sent = np.mean(sentiments) if sentiments else 0
+        
+        # 3. AI Score
+        co_data = companies_full[companies_full["ticker"] == fc_ticker].iloc[0] if not companies_full[companies_full["ticker"] == fc_ticker].empty else None
+        drift_score = compute_score(co_data) if co_data is not None else 50
+        
+        # 4. Monte Carlo Simulation (AI-Enhanced)
+        returns = df_fc["daily_return_pct"].dropna() / 100
+        mu = returns.mean()
+        sigma = returns.std()
+        last_price = ts[-1]
+        
+        drift_bias = 0
+        if drift_score >= 75: drift_bias += 0.0005 
+        elif drift_score <= 40: drift_bias -= 0.0005 
+        drift_bias += (avg_sent * 0.001) 
+        
+        dt = 1 
+        simulated_paths = np.zeros((forecast_days, n_sims))
+        for i in range(n_sims):
+            path = [last_price]
+            for d in range(forecast_days):
+                price = path[-1] * np.exp((mu + drift_bias - 0.5 * sigma**2) * dt + sigma * np.sqrt(dt) * np.random.normal())
+                path.append(price)
+            simulated_paths[:, i] = path[1:]
+        
+        # ── ROW 2: AI Metrics (Horizontal Cards) ─────────────────────────────
+        mcol1, mcol2, mcol3 = st.columns(3)
+        with mcol1:
+            st.metric("🤖 ML 7-Day Prediction", f"{ml_pred*100:.2f}%" if ml_pred else "N/A", help="Predicted return for the next 7 business days.")
+        with mcol2:
+            sent_label = "Positive" if avg_sent > 0.1 else "Negative" if avg_sent < -0.1 else "Neutral"
+            st.metric("📰 News Sentiment Spirit", sent_label, delta=f"{avg_sent:.2f}")
+        with mcol3:
+            st.metric("🎯 AI Confidence Score", f"{drift_score}/100", delta=int(drift_score-50))
 
-            fig_fc.update_layout(title=f"Advanced AI Forecast for {fc_ticker}", template="plotly_dark", height=500, yaxis_title="Price ($)")
-            st.plotly_chart(fig_fc, use_container_width=True)
-            
-            st.write(f"**Monte Carlo Statistics ({n_sims} runs):**")
+        # ── ROW 3: Main Chart (Full Width) ───────────────────────────────────
+        fig_fc = go.Figure()
+        future_dates = pd.date_range(start=df_fc["date"].max(), periods=forecast_days+1, freq='B')[1:]
+        
+        for i in range(min(n_sims, 50)): 
+            fig_fc.add_trace(go.Scatter(x=future_dates, y=simulated_paths[:, i], mode='lines', line=dict(color='rgba(255,255,255,0.05)', width=1), showlegend=False))
+        
+        mean_path = simulated_paths.mean(axis=1)
+        fig_fc.add_trace(go.Scatter(x=future_dates, y=mean_path, name="AI-Enhanced Mean Path", line=dict(color="#f1c40f", width=4)))
+        
+        p10 = np.percentile(simulated_paths, 10, axis=1)
+        p90 = np.percentile(simulated_paths, 90, axis=1)
+        fig_fc.add_trace(go.Scatter(x=future_dates, y=p10, name="Lower Bound (90%)", line=dict(color="rgba(255,0,0,0.3)", width=1, dash="dot")))
+        fig_fc.add_trace(go.Scatter(x=future_dates, y=p90, name="Upper Bound (90%)", line=dict(color="rgba(0,255,0,0.3)", width=1, dash="dot")))
+
+        fig_fc.update_layout(title=dict(text=f"Advanced AI Multi-Path Forecast: {fc_ticker}", font=dict(size=24)), template="plotly_dark", height=600, yaxis_title="Price ($)")
+        st.plotly_chart(fig_fc, use_container_width=True)
+        
+        # ── ROW 4: Analysis & Feature Importance ─────────────────────────────
+        acol1, acol2 = st.columns([1.2, 1])
+        with acol1:
+            st.markdown("#### 📡 AI Reasoning Logic")
+            if ml_pred is not None:
+                bias_text = "Bullish" if ml_pred > 0.01 else "Bearish" if ml_pred < -0.01 else "Neutral"
+                st.write(f"The simulation is currently **{bias_text}**. This is driven by a combination of current technical indicators and a news sentiment score of **{avg_sent:.2f}**.")
+                st.write(f"The **AI Score ({drift_score}/100)** provides a long-term anchor, while ML return predictions focus on short-term momentum.")
+                
             p5_final = np.percentile(simulated_paths[-1, :], 5)
             p95_final = np.percentile(simulated_paths[-1, :], 95)
-            st.success(f"With 90% confidence, the price of {fc_ticker} in {forecast_days} days will be between **${p5_final:.2f}** and **${p95_final:.2f}**.")
+            st.info(f"✨ **Stat Check**: With 90% confidence, at the end of {forecast_days} days, the price is expected to settle between **${p5_final:.2f}** and **${p95_final:.2f}**.")
             
-            if ml_pred is not None:
-                if ml_pred > 0.02:
-                    st.info(f"💡 **AI Logic**: The simulation is leaning **Bullish** due to positive sentiment (+{avg_sent:.2f}) and strong ML indicators.")
-                elif ml_pred < -0.02:
-                    st.warning(f"⚠️ **AI Logic**: The simulation is leaning **Bearish** due to negative momentum and ML data patterns.")
+        with acol2:
+            if ml_imp is not None:
+                fig_imp = px.bar(ml_imp, x="Importance", y="Feature", orientation='h', title="Feature Importance (Drivers)", template="plotly_dark", height=300)
+                fig_imp.update_layout(margin=dict(l=0, r=0, t=30, b=0))
+                st.plotly_chart(fig_imp, use_container_width=True)
 
 # ── FEATURE 4: Sector Rotation Map ───────────────────────────────────────────
 with tab7:
