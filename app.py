@@ -173,6 +173,17 @@ else:
     prices = prices[prices["ticker"].isin(all_tickers)]
     monthly = monthly[monthly["ticker"].isin(all_tickers)]
 
+st.sidebar.markdown("---")
+st.sidebar.title("🛡️ Elite Pro Navigation")
+page = st.sidebar.radio("Analysis Layer:", [
+    "🛡️ Strategic Overview",
+    "🔍 Single Stock Analysis",
+    "🎲 AI Predictive Suite",
+    "💼 Portfolio Management"
+])
+st.sidebar.markdown("---")
+
+
 # ── KPI Metric Cards ─────────────────────────────────────────────────────────
 latest_date = prices["date"].max()
 
@@ -205,18 +216,7 @@ with col3:
 st.markdown("---")
 
 # ── Tabs Configuration ───────────────────────────────────────────────────────
-tab1, tab2, tab3, tab4, tab5, tab6, tab7, tab8, tab9, tab10 = st.tabs([
-    "📋 Summary", 
-    "📈 Technicals", 
-    "🏢 Fundamentals",
-    "🔍 Deep Dive",
-    "🤝 Correlation",
-    "🎲 AI Forecast & Monte Carlo",
-    "🗺️ Sector Rotation",
-    "📰 News Sentiment",
-    "💼 Portfolio",
-    "🔔 Alerts"
-])
+
 
 # Color palette per ticker
 COLORS = {
@@ -557,10 +557,10 @@ fig10.update_traces(textposition="top center", marker=dict(opacity=0.7, line=dic
 
 
 
-# ── Render to Streamlit ──────────────────────────────────────────────────────
-# ── Render to Streamlit Tabs ─────────────────────────────────────────────────
+
+
 # ── Strategic Redesign: Control Room (What, Why, How) ─────────────────────────
-with tab1:
+if page == "🛡️ Strategic Overview":
     st.markdown("## 🛡️ Strategic Control Room (3-Question Analysis)")
     
     # --- 1. WHAT HAPPENED? (The Snapshot) ---
@@ -608,19 +608,23 @@ with tab1:
         - **If Volume Spike + High Score**: Institutional Accumulation likely.
         """)
 
-with tab2:
+    st.divider()
+    # Technicals Group
+    
     st.markdown("### 💸 Valuation & Income (Trailing vs Forward)")
     st.plotly_chart(fig8, use_container_width=True)
     st.info("Use this tab to identify if the current P/E is justified by forward earnings projections.")
 
-with tab3:
+    st.divider()
+    # Fundamentals Group
+    
     st.markdown("### 📊 Technical & Fundamental Performance Matrix")
     st.plotly_chart(fig6, use_container_width=True)
     st.plotly_chart(fig7, use_container_width=True)
 
 
 # ── FEATURE 1: Single Stock Deep Dive ─────────────────────────────────────────
-with tab4:
+elif page == "🔍 Single Stock Analysis":
     st.markdown("### 🔍 Single Stock Deep Dive")
     if all_tickers:
         hcol1, hcol2, hcol3, hcol4, hcol5 = st.columns([1, 1, 1, 1, 1])
@@ -717,7 +721,7 @@ with tab4:
             st.plotly_chart(fig_rel, use_container_width=True)
 
 # ── FEATURE 1.5: Correlation Matrix ──────────────────────────────────────────
-with tab5:
+elif page == "💼 Portfolio Management":
     st.markdown("### 🤝 Portfolio Correlation Matrix")
     st.write("Understand the linear relationship between your selected stocks. A correlation of **+1.0** means they move in perfect sync, while **-1.0** means they move in opposite directions.")
     
@@ -743,7 +747,7 @@ with tab5:
         st.warning("Please select at least 2 tickers to view the correlation matrix.")
 
 # ── FEATURE 3: AI Price & Monte Carlo Forecasting ────────────────────────────
-with tab6:
+elif page == "🎲 AI Predictive Suite":
     st.markdown("### 🎲 AI Price & Monte Carlo Forecasting")
     
     # ── ROW 1: Filters (Horizontal) ───────────────────────────────────────────
@@ -842,7 +846,8 @@ with tab6:
                 st.plotly_chart(fig_imp, use_container_width=True)
 
 # ── FEATURE 4: Sector Rotation Map ───────────────────────────────────────────
-with tab7:
+    st.markdown("---")
+    
     st.markdown("### 🗺️ Sector Rotation & Relative Strength")
     st.write("Comparing sector performance over multiple time horizons (30d vs 90d) to identify 'Rising Stars' vs 'Laggards'.")
     
@@ -884,7 +889,8 @@ with tab7:
     st.info("💡 **Quadrants:** Top-Right = Leading (Strong & Improving) | Top-Left = Improving (Weak but Rising) | Bottom-Left = Lagging (Weak & Falling)")
 
 # ── FEATURE 5: News Sentiment Analysis ────────────────────────────────────────
-with tab8:
+    st.markdown("---")
+    
     st.markdown("### 📰 AI News Sentiment Analysis")
     st.write("Fetches recent headlines and uses **NLP (Natural Language Processing)** to analyze the market mood.")
     
@@ -931,7 +937,8 @@ with tab8:
             st.error(f"Error fetching news: {e}")
 
 # ── FEATURE 6: Portfolio Backtester ──────────────────────────────────────────
-with tab9:
+    st.markdown("---")
+    
     st.markdown("### 💼 Portfolio Backtester")
     st.write("Simulate the growth of a **$10,000** investment starting from the beginning of the dataset.")
     
@@ -961,7 +968,8 @@ with tab9:
     st.success(f"Final Portfolio Value: **${final_val:,.2f}** ({total_ret:+.2f}%)")
 
 # ── FEATURE 7: Alert Configurator ────────────────────────────────────────────
-with tab10:
+    st.markdown("---")
+    
     st.markdown("### 🔔 Alert Configurator")
     st.write("Set up custom price or volume alerts. These rules will be evaluated by the Airflow pipeline.")
     
