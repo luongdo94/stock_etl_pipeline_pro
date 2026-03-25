@@ -19,6 +19,7 @@ def get_rich_email_content(db_path):
     conn.close()
     
     # 2. Pre-process for scoring
+    df = companies.merge(latest_prices, on="ticker", how="inner")
     df["upside_pct"] = (df["target_mean_price"] / df["price_close"] - 1) * 100
     df["upside_pct"] = df["upside_pct"].fillna(0)
     df["recommendation_key"] = df["recommendation_key"].fillna("none").astype(str).str.replace("_", " ").str.title()
