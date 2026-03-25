@@ -577,145 +577,101 @@ with tab3:
 # ── FEATURE 1: Single Stock Deep Dive ─────────────────────────────────────────
 with tab4:
     st.markdown("### 🔍 Single Stock Deep Dive")
-    colA, colB = st.columns([1, 3])
-    with colA:
-        deep_ticker = st.selectbox("Select Ticker for Deep Dive", all_tickers, key="deep_ticker")
+    if all_tickers:
+        # 1. Header Row: Ticker & High-Level Metrics
+        hcol1, hcol2, hcol3, hcol4, hcol5, hcol6 = st.columns([1.5, 1, 1, 1, 1, 1.5])
+        
+        with hcol1:
+            deep_ticker = st.selectbox("Ticker", all_tickers, key="deep_ticker")
+            
         if deep_ticker:
             meta = companies_full[companies_full["ticker"] == deep_ticker].iloc[0]
-            st.markdown(f"**Company**: {meta['company']}")
-            st.markdown(f"**Sector**: {meta['sector']}")
-            st.markdown(f"**Market Cap**: {meta['cap_category']}")
-            st.markdown(f"**P/E Ratio**: {meta['pe_ratio']}")
-            st.markdown(f"**ROE**: {meta['roe']*100:.1f}%")
-            
-        # RSI Calculation
-        def get_rsi(series, period=14):
-            delta = series.diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-            rs = gain / loss
-            return 100 - (100 / (1 + rs))
-
-        if deep_ticker:
             df_deep = prices_full[prices_full["ticker"] == deep_ticker].sort_values("date")
+            target_p = meta.get('target_mean_price', 0)
+            cur_p = df_deep['price_close'].iloc[-1]
+            upside = ((target_p / cur_p) - 1) * 100 if target_p > 0 else 0
+            
+            with hcol2: st.metric("Sector", meta['sector'])
+            with hcol3: st.metric("Market Cap", meta['cap_category'])
+            with hcol4: st.metric("P/E Ratio", f"{meta['pe_ratio']:.1f}" if pd.notnull(meta['pe_ratio']) else "N/A")
+            with hcol5: st.metric("ROE (%)", f"{meta['roe']*100:.1f}%" if pd.notnull(meta['roe']) else "N/A")
+            with hcol6: st.metric("Analyst Target", f"${target_p:.2f}", delta=f"{upside:.1f}% Upside")
+
+            st.markdown("---")
+            
+            # RSI Calculation
+            def get_rsi(series, period=14):
+                delta = series.diff()
+                gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+                rs = gain / loss
+                return 100 - (100 / (1 + rs))
+            
             df_deep['rsi'] = get_rsi(df_deep['price_close'])
             
-            # --- 1. Pro Technical Chart (Candlestick + RSI) ---
+            # 2. Main Technical Chart (Full Width)
             fig_tech = make_subplots(rows=2, cols=1, shared_xaxes=True, 
                                      vertical_spacing=0.05, 
                                      row_heights=[0.7, 0.3])
             
-            # Candlestick
             fig_tech.add_trace(go.Candlestick(
                 x=df_deep['date'], open=df_deep['price_open'], high=df_deep['price_high'],
                 low=df_deep['price_low'], close=df_deep['price_close'], name="Price"
             ), row=1, col=1)
             
-            # MAs
             fig_tech.add_trace(go.Scatter(x=df_deep['date'], y=df_deep['ma_20'], name='MA20', line=dict(color='orange', width=1.5)), row=1, col=1)
             fig_tech.add_trace(go.Scatter(x=df_deep['date'], y=df_deep['ma_50'], name='MA50', line=dict(color='cyan', width=1.5)), row=1, col=1)
             
-            # Target Price Line (Horizontal or point at the end)
-            target_p = meta.get('target_mean_price', 0)
             if target_p > 0:
                 fig_tech.add_trace(go.Scatter(
                     x=[df_deep['date'].max()], y=[target_p], mode="markers+text",
-                    name="Analyst Target", text=[f"Target: ${target_p}"],
+                    name="Target", text=[f"Target: ${target_p}"],
                     textposition="top right", marker=dict(color="gold", size=12, symbol="star")
                 ), row=1, col=1)
             
-            # RSI
             fig_tech.add_trace(go.Scatter(x=df_deep['date'], y=df_deep['rsi'], name='RSI (14)', line=dict(color='#9b59b6', width=2)), row=2, col=1)
             fig_tech.add_hline(y=70, line_dash="dash", line_color="red", row=2, col=1)
             fig_tech.add_hline(y=30, line_dash="dash", line_color="green", row=2, col=1)
             
-            fig_tech.update_layout(title=f"📈 {deep_ticker} Technical Master Chart", template="plotly_dark", height=600, xaxis_rangeslider_visible=False, hovermode="x unified")
+            fig_tech.update_layout(title=f"📈 {deep_ticker} Technical & Momentum Master Chart", template="plotly_dark", height=650, xaxis_rangeslider_visible=False, hovermode="x unified")
             fig_tech.update_yaxes(title_text="Price ($)", row=1, col=1)
             fig_tech.update_yaxes(title_text="RSI", row=2, col=1, range=[0, 100])
             st.plotly_chart(fig_tech, use_container_width=True)
             
-            # --- 2. Relative Strength vs SPY ---
-            # Calculate cumulative returns
-            df_ticker_ret = df_deep.set_index('date')['price_close']
-            df_spy_ret = spy_prices.set_index('date')['price_close']
-            
-            # Align dates
-            common_dates = df_ticker_ret.index.intersection(df_spy_ret.index)
-            ticker_cum = (df_ticker_ret.loc[common_dates] / df_ticker_ret.loc[common_dates].iloc[0] - 1) * 100
-            spy_cum = (df_spy_ret.loc[common_dates] / df_spy_ret.loc[common_dates].iloc[0] - 1) * 100
-            
-            fig_rel = go.Figure()
-            fig_rel.add_trace(go.Scatter(x=common_dates, y=ticker_cum, name=f"{deep_ticker} (%)", line=dict(color="#3498db", width=3)))
-            fig_rel.add_trace(go.Scatter(x=common_dates, y=spy_cum, name="S&P 500 (SPY %)", line=dict(color="rgba(255,255,255,0.4)", width=2, dash="dot")))
-            
-            fig_rel.update_layout(title=f"📊 Relative Strength: {deep_ticker} vs S&P 500", template="plotly_dark", height=400, yaxis_title="Cumulative Return (%)", hovermode="x unified")
-            st.plotly_chart(fig_rel, use_container_width=True)
-
-            # --- 3. Valuation & Growth Trends ---
+            # 3. Bottom Section: Relative Strength & Growth
             st.markdown("---")
-            vcol1, vcol2 = st.columns(2)
-            with vcol1:
-                cur_p = df_deep['price_close'].iloc[-1]
-                upside = ((target_p / cur_p) - 1) * 100 if target_p > 0 else 0
-                st.metric("🎯 Analyst Consensus Target", f"${target_p:.2f}", delta=f"{upside:.2f}% Upside")
+            bcol1, bcol2 = st.columns([2, 1])
+            
+            with bcol1:
+                df_ticker_ret = df_deep.set_index('date')['price_close']
+                df_spy_ret = spy_prices.set_index('date')['price_close']
+                common_dates = df_ticker_ret.index.intersection(df_spy_ret.index)
+                ticker_cum = (df_ticker_ret.loc[common_dates] / df_ticker_ret.loc[common_dates].iloc[0] - 1) * 100
+                spy_cum = (df_spy_ret.loc[common_dates] / df_spy_ret.loc[common_dates].iloc[0] - 1) * 100
                 
-                # Gauge-like indicator
-                if upside > 15: st.success("🚀 Significant Undervaluation (Buy Signal)")
-                elif upside > 0: st.info("📈 Fair Value / Moderate Upside")
-                else: st.error("⚠️ Overvalued relative to Target")
-                
-            with vcol2:
+                fig_rel = go.Figure()
+                fig_rel.add_trace(go.Scatter(x=common_dates, y=ticker_cum, name=f"{deep_ticker} (%)", line=dict(color="#3498db", width=3)))
+                fig_rel.add_trace(go.Scatter(x=common_dates, y=spy_cum, name="SPY (%)", line=dict(color="rgba(255,255,255,0.4)", width=2, dash="dot")))
+                fig_rel.update_layout(title=f"📊 Cumulative Alpha vs S&P 500", template="plotly_dark", height=450, yaxis_title="Return (%)", hovermode="x unified")
+                st.plotly_chart(fig_rel, use_container_width=True)
+
+            with bcol2:
+                # Historical Fundamentals Summary
+                df_fin = annual_fin[annual_fin["ticker"] == deep_ticker].sort_values("year", ascending=False)
+                st.markdown(f"#### 🏦 {deep_ticker} Financial Growth")
+                if not df_fin.empty:
+                    for _, row in df_fin.head(3).iterrows():
+                        st.metric(f"FY {int(row['year'])} Revenue", 
+                                  f"${row['revenue']/1e9:.1f}B", 
+                                  f"{row['revenue_growth_pct']:.1f}% Rev Growth" if (('revenue_growth_pct' in row) and (not os.environ.get('SKIP')) and (row['revenue_growth_pct'] is not None)) else None)
+                        st.divider()
+                else:
+                    st.info("No annual financial data.")
+
                 vol_avg = df_deep['volume'].tail(20).mean()
                 vol_last = df_deep['volume'].iloc[-1]
                 vol_ratio = vol_last / vol_avg
-                st.metric("📉 20D Volume Momentum", f"{vol_ratio:.2f}x", delta="Above average" if vol_ratio > 1 else "Below average")
-
-            # Historical Fundamentals
-            df_fin = annual_fin[annual_fin["ticker"] == deep_ticker].sort_values("year")
-            if not df_fin.empty:
-                fig_fin = make_subplots(specs=[[{"secondary_y": True}]])
-                
-                # Revenue Bar
-                fig_fin.add_trace(
-                    go.Bar(x=df_fin["year"], y=df_fin["revenue"], name="Revenue ($)", 
-                           marker_color="rgba(52, 152, 219, 0.6)",
-                           hovertemplate="Year: %{x}<br>Revenue: $%{y:,.0f}<extra></extra>"),
-                    secondary_y=False
-                )
-                
-                # EPS Line
-                fig_fin.add_trace(
-                    go.Scatter(x=df_fin["year"], y=df_fin["eps"], name="EPS ($)",
-                               line=dict(color="#2ecc71", width=3, shape='spline'),
-                               mode='lines+markers',
-                               hovertemplate="Year: %{x}<br>EPS: $%{y:.2f}<extra></extra>"),
-                    secondary_y=True
-                )
-                
-                fig_fin.update_layout(
-                    title=f"📈 {deep_ticker} Annual Revenue & EPS Growth Trends",
-                    template="plotly_dark",
-                    hovermode="x unified",
-                    legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
-                    margin=dict(t=80, b=40),
-                    height=450
-                )
-                
-                fig_fin.update_yaxes(title_text="Total Revenue ($)", secondary_y=False, showgrid=False)
-                fig_fin.update_yaxes(title_text="Earnings Per Share (EPS $)", secondary_y=True, showgrid=True, gridcolor="rgba(255,255,255,0.05)")
-                
-                st.plotly_chart(fig_fin, use_container_width=True)
-                
-                # Growth Metrics Row
-                cols = st.columns(len(df_fin))
-                for i, row in enumerate(df_fin.to_dict('records')):
-                    with cols[i]:
-                        st.metric(f"FY {int(row['year'])} Revenue", 
-                                  f"${row['revenue']/1e9:.1f}B", 
-                                  f"{row['revenue_growth_pct']:.1f}%" if not pd.isna(row['revenue_growth_pct']) else None)
-            else:
-                st.info("No historical annual financial data available for this ticker.")
-
+                st.metric("📊 Volume Momentum", f"{vol_ratio:.2f}x", delta="Above average" if vol_ratio > 1 else "Below average")
 
 # ── FEATURE 1.5: Correlation Matrix ──────────────────────────────────────────
 with tab5:
