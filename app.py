@@ -596,15 +596,8 @@ if page == "🛡️ Strategic Overview":
     # ── TIER 1: PERFORMANCE MATRIX ───────────────────────────────────────────
     st.plotly_chart(fig1, use_container_width=True) # Normalized Price Full Width
     
-    st.markdown("---")
-
-    # ── TIER 2: SECTOR & AI ACTION ───────────────────────────────────────────
-    mcol1, mcol2 = st.columns([1, 1])
-    with mcol1:
-        try: st.plotly_chart(fig_rot, use_container_width=True) 
-        except: st.info("Sector Rotation mapping in progress...")
-    with mcol2:
-        st.plotly_chart(fig9, use_container_width=True) # AI Table
+    # ── TIER 2: AI ACTION MATRIX ─────────────────────────────────────────────
+    st.plotly_chart(fig9, use_container_width=True) # AI Table Full Width
 
     st.markdown("---")
     
@@ -847,48 +840,7 @@ elif page == "🎲 AI Predictive Suite":
                 fig_imp.update_layout(margin=dict(l=0, r=0, t=30, b=0))
                 st.plotly_chart(fig_imp, use_container_width=True)
 
-# ── FEATURE 4: Sector Rotation Map ───────────────────────────────────────────
-    st.markdown("---")
-    
-    st.markdown("### 🗺️ Sector Rotation & Relative Strength")
-    st.write("Comparing sector performance over multiple time horizons (30d vs 90d) to identify 'Rising Stars' vs 'Laggards'.")
-    
-    # Calculate returns per sector
-    sector_perf = prices_full.groupby(["date", "sector"])["price_close"].mean().reset_index()
-    
-    # Get 30d and 90d ago dates
-    max_d = sector_perf["date"].max()
-    d30 = max_d - pd.Timedelta(days=30)
-    d90 = max_d - pd.Timedelta(days=90)
-    
-    rotation_data = []
-    for sector in sector_perf["sector"].unique():
-        if pd.isna(sector): continue
-        s_df = sector_perf[sector_perf["sector"] == sector].sort_values("date")
-        
-        last_p = s_df.iloc[-1]["price_close"]
-        p30 = s_df[s_df["date"] <= d30].iloc[-1]["price_close"] if not s_df[s_df["date"] <= d30].empty else s_df.iloc[0]["price_close"]
-        p90 = s_df[s_df["date"] <= d90].iloc[-1]["price_close"] if not s_df[s_df["date"] <= d90].empty else s_df.iloc[0]["price_close"]
-        
-        ret30 = (last_p / p30 - 1) * 100
-        ret90 = (last_p / p90 - 1) * 100
-        rotation_data.append({"Sector": sector, "Return_30d": ret30, "Return_90d": ret90})
-    
-    rot_df = pd.DataFrame(rotation_data)
-    
-    fig_rot = px.scatter(
-        rot_df, x="Return_90d", y="Return_30d", text="Sector", size=[40]*len(rot_df),
-        color="Sector",
-        title="Sector Rotation: Short-term (30d) vs Long-term (90d) Performance",
-        labels={"Return_90d": "Long-term Momentum (90d %)", "Return_30d": "Short-term Momentum (30d %)"},
-        template="plotly_dark", height=600
-    )
-    fig_rot.add_vline(x=0, line_dash="dash", line_color="gray")
-    fig_rot.add_hline(y=0, line_dash="dash", line_color="gray")
-    fig_rot.update_traces(textposition="top center")
-    st.plotly_chart(fig_rot, use_container_width=True)
-    
-    st.info("💡 **Quadrants:** Top-Right = Leading (Strong & Improving) | Top-Left = Improving (Weak but Rising) | Bottom-Left = Lagging (Weak & Falling)")
+    # Sector Rotation removed to streamline dashboard.
 
 # ── FEATURE 5: News Sentiment Analysis ────────────────────────────────────────
     st.markdown("---")
