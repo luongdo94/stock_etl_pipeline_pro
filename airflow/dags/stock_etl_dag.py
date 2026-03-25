@@ -12,7 +12,7 @@ from etl.load      import get_connection, create_raw_schema, \
                           load_stock_prices, load_company_info
 from etl.transform import run_transforms
 import etl.utils   as utils
-import dashboard   as db_gen
+# import dashboard   as db_gen (Moved to runtime task)
 from etl.load      import DB_PATH
 
 default_args = {
@@ -71,6 +71,7 @@ loads into DuckDB, and runs dbt-style transformations.
         conn.close()
 
     def _generate_report(**context):
+        import dashboard as db_gen
         db_gen.generate_html_report()
 
     def _prepare_email(**context):
