@@ -5,7 +5,7 @@ description: Kỹ năng chuyên sâu về phân tích chứng khoán và quản 
 
 # Kỹ năng Chuyên gia Chứng khoán (Stock Expert)
 
-Kỹ năng này giúp Antigravity vận hành hệ thống **Elite Pro Diagnostic Engine** một cách chuyên nghiệp và chính xác nhất.
+Kỹ năng này giúp Antigravity vận hành hệ thống một cách chuyên nghiệp và chính xác nhất.
 
 ## 🎯 Mục tiêu
 - Phân tích sâu các chỉ số tài chính (PEG, EV/EBITDA, ROE, v.v.).

@@ -79,6 +79,7 @@ def _create_staging(conn):
             quick_ratio,
             debt_to_equity,
             short_ratio,
+            short_percent_of_float,
             inst_ownership,
             insider_ownership,
             ROUND(pe_ratio,   2) AS pe_ratio,
@@ -94,6 +95,18 @@ def _create_staging(conn):
             END AS cap_category
         FROM raw.company_info
         WHERE ticker IS NOT NULL
+    """)
+    conn.execute("""
+        CREATE OR REPLACE VIEW staging.stg_historical_financials AS
+        SELECT
+            ticker,
+            EXTRACT(YEAR FROM date) AS year,
+            revenue,
+            eps,
+            _loaded_at
+        FROM raw.historical_financials
+        WHERE ticker IS NOT NULL
+          AND eps IS NOT NULL
     """)
     logger.info("✅ Staging views created")
 
@@ -128,22 +141,37 @@ def _create_intermediate(conn):
                 ROUND(AVG(close) OVER (w ROWS BETWEEN 6  PRECEDING AND CURRENT ROW), 4) AS ma_7,
                 ROUND(AVG(close) OVER (w ROWS BETWEEN 19 PRECEDING AND CURRENT ROW), 4) AS ma_20,
                 ROUND(AVG(close) OVER (w ROWS BETWEEN 49 PRECEDING AND CURRENT ROW), 4) AS ma_50,
+                -- 🏆 EXPERT: 200-day Moving Average (Traditional gold standard)
+                ROUND(AVG(close) OVER (w ROWS BETWEEN 199 PRECEDING AND CURRENT ROW), 4) AS ma_200,
                 -- Volume moving average
                 ROUND(AVG(volume) OVER (w ROWS BETWEEN 19 PRECEDING AND CURRENT ROW), 0) AS volume_ma_20,
                 -- 52-week high/low
                 MAX(close) OVER (w ROWS BETWEEN 251 PRECEDING AND CURRENT ROW) AS week52_high,
-                MIN(close) OVER (w ROWS BETWEEN 251 PRECEDING AND CURRENT ROW) AS week52_low
+                MIN(close) OVER (w ROWS BETWEEN 251 PRECEDING AND CURRENT ROW) AS week52_low,
+                -- 🏆 EXPERT: 5-year (all-time) High/Low/Mean
+                MAX(close) OVER w_all AS high_5y,
+                MIN(close) OVER w_all AS low_5y,
+                AVG(close) OVER w_all AS avg_5y,
+                STDDEV(close) OVER w_all AS std_dev_5y
             FROM staging.stg_stock_prices
-            WINDOW w AS (PARTITION BY ticker ORDER BY date)
+            WINDOW 
+                w AS (PARTITION BY ticker ORDER BY date),
+                w_all AS (PARTITION BY ticker ORDER BY date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
         )
         SELECT
             *,
+            -- Distance from 200d MA
+            ROUND((close - ma_200) / NULLIF(ma_200, 0) * 100, 2) AS pct_from_ma200,
             -- Distance from 52w high (drawdown)
             ROUND((close - week52_high) / week52_high * 100, 2) AS pct_from_52w_high,
-            -- Golden/Death cross signal
+            -- 🏆 EXPERT: Z-Score (Price distance from 5Y mean in standard deviations)
+            ROUND((close - avg_5y) / NULLIF(std_dev_5y, 0), 2) AS price_z_score,
+            -- Golden/Death cross signal (MA50 vs MA200)
             CASE
+                WHEN ma_50 > ma_200 THEN 'STRONG BULL'
                 WHEN ma_20 > ma_50 THEN 'BULLISH'
                 WHEN ma_20 < ma_50 THEN 'BEARISH'
+                WHEN ma_50 < ma_200 THEN 'STRONG BEAR'
                 ELSE 'NEUTRAL'
             END AS ma_signal,
             -- Volume spike
@@ -176,9 +204,12 @@ def _create_marts(conn):
             m.ma_7,
             m.ma_20,
             m.ma_50,
+            m.ma_200,
             m.ma_signal,
-            m.intraday_range_pct,
+            m.price_z_score,
+            m.pct_from_ma200,
             m.pct_from_52w_high,
+            m.intraday_range_pct,
             m.is_volume_spike,
             c.cap_category,
             c.pe_ratio,
@@ -226,10 +257,42 @@ def _create_marts(conn):
             quick_ratio,
             debt_to_equity,
             short_ratio,
+            short_percent_of_float,
             inst_ownership,
             insider_ownership,
-            ROUND(free_cashflow / NULLIF(revenue_ttm, 0) * 100, 2) AS fcf_margin
-        FROM staging.stg_company_info
+            ROUND(free_cashflow / NULLIF(revenue_ttm, 0) * 100, 2) AS fcf_margin,
+            -- 🏆 EXPERT: Historical Baselines (Joined from aggregates)
+            b.avg_5y_price,
+            b.std_dev_5y_price,
+            b.high_5y_price,
+            b.low_5y_price,
+            -- 🏆 EXPERT: 5-Year Average P/E ratio
+            hpe.pe_5y_avg
+        FROM staging.stg_company_info c
+        LEFT JOIN (
+            SELECT 
+                ticker, 
+                AVG(close) AS avg_5y_price,
+                STDDEV(close) AS std_dev_5y_price,
+                MAX(close) AS high_5y_price,
+                MIN(close) AS low_5y_price
+            FROM intermediate.int_stock_metrics
+            GROUP BY 1
+        ) b USING (ticker)
+        LEFT JOIN (
+            -- 🏆 EXPERT: Historical P/E Multiples (Yearly Avg Price / Yearly EPS)
+            SELECT 
+                p.ticker, 
+                ROUND(AVG(p.close / NULLIF(a.eps, 0)), 2) AS pe_5y_avg
+            FROM (
+                -- Get yearly average price for all tickers
+                SELECT ticker, EXTRACT(YEAR FROM date) AS year, AVG(close) AS close
+                FROM staging.stg_stock_prices
+                GROUP BY 1, 2
+            ) p
+            INNER JOIN staging.stg_historical_financials a ON p.ticker = a.ticker AND p.year = a.year
+            GROUP BY 1
+        ) hpe USING (ticker)
     """)
     
     # AGGREGATE: Monthly performance per ticker
@@ -271,7 +334,28 @@ def _create_marts(conn):
         ORDER BY ticker, year
     """)
     
-    logger.info("✅ Mart tables created: fct_daily_returns, dim_companies, agg_monthly_performance, dim_annual_financials")
+    # DIMENSION: Historical Quarterly Financials
+    conn.execute("""
+        CREATE OR REPLACE TABLE marts.dim_quarterly_financials AS
+        SELECT
+            ticker,
+            EXTRACT(YEAR FROM date) AS year,
+            EXTRACT(QUARTER FROM date) AS quarter,
+            date AS report_date,
+            revenue,
+            eps,
+            eps_diluted,
+            -- Calculate QoQ Growth
+            ROUND((revenue - LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(revenue) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS revenue_growth_qoq_pct,
+            ROUND((eps - LAG(eps) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(eps) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS eps_growth_qoq_pct,
+            -- Calculate YoY Growth (lag 4 quarters)
+            ROUND((revenue - LAG(revenue, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(revenue, 4) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS revenue_growth_yoy_pct,
+            ROUND((eps - LAG(eps, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(eps, 4) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS eps_growth_yoy_pct
+        FROM raw.quarterly_financials
+        ORDER BY ticker, date
+    """)
+    
+    logger.info("✅ Mart tables created: fct_daily_returns, dim_companies, agg_monthly_performance, dim_annual_financials, dim_quarterly_financials")
 
 
 def _run_data_quality_checks(conn):

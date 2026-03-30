@@ -33,7 +33,7 @@ services:
       AIRFLOW__SMTP__SMTP_STARTTLS: "true"
       AIRFLOW__SMTP__SMTP_SSL: "false"
       AIRFLOW__SMTP__SMTP_PORT: "587"
-      AIRFLOW__SMTP__SMTP_USER: "dgl.rocketmail94@gmail.com"
-      AIRFLOW__SMTP__SMTP_PASSWORD: "njfc dghk axtv vnrd"
-      AIRFLOW__SMTP__SMTP_MAIL_FROM: "dgl.rocketmail94@gmail.com"
+      AIRFLOW__SMTP__SMTP_USER: "${SMTP_USER}"
+      AIRFLOW__SMTP__SMTP_PASSWORD: "${SMTP_PASSWORD}"
+      AIRFLOW__SMTP__SMTP_MAIL_FROM: ${SMTP_USER}"
     command: bash /start_airflow.sh
