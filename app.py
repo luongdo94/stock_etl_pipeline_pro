@@ -345,7 +345,7 @@ prices_full["date"] = pd.to_datetime(prices_full["date"])
 monthly_full["month"] = pd.to_datetime(monthly_full["month"])
 
 prices_full = prices_full.sort_values(['ticker', 'date'])
-prices_full['rsi'] = prices_full.groupby('ticker', group_keys=False).apply(lambda x: get_rsi_vectorized(x))
+prices_full['rsi'] = prices_full.groupby('ticker', group_keys=False).apply(lambda x: get_rsi_vectorized(x), include_groups=False)
 
 companies = companies_full[companies_full["ticker"] != "SPY"].copy()
 spy_prices = prices_full[prices_full["ticker"] == "SPY"].copy()
