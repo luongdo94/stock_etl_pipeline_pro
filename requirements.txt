@@ -1,7 +1,7 @@
 yfinance==0.2.51
 pandas==2.2.0
-duckdb>=1.4.0
-dbt-duckdb>=1.8.0
+duckdb==1.4.4
+dbt-duckdb==1.8.0
 sqlalchemy==2.0.0
 plotly==5.22.0
 python-dotenv==1.0.0
