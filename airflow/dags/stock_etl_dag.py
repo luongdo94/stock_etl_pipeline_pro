@@ -20,7 +20,7 @@ default_args = {
     "retries":          2,
     "retry_delay":      timedelta(minutes=5),
     "email_on_failure": True,
-    "email":            ["data-alerts@company.com"],
+    "email":            ["gia.luong.do@gmx.de"],
 }
 
 with DAG(

@@ -12,4 +12,10 @@ if ROOT not in sys.path:
 from etl.pipeline import run_pipeline
 
 if __name__ == "__main__":
-    run_pipeline(lookback_days=365)
+    import argparse
+    parser = argparse.ArgumentParser(description="Stock ETL Pipeline Entry Point")
+    parser.add_argument("--full", action="store_true", help="Force a full historical refresh")
+    parser.add_argument("--lookback", type=int, default=1825, help="Days of history for full refresh")
+    args = parser.parse_args()
+    
+    run_pipeline(lookback_days=args.lookback, force_full=args.full)
