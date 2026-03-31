@@ -11,42 +11,6 @@ import numpy as np
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-import time
-from functools import wraps
-
-def retry_with_backoff(retries=3, backoff_in_seconds=2):
-    def decorator(f):
-        @wraps(f)
-        def wrapper(*args, **kwargs):
-            x = 0
-            while True:
-                try:
-                    return f(*args, **kwargs)
-                except Exception as e:
-                    if x == retries:
-                        raise e
-                    sleep = (backoff_in_seconds * (2 ** x))
-                    logger.warning(f"⚠️ Yahoo Finance Error: {e}. Retrying in {sleep}s...")
-                    time.sleep(sleep)
-                    x += 1
-        return wrapper
-    return decorator
-
-@retry_with_backoff(retries=3)
-def safe_yf_download(*args, **kwargs):
-    # Add fake browser headers to bypass simple bot detection
-    if 'proxy' not in kwargs:
-        kwargs['proxy'] = None
-    return yf.download(*args, **kwargs)
-
-def setup_yf_session():
-    from curl_cffi import requests
-    # impersonate chrome allows us to bypass JA3 fingerprinting
-    session = requests.Session(impersonate="chrome110")
-    return session
-
-YF_SESSION = setup_yf_session()
-
 def load_tickers_config():
     """Load tickers from config file."""
     config_path = Path(__file__).parent.parent / "config" / "tickers.yaml"
@@ -106,49 +70,17 @@ def extract_stock_prices(
 
     all_frames = []
 
-    def chunk_list(lst, n):
-        for i in range(0, len(lst), n):
-            yield lst[i:i + n]
-
-    # Helper for staggered download
-    def staggered_download(ticker_list, start_dt, end_dt):
-        import random
-        frames = []
-        # Even smaller chunks for maximum safety
-        chunks = list(chunk_list(ticker_list, 10))
-        logger.info(f"   📥 Downloading in {len(chunks)} ultra-staggered chunks...")
-        
-        for i, chunk in enumerate(chunks):
-            if i > 0:
-                # Random jitter between 5-10 seconds
-                delay = random.uniform(5, 10)
-                logger.info(f"   ⏳ Random jitter ({delay:.1f}s)...")
-                time.sleep(delay)
-            
-            df = safe_yf_download(
-                chunk,
-                start=start_dt,
-                end=end_dt,
-                auto_adjust=True,
-                progress=False,
-                group_by='column',
-                session=YF_SESSION
-            )
-            if not df.empty:
-                frames.append(df)
-        
-        if not frames:
-            return pd.DataFrame()
-        
-        if len(frames) == 1:
-            return frames[0]
-            
-        return pd.concat(frames, axis=1)
-
     # ── BATCH DOWNLOAD: Incremental (or Full if no watermarks) ───────────────
     existing_tickers = [t for t in all_ticker_list if t not in new_tickers]
     if existing_tickers:
-        raw_prices = staggered_download(existing_tickers, start_date, end_date)
+        raw_prices = yf.download(
+            existing_tickers,
+            start=start_date,
+            end=end_date,
+            auto_adjust=True,
+            progress=False,
+            group_by='column'
+        )
 
         if raw_prices.empty:
             logger.warning("⚠️ No price data returned for existing tickers in the incremental window.")
@@ -157,16 +89,19 @@ def extract_stock_prices(
 
     # ── BATCH DOWNLOAD: Full history for brand-new tickers ───────────────────
     if new_tickers and full_start:
-        raw_new = staggered_download(new_tickers, full_start, end_date)
+        raw_new = yf.download(
+            new_tickers,
+            start=full_start,
+            end=end_date,
+            auto_adjust=True,
+            progress=False,
+            group_by='column'
+        )
         if not raw_new.empty:
             all_frames.append(("new", new_tickers, raw_new))
 
-    if not all_frames:
-        if not watermarks:
-            raise ValueError("❌ No price data returned from Yahoo Finance.")
-        else:
-            logger.error("❌ ALL ticker downloads failed in this incremental run.")
-            return pd.DataFrame() # Return empty to avoid total crash if we already have history
+    if not all_frames and not watermarks:
+        raise ValueError("❌ No price data returned from Yahoo Finance.")
 
     # 2. BATCH FETCH CURRENCIES & FX RATES (covers all tickers)
     currencies = {}
@@ -178,12 +113,11 @@ def extract_stock_prices(
             logger.warning(f"⚠️ Failed to fetch currency for {t}: {e}")
             return t, "USD"
 
-    with ThreadPoolExecutor(max_workers=1) as executor:
+    with ThreadPoolExecutor(max_workers=20) as executor:
         future_to_tick = {executor.submit(fetch_currency, t): t for t in all_ticker_list}
         for future in as_completed(future_to_tick):
             t, cur = future.result()
             currencies[t] = cur
-            time.sleep(1) # Extra breath between fundamental calls
 
     unique_currencies = {c for c in currencies.values() if c != "USD"}
     fx_data = pd.DataFrame()
