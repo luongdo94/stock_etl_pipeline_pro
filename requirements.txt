@@ -18,3 +18,4 @@ pmdarima
 transformers
 sentencepiece
 protobuf
+shap
