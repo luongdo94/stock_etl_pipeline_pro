@@ -34,7 +34,20 @@ def retry_with_backoff(retries=3, backoff_in_seconds=2):
 
 @retry_with_backoff(retries=3)
 def safe_yf_download(*args, **kwargs):
+    # Add fake browser headers to bypass simple bot detection
+    if 'proxy' not in kwargs:
+        kwargs['proxy'] = None
     return yf.download(*args, **kwargs)
+
+def setup_yf_session():
+    import requests
+    session = requests.Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    })
+    return session
+
+YF_SESSION = setup_yf_session()
 
 def load_tickers_config():
     """Load tickers from config file."""
@@ -116,7 +129,8 @@ def extract_stock_prices(
                 end=end_dt,
                 auto_adjust=True,
                 progress=False,
-                group_by='column'
+                group_by='column',
+                session=YF_SESSION
             )
             if not df.empty:
                 frames.append(df)
@@ -162,7 +176,7 @@ def extract_stock_prices(
             logger.warning(f"⚠️ Failed to fetch currency for {t}: {e}")
             return t, "USD"
 
-    with ThreadPoolExecutor(max_workers=5) as executor:
+    with ThreadPoolExecutor(max_workers=2) as executor:
         future_to_tick = {executor.submit(fetch_currency, t): t for t in all_ticker_list}
         for future in as_completed(future_to_tick):
             t, cur = future.result()
