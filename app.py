@@ -13,6 +13,7 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+import shap
 import duckdb
 import pandas as pd
 import contextlib
@@ -2427,7 +2428,20 @@ with tab_ai:
         ensemble_prices = (lstm_w*lstm_predicted_prices)+(arima_w*arima_predicted_prices)
         current_price = data[-1,0]
         if np.isnan(ensemble_prices[-1]) or current_price==0: return None,None
-        return ensemble_prices, (ensemble_prices[-1]-current_price)/current_price
+        # ── EXPLAINABILITY: Feature Importance (Pseudo-SHAP / Gradient-based) ──
+        # Since SHAP DeepExplainer can be slow on large LSTMs, we use 
+        # a high-fidelity gradient-based sensitivity analysis.
+        model.eval()
+        X_explain = X_t[-1:].clone().requires_grad_(True)
+        out_explain = model(X_explain)
+        out_explain.backward()
+        
+        # Calculate mean importance over the lookback window
+        importances = torch.abs(X_explain.grad[0]).mean(dim=0).cpu().numpy()
+        importances = importances / np.sum(importances) * 100
+        feat_imp_dict = dict(zip(features, importances))
+
+        return ensemble_prices, (ensemble_prices[-1]-current_price)/current_price, feat_imp_dict
 
     @st.cache_data(show_spinner="Training Adaptive AI Ensemble (LSTM + ARIMA)...")
     def train_predict_lstm(df_ticker, lookback=60, forecast_days=30, sector_name=None, quality_score=50):
@@ -2483,7 +2497,7 @@ with tab_ai:
         # 1. ML Prediction (Adaptive LSTM Ensemble)
         # Quality score computed first (needed for LSTM as a fundamental feature)
         drift_score = compute_score(co_data) if co_data is not None else 50
-        lstm_path, lstm_return = train_predict_lstm(df_fc, forecast_days=forecast_days, sector_name=sector_val, quality_score=drift_score)
+        lstm_path, lstm_return, feat_imp = train_predict_lstm(df_fc, forecast_days=forecast_days, sector_name=sector_val, quality_score=drift_score)
         if lstm_path is None:
             st.warning(f"⚠️ Insufficient historical data ({len(df_fc)} days) to train the LSTM neural network. At least 30 days are required for memory-based forecasting.")
         
@@ -2538,6 +2552,38 @@ with tab_ai:
         mcol1, mcol2, mcol3, mcol4 = st.columns(4)
         with mcol1:
             st.metric("🧠 AI Ensemble Target", f"€{lstm_path[-1]:.2f}" if lstm_path is not None else "N/A", delta=f"{lstm_return*100:.2f}%" if lstm_return else "N/A")
+        
+        # ── FEATURE IMPORTANCE CHART: Why did the AI say this? ───────────────────
+        if feat_imp:
+            # Format feature names for UI
+            pretty_feat_map = {
+                'price_close': 'Price Momentum',
+                'volume': 'Volume Activity',
+                'rsi': 'Overbought/Oversold (RSI)',
+                'daily_return_pct': 'Volatility Pattern',
+                'macd': 'Trend Strength (MACD)',
+                'bollinger_pb': 'Price Extreme (%B)',
+                'spy_ret': 'Market Correlation (SPY)',
+                'vix_ret': 'Risk/Fear Index (VIX)',
+                'sector_ret': 'Sector Performance',
+                'obv_roc': 'Moneypath (OBV)',
+                'vol_surge': 'Relative Vol Spike',
+                'quality_score_norm': 'Quality Score (Fund.)'
+            }
+            
+            imp_df = pd.DataFrame([
+                {'Feature': pretty_feat_map.get(k, k), 'Weight (%)': v}
+                for k, v in feat_imp.items()
+            ]).sort_values('Weight (%)', ascending=True)
+
+            render_header("activity", "AI Reasoning: What's driving the forecast?")
+            fig_imp = px.bar(
+                imp_df, x='Weight (%)', y='Feature', orientation='h',
+                template="plotly_dark", height=400,
+                color='Weight (%)', color_continuous_scale="Viridis"
+            )
+            fig_imp.update_layout(xaxis_title="Influence on Price Prediction (%)", showlegend=False, margin=dict(t=10, b=10, l=10, r=10))
+            st.plotly_chart(fig_imp, use_container_width=True)
         with mcol2:
             sent_label = "Bullish" if avg_sent > 0.1 else "Bearish" if avg_sent < -0.1 else "Neutral"
             st.metric("📰 News Sentiment Mood", sent_label, delta=f"{avg_sent:.2f}")
