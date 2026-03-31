@@ -1,0 +1,600 @@
+tickers:
+  # US Tech Giants
+  NVDA:
+    name: "NVIDIA"
+    sector: "Semiconductors"
+    region: "US"
+  MSFT:
+    name: "Microsoft"
+    sector: "Cloud/Software"
+    region: "US"
+  AAPL:
+    name: "Apple"
+    sector: "Consumer Tech"
+    region: "US"
+  GOOGL:
+    name: "Alphabet"
+    sector: "Cloud/Software"
+    region: "US"
+  AMZN:
+    name: "Amazon"
+    sector: "Cloud/Ecommerce"
+    region: "US"
+  META:
+    name: "Meta"
+    sector: "Technology"
+    region: "US"
+  ADBE:
+    name: "Adobe"
+    sector: "Cloud/Software"
+    region: "US"
+  CRM:
+    name: "Salesforce"
+    sector: "Cloud/Software"
+    region: "US"
+  ORCL:
+    name: "Oracle"
+    sector: "Cloud/Software"
+    region: "US"
+  IBM:
+    name: "IBM"
+    sector: "Technology"
+    region: "US"
+  NFLX:
+    name: "Netflix"
+    sector: "Comm Services"
+    region: "US"
+  PYPL:
+    name: "PayPal"
+    sector: "Fintech"
+    region: "US"
+  SHOP:
+    name: "Shopify"
+    sector: "Ecommerce"
+    region: "US"
+  SNPS:
+    name: "Synopsys"
+    sector: "Software/Design"
+    region: "US"
+  FIG:
+    name: "Figma"
+    sector: "Software/Design"
+    region: "US"
+  DDOG:
+    name: "Datadog"
+    sector: "Cloud/Software"
+    region: "US"
+  TEAM:
+    name: "Atlassian"
+    sector: "Cloud/Software"
+    region: "US"
+  SNOW:
+    name: "Snowflake"
+    sector: "Cloud/Software"
+    region: "US"
+  NOW:
+    name: "ServiceNow"
+    sector: "Cloud/Software"
+    region: "US"
+  NBIS:
+    name: "Nebius"
+    sector: "Cloud/AI"
+    region: "US"
+  GRAB:
+    name: "Grab"
+    sector: "Technology"
+    region: "US"
+  SPOT:
+    name: "Spotify"
+    sector: "Technology"
+    region: "US"
+  APP:
+    name: "AppLovin"
+    sector: "Software/AI"
+    region: "US"
+  TER:
+    name: "Teradyne"
+    sector: "Semiconductors"
+    region: "US"
+  MDB:
+    name: "MongoDB"
+    sector: "Cloud/Software"
+    region: "US"
+  APLD:
+    name: "Applied Digital"
+    sector: "Cloud/AI"
+    region: "US"
+  ASTS:
+    name: "AST SpaceMobile"
+    sector: "Technology"
+    region: "US"
+  HPE:
+    name: "HPE"
+    sector: "Technology"
+    region: "US"
+  TRIP:
+    name: "TripAdvisor"
+    sector: "Technology"
+    region: "US"
+  NET:
+    name: "Cloudflare"
+    sector: "Cloud/Software"
+    region: "US"
+  U:
+    name: "Unity Software"
+    sector: "Software/AI"
+    region: "US"
+
+  # US Semiconductors
+  QCOM:
+    name: "Qualcomm"
+    sector: "Semiconductors"
+    region: "US"
+  AMD:
+    name: "AMD"
+    sector: "Semiconductors"
+    region: "US"
+  INTC:
+    name: "Intel"
+    sector: "Semiconductors"
+    region: "US"
+  ANET:
+    name: "Arista"
+    sector: "Networking"
+    region: "US"
+  NXPI:
+    name: "NXP Semi"
+    sector: "Semiconductors"
+    region: "US"
+  ZBRA:
+    name: "Zebra"
+    sector: "Technology"
+    region: "US"
+  AMAT:
+    name: "Applied Materials"
+    sector: "Semiconductors"
+    region: "US"
+  KLAC:
+    name: "KLA Corp"
+    sector: "Semiconductors"
+    region: "US"
+  MRVL:
+    name: "Marvell Tech"
+    sector: "Semiconductors"
+    region: "US"
+  ARM:
+    name: "ARM Holdings"
+    sector: "Semiconductors"
+    region: "US"
+
+  # US Healthcare & Biotech
+  UNH:
+    name: "UnitedHealth"
+    sector: "Healthcare"
+    region: "US"
+  ELV:
+    name: "Elevance"
+    sector: "Healthcare"
+    region: "US"
+  HIMS:
+    name: "Hims & Hers"
+    sector: "Healthcare"
+    region: "US"
+  JNJ:
+    name: "Johnson & Johnson"
+    sector: "Healthcare"
+    region: "US"
+  ABT:
+    name: "Abbott Labs"
+    sector: "Healthcare"
+    region: "US"
+  PFE:
+    name: "Pfizer"
+    sector: "Healthcare"
+    region: "US"
+  REGN:
+    name: "Regeneron"
+    sector: "Healthcare"
+    region: "US"
+  DHR:
+    name: "Danaher"
+    sector: "Healthcare"
+    region: "US"
+
+  # US Fintech & Crypto
+  COIN:
+    name: "Coinbase"
+    sector: "Fintech"
+    region: "US"
+  HOOD:
+    name: "Robinhood"
+    sector: "Fintech"
+    region: "US"
+  SOFI:
+    name: "SoFi"
+    sector: "Fintech"
+    region: "US"
+  KLAR:
+    name: "Klarna"
+    sector: "Fintech"
+    region: "US"
+  BITF:
+    name: "Bitfarms"
+    sector: "Crypto/Mining"
+    region: "US"
+  NU:
+    name: "Nu Holding"
+    sector: "Fintech"
+    region: "US"
+  JPM:
+    name: "JP Morgan"
+    sector: "Financials"
+    region: "US"
+  BAC:
+    name: "Bank of America"
+    sector: "Financials"
+    region: "US"
+  V:
+    name: "Visa"
+    sector: "Fintech"
+    region: "US"
+  LMND:
+    name: "Lemonade"
+    sector: "Fintech"
+    region: "US"
+  HG:
+    name: "Hamilton Ins"
+    sector: "Financials"
+    region: "US"
+
+  # US Tech & Misc
+  UBER:
+    name: "Uber"
+    sector: "Technology"
+    region: "US"
+  DELL:
+    name: "Dell"
+    sector: "Technology"
+    region: "US"
+  UPWK:
+    name: "Upwork"
+    sector: "Comm Services"
+    region: "US"
+  LULU:
+    name: "Lululemon"
+    sector: "Consumer Retail"
+    region: "US"
+  MELI:
+    name: "MercadoLibre"
+    sector: "Ecommerce"
+    region: "US"
+  EBAY:
+    name: "eBay"
+    sector: "Ecommerce"
+    region: "US"
+  EL:
+    name: "Estee Lauder"
+    sector: "Consumer Retail"
+    region: "US"
+  FISV:
+    name: "Fiserv"
+    sector: "Fintech"
+    region: "US"
+  PANW:
+    name: "Palo Alto"
+    sector: "Cybersecurity"
+    region: "US"
+  FTNT:
+    name: "Fortinet"
+    sector: "Cybersecurity"
+    region: "US"
+  CRWV:
+    name: "CoreWeave"
+    sector: "Cloud/AI"
+    region: "US"
+  PATH:
+    name: "UiPath"
+    sector: "Software/AI"
+    region: "US"
+  TSM:
+    name: "TSMC"
+    sector: "Semiconductors"
+    region: "US"
+  T:
+    name: "AT&T"
+    sector: "Comm Services"
+    region: "US"
+  VZ:
+    name: "Verizon"
+    sector: "Comm Services"
+    region: "US"
+  PG:
+    name: "Procter & Gamble"
+    sector: "Consumer Retail"
+    region: "US"
+  NKE:
+    name: "Nike"
+    sector: "Consumer Retail"
+    region: "US"
+  WMT:
+    name: "Walmart"
+    sector: "Consumer Retail"
+    region: "US"
+  HD:
+    name: "Home Depot"
+    sector: "Consumer Retail"
+    region: "US"
+  WDC:
+    name: "Western Digital"
+    sector: "Technology"
+    region: "US"
+  CSCO:
+    name: "Cisco"
+    sector: "Networking"
+    region: "US"
+  KO:
+    name: "Coca-Cola"
+    sector: "Consumer Retail"
+    region: "US"
+  TTD:
+    name: "The Trade Desk"
+    sector: "Technology"
+    region: "US"
+  DUK:
+    name: "Duke Energy"
+    sector: "Utilities"
+    region: "US"
+  MP:
+    name: "MP Materials"
+    sector: "Industrials"
+    region: "US"
+  LIN:
+    name: "Linde"
+    sector: "Industrials"
+    region: "US"
+  LEN:
+    name: "Lennar"
+    sector: "Industrials"
+    region: "US"
+  ROK:
+    name: "Rockwell"
+    sector: "Industrials"
+    region: "US"
+  LMT:
+    name: "Lockheed Martin"
+    sector: "Industrials"
+    region: "US"
+  NOC:
+    name: "Northrop Grumman"
+    sector: "Industrials"
+    region: "US"
+  PLUG:
+    name: "Plug Power"
+    sector: "Energy"
+    region: "US"
+  LEU:
+    name: "Centrus Energy"
+    sector: "Energy"
+    region: "US"
+
+  # EU Tech
+  SAP:
+    name: "SAP SE"
+    sector: "Enterprise SW"
+    region: "EU"
+  ASML:
+    name: "ASML"
+    sector: "Semiconductors"
+    region: "EU"
+  ADYEN.AS:
+    name: "Adyen"
+    sector: "Fintech"
+    region: "EU"
+  SIE.DE:
+    name: "Siemens"
+    sector: "Industrials"
+    region: "EU"
+  SMHN.DE:
+    name: "SUSS MicroTec"
+    sector: "Technology"
+    region: "EU"
+  ALV.DE:
+    name: "Allianz"
+    sector: "Financials"
+    region: "EU"
+  RWE.DE:
+    name: "RWE"
+    sector: "Utilities"
+    region: "EU"
+  FNTN.DE:
+    name: "Freenet"
+    sector: "Comm Services"
+    region: "EU"
+  VWS.CO:
+    name: "Vestas Wind"
+    sector: "Energy/Renewables"
+    region: "EU"
+  NDX1.DE:
+    name: "Nordex"
+    sector: "Energy/Renewables"
+    region: "EU"
+  ORSTED.CO:
+    name: "Ørsted"
+    sector: "Energy/Renewables"
+    region: "EU"
+  SU.PA:
+    name: "Schneider Electric"
+    sector: "Industrials"
+    region: "EU"
+  MC.PA:
+    name: "LVMH"
+    sector: "Consumer Luxury"
+    region: "EU"
+  RI.PA:
+    name: "Pernod Ricard"
+    sector: "Consumer Retail"
+    region: "EU"
+  PUM.DE:
+    name: "Puma SE"
+    sector: "Consumer Retail"
+    region: "EU"
+  ZAL.DE:
+    name: "Zalando SE"
+    sector: "Ecommerce"
+    region: "EU"
+  DSY.PA:
+    name: "Dassault Syst"
+    sector: "Technology"
+    region: "EU"
+  IFX.DE:
+    name: "Infineon"
+    sector: "Semiconductors"
+    region: "EU"
+  AIXA.DE:
+    name: "Aixtron SE"
+    sector: "Semiconductors"
+    region: "EU"
+  NOA3.DE:
+    name: "Nokia"
+    sector: "Technology"
+    region: "EU"
+  AIR.PA:
+    name: "Airbus"
+    sector: "Industrials"
+    region: "EU"
+  BMW.DE:
+    name: "BMW"
+    sector: "Industrials"
+    region: "EU"
+  MBG.DE:
+    name: "Mercedes-Benz"
+    sector: "Industrials"
+    region: "EU"
+  RHM.DE:
+    name: "Rheinmetall"
+    sector: "Industrials"
+    region: "EU"
+  R3NK.DE:
+    name: "Renk Group"
+    sector: "Industrials"
+    region: "EU"
+  MTX.DE:
+    name: "MTU Engines"
+    sector: "Industrials"
+    region: "EU"
+  LHA.DE:
+    name: "Lufthansa"
+    sector: "Industrials"
+    region: "EU"
+  BAS.DE:
+    name: "BASF SE"
+    sector: "Industrials"
+    region: "EU"
+  TKA.DE:
+    name: "ThyssenKrupp"
+    sector: "Industrials"
+    region: "EU"
+  HLAG.DE:
+    name: "Hapag-Lloyd"
+    sector: "Industrials"
+    region: "EU"
+
+  # EU Healthcare & Finance
+  NVO:
+    name: "Novo Nordisk"
+    sector: "Healthcare"
+    region: "EU"
+  SAN.PA:
+    name: "Sanofi"
+    sector: "Healthcare"
+    region: "EU"
+  INGA.AS:
+    name: "ING Group"
+    sector: "Financials"
+    region: "EU"
+  DTE.DE:
+    name: "Deutsche Telekom"
+    sector: "Comm Services"
+    region: "EU"
+  DBK.DE:
+    name: "Deutsche Bank"
+    sector: "Financials"
+    region: "EU"
+
+  # China
+  BABA:
+    name: "Alibaba"
+    sector: "Ecommerce"
+    region: "CN"
+  BIDU:
+    name: "Baidu"
+    sector: "Cloud/AI"
+    region: "CN"
+  JD:
+    name: "JD.com"
+    sector: "Ecommerce"
+    region: "CN"
+  PDD:
+    name: "PDD Holdings"
+    sector: "Ecommerce"
+    region: "CN"
+  "1211.HK":
+    name: "BYD"
+    sector: "Consumer Tech"
+    region: "CN"
+  "0285.HK":
+    name: "BYD Electronic"
+    sector: "Consumer Tech"
+    region: "CN"
+  "1810.HK":
+    name: "Xiaomi"
+    sector: "Consumer Tech"
+    region: "CN"
+
+  # Japan
+  "8035.T":
+    name: "Tokyo Electron"
+    sector: "Semiconductors"
+    region: "JP"
+  "6857.T":
+    name: "Advantest"
+    sector: "Semiconductors"
+    region: "JP"
+  "6758.T":
+    name: "Sony"
+    sector: "Consumer Tech"
+    region: "JP"
+  "7012.T":
+    name: "Kawasaki Heavy"
+    sector: "Industrials"
+    region: "JP"
+  "6367.T":
+    name: "Daikin Ind"
+    sector: "Industrials"
+    region: "JP"
+  "6861.T":
+    name: "Keyence"
+    sector: "Technology"
+    region: "JP"
+  "6752.T":
+    name: "Panasonic"
+    sector: "Consumer Tech"
+    region: "JP"
+  "7011.T":
+    name: "Mitsubishi Heavy"
+    sector: "Industrials"
+    region: "JP"
+  "9984.T":
+    name: "SoftBank Group"
+    sector: "Technology"
+    region: "JP"
+
+  # Benchmarks
+  SPY:
+    name: "S&P 500 ETF"
+    sector: "Benchmark"
+    region: "US"
+  "^VIX":
+    name: "VIX Index"
+    sector: "Volatility"
+    region: "US"
