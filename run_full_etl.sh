@@ -5,10 +5,10 @@ if [ -d ".venv" ]; then
     source .venv/bin/activate
 fi
 
-echo "🚀 Bắt đầu quá trình ETL Full Refresh (Tải toàn bộ dữ liệu lịch sử)..."
-echo "Quá trình này có thể mất một vài phút tùy vào băng thông mạng của bạn."
+echo "🚀 Starting full ETL refresh process (Downloading all historical data)..."
+echo "This process may take a few minutes depending on your network bandwidth."
 
-# Chạy pipeline với cờ --full
+# Run pipeline with --full flag
 python3 run.py --full
 
-echo "✅ Đã hoàn thành tải toàn bộ dữ liệu."
+echo "✅ Completed downloading all historical data."
