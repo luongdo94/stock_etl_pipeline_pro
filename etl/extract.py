@@ -95,17 +95,44 @@ def extract_stock_prices(
 
     all_frames = []
 
+    def chunk_list(lst, n):
+        for i in range(0, len(lst), n):
+            yield lst[i:i + n]
+
+    # Helper for staggered download
+    def staggered_download(ticker_list, start_dt, end_dt):
+        frames = []
+        chunks = list(chunk_list(ticker_list, 20))
+        logger.info(f"   📥 Downloading in {len(chunks)} staggered chunks...")
+        
+        for i, chunk in enumerate(chunks):
+            if i > 0:
+                logger.info("   ⏳ Staggering delay (5s)...")
+                time.sleep(5)
+            
+            df = safe_yf_download(
+                chunk,
+                start=start_dt,
+                end=end_dt,
+                auto_adjust=True,
+                progress=False,
+                group_by='column'
+            )
+            if not df.empty:
+                frames.append(df)
+        
+        if not frames:
+            return pd.DataFrame()
+        
+        if len(frames) == 1:
+            return frames[0]
+            
+        return pd.concat(frames, axis=1)
+
     # ── BATCH DOWNLOAD: Incremental (or Full if no watermarks) ───────────────
     existing_tickers = [t for t in all_ticker_list if t not in new_tickers]
     if existing_tickers:
-        raw_prices = safe_yf_download(
-            existing_tickers,
-            start=start_date,
-            end=end_date,
-            auto_adjust=True,
-            progress=False,
-            group_by='column'
-        )
+        raw_prices = staggered_download(existing_tickers, start_date, end_date)
 
         if raw_prices.empty:
             logger.warning("⚠️ No price data returned for existing tickers in the incremental window.")
@@ -114,19 +141,16 @@ def extract_stock_prices(
 
     # ── BATCH DOWNLOAD: Full history for brand-new tickers ───────────────────
     if new_tickers and full_start:
-        raw_new = safe_yf_download(
-            new_tickers,
-            start=full_start,
-            end=end_date,
-            auto_adjust=True,
-            progress=False,
-            group_by='column'
-        )
+        raw_new = staggered_download(new_tickers, full_start, end_date)
         if not raw_new.empty:
             all_frames.append(("new", new_tickers, raw_new))
 
-    if not all_frames and not watermarks:
-        raise ValueError("❌ No price data returned from Yahoo Finance.")
+    if not all_frames:
+        if not watermarks:
+            raise ValueError("❌ No price data returned from Yahoo Finance.")
+        else:
+            logger.error("❌ ALL ticker downloads failed in this incremental run.")
+            return pd.DataFrame() # Return empty to avoid total crash if we already have history
 
     # 2. BATCH FETCH CURRENCIES & FX RATES (covers all tickers)
     currencies = {}
