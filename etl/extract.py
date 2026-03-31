@@ -40,11 +40,9 @@ def safe_yf_download(*args, **kwargs):
     return yf.download(*args, **kwargs)
 
 def setup_yf_session():
-    import requests
-    session = requests.Session()
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    })
+    from curl_cffi import requests
+    # impersonate chrome allows us to bypass JA3 fingerprinting
+    session = requests.Session(impersonate="chrome110")
     return session
 
 YF_SESSION = setup_yf_session()
@@ -114,14 +112,18 @@ def extract_stock_prices(
 
     # Helper for staggered download
     def staggered_download(ticker_list, start_dt, end_dt):
+        import random
         frames = []
-        chunks = list(chunk_list(ticker_list, 20))
-        logger.info(f"   📥 Downloading in {len(chunks)} staggered chunks...")
+        # Even smaller chunks for maximum safety
+        chunks = list(chunk_list(ticker_list, 10))
+        logger.info(f"   📥 Downloading in {len(chunks)} ultra-staggered chunks...")
         
         for i, chunk in enumerate(chunks):
             if i > 0:
-                logger.info("   ⏳ Staggering delay (5s)...")
-                time.sleep(5)
+                # Random jitter between 5-10 seconds
+                delay = random.uniform(5, 10)
+                logger.info(f"   ⏳ Random jitter ({delay:.1f}s)...")
+                time.sleep(delay)
             
             df = safe_yf_download(
                 chunk,
@@ -176,11 +178,12 @@ def extract_stock_prices(
             logger.warning(f"⚠️ Failed to fetch currency for {t}: {e}")
             return t, "USD"
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
+    with ThreadPoolExecutor(max_workers=1) as executor:
         future_to_tick = {executor.submit(fetch_currency, t): t for t in all_ticker_list}
         for future in as_completed(future_to_tick):
             t, cur = future.result()
             currencies[t] = cur
+            time.sleep(1) # Extra breath between fundamental calls
 
     unique_currencies = {c for c in currencies.values() if c != "USD"}
     fx_data = pd.DataFrame()
