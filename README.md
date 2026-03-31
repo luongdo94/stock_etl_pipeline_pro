@@ -76,4 +76,4 @@ docker-compose up -d
 - `walkthrough.md`: Detailed feature demonstration.
 
 ---
-*Created by the Elite Pro Diagnostic Team.*
+*Created by GIA LUONG DO.*
