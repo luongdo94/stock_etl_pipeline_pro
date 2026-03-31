@@ -24,6 +24,10 @@ tickers:
     name: "Meta"
     sector: "Technology"
     region: "US"
+  TSLA:
+    name: "Tesla"
+    sector: "Consumer Tech"
+    region: "US"
   ADBE:
     name: "Adobe"
     sector: "Cloud/Software"
@@ -166,6 +170,18 @@ tickers:
     name: "ARM Holdings"
     sector: "Semiconductors"
     region: "US"
+  TXN:
+    name: "Texas Instruments"
+    sector: "Semiconductors"
+    region: "US"
+  LRCX:
+    name: "Lam Research"
+    sector: "Semiconductors"
+    region: "US"
+  "ON":
+    name: "Onsemi"
+    sector: "Semiconductors"
+    region: "US"
 
   # US Healthcare & Biotech
   UNH:
@@ -198,6 +214,10 @@ tickers:
     region: "US"
   DHR:
     name: "Danaher"
+    sector: "Healthcare"
+    region: "US"
+  MRK:
+    name: "Merck"
     sector: "Healthcare"
     region: "US"
 
@@ -320,6 +340,14 @@ tickers:
     name: "Walmart"
     sector: "Consumer Retail"
     region: "US"
+  LOW:
+    name: "Lowe's"
+    sector: "Consumer Retail"
+    region: "US"
+  PEP:
+    name: "PepsiCo"
+    sector: "Consumer Retail"
+    region: "US"
   HD:
     name: "Home Depot"
     sector: "Consumer Retail"
@@ -410,6 +438,18 @@ tickers:
     name: "Freenet"
     sector: "Comm Services"
     region: "EU"
+  JEN.DE:
+    name: "Jenoptik"
+    sector: "Technology"
+    region: "EU"
+  HAG.DE:
+    name: "Hensoldt"
+    sector: "Technology"
+    region: "EU"
+  ENR.DE:
+    name: "Siemens Energy"
+    sector: "Energy"
+    region: "EU"
   VWS.CO:
     name: "Vestas Wind"
     sector: "Energy/Renewables"
@@ -430,6 +470,10 @@ tickers:
     name: "LVMH"
     sector: "Consumer Luxury"
     region: "EU"
+  KER.PA:
+    name: "Kering"
+    sector: "Consumer Luxury"
+    region: "EU"
   RI.PA:
     name: "Pernod Ricard"
     sector: "Consumer Retail"
@@ -448,6 +492,10 @@ tickers:
     region: "EU"
   IFX.DE:
     name: "Infineon"
+    sector: "Semiconductors"
+    region: "EU"
+  STMPA.PA:
+    name: "STMicro"
     sector: "Semiconductors"
     region: "EU"
   AIXA.DE:
@@ -486,6 +534,10 @@ tickers:
     name: "Lufthansa"
     sector: "Industrials"
     region: "EU"
+  RR.L:
+    name: "Rolls-Royce"
+    sector: "Industrials"
+    region: "EU"
   BAS.DE:
     name: "BASF SE"
     sector: "Industrials"
@@ -506,6 +558,10 @@ tickers:
     region: "EU"
   SAN.PA:
     name: "Sanofi"
+    sector: "Healthcare"
+    region: "EU"
+  ROG.SW:
+    name: "Roche"
     sector: "Healthcare"
     region: "EU"
   INGA.AS:

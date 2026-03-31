@@ -2079,29 +2079,35 @@ with tab_scanner:
             if isinstance(rsi, pd.Series) and not rsi.empty:
                 latest_rsi = rsi.iloc[-1]
             
-            # AI Score
-            ai_score = compute_score(row)
-            action = get_action(ai_score)
-            
-            # Upside
-            cur_p = ticker_prices['price_close'].iloc[-1]
-            target_p = row.get('target_mean_price', 0)
+            cur_p = ticker_prices["price_close"].iloc[-1]
+            target_p = row.get("target_mean_price", 0)
             upside = ((target_p / cur_p) - 1) * 100 if target_p > 0 else 0
-
-            # 1-Day Change (%)
             if len(ticker_prices) >= 2:
-                prev_p = ticker_prices['price_close'].iloc[-2]
+                prev_p = ticker_prices["price_close"].iloc[-2]
                 chg_1d = ((cur_p / prev_p) - 1) * 100 if prev_p > 0 else 0
             else:
                 chg_1d = 0
+            mcap = row.get("market_cap", 0)
+            mcap_b = (mcap / 1e9) if pd.notnull(mcap) and mcap > 0 else 0            # ── AI SCORING (ENRICHED WITH TECHNICALS) ──────────────────────────
+            latest_p = ticker_prices.iloc[-1]
+            # Create enrichment dict (same as Deep Dive)
+            score_input = row.to_dict()
+            score_input['rsi'] = float(latest_rsi)
+            score_input['ma_signal'] = str(latest_p.get('ma_signal', 'NEUTRAL'))
+            score_input['price_z_score'] = float(latest_p.get('price_z_score', 0))
+            score_input['upside_pct'] = float(upside)
+            
+            # Ensure numeric safety for fundamental scores
+            for col in ['pe_ratio', 'peg_ratio', 'price_to_book', 'roe', 'fcf_margin', 'dividend_yield_pct']:
+                val = score_input.get(col)
+                try: score_input[col] = float(val) if pd.notnull(val) else None
+                except: score_input[col] = None
 
-            # Market Cap formatted (in Billions)
-            mcap = row.get('market_cap', 0)
-            mcap_b = (mcap / 1e9) if pd.notnull(mcap) and mcap > 0 else 0
-
-            # Dividend Yield
-            div_yield = row.get('dividend_yield_pct', 0)
-            div_yield = float(div_yield) if pd.notnull(div_yield) else 0
+            ai_score = compute_score(score_input)
+            action = get_action(ai_score)
+            
+            # Additional metrics
+            div_yield = float(row.get('dividend_yield_pct', 0)) if pd.notnull(row.get('dividend_yield_pct')) else 0
 
             # FCF Margin — already stored as % in DB (e.g., 26.92 = 26.92%)
             fcf_margin = row.get('fcf_margin', 0)
@@ -2452,7 +2458,7 @@ with tab_ai:
         test_size=21; max_lookback=120
         if len(df) < max_lookback+test_size+5: return None,None
         train_df=df.iloc[:-test_size]; actual=df.iloc[-test_size:]["price_close"].values
-        predicted,_ = _run_lstm_core(train_df,lookback=max_lookback,forecast_days=test_size,sector_name=sector_name,quality_score=quality_score)
+        predicted,_,_ = _run_lstm_core(train_df,lookback=max_lookback,forecast_days=test_size,sector_name=sector_name,quality_score=quality_score)
         if predicted is None: return None,None
         mape = np.mean(np.abs((actual-predicted)/actual))
         if np.isnan(mape): return None,None
@@ -2553,37 +2559,6 @@ with tab_ai:
         with mcol1:
             st.metric("🧠 AI Ensemble Target", f"€{lstm_path[-1]:.2f}" if lstm_path is not None else "N/A", delta=f"{lstm_return*100:.2f}%" if lstm_return else "N/A")
         
-        # ── FEATURE IMPORTANCE CHART: Why did the AI say this? ───────────────────
-        if feat_imp:
-            # Format feature names for UI
-            pretty_feat_map = {
-                'price_close': 'Price Momentum',
-                'volume': 'Volume Activity',
-                'rsi': 'Overbought/Oversold (RSI)',
-                'daily_return_pct': 'Volatility Pattern',
-                'macd': 'Trend Strength (MACD)',
-                'bollinger_pb': 'Price Extreme (%B)',
-                'spy_ret': 'Market Correlation (SPY)',
-                'vix_ret': 'Risk/Fear Index (VIX)',
-                'sector_ret': 'Sector Performance',
-                'obv_roc': 'Moneypath (OBV)',
-                'vol_surge': 'Relative Vol Spike',
-                'quality_score_norm': 'Quality Score (Fund.)'
-            }
-            
-            imp_df = pd.DataFrame([
-                {'Feature': pretty_feat_map.get(k, k), 'Weight (%)': v}
-                for k, v in feat_imp.items()
-            ]).sort_values('Weight (%)', ascending=True)
-
-            render_header("activity", "AI Reasoning: What's driving the forecast?")
-            fig_imp = px.bar(
-                imp_df, x='Weight (%)', y='Feature', orientation='h',
-                template="plotly_dark", height=400,
-                color='Weight (%)', color_continuous_scale="Viridis"
-            )
-            fig_imp.update_layout(xaxis_title="Influence on Price Prediction (%)", showlegend=False, margin=dict(t=10, b=10, l=10, r=10))
-            st.plotly_chart(fig_imp, use_container_width=True)
         with mcol2:
             sent_label = "Bullish" if avg_sent > 0.1 else "Bearish" if avg_sent < -0.1 else "Neutral"
             st.metric("📰 News Sentiment Mood", sent_label, delta=f"{avg_sent:.2f}")
@@ -2604,79 +2579,21 @@ with tab_ai:
                 p_val, p_delta = "N/A", None
             st.metric("🎯 AI Precision (21d)", p_val, delta=p_delta)
 
-        # ── ROW 2.5: 🏆 Historical Valuation Context (Pre-Forecast Warning) ──────
-        render_header("gem", "Historical Valuation Context (Forecast Anchor)")
+        # ── ROW 3.5: Analysis & Logic (Moved Up) ──────────────────────────────
+        render_header("activity", "AI Synergy & Reasoning Logic")
+        bias_text = "Bullish" if (lstm_return and lstm_return > 0.02) else "Bearish" if (lstm_return and lstm_return < -0.02) else "Neutral"
+        st.write(f"The hybrid Ensemble AI model is currently **{bias_text}**.")
+        st.write("This institutional-grade dashboard merges two distinct mathematical philosophies:")
+        uncertainty_txt = f" The Ensemble uncertainty band is calibrated at **±{mape_raw*100:.1f}%** based on 21-day walk-forward backtest." if mape_raw else ""
+        st.info("1. **Deterministic Path (Blue Line)**: A hybrid Deep Learning + ARIMA model learns the historical non-linear patterns, market beta (SPY), and volatility context (^VIX) to predict the single most likely path.\n\n"
+                  "2. **Dynamic Volatility (Grey Shadows)**: Monte Carlo risk bands expand or contract dynamically based on real-time market 'heat' (Volatility)." + uncertainty_txt)
         
-        # Pull the latest Z-Score and 5Y P/E for the selected ticker
-        _fc_latest = prices_full[prices_full['ticker'] == fc_ticker].sort_values('date').tail(1)
-        _fc_meta = companies_full[companies_full['ticker'] == fc_ticker]
+        p5_final = np.percentile(simulated_paths[-1, :], 5)
+        p95_final = np.percentile(simulated_paths[-1, :], 95)
+        st.success(f"✨ **Risk/Reward Check**: With 90% confidence, at the end of {forecast_days} days, the price bounded by Monte Carlo is between **€{p5_final:.2f}** and **€{p95_final:.2f}**. " +
+                   (f"The AI Ensemble targets **€{lstm_path[-1]:.2f}**" + (f" (±{mape_raw*100:.1f}% CI)." if mape_raw else ".") if lstm_path is not None else "Ensemble target unavailable."))
 
-        _z = _fc_latest['price_z_score'].iloc[0] if not _fc_latest.empty and 'price_z_score' in _fc_latest.columns else None
-        _pe_5y = _fc_meta['pe_5y_avg'].iloc[0] if not _fc_meta.empty and 'pe_5y_avg' in _fc_meta.columns else None
-        _pe_cur = _fc_meta['pe_ratio'].iloc[0] if not _fc_meta.empty else None
-
-        hc1, hc2, hc3 = st.columns(3)
-        with hc1:
-            if _z is not None and not pd.isna(_z):
-                if _z > 2:    _z_icon, _z_color = "🚨", "#e74c3c"
-                elif _z > 1:  _z_icon, _z_color = "⚠️", "#f1c40f"
-                elif _z < -2: _z_icon, _z_color = "💎", "#2ecc71"
-                elif _z < -1: _z_icon, _z_color = "🟢", "#27ae60"
-                else:         _z_icon, _z_color = "🔵", "#3498db"
-                st.markdown(f"""<div style='background:rgba(255,255,255,0.04);border:1px solid {_z_color}40;border-radius:10px;padding:14px;text-align:center;'>
-                    <small style='color:#999;text-transform:uppercase;font-size:0.7rem;'>Z-Score (5Y)</small><br>
-                    <b style='font-size:1.8rem;color:{_z_color};'>{_z:.2f}</b><br>
-                    <small style='color:{_z_color};'>{_z_icon} {'Historically Expensive' if _z > 1 else 'Historically Cheap' if _z < -1 else 'Near Fair Value'}</small>
-                </div>""", unsafe_allow_html=True)
-        with hc2:
-            if _pe_5y is not None and not pd.isna(_pe_5y) and _pe_5y > 0 and _pe_cur is not None and not pd.isna(_pe_cur):
-                _pe_delta = ((_pe_cur / _pe_5y) - 1) * 100
-                _pe_color = "#e74c3c" if _pe_delta > 20 else "#2ecc71" if _pe_delta < -15 else "#3498db"
-                st.markdown(f"""<div style='background:rgba(255,255,255,0.04);border:1px solid {_pe_color}40;border-radius:10px;padding:14px;text-align:center;'>
-                    <small style='color:#999;text-transform:uppercase;font-size:0.7rem;'>P/E vs 5Y Average</small><br>
-                    <b style='font-size:1.8rem;color:{_pe_color};'>{_pe_delta:+.1f}%</b><br>
-                    <small style='color:{_pe_color};'>{'Overvalued vs History' if _pe_delta > 0 else 'Undervalued vs History'}</small>
-                </div>""", unsafe_allow_html=True)
-        with hc3:
-            _ma200 = _fc_latest['pct_from_ma200'].iloc[0] if not _fc_latest.empty and 'pct_from_ma200' in _fc_latest.columns else None
-            if _ma200 is not None and not pd.isna(_ma200):
-                _ma_color = "#e74c3c" if _ma200 < -10 else "#2ecc71" if _ma200 > 10 else "#f1c40f"
-                st.markdown(f"""<div style='background:rgba(255,255,255,0.04);border:1px solid {_ma_color}40;border-radius:10px;padding:14px;text-align:center;'>
-                    <small style='color:#999;text-transform:uppercase;font-size:0.7rem;'>Distance from MA200</small><br>
-                    <b style='font-size:1.8rem;color:{_ma_color};'>{_ma200:+.1f}%</b><br>
-                    <small style='color:{_ma_color};'>{'Above Trend' if _ma200 > 0 else 'Below Trend'}</small>
-                </div>""", unsafe_allow_html=True)
-        
-        st.markdown("---")
-
-        # ── ROW 2.5: Intelligence Diagnostic (Breakdown) ──────────────────────
-        render_header("activity", "AI Reasoning & Diagnostic Insight")
-        dcol1, dcol2 = st.columns([1, 1])
-        
-        with dcol1:
-            # Feature Importance Bar Chart
-            render_header("chart", "Institutional Score Drivers")
-            score_data = compute_score_details(_fc_meta.iloc[0])
-            breakdown_df = pd.DataFrame(list(score_data["breakdown"].items()), columns=["Category", "Points"])
-            fig_breakdown = px.bar(
-                breakdown_df, x="Points", y="Category", orientation='h',
-                color="Points", color_continuous_scale="GnBu",
-                template="plotly_dark", height=300
-            )
-            fig_breakdown.update_layout(margin=dict(l=0, r=0, t=20, b=0), coloraxis_showscale=False)
-            st.plotly_chart(fig_breakdown, use_container_width=True)
-            
-        with dcol2:
-            st.write("**Model Philosophy:**")
-            st.info("""
-                - **Self-Optimizing Architecture**: AI uses **Optuna** to automatically find the best Neural Network structure (Layers/LR) for each Ticker.
-                - **God-Mode NLP (FinBERT)**: A Large Language Model (Transformer) analyzes news to inject professional-grade sentiment into the forecast.
-                - **Order Flow Tracking**: The AI monitors **OBV & Volume Surges** to detect "Institutional Accumulation" (Shadow Buying).
-                - **Adaptive AI Ensemble**: Weights (LSTM vs ARIMA) are dynamically adjusted (45% to 75%) based on the Volatility Regime.
-                - **Dynamic Lookback Window**: Low-vol/defensive stocks (e.g., EL, KO) use a 120-day window to capture seasonal cycles; High-vol stocks use 45-day for momentum sensitivity.
-            """)
-
-        # ── ROW 3: Main Chart (Full Width) ───────────────────────────────────
+        # ── ROW 3: Main Chart (Full Width) ── (Moved to Top) ───────────────────
         render_header("ai", f"AI Ensemble vs Stochastic Monte Carlo: {fc_ticker}")
         fig_fc = go.Figure()
         # Include today's date so all lines start from the last known price point
@@ -2723,20 +2640,54 @@ with tab_ai:
  
         fig_fc.update_layout(template="plotly_dark", height=600, yaxis_title="Price (€)", margin=dict(t=20, l=10, r=10, b=10))
         st.plotly_chart(fig_fc, use_container_width=True)
+
+        st.markdown("---")
+
+        # ── ROW 2.5: Intelligence Diagnostic (Breakdown) ──────────────────────
+        _fc_meta = companies_full[companies_full['ticker'] == fc_ticker]
+        render_header("activity", "AI Reasoning & Diagnostic Insight")
+        dcol1, dcol2 = st.columns([1, 1])
         
-        # ── ROW 4: Analysis & Feature Importance ─────────────────────────────
-        render_header("activity", "AI Synergy & Reasoning Logic")
-        bias_text = "Bullish" if (lstm_return and lstm_return > 0.02) else "Bearish" if (lstm_return and lstm_return < -0.02) else "Neutral"
-        st.write(f"The hybrid Ensemble AI model is currently **{bias_text}**.")
-        st.write("This institutional-grade dashboard merges two distinct mathematical philosophies:")
-        uncertainty_txt = f" The Ensemble uncertainty band is calibrated at **±{mape_raw*100:.1f}%** based on 21-day walk-forward backtest." if mape_raw else ""
-        st.info("1. **Deterministic Path (Blue Line)**: A hybrid Deep Learning + ARIMA model learns the historical non-linear patterns, market beta (SPY), and volatility context (^VIX) to predict the single most likely path.\n\n"
-                  "2. **Dynamic Volatility (Grey Shadows)**: Monte Carlo risk bands expand or contract dynamically based on real-time market 'heat' (Volatility)." + uncertainty_txt)
-        
-        p5_final = np.percentile(simulated_paths[-1, :], 5)
-        p95_final = np.percentile(simulated_paths[-1, :], 95)
-        st.success(f"✨ **Risk/Reward Check**: With 90% confidence, at the end of {forecast_days} days, the price bounded by Monte Carlo is between **€{p5_final:.2f}** and **€{p95_final:.2f}**. " +
-                   (f"The AI Ensemble targets **€{lstm_path[-1]:.2f}**" + (f" (±{mape_raw*100:.1f}% CI)." if mape_raw else ".") if lstm_path is not None else "Ensemble target unavailable."))
+        with dcol1:
+            # Feature Importance Bar Chart
+            render_header("chart", "Institutional Score Drivers")
+            score_data = compute_score_details(_fc_meta.iloc[0])
+            breakdown_df = pd.DataFrame(list(score_data["breakdown"].items()), columns=["Category", "Points"])
+            fig_breakdown = px.bar(
+                breakdown_df, x="Points", y="Category", orientation='h',
+                color="Points", color_continuous_scale="GnBu",
+                template="plotly_dark", height=300
+            )
+            fig_breakdown.update_layout(margin=dict(l=0, r=0, t=20, b=0), coloraxis_showscale=False)
+            st.plotly_chart(fig_breakdown, use_container_width=True)
+            
+        with dcol2:
+            # Feature Importance Bar Chart (Moved here)
+            render_header("activity", "Model Input Reasoning (SHAP)")
+            if feat_imp:
+                pretty_feat_map = {
+                    'price_close': 'Price Momentum', 'volume': 'Volume Activity',
+                    'rsi': 'RSI', 'daily_return_pct': 'Volatility',
+                    'macd': 'MACD', 'bollinger_pb': 'Bollinger %B',
+                    'spy_ret': 'Market (SPY)', 'vix_ret': 'Fear (VIX)',
+                    'sector_ret': 'Sector Perf.', 'obv_roc': 'Moneypath (OBV)',
+                    'vol_surge': 'Vol Spike', 'quality_score_norm': 'Quality Score'
+                }
+                imp_df = pd.DataFrame([
+                    {'Feature': pretty_feat_map.get(k, k), 'Weight (%)': v}
+                    for k, v in feat_imp.items()
+                ]).sort_values('Weight (%)', ascending=True)
+
+                fig_imp = px.bar(
+                    imp_df, x='Weight (%)', y='Feature', orientation='h',
+                    template="plotly_dark", height=300,
+                    color='Weight (%)', color_continuous_scale="Viridis"
+                )
+                fig_imp.update_layout(xaxis_title="Influence (%)", showlegend=False, margin=dict(t=0, b=0, l=0, r=0))
+                st.plotly_chart(fig_imp, use_container_width=True)
+            else:
+                st.info("Insufficient data for SHAP analysis.")
+
 
 # ── FEATURE 5: News Sentiment Analysis ────────────────────────────────────────
     st.markdown("---")
