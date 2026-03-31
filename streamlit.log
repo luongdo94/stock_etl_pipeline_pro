@@ -1,0 +1,241 @@
+
+  You can now view your Streamlit app in your browser.
+
+  URL: http://localhost:8503
+
+  For better performance, install the Watchdog module:
+
+  $ xcode-select --install
+  $ pip install watchdog
+            
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:330: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  companies_full = pd.read_sql("SELECT * FROM marts.dim_companies", conn)
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:331: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  monthly_full = pd.read_sql("SELECT * FROM marts.agg_monthly_performance ORDER BY month, ticker", conn)
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:348: FutureWarning: DataFrameGroupBy.apply operated on the grouping columns. This behavior is deprecated, and in a future version of pandas the grouping columns will be excluded from the operation. Either pass `include_groups=False` to exclude the groupings or explicitly select the grouping columns after groupby to silence this warning.
+  prices_full['rsi'] = prices_full.groupby('ticker', group_keys=False).apply(lambda x: get_rsi_vectorized(x))
+2026-03-30 21:38:20.823 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-03-30 21:38:20.850 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-03-30 21:38:21.763 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:330: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  companies_full = pd.read_sql("SELECT * FROM marts.dim_companies", conn)
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:331: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  monthly_full = pd.read_sql("SELECT * FROM marts.agg_monthly_performance ORDER BY month, ticker", conn)
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:348: FutureWarning: DataFrameGroupBy.apply operated on the grouping columns. This behavior is deprecated, and in a future version of pandas the grouping columns will be excluded from the operation. Either pass `include_groups=False` to exclude the groupings or explicitly select the grouping columns after groupby to silence this warning.
+  prices_full['rsi'] = prices_full.groupby('ticker', group_keys=False).apply(lambda x: get_rsi_vectorized(x))
+2026-03-30 21:38:43.980 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-03-30 21:38:44.016 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-03-30 21:38:44.247 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:330: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  companies_full = pd.read_sql("SELECT * FROM marts.dim_companies", conn)
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:331: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  monthly_full = pd.read_sql("SELECT * FROM marts.agg_monthly_performance ORDER BY month, ticker", conn)
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:348: FutureWarning: DataFrameGroupBy.apply operated on the grouping columns. This behavior is deprecated, and in a future version of pandas the grouping columns will be excluded from the operation. Either pass `include_groups=False` to exclude the groupings or explicitly select the grouping columns after groupby to silence this warning.
+  prices_full['rsi'] = prices_full.groupby('ticker', group_keys=False).apply(lambda x: get_rsi_vectorized(x))
+2026-03-30 21:39:35.265 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-03-30 21:39:35.298 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-03-30 21:39:35.497 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:330: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  companies_full = pd.read_sql("SELECT * FROM marts.dim_companies", conn)
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:331: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  monthly_full = pd.read_sql("SELECT * FROM marts.agg_monthly_performance ORDER BY month, ticker", conn)
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:348: FutureWarning: DataFrameGroupBy.apply operated on the grouping columns. This behavior is deprecated, and in a future version of pandas the grouping columns will be excluded from the operation. Either pass `include_groups=False` to exclude the groupings or explicitly select the grouping columns after groupby to silence this warning.
+  prices_full['rsi'] = prices_full.groupby('ticker', group_keys=False).apply(lambda x: get_rsi_vectorized(x))
+2026-03-30 21:43:23.896 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-03-30 21:43:23.936 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-03-30 21:43:24.084 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:330: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  companies_full = pd.read_sql("SELECT * FROM marts.dim_companies", conn)
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:331: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  monthly_full = pd.read_sql("SELECT * FROM marts.agg_monthly_performance ORDER BY month, ticker", conn)
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:348: FutureWarning: DataFrameGroupBy.apply operated on the grouping columns. This behavior is deprecated, and in a future version of pandas the grouping columns will be excluded from the operation. Either pass `include_groups=False` to exclude the groupings or explicitly select the grouping columns after groupby to silence this warning.
+  prices_full['rsi'] = prices_full.groupby('ticker', group_keys=False).apply(lambda x: get_rsi_vectorized(x))
+2026-03-30 21:44:11.728 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-03-30 21:44:11.750 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-03-30 21:44:11.878 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:330: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  companies_full = pd.read_sql("SELECT * FROM marts.dim_companies", conn)
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:331: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  monthly_full = pd.read_sql("SELECT * FROM marts.agg_monthly_performance ORDER BY month, ticker", conn)
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:348: FutureWarning: DataFrameGroupBy.apply operated on the grouping columns. This behavior is deprecated, and in a future version of pandas the grouping columns will be excluded from the operation. Either pass `include_groups=False` to exclude the groupings or explicitly select the grouping columns after groupby to silence this warning.
+  prices_full['rsi'] = prices_full.groupby('ticker', group_keys=False).apply(lambda x: get_rsi_vectorized(x))
+2026-03-30 21:44:27.875 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-03-30 21:44:27.898 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-03-30 21:44:28.051 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:330: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  companies_full = pd.read_sql("SELECT * FROM marts.dim_companies", conn)
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:331: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  monthly_full = pd.read_sql("SELECT * FROM marts.agg_monthly_performance ORDER BY month, ticker", conn)
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:348: FutureWarning: DataFrameGroupBy.apply operated on the grouping columns. This behavior is deprecated, and in a future version of pandas the grouping columns will be excluded from the operation. Either pass `include_groups=False` to exclude the groupings or explicitly select the grouping columns after groupby to silence this warning.
+  prices_full['rsi'] = prices_full.groupby('ticker', group_keys=False).apply(lambda x: get_rsi_vectorized(x))
+2026-03-30 21:44:30.291 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-03-30 21:44:30.309 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-03-30 21:44:30.435 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:330: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  companies_full = pd.read_sql("SELECT * FROM marts.dim_companies", conn)
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:331: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  monthly_full = pd.read_sql("SELECT * FROM marts.agg_monthly_performance ORDER BY month, ticker", conn)
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:348: FutureWarning: DataFrameGroupBy.apply operated on the grouping columns. This behavior is deprecated, and in a future version of pandas the grouping columns will be excluded from the operation. Either pass `include_groups=False` to exclude the groupings or explicitly select the grouping columns after groupby to silence this warning.
+  prices_full['rsi'] = prices_full.groupby('ticker', group_keys=False).apply(lambda x: get_rsi_vectorized(x))
+2026-03-30 21:52:25.279 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-03-30 21:52:25.316 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-03-30 21:52:25.484 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:330: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  companies_full = pd.read_sql("SELECT * FROM marts.dim_companies", conn)
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:331: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  monthly_full = pd.read_sql("SELECT * FROM marts.agg_monthly_performance ORDER BY month, ticker", conn)
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:348: FutureWarning: DataFrameGroupBy.apply operated on the grouping columns. This behavior is deprecated, and in a future version of pandas the grouping columns will be excluded from the operation. Either pass `include_groups=False` to exclude the groupings or explicitly select the grouping columns after groupby to silence this warning.
+  prices_full['rsi'] = prices_full.groupby('ticker', group_keys=False).apply(lambda x: get_rsi_vectorized(x))
+2026-03-30 21:56:17.462 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-03-30 21:56:17.495 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-03-30 21:56:17.627 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:330: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  companies_full = pd.read_sql("SELECT * FROM marts.dim_companies", conn)
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:331: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  monthly_full = pd.read_sql("SELECT * FROM marts.agg_monthly_performance ORDER BY month, ticker", conn)
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:348: FutureWarning: DataFrameGroupBy.apply operated on the grouping columns. This behavior is deprecated, and in a future version of pandas the grouping columns will be excluded from the operation. Either pass `include_groups=False` to exclude the groupings or explicitly select the grouping columns after groupby to silence this warning.
+  prices_full['rsi'] = prices_full.groupby('ticker', group_keys=False).apply(lambda x: get_rsi_vectorized(x))
+2026-03-30 22:28:03.448 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-03-30 22:28:03.485 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-03-30 22:28:03.643 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:330: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  companies_full = pd.read_sql("SELECT * FROM marts.dim_companies", conn)
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:331: UserWarning: pandas only supports SQLAlchemy connectable (engine/connection) or database string URI or sqlite3 DBAPI2 connection. Other DBAPI2 objects are not tested. Please consider using SQLAlchemy.
+  monthly_full = pd.read_sql("SELECT * FROM marts.agg_monthly_performance ORDER BY month, ticker", conn)
+/Users/luongdo/.gemini/antigravity/scratch/stock_etl_pipeline/app.py:348: FutureWarning: DataFrameGroupBy.apply operated on the grouping columns. This behavior is deprecated, and in a future version of pandas the grouping columns will be excluded from the operation. Either pass `include_groups=False` to exclude the groupings or explicitly select the grouping columns after groupby to silence this warning.
+  prices_full['rsi'] = prices_full.groupby('ticker', group_keys=False).apply(lambda x: get_rsi_vectorized(x))
+2026-03-30 22:28:14.112 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-03-30 22:28:14.131 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.
+2026-03-30 22:28:14.261 Please replace `use_container_width` with `width`.
+
+`use_container_width` will be removed after 2025-12-31.
+
+For `use_container_width=True`, use `width='stretch'`. For `use_container_width=False`, use `width='content'`.

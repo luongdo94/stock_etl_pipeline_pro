@@ -312,6 +312,13 @@ DB_PATH = os.path.join(ROOT, "warehouse", "stock_dw.duckdb")
 @contextlib.contextmanager
 def get_db_connection(read_only=False):
     """Database connection context manager."""
+    # Diagnostic: Print path and check existence
+    if not os.path.exists(DB_PATH):
+        st.error(f"FATAL: Database file not found at {DB_PATH}")
+        st.info(f"Existing files in {os.path.dirname(DB_PATH)}: {os.listdir(os.path.dirname(DB_PATH)) if os.path.exists(os.path.dirname(DB_PATH)) else 'Dir missing'}")
+        raise FileNotFoundError(f"Database missing at {DB_PATH}")
+        
+    st.sidebar.info(f"DuckDB Ver on Cloud: {duckdb.__version__}")
     conn = duckdb.connect(DB_PATH, read_only=read_only)
     try:
         yield conn
@@ -899,7 +906,7 @@ with tab_overview:
         margin=dict(t=30, l=10, r=10, b=10),
         coloraxis_colorbar=dict(title="Period Return (%)")
     )
-    st.plotly_chart(fig_tree, width="stretch")
+    st.plotly_chart(fig_tree, use_container_width=True)
 
     st.markdown("---")
 
@@ -926,7 +933,7 @@ with tab_overview:
         yaxis_title=""
     )
     fig_sector.update_traces(textposition='outside')
-    st.plotly_chart(fig_sector, width="stretch")
+    st.plotly_chart(fig_sector, use_container_width=True)
 
     st.markdown("---")
 
@@ -982,7 +989,7 @@ with tab_overview:
     )
     fig4_opt.add_vline(x=median_vol, line_dash="dash", line_color="rgba(255,255,255,0.3)", annotation_text="Median Risk")
     fig4_opt.add_hline(y=median_ret, line_dash="dash", line_color="rgba(255,255,255,0.3)", annotation_text="Median Return")
-    st.plotly_chart(fig4_opt, width="stretch")
+    st.plotly_chart(fig4_opt, use_container_width=True)
 
     st.markdown("---")
 
@@ -1028,7 +1035,7 @@ with tab_overview:
         )
         fig10_opt.add_vline(x=median_val, line_dash="dash", line_color="rgba(255,255,255,0.3)", annotation_text="Median Valuation")
         fig10_opt.add_hline(y=median_score, line_dash="dash", line_color="rgba(255,255,255,0.3)", annotation_text="Median Quality")
-        st.plotly_chart(fig10_opt, width="stretch")
+        st.plotly_chart(fig10_opt, use_container_width=True)
     else:
         st.info("Not enough fundamental data to compute Quality vs Valuation chart.")
 
@@ -1057,7 +1064,7 @@ with tab_overview:
             textfont=dict(size=10)
         ))
         fig2_top.update_layout(template="plotly_dark", height=400, margin=dict(l=0, r=0, t=10, b=0))
-        st.plotly_chart(fig2_top, width="stretch")
+        st.plotly_chart(fig2_top, use_container_width=True)
     else:
         st.info("Select a wider date range to view the Historical Monthly Heatmap.")
 
@@ -1154,7 +1161,7 @@ with tab_deep_dive:
                     # --- AI PILLAR ANALYSIS POPOVER ---
                     full_score_data = compute_score_details(meta_enriched)
                     score_details = full_score_data["breakdown"]
-                    with st.popover("🔍 Analyze Pillars", width="stretch"):
+                    with st.popover("🔍 Analyze Pillars", use_container_width=True):
                         st.markdown(f"### Score Breakdown: {deep_ticker}")
                         
                         # Robust sector detection
@@ -1474,7 +1481,7 @@ with tab_deep_dive:
             )
             fig_tech.update_yaxes(title_text="Price (€)", row=1, col=1)
             fig_tech.update_yaxes(title_text="RSI", row=2, col=1, range=[0, 100])
-            st.plotly_chart(fig_tech, width="stretch")
+            st.plotly_chart(fig_tech, use_container_width=True)
 
             # --- HISTORICAL FUNDAMENTAL TRENDS (Dual Axis) ---
             st.markdown("---")
@@ -1539,7 +1546,7 @@ with tab_deep_dive:
                     fig_fin.update_yaxes(title_text=f"Revenue (€{unit})", secondary_y=False, range=[0, (df_fin_plot['revenue'].max()/scale)*1.2]) # give space for labels
                     fig_fin.update_yaxes(title_text="Earnings Per Share (€)", secondary_y=True)
                     
-                    st.plotly_chart(fig_fin, width="stretch")
+                    st.plotly_chart(fig_fin, use_container_width=True)
                 else:
                     st.info("No historical financial data available for this ticker.")
             
@@ -1601,7 +1608,7 @@ with tab_deep_dive:
                         fig_fin_q.update_yaxes(title_text=f"Revenue (€{unit_q})", secondary_y=False, range=y_range_q)
                         fig_fin_q.update_yaxes(title_text="Earnings Per Share (€)", secondary_y=True)
                         
-                        st.plotly_chart(fig_fin_q, width="stretch")
+                        st.plotly_chart(fig_fin_q, use_container_width=True)
                     else:
                         st.info("No historical quarterly financial data available for this ticker.")
                 else:
@@ -1707,7 +1714,7 @@ with tab_deep_dive:
                 )
                 
                 fig_own.add_annotation(text=f"{(inst_own+insider_own)*100:.1f}%<br><b>Locked</b>", x=0.5, y=0.5, font_size=20, showarrow=False)
-                st.plotly_chart(fig_own, width="stretch")
+                st.plotly_chart(fig_own, use_container_width=True)
                 
             with col_own2:
                 squeeze_color = "#e74c3c" if short_pct > 0.15 else "#f39c12" if short_pct > 0.05 else "#2ecc71"
@@ -1729,7 +1736,7 @@ with tab_deep_dive:
                     }
                 ))
                 fig_short.update_layout(template="plotly_dark", height=300, margin=dict(l=20, r=20, t=50, b=20))
-                st.plotly_chart(fig_short, width="stretch")
+                st.plotly_chart(fig_short, use_container_width=True)
                 
                 st.markdown(f"<p style='text-align:center; color:#bbb; font-size:1rem;'>Short Ratio (Days to Cover): <b>{short_ratio:.1f} days</b></p>", unsafe_allow_html=True)
 
@@ -1814,7 +1821,7 @@ with tab_deep_dive:
                 peer_table['Upside %'] = peer_table['Upside %'].apply(lambda x: f"{x:+.1f}%")
 
 
-                st.dataframe(peer_table, width="stretch",
+                st.dataframe(peer_table, use_container_width=True,
                              column_config={"Quality": st.column_config.ProgressColumn("Quality", min_value=0, max_value=100, format="%d")})
             else:
                 st.info(f"No peers found in the **{meta['sector']}** sector to compare with.")
@@ -1836,7 +1843,7 @@ with tab_deep_dive:
             fig_rel.add_trace(go.Scatter(x=common_dates, y=ticker_cum, name=f"{deep_ticker} (%)", line=dict(color="#3498db", width=3)))
             fig_rel.add_trace(go.Scatter(x=common_dates, y=spy_cum, name="SPY (%)", line=dict(color="rgba(255,255,255,0.4)", width=2, dash="dot")))
             fig_rel.update_layout(template="plotly_dark", height=450, yaxis_title="Return (%)", hovermode="x unified", margin=dict(t=20, l=10, r=10, b=10))
-            st.plotly_chart(fig_rel, width="stretch")
+            st.plotly_chart(fig_rel, use_container_width=True)
 
 # ── FEATURE 1.5: Correlation Matrix ──────────────────────────────────────────
 
@@ -1886,7 +1893,7 @@ with tab_portfolio:
                 "Shares": st.column_config.NumberColumn("Shares owned", min_value=0.0, step=1.0)
             },
             hide_index=True,
-            width="stretch",
+            use_container_width=True,
             key="p_data_editor"
         )
         st.session_state.portfolio_df = edited_df
@@ -1972,7 +1979,7 @@ with tab_portfolio:
                     text=["CURRENT"], textposition="top center", name="Current Portfolio"
                 ))
                 fig_mpt.update_layout(template="plotly_dark", height=500, xaxis_title="Risk (Annual Vol)", yaxis_title="Annual Return")
-                st.plotly_chart(fig_mpt, width="stretch")
+                st.plotly_chart(fig_mpt, use_container_width=True)
                 
                 # Risk Decomposition
                 render_header("risk", "Global Risk Contribution", level="#####")
@@ -1985,7 +1992,7 @@ with tab_portfolio:
                     template="plotly_dark", color=risk_pct, color_continuous_scale="Reds"
                 )
                 fig_risk_b.update_layout(height=400)
-                st.plotly_chart(fig_risk_b, width="stretch")
+                st.plotly_chart(fig_risk_b, use_container_width=True)
                 
                 # Correlation Heatmap
                 render_header("globe", "Asset Correlation Heatmap", level="#####")
@@ -1999,7 +2006,7 @@ with tab_portfolio:
                     aspect="auto"
                 )
                 fig_corr.update_layout(height=400)
-                st.plotly_chart(fig_corr, width="stretch")
+                st.plotly_chart(fig_corr, use_container_width=True)
                 
             # 6. ── PORTFOLIO BACKTESTER ──
             render_header("chart", "Portfolio Growth Simulation")
@@ -2016,7 +2023,7 @@ with tab_portfolio:
                 fig_bt.add_trace(go.Scatter(x=spy_bt["date"], y=spy_bt["spy_value"], name="S&P 500 (SPY)", line=dict(color="rgba(255,255,255,0.4)", width=2, dash="dot")))
             
             fig_bt.update_layout(template="plotly_dark", height=450, yaxis_title="Value (€)", margin=dict(t=20, l=10, r=10, b=10))
-            st.plotly_chart(fig_bt, width="stretch")
+            st.plotly_chart(fig_bt, use_container_width=True)
         else:
             st.warning("⚠️ Total portfolio value is 0. Please enter the number of shares owned to activate the analysis.")
     else:
@@ -2164,17 +2171,17 @@ with tab_scanner:
         st.session_state.scan_mode = "All Stocks"
 
     with scan_col1:
-        if st.button("Value Hunter", width="stretch"): st.session_state.scan_mode = "Value"
+        if st.button("Value Hunter", use_container_width=True): st.session_state.scan_mode = "Value"
     with scan_col2:
-        if st.button("Momentum", width="stretch"): st.session_state.scan_mode = "Momentum"
+        if st.button("Momentum", use_container_width=True): st.session_state.scan_mode = "Momentum"
     with scan_col3:
-        if st.button("Expert Value", width="stretch"): st.session_state.scan_mode = "Expert"
+        if st.button("Expert Value", use_container_width=True): st.session_state.scan_mode = "Expert"
     with scan_col4:
-        if st.button("Top Picks", width="stretch"): st.session_state.scan_mode = "AI"
+        if st.button("Top Picks", use_container_width=True): st.session_state.scan_mode = "AI"
     with scan_col5:
-        if st.button("Safety & Yield", width="stretch"): st.session_state.scan_mode = "Yield"
+        if st.button("Safety & Yield", use_container_width=True): st.session_state.scan_mode = "Yield"
     with scan_reset:
-        if st.button("🔄 Reset", width="stretch"): st.session_state.scan_mode = "All Stocks"
+        if st.button("🔄 Reset", use_container_width=True): st.session_state.scan_mode = "All Stocks"
 
     scan_mode = st.session_state.scan_mode
 
@@ -2225,7 +2232,7 @@ with tab_scanner:
     
     st.dataframe(
         display_df,
-        width="stretch", 
+        use_container_width=True, 
         height=520,
         column_config={
             "Quality":         st.column_config.ProgressColumn("Quality Score", min_value=0, max_value=100, format="%d"),
@@ -2611,7 +2618,7 @@ with tab_ai:
                 template="plotly_dark", height=300
             )
             fig_breakdown.update_layout(margin=dict(l=0, r=0, t=20, b=0), coloraxis_showscale=False)
-            st.plotly_chart(fig_breakdown, width="stretch")
+            st.plotly_chart(fig_breakdown, use_container_width=True)
             
         with dcol2:
             st.write("**Model Philosophy:**")
@@ -2669,7 +2676,7 @@ with tab_ai:
         fig_fc.add_trace(go.Scatter(x=future_dates, y=p90, name="Upper Reward Bound (90%)", line=dict(color="rgba(0,255,0,0.5)", width=2, dash="dot")))
  
         fig_fc.update_layout(template="plotly_dark", height=600, yaxis_title="Price (€)", margin=dict(t=20, l=10, r=10, b=10))
-        st.plotly_chart(fig_fc, width="stretch")
+        st.plotly_chart(fig_fc, use_container_width=True)
         
         # ── ROW 4: Analysis & Feature Importance ─────────────────────────────
         render_header("activity", "AI Synergy & Reasoning Logic")
