@@ -11,6 +11,31 @@ import numpy as np
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+import time
+from functools import wraps
+
+def retry_with_backoff(retries=3, backoff_in_seconds=2):
+    def decorator(f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            x = 0
+            while True:
+                try:
+                    return f(*args, **kwargs)
+                except Exception as e:
+                    if x == retries:
+                        raise e
+                    sleep = (backoff_in_seconds * (2 ** x))
+                    logger.warning(f"⚠️ Yahoo Finance Error: {e}. Retrying in {sleep}s...")
+                    time.sleep(sleep)
+                    x += 1
+        return wrapper
+    return decorator
+
+@retry_with_backoff(retries=3)
+def safe_yf_download(*args, **kwargs):
+    return yf.download(*args, **kwargs)
+
 def load_tickers_config():
     """Load tickers from config file."""
     config_path = Path(__file__).parent.parent / "config" / "tickers.yaml"
@@ -73,7 +98,7 @@ def extract_stock_prices(
     # ── BATCH DOWNLOAD: Incremental (or Full if no watermarks) ───────────────
     existing_tickers = [t for t in all_ticker_list if t not in new_tickers]
     if existing_tickers:
-        raw_prices = yf.download(
+        raw_prices = safe_yf_download(
             existing_tickers,
             start=start_date,
             end=end_date,
@@ -89,7 +114,7 @@ def extract_stock_prices(
 
     # ── BATCH DOWNLOAD: Full history for brand-new tickers ───────────────────
     if new_tickers and full_start:
-        raw_new = yf.download(
+        raw_new = safe_yf_download(
             new_tickers,
             start=full_start,
             end=end_date,
@@ -113,7 +138,7 @@ def extract_stock_prices(
             logger.warning(f"⚠️ Failed to fetch currency for {t}: {e}")
             return t, "USD"
 
-    with ThreadPoolExecutor(max_workers=20) as executor:
+    with ThreadPoolExecutor(max_workers=5) as executor:
         future_to_tick = {executor.submit(fetch_currency, t): t for t in all_ticker_list}
         for future in as_completed(future_to_tick):
             t, cur = future.result()
