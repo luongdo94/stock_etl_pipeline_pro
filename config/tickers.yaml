@@ -1,35 +1,35 @@
 tickers:
   # US Tech Giants
   NVDA:
-    name: "NVIDIA"
+    name: "NVIDIA Corporation"
     sector: "Semiconductors"
     region: "US"
   MSFT:
-    name: "Microsoft"
+    name: "Microsoft Corporation"
     sector: "Cloud/Software"
     region: "US"
   AAPL:
-    name: "Apple"
+    name: "Apple Inc."
     sector: "Consumer Tech"
     region: "US"
   GOOGL:
-    name: "Alphabet"
+    name: "Alphabet Inc."
     sector: "Cloud/Software"
     region: "US"
   AMZN:
-    name: "Amazon"
+    name: "Amazon.com, Inc."
     sector: "Cloud/Ecommerce"
     region: "US"
   META:
-    name: "Meta"
+    name: "Meta Platforms, Inc."
     sector: "Technology"
     region: "US"
   TSLA:
-    name: "Tesla"
+    name: "Tesla, Inc."
     sector: "Consumer Tech"
     region: "US"
   ADBE:
-    name: "Adobe"
+    name: "Adobe Inc."
     sector: "Cloud/Software"
     region: "US"
   CRM:
@@ -41,23 +41,23 @@ tickers:
     sector: "Cloud/Software"
     region: "US"
   IBM:
-    name: "IBM"
+    name: "International Business Machines Corporation"
     sector: "Technology"
     region: "US"
   NFLX:
-    name: "Netflix"
+    name: "Netflix, Inc."
     sector: "Comm Services"
     region: "US"
   PYPL:
-    name: "PayPal"
+    name: "PayPal Holdings, Inc."
     sector: "Fintech"
     region: "US"
   SHOP:
-    name: "Shopify"
+    name: "Shopify Inc."
     sector: "Ecommerce"
     region: "US"
   SNPS:
-    name: "Synopsys"
+    name: "Synopsys, Inc."
     sector: "Software/Design"
     region: "US"
   FIG:
@@ -65,19 +65,19 @@ tickers:
     sector: "Software/Design"
     region: "US"
   DDOG:
-    name: "Datadog"
+    name: "Datadog, Inc."
     sector: "Cloud/Software"
     region: "US"
   TEAM:
-    name: "Atlassian"
+    name: "Atlassian Corporation plc"
     sector: "Cloud/Software"
     region: "US"
   SNOW:
-    name: "Snowflake"
+    name: "Snowflake Inc."
     sector: "Cloud/Software"
     region: "US"
   NOW:
-    name: "ServiceNow"
+    name: "ServiceNow, Inc."
     sector: "Cloud/Software"
     region: "US"
   NBIS:
@@ -85,115 +85,119 @@ tickers:
     sector: "Cloud/AI"
     region: "US"
   GRAB:
-    name: "Grab"
+    name: "Grab Holdings Limited"
     sector: "Technology"
     region: "US"
   SPOT:
-    name: "Spotify"
+    name: "Spotify Technology S.A."
     sector: "Technology"
     region: "US"
   APP:
-    name: "AppLovin"
+    name: "AppLovin Corporation"
     sector: "Software/AI"
     region: "US"
   TER:
-    name: "Teradyne"
+    name: "Teradyne, Inc."
     sector: "Semiconductors"
     region: "US"
   MDB:
-    name: "MongoDB"
+    name: "MongoDB, Inc."
     sector: "Cloud/Software"
     region: "US"
   APLD:
-    name: "Applied Digital"
+    name: "Applied Digital Corporation"
     sector: "Cloud/AI"
     region: "US"
   ASTS:
-    name: "AST SpaceMobile"
+    name: "AST SpaceMobile, Inc."
     sector: "Technology"
     region: "US"
   HPE:
-    name: "HPE"
+    name: "Hewlett Packard Enterprise Company"
     sector: "Technology"
     region: "US"
   TRIP:
-    name: "TripAdvisor"
+    name: "TripAdvisor, Inc."
     sector: "Technology"
     region: "US"
   NET:
-    name: "Cloudflare"
+    name: "Cloudflare, Inc."
     sector: "Cloud/Software"
     region: "US"
   U:
-    name: "Unity Software"
+    name: "Unity Software Inc."
     sector: "Software/AI"
     region: "US"
 
   # US Semiconductors
   QCOM:
-    name: "Qualcomm"
+    name: "QUALCOMM Incorporated"
     sector: "Semiconductors"
     region: "US"
   AMD:
-    name: "AMD"
+    name: "Advanced Micro Devices, Inc."
     sector: "Semiconductors"
     region: "US"
   INTC:
-    name: "Intel"
+    name: "Intel Corporation"
     sector: "Semiconductors"
     region: "US"
   ANET:
-    name: "Arista"
+    name: "Arista Networks, Inc."
     sector: "Networking"
     region: "US"
   NXPI:
-    name: "NXP Semi"
+    name: "NXP Semiconductors N.V."
     sector: "Semiconductors"
     region: "US"
   ZBRA:
-    name: "Zebra"
+    name: "Zebra Technologies Corporation"
     sector: "Technology"
     region: "US"
   AMAT:
-    name: "Applied Materials"
+    name: "Applied Materials, Inc."
     sector: "Semiconductors"
     region: "US"
   KLAC:
-    name: "KLA Corp"
+    name: "KLA Corporation"
     sector: "Semiconductors"
     region: "US"
   MRVL:
-    name: "Marvell Tech"
+    name: "Marvell Technology Group, Ltd."
     sector: "Semiconductors"
     region: "US"
   ARM:
-    name: "ARM Holdings"
+    name: "Arm Holdings plc"
     sector: "Semiconductors"
     region: "US"
   TXN:
-    name: "Texas Instruments"
+    name: "Texas Instruments Incorporated"
     sector: "Semiconductors"
     region: "US"
   LRCX:
-    name: "Lam Research"
+    name: "Lam Research Corporation"
     sector: "Semiconductors"
     region: "US"
   "ON":
-    name: "Onsemi"
+    name: "onsemi"
+    sector: "Semiconductors"
+    region: "US"
+  MPWR:
+    name: "Monolithic Power Systems, Inc."
     sector: "Semiconductors"
     region: "US"
 
   # US Healthcare & Biotech
   UNH:
-    name: "UnitedHealth"
+    name: "UnitedHealth Group Incorporated"
     sector: "Healthcare"
     region: "US"
   ELV:
-    name: "Elevance"
+    name: "Elevance Health, Inc."
     sector: "Healthcare"
     region: "US"
   HIMS:
-    name: "Hims & Hers"
+    name: "Hims & Hers Health, Inc."
     sector: "Healthcare"
     region: "US"
   JNJ:
@@ -201,7 +205,7 @@ tickers:
     sector: "Healthcare"
     region: "US"
   ABT:
-    name: "Abbott Labs"
+    name: "Abbott Laboratories"
     sector: "Healthcare"
     region: "US"
   PFE:
@@ -209,7 +213,7 @@ tickers:
     sector: "Healthcare"
     region: "US"
   REGN:
-    name: "Regeneron"
+    name: "Regeneron Pharmaceuticals"
     sector: "Healthcare"
     region: "US"
   DHR:
@@ -220,22 +224,34 @@ tickers:
     name: "Merck"
     sector: "Healthcare"
     region: "US"
+  CRSP:
+    name: "CRISPR Therapeutics"
+    sector: "Healthcare"
+    region: "US"
+  TMO:
+    name: "Thermo Fisher Scientific"
+    sector: "Healthcare"
+    region: "US"
+  MOH:
+    name: "Molina Healthcare"
+    sector: "Healthcare"
+    region: "US"
 
   # US Fintech & Crypto
   COIN:
-    name: "Coinbase"
+    name: "Coinbase Global, Inc."
     sector: "Fintech"
     region: "US"
   HOOD:
-    name: "Robinhood"
+    name: "Robinhood Markets, Inc."
     sector: "Fintech"
     region: "US"
   SOFI:
-    name: "SoFi"
+    name: "SoFi Technologies, Inc."
     sector: "Fintech"
     region: "US"
   KLAR:
-    name: "Klarna"
+    name: "Klarna Bank AB (publ)"
     sector: "Fintech"
     region: "US"
   BITF:
@@ -243,11 +259,11 @@ tickers:
     sector: "Crypto/Mining"
     region: "US"
   NU:
-    name: "Nu Holding"
+    name: "Nu Holdings Ltd."
     sector: "Fintech"
     region: "US"
   JPM:
-    name: "JP Morgan"
+    name: "JPMorgan Chase & Co."
     sector: "Financials"
     region: "US"
   BAC:
@@ -255,153 +271,169 @@ tickers:
     sector: "Financials"
     region: "US"
   V:
-    name: "Visa"
+    name: "Visa Inc."
     sector: "Fintech"
     region: "US"
   LMND:
-    name: "Lemonade"
+    name: "Lemonade, Inc."
     sector: "Fintech"
     region: "US"
   HG:
-    name: "Hamilton Ins"
+    name: "Hamilton Insurance Group, Ltd."
     sector: "Financials"
+    region: "US"
+  ADP:
+    name: "Automatic Data Processing, Inc."
+    sector: "Fintech"
     region: "US"
 
   # US Tech & Misc
+  BMNR:
+    name: "BitMine Immersion Technologies Inc."
+    sector: "Technology"
+    region: "US"
+  UPS:
+    name: "United Parcel Service, Inc."
+    sector: "Industrials"
+    region: "US"
   UBER:
-    name: "Uber"
+    name: "Uber Technologies, Inc."
     sector: "Technology"
     region: "US"
   DELL:
-    name: "Dell"
+    name: "Dell Technologies Inc."
+    sector: "Technology"
+    region: "US"
+  HPQ:
+    name: "HP Inc."
     sector: "Technology"
     region: "US"
   UPWK:
-    name: "Upwork"
+    name: "Upwork Inc."
     sector: "Comm Services"
     region: "US"
   LULU:
-    name: "Lululemon"
+    name: "Lululemon Athletica Inc."
     sector: "Consumer Retail"
     region: "US"
   MELI:
-    name: "MercadoLibre"
+    name: "MercadoLibre, Inc."
     sector: "Ecommerce"
     region: "US"
   EBAY:
-    name: "eBay"
+    name: "eBay Inc."
     sector: "Ecommerce"
     region: "US"
   EL:
-    name: "Estee Lauder"
+    name: "The Estée Lauder Companies Inc."
     sector: "Consumer Retail"
     region: "US"
   FISV:
-    name: "Fiserv"
+    name: "Fiserv, Inc."
     sector: "Fintech"
     region: "US"
   PANW:
-    name: "Palo Alto"
+    name: "Palo Alto Networks, Inc."
     sector: "Cybersecurity"
     region: "US"
   FTNT:
-    name: "Fortinet"
+    name: "Fortinet, Inc."
     sector: "Cybersecurity"
     region: "US"
   CRWV:
-    name: "CoreWeave"
+    name: "CoreWeave, Inc."
     sector: "Cloud/AI"
     region: "US"
   PATH:
-    name: "UiPath"
+    name: "UiPath, Inc."
     sector: "Software/AI"
     region: "US"
   TSM:
-    name: "TSMC"
+    name: "Taiwan Semiconductor Manufacturing Company Limited"
     sector: "Semiconductors"
     region: "US"
   T:
-    name: "AT&T"
+    name: "AT&T Inc."
     sector: "Comm Services"
     region: "US"
   VZ:
-    name: "Verizon"
+    name: "Verizon Communications Inc."
     sector: "Comm Services"
     region: "US"
   PG:
-    name: "Procter & Gamble"
+    name: "The Procter & Gamble Company"
     sector: "Consumer Retail"
     region: "US"
   NKE:
-    name: "Nike"
+    name: "Nike, Inc."
     sector: "Consumer Retail"
     region: "US"
   WMT:
-    name: "Walmart"
+    name: "Walmart Inc."
     sector: "Consumer Retail"
     region: "US"
   LOW:
-    name: "Lowe's"
+    name: "Lowe's Companies, Inc."
     sector: "Consumer Retail"
     region: "US"
   PEP:
-    name: "PepsiCo"
+    name: "PepsiCo, Inc."
     sector: "Consumer Retail"
     region: "US"
   HD:
-    name: "Home Depot"
+    name: "The Home Depot, Inc."
     sector: "Consumer Retail"
     region: "US"
   WDC:
-    name: "Western Digital"
+    name: "Western Digital Corporation"
     sector: "Technology"
     region: "US"
   CSCO:
-    name: "Cisco"
+    name: "Cisco Systems, Inc."
     sector: "Networking"
     region: "US"
   KO:
-    name: "Coca-Cola"
+    name: "The Coca-Cola Company"
     sector: "Consumer Retail"
     region: "US"
   TTD:
-    name: "The Trade Desk"
+    name: "The Trade Desk, Inc."
     sector: "Technology"
     region: "US"
   DUK:
-    name: "Duke Energy"
+    name: "Duke Energy Corporation"
     sector: "Utilities"
     region: "US"
   MP:
-    name: "MP Materials"
+    name: "MP Materials Corp."
     sector: "Industrials"
     region: "US"
   LIN:
-    name: "Linde"
+    name: "Linde plc"
     sector: "Industrials"
     region: "US"
   LEN:
-    name: "Lennar"
+    name: "Lennar Corporation"
     sector: "Industrials"
     region: "US"
   ROK:
-    name: "Rockwell"
+    name: "Rockwell Automation, Inc."
     sector: "Industrials"
     region: "US"
   LMT:
-    name: "Lockheed Martin"
+    name: "Lockheed Martin Corporation"
     sector: "Industrials"
     region: "US"
   NOC:
-    name: "Northrop Grumman"
+    name: "Northrop Grumman Corporation"
     sector: "Industrials"
     region: "US"
   PLUG:
-    name: "Plug Power"
+    name: "Plug Power Inc."
     sector: "Energy"
     region: "US"
   LEU:
-    name: "Centrus Energy"
+    name: "Centrus Energy Corp."
     sector: "Energy"
     region: "US"
 
@@ -410,24 +442,28 @@ tickers:
     name: "SAP SE"
     sector: "Enterprise SW"
     region: "EU"
+  "ANX.PA":
+    name: "Amundi Nasdaq 100"
+    sector: "Technology"
+    region: "EU"
   ASML:
-    name: "ASML"
+    name: "ASML Holding N.V."
     sector: "Semiconductors"
     region: "EU"
   ADYEN.AS:
-    name: "Adyen"
+    name: "Adyen N.V."
     sector: "Fintech"
     region: "EU"
   SIE.DE:
-    name: "Siemens"
+    name: "Siemens Aktiengesellschaft"
     sector: "Industrials"
     region: "EU"
   SMHN.DE:
-    name: "SUSS MicroTec"
+    name: "SUSS MicroTec SE"
     sector: "Technology"
     region: "EU"
   ALV.DE:
-    name: "Allianz"
+    name: "Allianz SE"
     sector: "Financials"
     region: "EU"
   RWE.DE:
@@ -435,39 +471,39 @@ tickers:
     sector: "Utilities"
     region: "EU"
   FNTN.DE:
-    name: "Freenet"
+    name: "freenet AG"
     sector: "Comm Services"
     region: "EU"
   JEN.DE:
-    name: "Jenoptik"
+    name: "Jenoptik AG"
     sector: "Technology"
     region: "EU"
   HAG.DE:
-    name: "Hensoldt"
+    name: "Hensoldt AG"
     sector: "Technology"
     region: "EU"
   ENR.DE:
-    name: "Siemens Energy"
+    name: "Siemens Energy AG"
     sector: "Energy"
     region: "EU"
   VWS.CO:
-    name: "Vestas Wind"
+    name: "Vestas Wind Systems A/S"
     sector: "Energy/Renewables"
     region: "EU"
   NDX1.DE:
-    name: "Nordex"
+    name: "Nordex SE"
     sector: "Energy/Renewables"
     region: "EU"
   ORSTED.CO:
-    name: "Ørsted"
+    name: "Ørsted A/S"
     sector: "Energy/Renewables"
     region: "EU"
   SU.PA:
-    name: "Schneider Electric"
+    name: "Schneider Electric SE"
     sector: "Industrials"
     region: "EU"
   MC.PA:
-    name: "LVMH"
+    name: "LVMH Moët Hennessy Louis Vuitton SE"
     sector: "Consumer Luxury"
     region: "EU"
   KER.PA:
@@ -487,15 +523,15 @@ tickers:
     sector: "Ecommerce"
     region: "EU"
   DSY.PA:
-    name: "Dassault Syst"
+    name: "Dassault Systèmes SE"
     sector: "Technology"
     region: "EU"
   IFX.DE:
-    name: "Infineon"
+    name: "Infineon Technologies AG"
     sector: "Semiconductors"
     region: "EU"
   STMPA.PA:
-    name: "STMicro"
+    name: "STMicroelectronics N.V."
     sector: "Semiconductors"
     region: "EU"
   AIXA.DE:
@@ -503,39 +539,39 @@ tickers:
     sector: "Semiconductors"
     region: "EU"
   NOA3.DE:
-    name: "Nokia"
+    name: "Nokia Corporation"
     sector: "Technology"
     region: "EU"
   AIR.PA:
-    name: "Airbus"
+    name: "Airbus SE"
     sector: "Industrials"
     region: "EU"
   BMW.DE:
-    name: "BMW"
+    name: "Bayerische Motoren Werke Aktiengesellschaft"
     sector: "Industrials"
     region: "EU"
   MBG.DE:
-    name: "Mercedes-Benz"
+    name: "Mercedes-Benz Group AG"
     sector: "Industrials"
     region: "EU"
   RHM.DE:
-    name: "Rheinmetall"
+    name: "Rheinmetall AG"
     sector: "Industrials"
     region: "EU"
   R3NK.DE:
-    name: "Renk Group"
+    name: "Renk Group AG"
     sector: "Industrials"
     region: "EU"
   MTX.DE:
-    name: "MTU Engines"
+    name: "MTU Aero Engines AG"
     sector: "Industrials"
     region: "EU"
   LHA.DE:
-    name: "Lufthansa"
+    name: "Deutsche Lufthansa AG"
     sector: "Industrials"
     region: "EU"
   RR.L:
-    name: "Rolls-Royce"
+    name: "Rolls-Royce Holdings plc"
     sector: "Industrials"
     region: "EU"
   BAS.DE:
@@ -543,114 +579,120 @@ tickers:
     sector: "Industrials"
     region: "EU"
   TKA.DE:
-    name: "ThyssenKrupp"
+    name: "thyssenkrupp AG"
     sector: "Industrials"
     region: "EU"
   HLAG.DE:
-    name: "Hapag-Lloyd"
+    name: "Hapag-Lloyd AG"
     sector: "Industrials"
     region: "EU"
 
   # EU Healthcare & Finance
   NVO:
-    name: "Novo Nordisk"
+    name: "Novo Nordisk A/S"
     sector: "Healthcare"
     region: "EU"
   SAN.PA:
-    name: "Sanofi"
+    name: "Sanofi S.A."
     sector: "Healthcare"
     region: "EU"
-  ROG.SW:
-    name: "Roche"
+  RHHVF:
+    name: "Roche Holding AG"
     sector: "Healthcare"
     region: "EU"
   INGA.AS:
-    name: "ING Group"
+    name: "ING Groep N.V."
     sector: "Financials"
     region: "EU"
   DTE.DE:
-    name: "Deutsche Telekom"
+    name: "Deutsche Telekom AG"
     sector: "Comm Services"
     region: "EU"
   DBK.DE:
-    name: "Deutsche Bank"
+    name: "Deutsche Bank AG"
     sector: "Financials"
     region: "EU"
 
   # China
   BABA:
-    name: "Alibaba"
+    name: "Alibaba Group Holding Limited"
     sector: "Ecommerce"
     region: "CN"
   BIDU:
-    name: "Baidu"
+    name: "Baidu, Inc."
     sector: "Cloud/AI"
     region: "CN"
   JD:
-    name: "JD.com"
+    name: "JD.com, Inc."
     sector: "Ecommerce"
     region: "CN"
   PDD:
-    name: "PDD Holdings"
+    name: "PDD Holdings Inc."
     sector: "Ecommerce"
     region: "CN"
   "1211.HK":
-    name: "BYD"
+    name: "BYD Company Limited"
     sector: "Consumer Tech"
     region: "CN"
   "0285.HK":
-    name: "BYD Electronic"
+    name: "BYD Electronic (International) Co., Ltd."
     sector: "Consumer Tech"
     region: "CN"
   "1810.HK":
-    name: "Xiaomi"
+    name: "Xiaomi Corporation"
     sector: "Consumer Tech"
     region: "CN"
 
   # Japan
   "8035.T":
-    name: "Tokyo Electron"
+    name: "Tokyo Electron Limited"
     sector: "Semiconductors"
     region: "JP"
   "6857.T":
-    name: "Advantest"
+    name: "Advantest Corporation"
     sector: "Semiconductors"
     region: "JP"
   "6758.T":
-    name: "Sony"
+    name: "Sony Group Corporation"
     sector: "Consumer Tech"
     region: "JP"
   "7012.T":
-    name: "Kawasaki Heavy"
+    name: "Kawasaki Heavy Industries, Ltd."
     sector: "Industrials"
     region: "JP"
   "6367.T":
-    name: "Daikin Ind"
+    name: "Daikin Industries, Ltd."
     sector: "Industrials"
     region: "JP"
   "6861.T":
-    name: "Keyence"
+    name: "Keyence Corporation"
     sector: "Technology"
     region: "JP"
   "6752.T":
-    name: "Panasonic"
+    name: "Panasonic Holdings Corporation"
     sector: "Consumer Tech"
     region: "JP"
   "7011.T":
-    name: "Mitsubishi Heavy"
+    name: "Mitsubishi Heavy Industries, Ltd."
     sector: "Industrials"
     region: "JP"
   "9984.T":
-    name: "SoftBank Group"
+    name: "SoftBank Group Corp."
     sector: "Technology"
     region: "JP"
 
+  # Commodities
+  "SSLN.MI":
+    name: "iShares Physical Silver"
+    sector: "Commodities"
+    region: "EU"
+
   # Benchmarks
   SPY:
-    name: "S&P 500 ETF"
+    name: "SPDR S&P 500 ETF Trust"
     sector: "Benchmark"
     region: "US"
   "^VIX":
-    name: "VIX Index"
+    name: "CBOE Volatility Index"
     sector: "Volatility"
     region: "US"

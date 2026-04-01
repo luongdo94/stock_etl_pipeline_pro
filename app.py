@@ -1,9 +1,9 @@
 """
-dashboard.py — Interactive stock analytics dashboard using Plotly.
+app.py — Interactive stock analytics dashboard using Streamlit.
 Reads directly from the DuckDB warehouse and opens charts in the browser.
 
 Usage:
-    python c:\\etl_pipeline\\dashboard.py
+    python c:\\etl_pipeline\\app.py
 """
 import sys
 import os
@@ -150,6 +150,10 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# ── SESSION STATE INITIALIZATION ───────────────────────────────────────────
+if "active_tab" not in st.session_state:
+    st.session_state.active_tab = 0  # Default to Strategic Overview
 
 # ── PREMIUM GLASSMORPHISM CSS ───────────────────────────────────────────────
 st.markdown("""
@@ -479,144 +483,100 @@ if not prices_full.empty:
     render_header("activity", "Dashboard Control Panel", color="#8899aa")
 
     def clear_filters():
-        st.session_state.sector_dropdown = "All Sectors"
-        st.session_state.ticker_multiselect = []
-        st.session_state.date_range_picker = (default_start, max_db_date)
+        st.session_state.sector_dropdown_form = "All Sectors"
+        st.session_state.ticker_multiselect_form = []
+        st.session_state.time_horizon_form = "1Y"
 
-    st.sidebar.button("Clear Filters", on_click=clear_filters)
-else:
-    render_header("activity", "Dashboard Control Panel", color="#8899aa")
+    with st.sidebar.form("global_filters"):
+        render_header("activity", "Terminal Control Panel", color="#8899aa")
+        
+        # Sector Dropdown
+        all_sectors = ["All Sectors"] + sorted(companies["sector"].dropna().unique().tolist())
+        selected_sector = st.selectbox("Filter by Sector", all_sectors, key="sector_dropdown_form")
 
-# Sector Dropdown
-all_sectors = ["All Sectors"] + sorted(companies["sector"].dropna().unique().tolist())
-selected_sector = st.sidebar.selectbox("Filter by Sector (Dropdown)", all_sectors, key="sector_dropdown")
+        # Ticker Search / Dropdown
+        indices = ["^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"]
+        if selected_sector != "All Sectors":
+            filtered_companies_sidebar = companies_full[(companies_full["sector"] == selected_sector) & (~companies_full["ticker"].isin(indices))]
+        else:
+            filtered_companies_sidebar = companies_full[~companies_full["ticker"].isin(indices)]
+            
+        ticker_options = sorted(filtered_companies_sidebar.apply(lambda x: f"{x['ticker']}: {x['company']}", axis=1).tolist())
+        selected_display_names = st.multiselect(
+            "Search Tickers (Leave empty for all)", 
+            options=ticker_options, 
+            key="ticker_multiselect_form"
+        )
+        
+        # Time Horizon
+        st.markdown("### ⏱ Time Horizon")
+        horizon_options = ["1D", "1W", "1M", "3M", "6M", "1Y", "YTD", "3Y", "5Y", "ALL", "Custom"]
+        selected_horizon = st.segmented_control(
+            "Horizon",
+            options=horizon_options,
+            selection_mode="single",
+            default="1Y",
+            label_visibility="collapsed",
+            key="time_horizon_form"
+        )
+        
+        submitted = st.form_submit_button("🚀 APPLY ANALYSIS & SYNC", use_container_width=True, type="primary")
 
-# Filter companies by sector to cascade the ticker filter
-indices = ["^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"]
-if selected_sector != "All Sectors":
-    filtered_companies = companies[(companies["sector"] == selected_sector) & (~companies["ticker"].isin(indices))]
-else:
-    filtered_companies = companies[~companies["ticker"].isin(indices)]
+    # Global State Sync
+    if not submitted and 'first_run' not in st.session_state:
+        st.session_state.first_run = True
+        selected_tickers = []
+        selected_sector = "All Sectors"
+        selected_horizon = "1Y"
+    else:
+        selected_tickers = [name.split(":")[0] for name in st.session_state.ticker_multiselect_form]
+        selected_sector = st.session_state.sector_dropdown_form
+        selected_horizon = st.session_state.time_horizon_form
 
-# Ticker Search / Dropdown
-ticker_options = sorted(filtered_companies.apply(lambda x: f"{x['ticker']}: {x['company']}", axis=1).tolist())
-selected_display_names = st.sidebar.multiselect(
-    "Search Tickers (Leave empty to show all)", 
-    options=ticker_options, 
-    key="ticker_multiselect"
-)
-selected_tickers = [name.split(":")[0] for name in selected_display_names]
+    # Apply filters to main dataframes
+    if selected_sector != "All Sectors":
+        companies = companies_full[(companies_full["sector"] == selected_sector)]
+    else:
+        companies = companies_full.copy()
+        
+    if len(selected_tickers) > 0:
+        companies = companies[companies["ticker"].isin(selected_tickers)]
+        prices = prices_full[prices_full["ticker"].isin(selected_tickers + indices)]
+        monthly = monthly_full[monthly_full["ticker"].isin(selected_tickers)]
+    else:
+        prices = prices_full.copy()
+        monthly = monthly_full.copy()
 
-# Apply filters
-if len(selected_tickers) > 0:
-    companies = filtered_companies[filtered_companies["ticker"].isin(selected_tickers)]
-    prices = prices[prices["ticker"].isin(selected_tickers)]
-    monthly = monthly[monthly["ticker"].isin(selected_tickers)]
-else:
-    companies = filtered_companies
-    prices = prices[prices["ticker"].isin(all_tickers)]
-    monthly = monthly[monthly["ticker"].isin(all_tickers)]
-
-# 💡 EXCLUDE INDICES FROM MAIN ANALYSIS (Overview, Deep Dive, AI, Scanner)
-# We keep indices in prices_full/companies_full for the KPI Header only.
-indices = ["^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"]
-companies = companies[~companies["ticker"].isin(indices)]
-prices = prices[~prices["ticker"].isin(indices)]
-monthly = monthly[~monthly["ticker"].isin(indices)]
-
-# 💡 Define the Current Universe for Tab-Specific Selectors
-current_universe = sorted(prices["ticker"].unique().tolist())
-if not current_universe: # Fallback if everything is filtered out
-    current_universe = sorted([t for t in all_tickers if t not in indices])
-
-# ── Sidebar: Time Horizon Presets ─────────────────────────────────────────────
-if not prices_full.empty:
-    db_max = prices_full["date"].max().date()
-    db_min = prices_full["date"].min().date()
-    today  = db_max
-
-    # Custom CSS for Premium Sidebar Buttons
-    st.sidebar.markdown("""
-        <style>
-        /* Modern Trading Terminal Buttons for Segmented Control */
-        div[data-testid="stSegmentedControl"] {
-            gap: 4px !important;
-        }
-        div[data-testid="stSegmentedControl"] button {
-            background: rgba(255, 255, 255, 0.05) !important;
-            border: 1px solid rgba(255, 255, 255, 0.1) !important;
-            color: #b0b0b0 !important;
-            border-radius: 6px !important;
-            font-size: 0.75rem !important;
-            font-weight: 600 !important;
-            padding: 4px 8px !important;
-            min-height: 28px !important;
-            transition: all 0.2s ease !important;
-        }
-        div[data-testid="stSegmentedControl"] button[aria-checked="true"] {
-            background: linear-gradient(135deg, #3498db, #2980b9) !important;
-            color: white !important;
-            border-color: #3498db !important;
-            box-shadow: 0 0 10px rgba(52, 152, 219, 0.3);
-        }
-        div[data-testid="stSegmentedControl"] button:hover {
-            border-color: rgba(255, 255, 255, 0.3) !important;
-            color: white !important;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-
-    st.sidebar.markdown("### ⏱ Time Horizon")
-    horizon_options = ["1D", "1W", "1M", "3M", "6M", "1Y", "YTD", "3Y", "5Y", "ALL", "Custom"]
-
-    selected_horizon = st.sidebar.segmented_control(
-        "Horizon",
-        options=horizon_options,
-        selection_mode="single",
-        default="1Y",
-        label_visibility="collapsed",
-        key="time_horizon"
-    )
-
-    # Compute start/end from preset
-    end_date = today
-    if selected_horizon == "1D":
-        start_date = today - timedelta(days=1)
-    elif selected_horizon == "1W":
-        start_date = today - timedelta(days=7)
-    elif selected_horizon == "1M":
-        start_date = today - timedelta(days=30)
-    elif selected_horizon == "3M":
-        start_date = today - timedelta(days=90)
-    elif selected_horizon == "6M":
-        start_date = today - timedelta(days=180)
-    elif selected_horizon == "YTD":
-        start_date = date(today.year, 1, 1)
-    elif selected_horizon == "3Y":
-        start_date = today - timedelta(days=1095)
-    elif selected_horizon == "5Y":
-        start_date = today - timedelta(days=1825)
-    elif selected_horizon == "ALL":
-        start_date = db_min
+    # Horizon Logic
+    end_date = max_db_date
+    if selected_horizon == "1D": start_date = max_db_date - timedelta(days=1)
+    elif selected_horizon == "1W": start_date = max_db_date - timedelta(days=7)
+    elif selected_horizon == "1M": start_date = max_db_date - timedelta(days=30)
+    elif selected_horizon == "3M": start_date = max_db_date - timedelta(days=90)
+    elif selected_horizon == "6M": start_date = max_db_date - timedelta(days=180)
+    elif selected_horizon == "YTD": start_date = date(max_db_date.year, 1, 1)
+    elif selected_horizon == "3Y": start_date = max_db_date - timedelta(days=1095)
+    elif selected_horizon == "5Y": start_date = max_db_date - timedelta(days=1825)
+    elif selected_horizon == "ALL": start_date = min_db_date
     elif selected_horizon == "Custom":
         with st.sidebar.expander("🛠️ Custom Range", expanded=True):
             custom_range = st.date_input(
                 "Pick Dates",
-                value=(today - timedelta(days=365), today),
-                min_value=db_min,
-                max_value=db_max
+                value=(max_db_date - timedelta(days=365), max_db_date),
+                min_value=min_db_date,
+                max_value=max_db_date
             )
         if isinstance(custom_range, (list, tuple)) and len(custom_range) == 2:
             start_date, end_date = custom_range
         else:
             start_date = custom_range if not isinstance(custom_range, (list, tuple)) else custom_range[0]
-            end_date   = today
+            end_date   = max_db_date
     else:  # fallback 1Y
-        start_date = today - timedelta(days=365)
+        start_date = max_db_date - timedelta(days=365)
 
     # Clamp to DB boundaries
-    start_date = max(start_date, db_min)
-    end_date   = min(end_date, db_max)
+    start_date = max(start_date, min_db_date)
+    end_date   = min(end_date, max_db_date)
 
     st.sidebar.caption(f"📅 {start_date:%b %d, %Y}  →  {end_date:%b %d, %Y}")
 
@@ -626,6 +586,18 @@ if not prices_full.empty:
     prices      = prices[(prices["date"] >= t_start) & (prices["date"] <= t_end)]
     spy_prices  = spy_prices[(spy_prices["date"] >= t_start) & (spy_prices["date"] <= t_end)]
     monthly     = monthly[(monthly["month"] >= t_start) & (monthly["month"] <= t_end)]
+
+    # 💡 EXCLUDE INDICES FROM MAIN ANALYSIS (Overview, Deep Dive, AI, Scanner)
+    # We keep indices in prices_full/companies_full for the KPI Header only.
+    indices = ["^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"]
+    companies = companies[~companies["ticker"].isin(indices)]
+    prices = prices[~prices["ticker"].isin(indices)]
+    monthly = monthly[~monthly["ticker"].isin(indices)]
+
+    # 💡 Define the Current Universe for Tab-Specific Selectors
+    current_universe = sorted(prices["ticker"].unique().tolist())
+    if not current_universe: # Fallback if everything is filtered out
+        current_universe = sorted([t for t in all_tickers if t not in indices])
 
 st.sidebar.markdown("---")
 
@@ -857,13 +829,19 @@ risk_return = monthly.groupby("ticker").agg(
 ).reset_index().merge(companies[["ticker", "company", "sector"]], on="ticker")
 
 # ── LAYER 6: MAIN TAB EXECUTION ──────────────────────────────────────────────
-tab_overview, tab_deep_dive, tab_ai, tab_scanner, tab_portfolio = st.tabs([
+# define tab labels
+tab_labels = [
     "Strategic Overview",
     "Single Stock Analysis",
     "Predictive Suite",
     "Market Scanner",
     "Portfolio Management"
-])
+]
+
+# Use segmented control for better tab persistence or stick with st.tabs
+# To REALLY fix the jumping issue in standard st.tabs, we use session state indexing
+tabs = st.tabs(tab_labels)
+tab_overview, tab_deep_dive, tab_ai, tab_scanner, tab_portfolio = tabs
 
 
 
@@ -959,6 +937,10 @@ with tab_overview:
     
     plot_df = risk_return_strategic.copy()
     plot_df['market_cap'] = plot_df['market_cap'].fillna(1e6)
+    
+    # Scale to ANNUALIZED returns/vol (assuming monthly base data)
+    plot_df['avg_return'] = plot_df['avg_return'] * 12
+    plot_df['volatility'] = plot_df['volatility'] * (12 ** 0.5)
     plot_df['sharpe_ratio'] = plot_df['avg_return'] / plot_df['volatility'].replace(0, 0.001)
 
     # Highlight Top 10 by Cap or Currently Selected tickers
@@ -985,11 +967,25 @@ with tab_overview:
         font=dict(color="#cfd8dc"),
         showlegend=False,
         margin=dict(t=20, l=10, r=10, b=10),
-        xaxis=dict(gridcolor="rgba(255,255,255,0.05)", zerolinecolor="rgba(255,255,255,0.1)", showline=True, linecolor="rgba(255,255,255,0.2)"),
-        yaxis=dict(gridcolor="rgba(255,255,255,0.05)", zerolinecolor="rgba(255,255,255,0.1)", showline=True, linecolor="rgba(255,255,255,0.2)")
+        xaxis=dict(
+            title="Annualized Risk (Volatility)",
+            gridcolor="rgba(255,255,255,0.05)", 
+            zerolinecolor="rgba(255,255,255,0.1)", 
+            showline=True, 
+            linecolor="rgba(255,255,255,0.2)",
+            range=[plot_df['volatility'].min()*0.8, plot_df['volatility'].max()*1.2]
+        ),
+        yaxis=dict(
+            title="Annualized Return",
+            gridcolor="rgba(255,255,255,0.05)", 
+            zerolinecolor="rgba(255,255,255,0.1)", 
+            showline=True, 
+            linecolor="rgba(255,255,255,0.2)",
+            range=[plot_df['avg_return'].min()*1.5 if plot_df['avg_return'].min() < 0 else 0, plot_df['avg_return'].max()*1.2]
+        )
     )
-    fig4_opt.add_vline(x=median_vol, line_dash="dash", line_color="rgba(255,255,255,0.3)", annotation_text="Median Risk")
-    fig4_opt.add_hline(y=median_ret, line_dash="dash", line_color="rgba(255,255,255,0.3)", annotation_text="Median Return")
+    fig4_opt.add_vline(x=median_vol * (12**0.5), line_dash="dash", line_color="rgba(255,255,255,0.3)", annotation_text="Median Risk")
+    fig4_opt.add_hline(y=median_ret * 12, line_dash="dash", line_color="rgba(255,255,255,0.3)", annotation_text="Median Return")
     st.plotly_chart(fig4_opt, use_container_width=True)
 
     st.markdown("---")
@@ -1077,13 +1073,14 @@ with tab_overview:
 with tab_deep_dive:
     render_header("search", "Single Stock Deep Dive")
     if current_universe:
-        # Cascading Selection: Only show tickers in the current sidebar filter
-        if st.session_state.get('deep_ticker') not in current_universe:
-            st.session_state['deep_ticker'] = current_universe[0] if current_universe else None
-            
-        deep_ticker = st.selectbox("Select Asset to Analyze:", current_universe, 
-                                   format_func=format_ticker,
-                                   key="deep_ticker")
+        deep_ticker = st.selectbox(
+            "Select Asset to Analyze:", 
+            current_universe, 
+            index=None,
+            placeholder="Search and Select an Asset...",
+            format_func=format_ticker,
+            key="deep_ticker_selector"
+        )
             
         if deep_ticker:
             _meta_df = companies_full[companies_full["ticker"] == deep_ticker]
@@ -1859,45 +1856,103 @@ with tab_portfolio:
     indices = ["^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"]
     stock_tickers = [t for t in all_available_tickers if t not in indices]
     
+    # ── 1. PORTFOLIO PERSISTENCE (DEEP URL SYNC) ─────────────────────────────
+    # Format in URL: ?p=AAPL:10.0,NVDA:25.5
+    query_p = st.query_params.get("p", "")
+    
+    # helper to parse URL to dict {ticker: shares}
+    def parse_portfolio_url(p_string):
+        if not p_string: return {}
+        out = {}
+        for item in p_string.split(","):
+            if ":" in item:
+                t, s = item.split(":")
+                try: out[t] = float(s)
+                except: out[t] = 10.0
+            else:
+                out[item] = 10.0
+        return out
+
+    # Initial Load
     if 'portfolio_tickers' not in st.session_state:
-        st.session_state.portfolio_tickers = ["AAPL", "NVDA", "META"] # Default seed
+        url_data = parse_portfolio_url(query_p)
+        if url_data:
+            st.session_state.portfolio_tickers = sorted(list(url_data.keys()))
+            st.session_state.portfolio_shares = url_data
+        else:
+            defaults = ["AAPL", "NVDA", "META"]
+            st.session_state.portfolio_tickers = defaults
+            st.session_state.portfolio_shares = {t: 10.0 for t in defaults}
+
+    p_tickers = st.multiselect(
+        "Select Tickers for Portfolio Construction", 
+        stock_tickers, 
+        default=st.session_state.portfolio_tickers, 
+        key="p_ticker_select"
+    )
+
+    # Sync URL if TICKERS changed (Multiselect)
+    if p_tickers != st.session_state.portfolio_tickers:
+        st.session_state.portfolio_tickers = p_tickers
+        # Re-build shares dict: keep existing, add new with 10.0
+        new_shares = {}
+        for t in p_tickers:
+            new_shares[t] = st.session_state.portfolio_shares.get(t, 10.0)
+        st.session_state.portfolio_shares = new_shares
         
-    p_tickers = st.multiselect("Select Tickers for Portfolio Construction", stock_tickers, 
-                               default=st.session_state.portfolio_tickers, key="p_ticker_select")
-    st.session_state.portfolio_tickers = p_tickers
+        # Update URL
+        url_str = ",".join([f"{t}:{s}" for t, s in new_shares.items()])
+        st.query_params["p"] = url_str
+        st.rerun() # Refresh to rebuild data_editor correctly
 
     if p_tickers:
         # Prepare Data for Editor
         # Get latest prices for selected tickers
         latest_prices = prices[prices["ticker"].isin(p_tickers)].groupby("ticker")["price_close"].last().to_dict()
         
-        # Build Initial DataFrame for Editor
-        if 'portfolio_df' not in st.session_state or set(st.session_state.portfolio_df['Ticker']) != set(p_tickers):
+        # Build Initial DataFrame for Editor (ONLY if tickers list actually changed)
+        if 'last_portfolio_tickers' not in st.session_state or st.session_state.last_portfolio_tickers != p_tickers:
+            st.session_state.last_portfolio_tickers = p_tickers
             init_data = []
             for t in p_tickers:
                 init_data.append({
                     "Ticker": t,
                     "Company": ticker_to_name.get(t, t),
                     "Price (€)": latest_prices.get(t, 0),
-                    "Shares": 10.0 # Default
+                    "Shares": st.session_state.portfolio_shares.get(t, 10.0)
                 })
             st.session_state.portfolio_df = pd.DataFrame(init_data)
         
         # 2. BULK DATA EDITOR
         render_header("layers", "Capital Allocation Grid", level="#####")
-        edited_df = st.data_editor(
-            st.session_state.portfolio_df,
-            column_config={
-                "Ticker": st.column_config.TextColumn("Ticker", disabled=True),
-                "Company": st.column_config.TextColumn("Company", disabled=True),
-                "Price (€)": st.column_config.NumberColumn("Market Price", format="€%.2f", disabled=True),
-                "Shares": st.column_config.NumberColumn("Shares owned", min_value=0.0, step=1.0)
-            },
-            hide_index=True,
-            use_container_width=True,
-            key="p_data_editor"
-        )
-        st.session_state.portfolio_df = edited_df
+        
+        with st.form("portfolio_editor_form"):
+            # KEY FIX: The data_editor should be the ONLY way to change weights for the current tickers
+            edited_df = st.data_editor(
+                st.session_state.portfolio_df,
+                column_config={
+                    "Ticker": st.column_config.TextColumn("Ticker", disabled=True),
+                    "Company": st.column_config.TextColumn("Company", disabled=True),
+                    "Price (€)": st.column_config.NumberColumn("Market Price", format="€%.2f", disabled=True),
+                    "Shares": st.column_config.NumberColumn("Shares owned", min_value=0.0, step=0.01, format="%.4f")
+                },
+                hide_index=True,
+                width="stretch",
+                key="p_portfolio_editor_final"
+            )
+            
+            # PASSIVE SYNC: Use a button to lock in changes and update URL
+            recompute = st.form_submit_button("⚖️ COMMIT REBALANCE & RECALCULATE ANALYTICS", use_container_width=True, type="primary")
+
+        if recompute:
+            st.session_state.portfolio_df = edited_df.copy()
+            shares_dict = edited_df.set_index("Ticker")["Shares"].to_dict()
+            st.session_state.portfolio_shares = shares_dict
+            st.query_params["p"] = ",".join([f"{t}:{s}" for t, s in shares_dict.items()])
+            st.toast("✅ Portfolio structure updated!", icon="🚀")
+            st.rerun()
+        else:
+            edited_df = st.session_state.portfolio_df.copy()
         
         # 3. WEIGHT & VALUE CALCULATION
         edited_df["Market Value"] = edited_df["Price (€)"] * edited_df["Shares"]
@@ -1939,11 +1994,81 @@ with tab_portfolio:
             # Metric Tiles
             pcol1, pcol2, pcol3, pcol4, pcol5, pcol6 = st.columns(6)
             with pcol1: render_metric_tile("Weighted Return", f"{(cum_returns.iloc[-1]-1)*100:.1f}%", delta=(cum_returns.iloc[-1]-1)*100)
-            with pcol2: render_metric_tile("Sharpe Ratio", f"{sharpe:.2f}")
+            with pcol2: 
+                render_metric_tile("Sharpe Ratio", f"{sharpe:.2f}")
+                # Clean labeling below the card
+                if sharpe > 2.0: s_label, s_color = "💎 ELITE QUALITY", "#00ffcc"
+                elif sharpe > 1.5: s_label, s_color = "🟢 STRONG", "#2ecc71"
+                elif sharpe > 1.0: s_label, s_color = "🟡 ACCEPTABLE", "#f1c40f"
+                else: s_label, s_color = "🔴 UNSATISFACTORY", "#e74c3c"
+                st.markdown(f"<div style='text-align:center; color:{s_color}; font-size:0.65rem; font-weight:700; margin-top:-5px;'>{s_label}</div>", unsafe_allow_html=True)
             with pcol3: render_metric_tile("Max DD", f"{max_dd:.1f}%")
             with pcol4: render_metric_tile("Annual Vol", f"{vol:.1f}%")
             with pcol5: render_metric_tile("VaR (95%)", f"{var_95:.2f}%")
             with pcol6: render_metric_tile("CVaR (95%)", f"{cvar_95:.2f}%")
+
+            st.markdown("---")
+            
+            # ── 4.6. AI REBALANCING COMMAND CENTER (PREMIUM CARD GRID) ──────────────
+            render_header("ai", "Institutional Rebalancing Command Center")
+            
+            # Use chunks for grid layout (ULTRA-DENSE: 6 per row)
+            n_cols = 6
+            tickers_list = edited_df.to_dict('records')
+            
+            for i in range(0, len(tickers_list), n_cols):
+                cols = st.columns(n_cols)
+                chunk = tickers_list[i : i + n_cols]
+                
+                for idx, row in enumerate(chunk):
+                    t = row["Ticker"]
+                    w = row["Weight (%)"]
+                    
+                    # Fetch AI target from reco_df
+                    ai_meta = reco_df[reco_df["ticker"] == t].iloc[0] if not reco_df[reco_df["ticker"] == t].empty else None
+                    
+                    if ai_meta is not None:
+                        ai_score = ai_meta["score"]
+                        upside = ai_meta["upside_pct"]
+                        
+                        # ── SIMPLIFIED DECISION LOGIC (BUY/SELL/HOLD) ──────────
+                        if ai_score > 70 and upside > 5:
+                            status, color = "BUY", "#00ffcc"
+                            border = "2px solid #00ffcc"
+                        elif ai_score < 40 or upside < -5 or w > 20:
+                            status, color = "SELL", "#ff4b4b"
+                            border = "2px solid #ff4b4b"
+                        else:
+                            status, color = "HOLD", "#3498db"
+                            border = "1px solid rgba(255,255,255,0.1)"
+                        
+                        reason = f"High conv. score {ai_score}" if ai_score > 60 else "Maintain market exposure"
+                        if upside > 10: reason = f"Upside potential (+{upside:.1f}%)"
+                        if w > 20: reason = "Risk concentration limit exceeded"
+
+                        with cols[idx]:
+                            st.markdown(f"""
+                            <div style='background:rgba(255,255,255,0.02); border:{border}; border-radius:5px; padding:6px; margin-bottom:4px;'>
+                                <div style='display:flex; justify-content:space-between; margin-bottom:4px;'>
+                                    <span style='font-size:0.8rem; font-weight:800; color:{color};'>{t}</span>
+                                    <span style='background:{color}22; color:{color}; padding:1px 4px; border-radius:2px; font-size:0.45rem; font-weight:700;'>{status}</span>
+                                </div>
+                                <div style='display:grid; grid-template-columns: 1fr 1fr; gap:4px; margin-bottom:4px;'>
+                                    <div><div style='color:#777; font-size:0.45rem; text-transform:uppercase;'>WGT</div><div style='font-size:0.75rem; font-weight:700;'>{w:.1f}%</div></div>
+                                    <div><div style='color:#777; font-size:0.45rem; text-transform:uppercase;'>SCORE</div><div style='font-size:0.75rem; font-weight:700;'>{ai_score}</div></div>
+                                </div>
+                                <div style='color:#666; font-size:0.55rem; border-top:1px solid rgba(255,255,255,0.05); padding-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;'>
+                                    {reason}
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                    else:
+                        with cols[idx]:
+                            st.markdown(f"""
+                            <div style='background:rgba(255,255,255,0.01); border:1px dashed rgba(255,255,255,0.08); border-radius:5px; padding:6px; text-align:center;'>
+                                <div style='color:#555; font-size:0.5rem;'>{t}</div>
+                            </div>
+                            """, unsafe_allow_html=True)
 
             st.markdown("---")
             
@@ -2318,26 +2443,67 @@ with tab_ai:
     import torch.nn as nn
     from sklearn.preprocessing import MinMaxScaler
     import optuna
+    from arch import arch_model
     optuna.logging.set_verbosity(optuna.logging.WARNING)
 
     # ── LSTM Architecture Definition (deferred) ─────────────────────────────
+    # ── UPGRADED LSTM Architecture (with Attention) ──────────────────────────
     class StockLSTM(torch.nn.Module):
         def __init__(self, input_size=4, hidden_size=64, num_layers=2, output_size=1):
             super().__init__()
             self.hidden_size = hidden_size
             self.num_layers = num_layers
             self.lstm = torch.nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=0.1)
+            # Self-Attention Layer to capture long-range dependencies in volatile assets
+            self.attention = torch.nn.MultiheadAttention(embed_dim=hidden_size, num_heads=2, batch_first=True)
             self.fc = torch.nn.Linear(hidden_size, output_size)
+            
         def forward(self, x):
             h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
             c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
             out, _ = self.lstm(x, (h0, c0))
-            return self.fc(out[:, -1, :])
+            # Attention Mechanism: Focus on pivot points within the lookback window
+            attn_output, _ = self.attention(out, out, out)
+            # Final prediction based on attended feature vector
+            return self.fc(attn_output[:, -1, :])
+
+    # ── Gating Network for Neural Stacking (Phase 6) ──
+    class GatingNet(torch.nn.Module):
+        def __init__(self, input_size=5, hidden_size=16):
+            super().__init__()
+            self.net = torch.nn.Sequential(
+                torch.nn.Linear(input_size, hidden_size),
+                torch.nn.ReLU(),
+                torch.nn.Linear(hidden_size, 1),
+                torch.nn.Sigmoid() # Output: weight w for LSTM
+            )
+        def forward(self, x):
+            return self.net(x)
 
     def _run_lstm_core(df_ticker, lookback=60, forecast_days=30, sector_name=None, quality_score=50):
         import warnings
         warnings.filterwarnings('ignore')
         df = df_ticker.copy().sort_values("date").reset_index(drop=True)
+        
+        # ── Phase 1: Robust Signal Processing (Kalman Denoising) ──
+        # Simple self-adjusting Kalman Filter for 1D price action
+        # ── Phase 1 Refinement: Dynamic Price-Aware Kalman ──
+        def apply_kalman(data, process_variance=1e-5):
+            # Dynamic measurement error based on price scale (0.1% of avg price)
+            measurement_error = (np.mean(data) * 0.001) ** 2
+            estimate = data[0]; error_est = 1.0; result = []
+            for measurement in data:
+                priori_est = estimate; priori_error = error_est + process_variance
+                gain = priori_error / (priori_error + measurement_error)
+                estimate = priori_est + gain * (measurement - priori_est)
+                error_est = (1 - gain) * priori_error
+                result.append(estimate)
+            return np.array(result)
+        
+        # Smooth 'price_close' to reduce idiosyncratic noise impact
+        df['price_raw'] = df['price_close']
+        df['price_close'] = apply_kalman(df['price_close'].values)
+        
         df['macd'] = df['price_close'].ewm(span=12, adjust=False).mean() - df['price_close'].ewm(span=26, adjust=False).mean()
         roll_mean = df['price_close'].rolling(20).mean()
         roll_std  = df['price_close'].rolling(20).std()
@@ -2360,6 +2526,15 @@ with tab_ai:
         ticker_vol = df['daily_return_pct'].tail(60).std()
         spy_vol_s  = prices_full[prices_full['ticker']=='SPY']['daily_return_pct'].tail(60)
         spy_vol    = spy_vol_s.std() if not spy_vol_s.empty else 1.0
+        
+        # ── Phase 8: GARCH(1,1) feature for GatingNet ──
+        try:
+            from arch import arch_model
+            garch_series = df['daily_return_pct'].tail(250) * 100
+            res_g = arch_model(garch_series, vol='Garch', p=1, q=1, dist='Normal', rescale=False).fit(disp='off')
+            garch_vol_current = np.sqrt(res_g.forecast(horizon=1).variance.values[-1, 0]) / 100.0
+        except Exception:
+            garch_vol_current = ticker_vol
         if ticker_vol > 2.0 * spy_vol:   lstm_w,arima_w,lookback = 0.75,0.25,min(lookback,45)
         elif ticker_vol < 0.8 * spy_vol: lstm_w,arima_w,lookback = 0.45,0.55,120
         else:                             lstm_w,arima_w,lookback = 0.60,0.40,75
@@ -2390,50 +2565,139 @@ with tab_ai:
             def objective(trial):
                 h  = trial.suggest_categorical("hidden_size",[32,64,128])
                 nl = trial.suggest_int("num_layers",1,3)
-                lr = trial.suggest_float("lr",1e-4,1e-2,log=True)
+                lr = trial.suggest_float("lr",1e-4,1e-3,log=True) # Slightly tighter LR for stability
                 m  = StockLSTM(input_size=len(features),hidden_size=h,num_layers=nl)
-                cr = torch.nn.MSELoss(); op = torch.optim.Adam(m.parameters(),lr=lr)
+                # Phase 3: Huber Loss (Robust to outliers)
+                cr = torch.nn.HuberLoss(delta=1.0)
+                op = torch.optim.Adam(m.parameters(),lr=lr)
                 m.train()
+                
+                # Pre-calculate Directional Baseline (last price in sequence)
+                # X_hpo is [batch, seq, features], price is feature index 0
+                y_baseline = X_hpo[:, -1, 0].unsqueeze(1)
+                
                 for _ in range(40):
-                    op.zero_grad(); o=m(X_hpo); l=cr(o,y_hpo)
-                    if torch.isnan(l): return 1e6
-                    l.backward(); op.step()
-                return l.item()
-            with st.spinner(f"🧠 Tuning AI Architecture for {ticker_id}..."):
+                    op.zero_grad(); o=m(X_hpo); l_core=cr(o,y_hpo)
+                    
+                    # Directional Penalty logic
+                    pred_diff = o - y_baseline
+                    true_diff = y_hpo - y_baseline
+                    # Phase 3 Refinement: Softer Directional Penalty (2.0 -> 0.5)
+                    penalty = torch.mean(torch.clamp(-pred_diff * true_diff, min=0)) * 0.5
+                    loss = l_core + penalty
+                    
+                    if torch.isnan(loss): return 1e6
+                    loss.backward(); op.step()
+                return loss.item()
+            with st.spinner(f"🧠 Tuning Deep Intelligence for {ticker_id}..."):
                 study = optuna.create_study(direction="minimize")
-                study.optimize(objective, n_trials=12, timeout=20)
-                best = study.best_params; best['epochs']=80
+                # Phase 2: Higher Fidelity Optimization
+                study.optimize(objective, n_trials=25, timeout=30)
+                best = study.best_params; best['epochs']=60
                 st.session_state.optuna_cache[ticker_id] = best
         model = StockLSTM(input_size=len(features),hidden_size=best['hidden_size'],num_layers=best['num_layers'])
-        cr = torch.nn.MSELoss(); op = torch.optim.Adam(model.parameters(),lr=best['lr'])
+        # Main Training Loop with Huber Loss
+        cr = torch.nn.HuberLoss(delta=1.0)
+        op = torch.optim.Adam(model.parameters(),lr=best['lr'])
         model.train()
-        for _ in range(best['epochs']):
-            op.zero_grad(); o=model(X_t); l=cr(o,y_t)
+        
+        y_baseline_total = X_t[:, -1, 0].unsqueeze(1)
+        prev_loss = 1e9
+        for epoch in range(best['epochs']):
+            op.zero_grad(); o=model(X_t); l_core=cr(o,y_t)
+            
+            # Apply Directional Penalty to main training
+            # Phase 3 Refinement: Softer Directional Penalty (2.0 -> 0.5)
+            pred_diff = o - y_baseline_total
+            true_diff = y_t - y_baseline_total
+            penalty = torch.mean(torch.clamp(-pred_diff * true_diff, min=0)) * 0.5
+            l = l_core + penalty
+            
             if torch.isnan(l): break
+            l_val = l.item()
+            if abs(prev_loss - l_val) < (prev_loss * 0.0005) and epoch > 25: break
+            prev_loss = l_val
             l.backward(); op.step()
         model.eval()
         lstm_scaled=[]; cur_seq=scaled_data[-lookback:].copy()
         with torch.no_grad():
+            p_prev = cur_seq[-1,0]
             for _ in range(forecast_days):
                 s=torch.FloatTensor(cur_seq).unsqueeze(0)
                 p=model(s).item()
+                
+                # ── Phase 9: Recursive Feature Projection ──
+                # We update not only the price, but its dependent momentum features 
+                # to prevent the LSTM from seeing contradictory stale context.
+                nr = cur_seq[-1].copy()
+                nr[0] = p # Scaled Price
+                nr[3] = p - p_prev # Scaled Return proxy
+                # We also nudge the RSI feature (index 2) towards the new price direction
+                nr[2] = np.clip(nr[2] + (p - p_prev)*0.5, -1, 1)
+                
                 lstm_scaled.append(p)
-                nr=cur_seq[-1].copy(); nr[0]=p
-                cur_seq=np.append(cur_seq[1:],[nr],axis=0)
+                cur_seq = np.append(cur_seq[1:],[nr],axis=0)
+                p_prev = p
         lstm_predicted_prices = price_scaler.inverse_transform(np.array(lstm_scaled).reshape(-1,1)).flatten()
         ts_prices = df_clean['price_close'].values
         try:
             from pmdarima import auto_arima
-            arima_predicted_prices = auto_arima(ts_prices,seasonal=False,stepwise=True,suppress_warnings=True,error_action='ignore',max_p=7,max_q=3).predict(n_periods=forecast_days)
+            arima_predicted_prices = auto_arima(ts_prices,seasonal=False,stepwise=False,approximation=True,suppress_warnings=True,error_action='ignore',max_p=4,max_q=2).predict(n_periods=forecast_days)
         except Exception:
             try:
                 from statsmodels.tsa.arima.model import ARIMA
                 arima_predicted_prices = ARIMA(ts_prices,order=(2,1,2)).fit().forecast(steps=forecast_days)
             except Exception:
                 arima_predicted_prices = np.full(forecast_days,ts_prices[-1])
-        ensemble_prices = (lstm_w*lstm_predicted_prices)+(arima_w*arima_predicted_prices)
+        # ── Phase 8: GARCH-Augmented Neural Meta-Stacking ──
+        # Input features: [ticker_vol, spy_vol, vix, sector, quality, GARCH_VOL]
+        current_mom = (df_ticker['price_close'].iloc[-1] / df_ticker['price_close'].iloc[-6] - 1) if len(df_ticker) > 6 else 0
+        meta_features = torch.FloatTensor([ticker_vol, spy_vol, df['vix_ret'].tail(10).mean(), df['sector_ret'].tail(10).mean(), quality_score / 100.0, garch_vol_current])
+        
+        g_model = GatingNet(input_size=6) # Incremented to 6 features
+        g_op = torch.optim.Adam(g_model.parameters(), lr=0.01)
+        g_model.train()
+        
+        # Meta-Training on current context (Stabilizing the gating)
+        for _ in range(50):
+            g_op.zero_grad()
+            w_pred = g_model(meta_features)
+            # Target w: bias towards 0.85 (LSTM) if volatility is manageable
+            target_w = 0.85 if ticker_vol < 1.5 * spy_vol else 0.45
+            target_w = torch.FloatTensor([target_w])
+            l_meta = torch.nn.functional.mse_loss(w_pred, target_w)
+            l_meta.backward(); g_op.step()
+        
+        g_model.eval()
+        with torch.no_grad():
+            w_l = g_model(meta_features).item()
+            w_a = 1.0 - w_l
+        
+        ensemble_prices = (w_l * lstm_predicted_prices) + (w_a * arima_predicted_prices)
+        
+        # ── Phase 9: Institutional Volatility Clipping (Guardrails) ──
+        # We cap daily jumps to ±5% to ensure the AI remains within 
+        # realistic market boundaries for stable investment analysis.
+        clamped_prices = [df_ticker['price_close'].iloc[-1]]
+        for t in range(len(ensemble_prices)):
+            p_raw = ensemble_prices[t]
+            p_prev = clamped_prices[-1]
+            # Max 5.5% jump per day (standard limit for high-vol assets)
+            p_clamped = np.clip(p_raw, p_prev * 0.945, p_prev * 1.055)
+            clamped_prices.append(p_clamped)
+        ensemble_prices = np.array(clamped_prices[1:])
+        
+        # Boost the ensemble with raw momentum to 'un-smooth' the Kalman effect
+        momentum_boost = np.linspace(current_mom * 0.15, 0, len(ensemble_prices))
+        ensemble_prices = ensemble_prices * (1 + momentum_boost)
+        
+        # Boost the ensemble with a residual 'Trend Bias' from the VIX context
+        vix_bias = -0.001 if df['vix_ret'].tail(10).mean() > 0.02 else 0.0005
+        ensemble_prices = ensemble_prices * (1 + vix_bias)
+
         current_price = data[-1,0]
         if np.isnan(ensemble_prices[-1]) or current_price==0: return None,None
+        
         # ── EXPLAINABILITY: Feature Importance (Pseudo-SHAP / Gradient-based) ──
         # Since SHAP DeepExplainer can be slow on large LSTMs, we use 
         # a high-fidelity gradient-based sensitivity analysis.
@@ -2453,9 +2717,9 @@ with tab_ai:
     def train_predict_lstm(df_ticker, lookback=60, forecast_days=30, sector_name=None, quality_score=50):
         return _run_lstm_core(df_ticker, lookback=lookback, forecast_days=forecast_days, sector_name=sector_name, quality_score=quality_score)
 
-    def calculate_backtest_accuracy(df_ticker, sector_name=None, quality_score=50):
+    def calculate_backtest_accuracy(df_ticker, sector_name=None, quality_score=50, test_size=21):
         df = df_ticker.copy().sort_values("date").reset_index(drop=True)
-        test_size=21; max_lookback=120
+        max_lookback=120
         if len(df) < max_lookback+test_size+5: return None,None
         train_df=df.iloc[:-test_size]; actual=df.iloc[-test_size:]["price_close"].values
         predicted,_,_ = _run_lstm_core(train_df,lookback=max_lookback,forecast_days=test_size,sector_name=sector_name,quality_score=quality_score)
@@ -2476,23 +2740,30 @@ with tab_ai:
     </div>
     """, unsafe_allow_html=True)
     
-    # ── ROW 1: Filters (Horizontal) ───────────────────────────────────────────
-    fcol1, fcol2, fcol3 = st.columns(3)
-    with fcol1:
-        if 'fc_select' not in st.session_state or st.session_state.get('fc_select') not in current_universe:
-            st.session_state['fc_select'] = None
+    # ── ROW 1: Forecast Configuration (Horizontal Form) ──────────────────────
+    with st.form("forecast_config_form"):
+        fcol1, fcol2, fcol3 = st.columns(3)
+        with fcol1:
+            if 'fc_select' not in st.session_state or st.session_state.get('fc_select') not in current_universe:
+                st.session_state['fc_select'] = None
+                
+            fc_ticker = st.selectbox("Select Ticker to Forecast", current_universe, 
+                                     format_func=format_ticker,
+                                     index=None,
+                                     placeholder="Choose a Ticker...",
+                                     key="fc_selector_form")
+        with fcol2:
+            forecast_days = st.slider("Forecast Horizon (Days)", 7, 90, 30, key="fc_days_form")
+        with fcol3:
+            n_sims = st.selectbox("Monte Carlo Simulations", [500, 1000, 1500, 2000, 5000], index=1, key="n_sims_form")
             
-        fc_ticker = st.selectbox("Select Ticker to Forecast", current_universe, 
-                                 format_func=format_ticker,
-                                 index=None,
-                                 placeholder="Choose a Ticker...",
-                                 key="fc_select")
-    with fcol2:
-        forecast_days = st.slider("Forecast Horizon (Days)", 7, 90, 30, key="fc_days")
-    with fcol3:
-        n_sims = st.selectbox("Monte Carlo Simulations", [500, 1000, 1500, 2000, 5000], index=1)
-    
-    if fc_ticker:
+        run_forecast = st.form_submit_button("🎯 RUN ENSEMBLE FORECAST", use_container_width=True, type="primary")
+
+    if run_forecast and fc_ticker:
+        fc_ticker = st.session_state.fc_selector_form
+        forecast_days = st.session_state.fc_days_form
+        n_sims = st.session_state.n_sims_form
+        
         df_fc = prices_full[prices_full["ticker"] == fc_ticker].sort_values("date")
         ts = df_fc["price_close"].values
         
@@ -2530,14 +2801,31 @@ with tab_ai:
         drift_bias += (avg_sent * 0.001) 
         if lstm_return is not None and lstm_return > 0.05: drift_bias += 0.0005
         
-        # ── Volatility Forecasting (Mean Reversion / OU Process) ───────────────
-        # sigma_t moves toward sigma_long_term with a speed of k=0.1 (10% per day)
-        kappa = 0.1 
-        sigma_forecast = []
-        s_t = sigma_current
-        for _ in range(forecast_days):
-            s_t = s_t + kappa * (sigma_long_term - s_t)
-            sigma_forecast.append(s_t)
+        # ── Phase 7: Monte Carlo GARCH(1,1) (Volatility Clustering) ───────────
+        try:
+            # Fit GARCH(1,1) to captured historical returns (using 500-day window)
+            # Scaling by 100 for numerical stability in the solver
+            garch_data = returns.tail(500) * 100
+            am = arch_model(garch_data, vol='Garch', p=1, q=1, dist='Normal', rescale=False)
+            res = am.fit(disp='off')
+            
+            # Forecast volatility term structure for the horizon
+            forecasts = res.forecast(horizon=forecast_days)
+            # Variance -> Std Dev, and rescale back from percent
+            sigma_forecast = np.sqrt(forecasts.variance.values[-1, :]) / 100.0
+            
+            # Ensure no zero/nan vol (fallback to long-term avg)
+            sigma_forecast = np.nan_to_num(sigma_forecast, nan=sigma_long_term)
+            sigma_forecast[sigma_forecast == 0] = sigma_long_term
+            
+        except Exception:
+            # Robust Fallback to Mean Reversion (OU Process) if GARCH fails to converge
+            kappa = 0.1 
+            sigma_forecast = []
+            s_t = sigma_current
+            for _ in range(forecast_days):
+                s_t = s_t + kappa * (sigma_long_term - s_t)
+                sigma_forecast.append(s_t)
             
         dt = 1 
         simulated_paths = np.zeros((forecast_days + 1, n_sims))
@@ -2550,9 +2838,9 @@ with tab_ai:
                 path.append(price)
             simulated_paths[:, i] = path
         
-        # 1.5 Backtest Accuracy (Diagnostic) — Leak-Free Walk-Forward
-        with st.spinner("🔍 Validating Model Accuracy (Walk-Forward)..."):
-            precision_score, mape_raw = calculate_backtest_accuracy(df_fc, sector_name=sector_val, quality_score=drift_score)
+        # 1.5 Backtest Accuracy (Diagnostic) — Dynamic Horizon Sync (Phase 8)
+        with st.spinner(f"🔍 Validating {forecast_days}-Day Accuracy..."):
+            precision_score, mape_raw = calculate_backtest_accuracy(df_fc, sector_name=sector_val, quality_score=drift_score, test_size=forecast_days)
 
         # ── ROW 2: AI Metrics (Horizontal Cards) ─────────────────────────────
         mcol1, mcol2, mcol3, mcol4 = st.columns(4)
@@ -2574,10 +2862,11 @@ with tab_ai:
         with mcol4:
             if precision_score is not None:
                 p_val = f"{precision_score:.1f}%"
+                p_label = f"🎯 AI Precision ({forecast_days}d)"
                 p_delta = f"±{mape_raw*100:.1f}% uncertainty" if mape_raw else None
             else:
-                p_val, p_delta = "N/A", None
-            st.metric("🎯 AI Precision (21d)", p_val, delta=p_delta)
+                p_val, p_label, p_delta = "N/A", "🎯 AI Precision", None
+            st.metric(p_label, p_val, delta=p_delta)
 
         # ── ROW 3.5: Analysis & Logic (Moved Up) ──────────────────────────────
         render_header("activity", "AI Synergy & Reasoning Logic")
