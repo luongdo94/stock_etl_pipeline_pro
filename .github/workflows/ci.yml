@@ -1,0 +1,101 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  # ── JOB 1: Lint & Type Check ─────────────────────────────
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Lint with Ruff
+        run: |
+          pip install ruff
+          ruff check .
+
+      - name: Check YAML syntax
+        run: pip install pyyaml && python -c "import yaml; yaml.safe_load(open('config/tickers.yaml'))"
+
+  # ── JOB 2: Unit Tests ───────────────────────────────────
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest pytest-cov
+
+      - name: Run tests
+        run: pytest tests/ -v --cov=. --cov-report=xml
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v4
+        with:
+          file: ./coverage.xml
+          fail_ci_if_error: false
+
+  # ── JOB 3: ETL Pipeline Test ─────────────────────────────
+  etl-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt duckdb
+
+      - name: Test ETL imports
+        run: python -c "from etl.extract import extract_stock_prices; from etl.load import load_stock_prices; from etl.transform import run_transforms; print('✅ All ETL modules importable')"
+
+      - name: Test DuckDB connection
+        run: python -c "import duckdb; conn = duckdb.connect(':memory:'); print('✅ DuckDB connection OK')"
+
+  # ── JOB 4: Deploy (chỉ chạy khi push vào main) ────────
+  deploy:
+    needs: [lint, test, etl-test]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy notification
+        run: |
+          echo "🎉 All checks passed! Ready to deploy."
+          echo "📋 Next steps:"
+          echo "   1. Build Docker image"
+          echo "   2. Push to registry"
+          echo "   3. Deploy to server"

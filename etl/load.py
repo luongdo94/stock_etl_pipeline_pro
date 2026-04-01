@@ -160,7 +160,8 @@ def load_stock_prices(
         conn.execute("DELETE FROM raw.stock_prices WHERE date = ANY(?) AND ticker = ANY(?)", 
                      [dates, tickers])
     
-    # Load DataFrame into DuckDB (extremely fast, no row-by-row loop needed)
+    # Explicitly register DataFrame to avoid fragile scope-based lookup in DuckDB
+    conn.register("df_tmp", df)
     conn.execute("""
         INSERT INTO raw.stock_prices
         SELECT
@@ -170,8 +171,9 @@ def load_stock_prices(
             ticker, company, sector, region,
             _extracted_at,
             CURRENT_TIMESTAMP
-        FROM df
+        FROM df_tmp
     """)
+    conn.unregister("df_tmp")
     
     result = conn.execute("SELECT COUNT(*) FROM raw.stock_prices").fetchone()
     row_count = result[0] if result else 0
@@ -191,7 +193,9 @@ def load_company_info(
     conn.execute("BEGIN TRANSACTION")
     try:
         conn.execute("CREATE TABLE raw.company_info_new AS SELECT * FROM raw.company_info LIMIT 0")
-        conn.execute("INSERT INTO raw.company_info_new SELECT *, CURRENT_TIMESTAMP FROM df")
+        conn.register("df_tmp", df)
+        conn.execute("INSERT INTO raw.company_info_new SELECT *, CURRENT_TIMESTAMP FROM df_tmp")
+        conn.unregister("df_tmp")
         conn.execute("ALTER TABLE raw.company_info RENAME TO company_info_old")
         conn.execute("ALTER TABLE raw.company_info_new RENAME TO company_info")
         conn.execute("DROP TABLE raw.company_info_old")
@@ -214,6 +218,7 @@ def load_historical_financials(
     tickers = df["ticker"].unique().tolist()
     conn.execute("DELETE FROM raw.historical_financials WHERE ticker = ANY(?)", [tickers])
     
+    conn.register("df_tmp", df)
     conn.execute("""
         INSERT INTO raw.historical_financials
         SELECT 
@@ -223,8 +228,9 @@ def load_historical_financials(
             eps, 
             eps_diluted, 
             CURRENT_TIMESTAMP 
-        FROM df
+        FROM df_tmp
     """)
+    conn.unregister("df_tmp")
     logger.info(f"✅ Loaded {len(df)} financial records → raw.historical_financials")
 
 def load_quarterly_financials(
@@ -240,6 +246,7 @@ def load_quarterly_financials(
     tickers = df["ticker"].unique().tolist()
     conn.execute("DELETE FROM raw.quarterly_financials WHERE ticker = ANY(?)", [tickers])
     
+    conn.register("df_tmp", df)
     conn.execute("""
         INSERT INTO raw.quarterly_financials
         SELECT 
@@ -249,8 +256,9 @@ def load_quarterly_financials(
             eps, 
             eps_diluted, 
             CURRENT_TIMESTAMP 
-        FROM df
+        FROM df_tmp
     """)
+    conn.unregister("df_tmp")
     logger.info(f"✅ Loaded {len(df)} quarterly financial records → raw.quarterly_financials")
 
 def perform_atomic_swap():

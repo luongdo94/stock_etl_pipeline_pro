@@ -7,9 +7,9 @@ from datetime import timedelta
 import sys
 sys.path.insert(0, "/opt/project")
 
-from etl.extract   import extract_stock_prices, extract_company_info
+from etl.extract   import extract_stock_prices, extract_company_info, extract_historical_financials, extract_quarterly_financials
 from etl.load      import get_connection, create_raw_schema, \
-                          load_stock_prices, load_company_info
+                          load_stock_prices, load_company_info, load_historical_financials, load_quarterly_financials
 from etl.transform import run_transforms
 import etl.utils   as utils
 # import dashboard   as db_gen (Moved to runtime task)
@@ -41,9 +41,15 @@ loads into DuckDB, and runs dbt-style transformations.
     def _extract(**context):
         prices_df  = extract_stock_prices(lookback_days=2)  # Daily: only last 2 days
         company_df = extract_company_info()
+        annual_df  = extract_historical_financials()
+        quarterly_df = extract_quarterly_financials()
+        
         # Pass data via temp file (DataFrames are too large for XCom)
         prices_df.to_parquet("/tmp/prices.parquet")
         company_df.to_parquet("/tmp/companies.parquet")
+        annual_df.to_parquet("/tmp/fin_annual.parquet")
+        quarterly_df.to_parquet("/tmp/fin_quarterly.parquet")
+        
         context["ti"].xcom_push(key="row_count", value=len(prices_df))
         return len(prices_df)
 
@@ -57,12 +63,17 @@ loads into DuckDB, and runs dbt-style transformations.
 
     def _load(**context):
         import pandas as pd
-        prices_df  = pd.read_parquet("/tmp/prices.parquet")
-        company_df = pd.read_parquet("/tmp/companies.parquet")
+        prices_df    = pd.read_parquet("/tmp/prices.parquet")
+        company_df   = pd.read_parquet("/tmp/companies.parquet")
+        annual_df    = pd.read_parquet("/tmp/fin_annual.parquet")
+        quarterly_df = pd.read_parquet("/tmp/fin_quarterly.parquet")
+        
         conn = get_connection()
         create_raw_schema(conn)
         load_stock_prices(conn, prices_df, mode="upsert")
         load_company_info(conn, company_df)
+        load_historical_financials(conn, annual_df)
+        load_quarterly_financials(conn, quarterly_df)
         conn.close()
 
     def _transform(**context):

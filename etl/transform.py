@@ -121,7 +121,7 @@ def _create_intermediate(conn):
     # Compute technical indicators
     conn.execute("""
         CREATE OR REPLACE TABLE intermediate.int_stock_metrics AS
-        WITH base AS (
+        WITH base_pre AS (
             SELECT
                 date,
                 ticker,
@@ -143,6 +143,33 @@ def _create_intermediate(conn):
                 ROUND(AVG(close) OVER (w ROWS BETWEEN 49 PRECEDING AND CURRENT ROW), 4) AS ma_50,
                 -- 🏆 EXPERT: 200-day Moving Average (Traditional gold standard)
                 ROUND(AVG(close) OVER (w ROWS BETWEEN 199 PRECEDING AND CURRENT ROW), 4) AS ma_200,
+                -- 🏆 EXPERT: RSI-14 (Relative Strength Index)
+                -- 1. Calculate price deltas
+                close - LAG(close) OVER w AS diff,
+            FROM staging.stg_stock_prices
+            WINDOW 
+                w AS (PARTITION BY ticker ORDER BY date)
+        ),
+        rsi_base AS (
+            SELECT
+                *,
+                CASE WHEN diff > 0 THEN diff ELSE 0 END AS gain,
+                CASE WHEN diff < 0 THEN -diff ELSE 0 END AS loss
+            FROM base_pre
+        ),
+        rsi_calc AS (
+            SELECT
+                *,
+                AVG(gain) OVER (PARTITION BY ticker ORDER BY date ROWS BETWEEN 13 PRECEDING AND CURRENT ROW) AS avg_gain,
+                AVG(loss) OVER (PARTITION BY ticker ORDER BY date ROWS BETWEEN 13 PRECEDING AND CURRENT ROW) AS avg_loss
+            FROM rsi_base
+        ),
+        base AS (
+            SELECT
+                *,
+                -- Relative Strength (RS) = AvgGain / AvgLoss
+                -- RSI = 100 - (100 / (1 + RS))
+                ROUND(100 - (100 / (1 + NULLIF(avg_gain/NULLIF(avg_loss, 0), 0))), 2) AS rsi,
                 -- Volume moving average
                 ROUND(AVG(volume) OVER (w ROWS BETWEEN 19 PRECEDING AND CURRENT ROW), 0) AS volume_ma_20,
                 -- 52-week high/low
@@ -153,7 +180,7 @@ def _create_intermediate(conn):
                 MIN(close) OVER w_all AS low_5y,
                 AVG(close) OVER w_all AS avg_5y,
                 STDDEV(close) OVER w_all AS std_dev_5y
-            FROM staging.stg_stock_prices
+            FROM rsi_calc
             WINDOW 
                 w AS (PARTITION BY ticker ORDER BY date),
                 w_all AS (PARTITION BY ticker ORDER BY date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
@@ -205,6 +232,7 @@ def _create_marts(conn):
             m.ma_20,
             m.ma_50,
             m.ma_200,
+            m.rsi,
             m.ma_signal,
             m.price_z_score,
             m.pct_from_ma200,
