@@ -24,6 +24,13 @@ def load_tickers_config():
 
 TICKERS = load_tickers_config()
 
+def _guess_currency(ticker: str) -> str:
+    """Heuristic to guess currency from ticker suffix for fast FX pre-fetching."""
+    if ticker.endswith(".T"): return "JPY"
+    if any(ticker.endswith(s) for s in [".DE", ".PA", ".AS"]): return "EUR"
+    if ".CO" in ticker: return "DKK"
+    return "USD"
+
 def extract_stock_prices(
     tickers: dict = TICKERS,
     lookback_days: int = 365,
@@ -200,9 +207,7 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
     # 1. Pre-fetch FX rates globally
     unique_currencies = {"USD"}
     for ticker in tickers.keys():
-        # Heuristic/Fast check for currency
-        if ticker.endswith(".T"): unique_currencies.add("JPY")
-        elif ticker.endswith(".DE") or ticker.endswith(".PA") or ticker.endswith(".AS"): unique_currencies.add("EUR")
+        unique_currencies.add(_guess_currency(ticker))
     
     fx_rates = {"USD": 1.0}
     if len(unique_currencies) > 1:
@@ -291,9 +296,7 @@ def extract_historical_financials(tickers: dict = TICKERS) -> pd.DataFrame:
     # 1. Pre-fetch FX rates globally
     unique_currencies = {"USD"}
     for ticker in tickers.keys():
-        if ticker.endswith(".T"): unique_currencies.add("JPY")
-        elif ".AS" in ticker or ".DE" in ticker or ".PA" in ticker: unique_currencies.add("EUR")
-        elif ".CO" in ticker: unique_currencies.add("DKK")
+        unique_currencies.add(_guess_currency(ticker))
     
     fx_rates = {"USD": 1.0}
     if len(unique_currencies) > 1:
@@ -311,13 +314,7 @@ def extract_historical_financials(tickers: dict = TICKERS) -> pd.DataFrame:
         try:
             t = yf.Ticker(ticker)
             # Use ticker suffix to guess currency if info fails
-            guess_cur = "USD"
-            if ticker.endswith(".T"): guess_cur = "JPY"
-            elif any(s in ticker for s in [".AS", ".DE", ".PA"]): guess_cur = "EUR"
-            elif ".CO" in ticker: guess_cur = "DKK"
-            
-            # Try to get real currency but fall back to guess to avoid extra downloads
-            currency = guess_cur
+            currency = _guess_currency(ticker)
             fx_rate = fx_rates.get(currency, 1.0)
             
             fin = t.financials
@@ -364,14 +361,11 @@ def extract_quarterly_financials(tickers: dict = TICKERS) -> pd.DataFrame:
     # 1. Pre-fetch FX rates globally
     unique_currencies = {"USD"}
     for ticker in tickers.keys():
-        if ticker.endswith(".T"): unique_currencies.add("JPY")
-        elif ".AS" in ticker or ".DE" in ticker or ".PA" in ticker: unique_currencies.add("EUR")
-        elif ".CO" in ticker: unique_currencies.add("DKK")
+        unique_currencies.add(_guess_currency(ticker))
     
     fx_rates = {"USD": 1.0}
     if len(unique_currencies) > 1:
         fx_tkrs = [f"{c}USD=X" for c in unique_currencies if c != "USD"]
-        import yfinance as yf
         fx_data = yf.download(fx_tkrs, period="1d", progress=False)["Close"]
         for c in unique_currencies:
             if c == "USD": continue
@@ -383,16 +377,9 @@ def extract_quarterly_financials(tickers: dict = TICKERS) -> pd.DataFrame:
 
     def fetch_single_ticker_fin(ticker):
         try:
-            import yfinance as yf
             t = yf.Ticker(ticker)
             # Use ticker suffix to guess currency if info fails
-            guess_cur = "USD"
-            if ticker.endswith(".T"): guess_cur = "JPY"
-            elif any(s in ticker for s in [".AS", ".DE", ".PA"]): guess_cur = "EUR"
-            elif ".CO" in ticker: guess_cur = "DKK"
-            
-            # Try to get real currency but fall back to guess to avoid extra downloads
-            currency = guess_cur
+            currency = _guess_currency(ticker)
             fx_rate = fx_rates.get(currency, 1.0)
             
             fin = t.quarterly_financials
@@ -407,7 +394,6 @@ def extract_quarterly_financials(tickers: dict = TICKERS) -> pd.DataFrame:
             df_filtered = df_fin[found_rows].copy()
             df_filtered.index.name = "date"
             df_filtered = df_filtered.reset_index()
-            import pandas as pd
             df_filtered = df_filtered.rename(columns=row_map)
             for col in ["revenue", "eps", "eps_diluted"]:
                 if col in df_filtered.columns:
@@ -418,14 +404,12 @@ def extract_quarterly_financials(tickers: dict = TICKERS) -> pd.DataFrame:
             logger.warning(f"⚠️ Failed to fetch quarterly financials for {ticker}: {e}")
             return None
 
-    from concurrent.futures import ThreadPoolExecutor, as_completed
     with ThreadPoolExecutor(max_workers=20) as executor:
         future_to_tick = {executor.submit(fetch_single_ticker_fin, t): t for t in tickers.keys()}
         for future in as_completed(future_to_tick):
             res = future.result()
             if res is not None: all_data.append(res)
             
-    import pandas as pd
     if not all_data: return pd.DataFrame()
     final_df = pd.concat(all_data, ignore_index=True)
     final_df["date"] = pd.to_datetime(final_df["date"])

@@ -13,8 +13,6 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-import shap
-import duckdb
 import pandas as pd
 import contextlib
 import plotly.graph_objects as go
@@ -22,7 +20,6 @@ import plotly.express as px
 from plotly.subplots import make_subplots
 import streamlit as st
 import numpy as np
-from textblob import TextBlob
 import yfinance as yf
 
 # ── MULTI-CURRENCY NORMALIZATION MATRIX (Target: EUR) ───────────────
@@ -323,6 +320,7 @@ def get_db_connection(read_only=False):
         st.info(f"Existing files in {os.path.dirname(DB_PATH)}: {os.listdir(os.path.dirname(DB_PATH)) if os.path.exists(os.path.dirname(DB_PATH)) else 'Dir missing'}")
         raise FileNotFoundError(f"Database missing at {DB_PATH}")
         
+    import duckdb
     st.sidebar.info(f"DuckDB Ver on Cloud: {duckdb.__version__}")
     conn = duckdb.connect(DB_PATH, read_only=read_only)
     try:
@@ -337,7 +335,7 @@ def load_data():
             SELECT f.date, f.ticker, d.company, d.sector, d.region,
                    f.price_open, f.price_high, f.price_low, f.price_close, 
                    f.daily_return_pct, f.volume,
-                   f.ma_20, f.ma_50, f.ma_200, f.ma_signal, 
+                   f.ma_20, f.ma_50, f.ma_200, f.rsi, f.ma_signal, 
                    f.price_z_score, f.pct_from_ma200, f.pct_from_52w_high,
                    f.is_volume_spike, f.cap_category
             FROM marts.fct_daily_returns f
@@ -2194,15 +2192,8 @@ with tab_scanner:
             ticker_prices = _prices_df[_prices_df['ticker'] == ticker].sort_values('date')
             if ticker_prices.empty: continue
             
-            # RSI Calculation
-            delta = ticker_prices['price_close'].diff()
-            gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-            loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-            rs = gain / loss
-            rsi = 100 - (100 / (1 + rs))
-            latest_rsi = 50
-            if isinstance(rsi, pd.Series) and not rsi.empty:
-                latest_rsi = rsi.iloc[-1]
+            # RSI (Pre-calculated in transform.py)
+            latest_rsi = ticker_prices["rsi"].iloc[-1] if not ticker_prices.empty else 50
             
             cur_p = ticker_prices["price_close"].iloc[-1]
             target_p = row.get("target_mean_price", 0)
@@ -2449,12 +2440,12 @@ with tab_ai:
     # ── LSTM Architecture Definition (deferred) ─────────────────────────────
     # ── UPGRADED LSTM Architecture (with Attention) ──────────────────────────
     class StockLSTM(torch.nn.Module):
-        def __init__(self, input_size=4, hidden_size=64, num_layers=2, output_size=1):
+        def __init__(self, input_size=6, hidden_size=64, num_layers=2, output_size=1):
             super().__init__()
             self.hidden_size = hidden_size
             self.num_layers = num_layers
             self.lstm = torch.nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=0.1)
-            # Self-Attention Layer to capture long-range dependencies in volatile assets
+            # Self-Attention Layer to capture long-range dependencies
             self.attention = torch.nn.MultiheadAttention(embed_dim=hidden_size, num_heads=2, batch_first=True)
             self.fc = torch.nn.Linear(hidden_size, output_size)
             
@@ -2462,23 +2453,12 @@ with tab_ai:
             h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
             c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
             out, _ = self.lstm(x, (h0, c0))
-            # Attention Mechanism: Focus on pivot points within the lookback window
             attn_output, _ = self.attention(out, out, out)
-            # Final prediction based on attended feature vector
             return self.fc(attn_output[:, -1, :])
 
-    # ── Gating Network for Neural Stacking (Phase 6) ──
-    class GatingNet(torch.nn.Module):
-        def __init__(self, input_size=5, hidden_size=16):
-            super().__init__()
-            self.net = torch.nn.Sequential(
-                torch.nn.Linear(input_size, hidden_size),
-                torch.nn.ReLU(),
-                torch.nn.Linear(hidden_size, 1),
-                torch.nn.Sigmoid() # Output: weight w for LSTM
-            )
-        def forward(self, x):
-            return self.net(x)
+    # ── Gating logic (Phase 10: Simple Volatility Switch) ───────────────────
+
+    # ── Gating Network for Neural Stacking (Phase 6) ── (DELETED In Phase 10)
 
     def _run_lstm_core(df_ticker, lookback=60, forecast_days=30, sector_name=None, quality_score=50):
         import warnings
@@ -2504,41 +2484,27 @@ with tab_ai:
         df['price_raw'] = df['price_close']
         df['price_close'] = apply_kalman(df['price_close'].values)
         
-        df['macd'] = df['price_close'].ewm(span=12, adjust=False).mean() - df['price_close'].ewm(span=26, adjust=False).mean()
-        roll_mean = df['price_close'].rolling(20).mean()
-        roll_std  = df['price_close'].rolling(20).std()
-        df['bollinger_pb'] = ((df['price_close'] - (roll_mean - 2*roll_std)) / (4*roll_std)).replace([np.inf,-np.inf],0.5).fillna(0.5)
-        raw_obv = (np.sign(df['price_close'].diff().fillna(0)) * df['volume']).cumsum()
-        df['obv_roc']   = raw_obv.pct_change(5).replace([np.inf,-np.inf],0).fillna(0)
+        # ── Phase 10: 'Honest Quant' Pre-processing ──
+        # These 3 features are independent and crucial for macro context.
         df['vol_surge'] = df['volume'] / (df['volume'].rolling(20).mean().fillna(df['volume']))
         spy_df = prices_full[prices_full['ticker']=='SPY'][['date','daily_return_pct']].rename(columns={'daily_return_pct':'spy_ret'})
         vix_df = prices_full[prices_full['ticker']=='^VIX'][['date','daily_return_pct']].rename(columns={'daily_return_pct':'vix_ret'})
         df = df.merge(spy_df, on='date', how='left').merge(vix_df, on='date', how='left')
         df['spy_ret'] = df['spy_ret'].fillna(0)
         df['vix_ret'] = df['vix_ret'].fillna(0)
-        if sector_name:
-            sec_data = prices_full[prices_full['sector']==sector_name].groupby('date')['daily_return_pct'].mean().reset_index().rename(columns={'daily_return_pct':'sector_ret'})
-            df = df.merge(sec_data, on='date', how='left')
-            df['sector_ret'] = df['sector_ret'].fillna(0)
-        else:
-            df['sector_ret'] = 0
+        
         df['quality_score_norm'] = quality_score / 100.0
         ticker_vol = df['daily_return_pct'].tail(60).std()
         spy_vol_s  = prices_full[prices_full['ticker']=='SPY']['daily_return_pct'].tail(60)
         spy_vol    = spy_vol_s.std() if not spy_vol_s.empty else 1.0
         
-        # ── Phase 8: GARCH(1,1) feature for GatingNet ──
-        try:
-            from arch import arch_model
-            garch_series = df['daily_return_pct'].tail(250) * 100
-            res_g = arch_model(garch_series, vol='Garch', p=1, q=1, dist='Normal', rescale=False).fit(disp='off')
-            garch_vol_current = np.sqrt(res_g.forecast(horizon=1).variance.values[-1, 0]) / 100.0
-        except Exception:
-            garch_vol_current = ticker_vol
-        if ticker_vol > 2.0 * spy_vol:   lstm_w,arima_w,lookback = 0.75,0.25,min(lookback,45)
-        elif ticker_vol < 0.8 * spy_vol: lstm_w,arima_w,lookback = 0.45,0.55,120
+        if ticker_vol > 2.0 * spy_vol:   lstm_w,arima_w,lookback = 0.70,0.30,min(lookback,45)
+        elif ticker_vol < 0.8 * spy_vol: lstm_w,arima_w,lookback = 0.40,0.60,120
         else:                             lstm_w,arima_w,lookback = 0.60,0.40,75
-        features = ['price_close','volume','rsi','daily_return_pct','macd','bollinger_pb','spy_ret','vix_ret','sector_ret','obv_roc','vol_surge','quality_score_norm']
+        
+        # ── Phase 10: 'Honest Quant' Indepedent Feature Set ──
+        # We only use features that are simple to project recursively.
+        features = ['price_close','daily_return_pct','spy_ret','vix_ret','vol_surge','quality_score_norm']
         df_clean = df[features].dropna()
         if len(df_clean) < lookback * 2: return None, None
         data = df_clean.values.astype(np.float32)
@@ -2626,116 +2592,79 @@ with tab_ai:
                 s=torch.FloatTensor(cur_seq).unsqueeze(0)
                 p=model(s).item()
                 
-                # ── Phase 9: Recursive Feature Projection ──
-                # We update not only the price, but its dependent momentum features 
-                # to prevent the LSTM from seeing contradictory stale context.
+                # ── Phase 10: Clean Recursive Path ──
                 nr = cur_seq[-1].copy()
-                nr[0] = p # Scaled Price
-                nr[3] = p - p_prev # Scaled Return proxy
-                # We also nudge the RSI feature (index 2) towards the new price direction
-                nr[2] = np.clip(nr[2] + (p - p_prev)*0.5, -1, 1)
+                nr[0] = p # Target Price
+                nr[1] = p - p_prev # Return proxy
                 
                 lstm_scaled.append(p)
                 cur_seq = np.append(cur_seq[1:],[nr],axis=0)
                 p_prev = p
         lstm_predicted_prices = price_scaler.inverse_transform(np.array(lstm_scaled).reshape(-1,1)).flatten()
-        ts_prices = df_clean['price_close'].values
+        
+        # ── Phase 10: Raw ARIMA (Capture market trend, not internal filters) ──
+        ts_raw = df['price_raw'].values
         try:
             from pmdarima import auto_arima
-            arima_predicted_prices = auto_arima(ts_prices,seasonal=False,stepwise=False,approximation=True,suppress_warnings=True,error_action='ignore',max_p=4,max_q=2).predict(n_periods=forecast_days)
+            arima_predicted_prices = auto_arima(ts_raw, seasonal=False, stepwise=True, suppress_warnings=True, max_p=3, max_q=2).predict(n_periods=forecast_days)
         except Exception:
             try:
                 from statsmodels.tsa.arima.model import ARIMA
-                arima_predicted_prices = ARIMA(ts_prices,order=(2,1,2)).fit().forecast(steps=forecast_days)
+                arima_predicted_prices = ARIMA(ts_raw,order=(2,1,2)).fit().forecast(steps=forecast_days)
             except Exception:
-                arima_predicted_prices = np.full(forecast_days,ts_prices[-1])
-        # ── Phase 8: GARCH-Augmented Neural Meta-Stacking ──
-        # Input features: [ticker_vol, spy_vol, vix, sector, quality, GARCH_VOL]
-        current_mom = (df_ticker['price_close'].iloc[-1] / df_ticker['price_close'].iloc[-6] - 1) if len(df_ticker) > 6 else 0
-        meta_features = torch.FloatTensor([ticker_vol, spy_vol, df['vix_ret'].tail(10).mean(), df['sector_ret'].tail(10).mean(), quality_score / 100.0, garch_vol_current])
+                arima_predicted_prices = np.full(forecast_days,ts_raw[-1])
+        w_l_final, w_a_final = lstm_w, arima_w
+        ensemble_prices = (w_l_final * lstm_predicted_prices) + (w_a_final * arima_predicted_prices)
         
-        g_model = GatingNet(input_size=6) # Incremented to 6 features
-        g_op = torch.optim.Adam(g_model.parameters(), lr=0.01)
-        g_model.train()
-        
-        # Meta-Training on current context (Stabilizing the gating)
-        for _ in range(50):
-            g_op.zero_grad()
-            w_pred = g_model(meta_features)
-            # Target w: bias towards 0.85 (LSTM) if volatility is manageable
-            target_w = 0.85 if ticker_vol < 1.5 * spy_vol else 0.45
-            target_w = torch.FloatTensor([target_w])
-            l_meta = torch.nn.functional.mse_loss(w_pred, target_w)
-            l_meta.backward(); g_op.step()
-        
-        g_model.eval()
-        with torch.no_grad():
-            w_l = g_model(meta_features).item()
-            w_a = 1.0 - w_l
-        
-        ensemble_prices = (w_l * lstm_predicted_prices) + (w_a * arima_predicted_prices)
-        
-        # ── Phase 9: Institutional Volatility Clipping (Guardrails) ──
-        # We cap daily jumps to ±5% to ensure the AI remains within 
-        # realistic market boundaries for stable investment analysis.
+        # ── Phase 10: Institutional Guardrails (Volatility Clipping) ──
         clamped_prices = [df_ticker['price_close'].iloc[-1]]
         for t in range(len(ensemble_prices)):
             p_raw = ensemble_prices[t]
             p_prev = clamped_prices[-1]
-            # Max 5.5% jump per day (standard limit for high-vol assets)
-            p_clamped = np.clip(p_raw, p_prev * 0.945, p_prev * 1.055)
+            p_clamped = np.clip(p_raw, p_prev * 0.95, p_prev * 1.05)
             clamped_prices.append(p_clamped)
-        ensemble_prices = np.array(clamped_prices[1:])
-        
-        # Boost the ensemble with raw momentum to 'un-smooth' the Kalman effect
-        momentum_boost = np.linspace(current_mom * 0.15, 0, len(ensemble_prices))
-        ensemble_prices = ensemble_prices * (1 + momentum_boost)
-        
-        # Boost the ensemble with a residual 'Trend Bias' from the VIX context
-        vix_bias = -0.001 if df['vix_ret'].tail(10).mean() > 0.02 else 0.0005
-        ensemble_prices = ensemble_prices * (1 + vix_bias)
-
+        # Final result check
         current_price = data[-1,0]
-        if np.isnan(ensemble_prices[-1]) or current_price==0: return None,None
+        if np.isnan(ensemble_prices[-1]) or current_price==0: return None,None,None
         
-        # ── EXPLAINABILITY: Feature Importance (Pseudo-SHAP / Gradient-based) ──
-        # Since SHAP DeepExplainer can be slow on large LSTMs, we use 
-        # a high-fidelity gradient-based sensitivity analysis.
+        # ── EXPLAINABILITY: Feature Importance ──
         model.eval()
         X_explain = X_t[-1:].clone().requires_grad_(True)
         out_explain = model(X_explain)
         out_explain.backward()
-        
-        # Calculate mean importance over the lookback window
         importances = torch.abs(X_explain.grad[0]).mean(dim=0).cpu().numpy()
-        importances = importances / np.sum(importances) * 100
+        importances = importances / (np.sum(importances) + 1e-9) * 100
         feat_imp_dict = dict(zip(features, importances))
 
         return ensemble_prices, (ensemble_prices[-1]-current_price)/current_price, feat_imp_dict
 
+    def calculate_backtest_accuracy(df_full, sector_name=None, quality_score=50, test_size=21):
+        """Phase 10: Honest Backtest - Strict Train/Test Separation"""
+        if len(df_full) < 150: return None, None
+        # We slice raw data to ensure NO LEAKAGE from the future
+        train_df = df_full.iloc[:-test_size].copy()
+        actual_prices = df_full["price_close"].iloc[-test_size:].values
+        
+        # Run forecast strictly on training data
+        # No re-training or HPO on the test window allowed
+        predicted,_,_ = _run_lstm_core(train_df, lookback=120, forecast_days=test_size, sector_name=sector_name, quality_score=quality_score)
+        
+        if predicted is None or len(predicted) < test_size: return None, None
+        mape = np.mean(np.abs((actual_prices - predicted) / actual_prices))
+        return max(0.0, min(100.0, 100*(1-mape))), float(mape)
+
     @st.cache_data(show_spinner="Training Adaptive AI Ensemble (LSTM + ARIMA)...")
     def train_predict_lstm(df_ticker, lookback=60, forecast_days=30, sector_name=None, quality_score=50):
         return _run_lstm_core(df_ticker, lookback=lookback, forecast_days=forecast_days, sector_name=sector_name, quality_score=quality_score)
-
-    def calculate_backtest_accuracy(df_ticker, sector_name=None, quality_score=50, test_size=21):
-        df = df_ticker.copy().sort_values("date").reset_index(drop=True)
-        max_lookback=120
-        if len(df) < max_lookback+test_size+5: return None,None
-        train_df=df.iloc[:-test_size]; actual=df.iloc[-test_size:]["price_close"].values
-        predicted,_,_ = _run_lstm_core(train_df,lookback=max_lookback,forecast_days=test_size,sector_name=sector_name,quality_score=quality_score)
-        if predicted is None: return None,None
-        mape = np.mean(np.abs((actual-predicted)/actual))
-        if np.isnan(mape): return None,None
-        return max(0.0,min(100.0,100*(1-mape))), float(mape)
 
     render_header("ai", "Price & Monte Carlo Forecasting", level="###")
     
     st.markdown("""
     <div style='background:rgba(52,152,219,0.05); border-left:4px solid #3498db; padding:12px 18px; border-radius:4px; margin-bottom:20px;'>
         <p style='margin:0; font-size:0.9rem; color:#d1d1d1;'>
-            <b style='color:#3498db;'>Quant Intelligence Note:</b> This ensemble model (LSTM + ARIMA) is trained on <b>12 high-conviction factors</b>: 
-            Price Action, Volume Surges, Momentum (RSI/MACD), Volatility (Bollinger), Market Correlation (SPY/VIX), Sector Performance, 
-            and the <b>Institutional Quality Score</b> (Valuation & Financial Health). Simulated paths also incorporate <b>FinBERT News Sentiment</b>.
+            <b style='color:#3498db;'>Quant Intelligence Note:</b> This ensemble model (LSTM + ARIMA) is trained on <b>6 independent factors</b>: 
+            Price Action, Daily Returns, Market Correlation (SPY/VIX), Volume Surge Indicators, 
+            and the <b>Institutional Quality Score</b> (Valuation & Financial Health).
         </p>
     </div>
     """, unsafe_allow_html=True)
@@ -2955,12 +2884,12 @@ with tab_ai:
             render_header("activity", "Model Input Reasoning (SHAP)")
             if feat_imp:
                 pretty_feat_map = {
-                    'price_close': 'Price Momentum', 'volume': 'Volume Activity',
-                    'rsi': 'RSI', 'daily_return_pct': 'Volatility',
-                    'macd': 'MACD', 'bollinger_pb': 'Bollinger %B',
-                    'spy_ret': 'Market (SPY)', 'vix_ret': 'Fear (VIX)',
-                    'sector_ret': 'Sector Perf.', 'obv_roc': 'Moneypath (OBV)',
-                    'vol_surge': 'Vol Spike', 'quality_score_norm': 'Quality Score'
+                    'price_close': 'Price Level',
+                    'daily_return_pct': 'Volatility/Return',
+                    'spy_ret': 'Market (SPY)', 
+                    'vix_ret': 'Fear Index (VIX)',
+                    'vol_surge': 'Volume Spike', 
+                    'quality_score_norm': 'Quality Score'
                 }
                 imp_df = pd.DataFrame([
                     {'Feature': pretty_feat_map.get(k, k), 'Weight (%)': v}
@@ -2977,45 +2906,44 @@ with tab_ai:
             else:
                 st.info("Insufficient data for SHAP analysis.")
 
-
-# ── FEATURE 5: News Sentiment Analysis ────────────────────────────────────────
-    st.markdown("---")
-    render_header("layers", f"AI News Sentiment Analysis: {fc_ticker}", level="###")
-    st.write("Fetches recent headlines and uses **NLP (Natural Language Processing)** to analyze the market mood.")
-    
-    if fc_ticker:
-        import feedparser
-        try:
-            rss_url = f"https://news.google.com/rss/search?q={fc_ticker}+stock&hl=en-US&gl=US&ceid=US:en"
-            feed = feedparser.parse(rss_url)
-            news_items = feed.entries[:10]
-            if news_items:
-                titles = [item.get("title", "").split(" - ")[0] for item in news_items]
-                pipe = get_finbert_pipeline()
-                if pipe:
-                    results = pipe(titles)
-                    sent_scores = []
-                    for i, res in enumerate(results):
-                        clean_title = titles[i]
-                        entry = news_items[i]
-                        label = res['label'].upper()
-                        score = res['score']
-                        numeric_score = score if label == 'POSITIVE' else (-score if label == 'NEGATIVE' else 0)
-                        sent_scores.append(numeric_score)
-                        icon = "🟢" if label == 'POSITIVE' else ("🔴" if label == 'NEGATIVE' else "⚪")
-                        with st.expander(f"{icon} {label} ({score:.2f}) | {clean_title}"):
-                            st.write(f"**Source:** {entry.get('source', {}).get('title', 'Google News')}")
-                            st.write(f"**Date:** {entry.get('published', 'N/A')}")
-                            st.write(f"**Link:** [Read Article]({entry.get('link')})")
-                    avg_sent = np.mean(sent_scores) if sent_scores else 0
-                    mood = "BULLISH 🚀" if avg_sent > 0.1 else ("BEARISH 📉" if avg_sent < -0.1 else "NEUTRAL 😴")
-                    st.metric("FinBERT Market Mood", mood, delta=f"{avg_sent:.2f} confidence")
-                else:
-                    st.error("FinBERT engine unavailable. Please check internet connection.")
-            else:
-                st.info("No recent news found for this ticker.")
-        except Exception as e:
-            st.error(f"Error fetching news: {e}")
+            # ── FEATURE 5: News Sentiment Analysis ────────────────────────────────────────
+            st.markdown("---")
+            render_header("layers", f"AI News Sentiment Analysis: {fc_ticker}", level="###")
+            st.write("Fetches recent headlines and uses **NLP (Natural Language Processing)** to analyze the market mood.")
+            
+            if fc_ticker:
+                import feedparser
+                try:
+                    rss_url = f"https://news.google.com/rss/search?q={fc_ticker}+stock&hl=en-US&gl=US&ceid=US:en"
+                    feed = feedparser.parse(rss_url)
+                    news_items = feed.entries[:10]
+                    if news_items:
+                        titles = [item.get("title", "").split(" - ")[0] for item in news_items]
+                        pipe = get_finbert_pipeline()
+                        if pipe:
+                            results = pipe(titles)
+                            sent_scores = []
+                            for i, res in enumerate(results):
+                                clean_title = titles[i]
+                                entry = news_items[i]
+                                label = res['label'].upper()
+                                score = res['score']
+                                numeric_score = score if label == 'POSITIVE' else (-score if label == 'NEGATIVE' else 0)
+                                sent_scores.append(numeric_score)
+                                icon = "🟢" if label == 'POSITIVE' else ("🔴" if label == 'NEGATIVE' else "⚪")
+                                with st.expander(f"{icon} {label} ({score:.2f}) | {clean_title}"):
+                                    st.write(f"**Source:** {entry.get('source', {}).get('title', 'Google News')}")
+                                    st.write(f"**Date:** {entry.get('published', 'N/A')}")
+                                    st.write(f"**Link:** [Read Article]({entry.get('link')})")
+                            avg_sent = np.mean(sent_scores) if sent_scores else 0
+                            mood = "BULLISH 🚀" if avg_sent > 0.1 else ("BEARISH 📉" if avg_sent < -0.1 else "NEUTRAL 😴")
+                            st.metric("FinBERT Market Mood", mood, delta=f"{avg_sent:.2f} confidence")
+                        else:
+                            st.error("FinBERT engine unavailable. Please check internet connection.")
+                    else:
+                        st.info("No recent news found for this ticker.")
+                except Exception as e:
+                    st.error(f"Error fetching news: {e}")
 
 # ── FEATURE 4: Sidebar Export Hub ────────────────────────────────────────────
 st.sidebar.markdown("---")
