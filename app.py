@@ -2089,210 +2089,65 @@ with tab_portfolio:
             if len(current_tickers) > 1:
                 render_header("activity", "Markowitz Portfolio Optimization (Efficient Frontier)")
                 
-                from scipy.optimize import minimize
-                
-                # ── Build base matrices ───────────────────────────────────────
-                cov_matrix = ret_matrix.cov() * 252          # Annualized
-                hist_rets  = ret_matrix.mean() * 252         # Raw historical
-                
-                # ── AI-ADJUSTED EXPECTED RETURNS (Black-Litterman inspired) ──
-                # Score signal maps [0,100] → [-0.50, +0.50] annualized return view
-                # score 38 → -0.12/yr (strong headwind, optimizer avoids this)
-                # score 80 → +0.30/yr (strong tailwind, optimizer prefers this)
-                score_lookup = {}
-                for tk in current_tickers:
-                    meta = reco_df[reco_df["ticker"] == tk]
-                    if not meta.empty:
-                        score_lookup[tk] = float(meta.iloc[0]["score"])
-                    else:
-                        score_lookup[tk] = 50.0  # Neutral fallback
-                
-                score_arr    = np.array([score_lookup[tk] for tk in current_tickers])
-                score_signal = (score_arr - 50.0) / 100.0  # score 38 → -0.12, score 80 → +0.30
-                
-                # Blend: 30% history, 70% AI conviction signal
-                adj_rets = 0.30 * hist_rets.values + 0.70 * score_signal
-                
-                # ── Neg-Sharpe objective using adj_rets ───────────────────────
-                def neg_sharpe(w, adj_rets, cov_matrix, rf=0.04):
-                    r = np.sum(adj_rets * w)
-                    v = np.sqrt(np.dot(w.T, np.dot(cov_matrix, w)))
-                    return -(r - rf) / v if v > 0 else 0
-                
-                n_assets = len(current_tickers)
-                
-                # ── DYNAMIC BOUNDS: AI-aware per-asset limits ─────────────────
-                # Rule: If AI says SELL (score<40), the optimizer is FORBIDDEN
-                # from recommending an INCREASE over the current weight.
-                # This directly resolves the paradox: no more "SELL but buy more".
-                bounds = []
-                for i, tk in enumerate(current_tickers):
-                    curr_w = float(weights[i])         # current portfolio weight (0-1)
-                    score  = score_lookup.get(tk, 50)
-                    if score < 40:                     # SELL zone
-                        hi = min(curr_w + 0.01, 0.05)  # Can't grow beyond curr+1% or 5% max
-                        hi = max(hi, 0.00)             # Ensure hi >= 0
-                        bounds.append((0.00, hi))
-                    elif score >= 75:                  # Strong BUY
-                        bounds.append((0.02, 0.45))
-                    else:                              # HOLD / neutral
-                        bounds.append((0.00, 0.35))
-                
-                # Safety: if bounds are too tight and feasibility fails, relax them
-                if sum(b[1] for b in bounds) < 1.0:
-                    bounds = [(0.00, 0.40)] * n_assets
-                
-                constr = [{"type": "eq", "fun": lambda w: np.sum(w) - 1}]
-                w0     = np.ones(n_assets) / n_assets
-                
-                opt_result = minimize(
-                    neg_sharpe, w0,
-                    args=(adj_rets, cov_matrix),
-                    method="SLSQP",
-                    bounds=bounds,
-                    constraints=constr,
-                    options={"maxiter": 1000, "ftol": 1e-9}
+                # ── Build matrices ───────────────────────────────────────────
+                n_assets   = len(current_tickers)
+                cov_matrix = ret_matrix.cov() * 252
+                hist_rets  = ret_matrix.mean() * 252
+
+                curr_r = np.sum(hist_rets.values * weights)
+                curr_v = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
+                curr_sharpe = (curr_r - 0.04) / curr_v if curr_v > 0 else 0
+
+                # ── Efficient Frontier (Monte Carlo) ─────────────────────────
+                st.info(
+                    "ℹ️ This chart shows the **risk/return landscape** across all possible weight combinations. "
+                    "The ★ marks your current portfolio position. "
+                    "Use the **Correlation Heatmap** below to understand diversification — "
+                    "individual buy/sell decisions belong in the **Deep Dive tab**."
                 )
-                opt_w = opt_result.x
-                
-                # Compute portfolio stats with adj_rets for display
-                opt_r      = np.sum(adj_rets * opt_w)
-                opt_v      = np.sqrt(np.dot(opt_w.T, np.dot(cov_matrix, opt_w)))
-                opt_sharpe = (opt_r - 0.04) / opt_v if opt_v > 0 else 0
-                curr_r     = np.sum(adj_rets * weights)
-                curr_v     = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
-                
-                # ── Efficient Frontier scatter ────────────────────────────────
-                n_sims = 1000
+                n_sims  = 1000
                 sim_res = np.zeros((3, n_sims))
                 for i in range(n_sims):
                     w_rnd  = np.random.dirichlet(np.ones(n_assets))
-                    r_rnd  = np.sum(adj_rets * w_rnd)
+                    r_rnd  = np.sum(hist_rets.values * w_rnd)
                     v_rnd  = np.sqrt(np.dot(w_rnd.T, np.dot(cov_matrix, w_rnd)))
                     sim_res[0, i] = v_rnd
                     sim_res[1, i] = r_rnd
                     sim_res[2, i] = (r_rnd - 0.04) / v_rnd if v_rnd > 0 else 0
-                
+
                 fig_mpt = go.Figure()
                 fig_mpt.add_trace(go.Scatter(
                     x=sim_res[0, :], y=sim_res[1, :], mode="markers",
                     marker=dict(color=sim_res[2, :], colorscale="Viridis",
-                                showscale=True, size=5, opacity=0.4),
-                    name="Simulated Portfolios"
+                                showscale=True, size=5, opacity=0.4,
+                                colorbar=dict(title="Sharpe")),
+                    name="Simulated Portfolios",
+                    hovertemplate="Vol: %{x:.1%}<br>Return: %{y:.1%}<extra></extra>"
                 ))
                 fig_mpt.add_trace(go.Scatter(
                     x=[curr_v], y=[curr_r], mode="markers+text",
-                    marker=dict(color="red", size=15, symbol="star"),
-                    text=["CURRENT"], textposition="top center", name="Current"
-                ))
-                fig_mpt.add_trace(go.Scatter(
-                    x=[opt_v], y=[opt_r], mode="markers+text",
-                    marker=dict(color="#00ffcc", size=18, symbol="star"),
-                    text=["⭐ OPTIMAL"], textposition="top center",
-                    name=f"Optimal (Sharpe={opt_sharpe:.2f})"
+                    marker=dict(color="#e74c3c", size=18, symbol="star",
+                                line=dict(color="white", width=2)),
+                    text=[f"YOUR PORTFOLIO<br>(Sharpe {curr_sharpe:.2f})"],
+                    textposition="top center", name="Current Portfolio"
                 ))
                 fig_mpt.update_layout(
                     template="plotly_dark", height=500,
-                    xaxis_title="Risk (Annual Vol)", yaxis_title="AI-Adj. Annual Return",
+                    xaxis_title="Annual Volatility (Risk)",
+                    yaxis_title="Annual Historical Return",
+                    xaxis=dict(tickformat=".0%"),
+                    yaxis=dict(tickformat=".0%"),
                     margin=dict(t=30, b=10, l=10, r=10)
                 )
                 st.plotly_chart(fig_mpt, use_container_width=True)
-                
-                # ── OPTIMAL WEIGHTS DISPLAY ───────────────────────────────────
+
                 st.markdown("---")
-                render_header("zap", "🎯 Optimal Portfolio Allocation (Max-Sharpe)", level="#####")
-                
-                # KPI row
-                opc1, opc2, opc3, opc4 = st.columns(4)
-                with opc1: render_metric_tile("Adj. Return", f"{opt_r*100:.1f}%")
-                with opc2: render_metric_tile("Optimal Vol.", f"{opt_v*100:.1f}%")
-                with opc3: render_metric_tile("Optimal Sharpe", f"{opt_sharpe:.2f}")
-                with opc4:
-                    sharpe_delta = opt_sharpe - ((curr_r - 0.04) / curr_v if curr_v > 0 else 0)
-                    render_metric_tile("vs Current Sharpe", f"{sharpe_delta:+.2f}", delta=sharpe_delta * 100)
-                
-                st.markdown("<br>", unsafe_allow_html=True)
-                
-                # Pie + Weight cards
-                pie_col, card_col = st.columns([3, 2])
-                
-                with pie_col:
-                    # Color: green for high score, red for low
-                    pie_colors = []
-                    for tk in current_tickers:
-                        s = score_lookup.get(tk, 50)
-                        if s >= 70:   pie_colors.append("#2ecc71")
-                        elif s >= 50: pie_colors.append("#3498db")
-                        elif s >= 35: pie_colors.append("#e67e22")
-                        else:         pie_colors.append("#e74c3c")
-                    
-                    fig_pie = go.Figure(go.Pie(
-                        labels=current_tickers,
-                        values=[round(w * 100, 1) for w in opt_w],
-                        hole=0.45,
-                        textinfo="label+percent",
-                        textfont=dict(size=13),
-                        marker=dict(colors=pie_colors)
-                    ))
-                    fig_pie.update_layout(
-                        template="plotly_dark", height=500,
-                        showlegend=True,
-                        legend=dict(orientation="h", y=-0.05, font=dict(size=11)),
-                        margin=dict(t=30, b=10, l=10, r=10),
-                        annotations=[dict(text="OPTIMAL<br>MIX", x=0.5, y=0.5,
-                                      font_size=14, showarrow=False, font_color="#ccc")]
-                    )
-                    st.plotly_chart(fig_pie, use_container_width=True)
-                
-                with card_col:
-                    sorted_opt = sorted(
-                        zip(current_tickers, opt_w),
-                        key=lambda x: x[1], reverse=True
-                    )
-                    st.markdown("<div style='display:flex; flex-direction:column; gap:6px;'>", unsafe_allow_html=True)
-                    for tk, wt in sorted_opt:
-                        curr_wt   = weights[current_tickers.index(tk)] * 100
-                        delta_wt  = wt * 100 - curr_wt
-                        ai_sc     = score_lookup.get(tk, 50)
-                        
-                        # Action label driven by BOTH delta AND AI score
-                        if ai_sc < 40 and wt * 100 > 5:
-                            action_lbl, d_color = "⚠️ OVERWEIGHT SELL", "#e74c3c"
-                        elif delta_wt > 1.0:
-                            action_lbl, d_color = "▲ INCREASE", "#00ffcc"
-                        elif delta_wt < -1.0:
-                            action_lbl, d_color = "▼ REDUCE", "#ff4b4b"
-                        else:
-                            action_lbl, d_color = "● HOLD", "#888"
-                        
-                        score_badge_color = "#2ecc71" if ai_sc >= 70 else ("#f1c40f" if ai_sc >= 50 else "#e74c3c")
-                        
-                        st.markdown(f"""
-                        <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08);
-                                    border-radius:6px; padding:8px 12px; margin-bottom:2px;'>
-                            <div style='display:flex; justify-content:space-between; align-items:center;'>
-                                <span style='font-weight:800; font-size:0.85rem;'>{tk}</span>
-                                <span style='background:{score_badge_color}22; color:{score_badge_color};
-                                            padding:1px 5px; border-radius:3px; font-size:0.65rem; font-weight:700;'>
-                                    Score {ai_sc:.0f}
-                                </span>
-                            </div>
-                            <div style='display:flex; justify-content:space-between; align-items:center; margin-top:4px;'>
-                                <span style='color:#aaa; font-size:0.75rem;'>Now: <b>{curr_wt:.1f}%</b></span>
-                                <span style='font-size:0.9rem; font-weight:900;'>→ <b>{wt*100:.1f}%</b></span>
-                                <span style='color:{d_color}; font-size:0.7rem; font-weight:700;'>{action_lbl} ({delta_wt:+.1f}%)</span>
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                    st.markdown("</div>", unsafe_allow_html=True)
-                
-                st.markdown("---")
-                # Risk Decomposition
+                # ── Risk Contribution ────────────────────────────────────────
                 render_header("risk", "Global Risk Contribution", level="#####")
-                mctr        = np.dot(cov_matrix, weights) / (curr_v if curr_v > 0 else 1)
+                mctr         = np.dot(cov_matrix, weights) / (curr_v if curr_v > 0 else 1)
                 risk_contrib = weights * mctr
-                risk_pct    = risk_contrib / np.sum(np.abs(risk_contrib)) * 100
-                
+                risk_pct     = risk_contrib / np.sum(np.abs(risk_contrib)) * 100
+
                 fig_risk_b = px.bar(
                     x=current_tickers, y=risk_pct,
                     labels={"x": "Ticker", "y": "Risk Contribution (%)"},
@@ -2301,8 +2156,8 @@ with tab_portfolio:
                 )
                 fig_risk_b.update_layout(height=380)
                 st.plotly_chart(fig_risk_b, use_container_width=True)
-                
-                # Correlation Heatmap
+
+                # ── Correlation Heatmap ──────────────────────────────────────
                 render_header("globe", "Asset Correlation Heatmap", level="#####")
                 corr_matrix = ret_matrix.corr()
                 fig_corr = px.imshow(
@@ -2312,7 +2167,7 @@ with tab_portfolio:
                 )
                 fig_corr.update_layout(height=400)
                 st.plotly_chart(fig_corr, use_container_width=True)
-                
+
             # 6. ── PORTFOLIO BACKTESTER ──
             render_header("chart", "Portfolio Growth Simulation")
             initial_investment = 10000
