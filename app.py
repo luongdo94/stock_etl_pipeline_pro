@@ -2382,7 +2382,7 @@ with tab_scanner:
         </div>
         <div style='display:grid; grid-template-columns: repeat(6, 1fr); gap:10px;'>
             <div style='background:rgba(52,152,219,0.08); border-left:3px solid #3498db; padding:8px 10px; border-radius:5px;'>
-                <div style='font-size:0.7rem; color:#3498db; font-weight:700;'>VALUATION</div>
+<div style='font-size:0.7rem; color:#3498db; font-weight:700;'>VALUATION</div>
                 <div style='font-size:0.65rem; color:#aaa; margin-top:3px;'>PEG, P/E, P/B</div>
                 <div style='font-size:1rem; font-weight:800; color:#fff;'>≤ 20 pts</div>
             </div>
@@ -2437,15 +2437,13 @@ with tab_ai:
     from arch import arch_model
     optuna.logging.set_verbosity(optuna.logging.WARNING)
 
-    # ── LSTM Architecture Definition (deferred) ─────────────────────────────
-    # ── UPGRADED LSTM Architecture (with Attention) ──────────────────────────
+    # ── LSTM Architecture Definition (v7.0: Direct Multi-step) ─────────────────────────
     class StockLSTM(torch.nn.Module):
-        def __init__(self, input_size=6, hidden_size=64, num_layers=2, output_size=1):
+        def __init__(self, input_size=6, hidden_size=64, num_layers=2, output_size=30):
             super().__init__()
             self.hidden_size = hidden_size
             self.num_layers = num_layers
             self.lstm = torch.nn.LSTM(input_size, hidden_size, num_layers, batch_first=True, dropout=0.1)
-            # Self-Attention Layer to capture long-range dependencies
             self.attention = torch.nn.MultiheadAttention(embed_dim=hidden_size, num_heads=2, batch_first=True)
             self.fc = torch.nn.Linear(hidden_size, output_size)
             
@@ -2454,75 +2452,67 @@ with tab_ai:
             c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
             out, _ = self.lstm(x, (h0, c0))
             attn_output, _ = self.attention(out, out, out)
-            return self.fc(attn_output[:, -1, :])
-
-    # ── Gating logic (Phase 10: Simple Volatility Switch) ───────────────────
-
-    # ── Gating Network for Neural Stacking (Phase 6) ── (DELETED In Phase 10)
+            return self.fc(attn_output[:, -1, :]) # Projects to [batch, forecast_days]
 
     def _run_lstm_core(df_ticker, lookback=60, forecast_days=30, sector_name=None, quality_score=50):
         import warnings
         warnings.filterwarnings('ignore')
         df = df_ticker.copy().sort_values("date").reset_index(drop=True)
-        
-        # ── Phase 1: Robust Signal Processing (Kalman Denoising) ──
-        # Simple self-adjusting Kalman Filter for 1D price action
-        # ── Phase 1 Refinement: Dynamic Price-Aware Kalman ──
-        def apply_kalman(data, process_variance=1e-5):
-            # Dynamic measurement error based on price scale (0.1% of avg price)
-            measurement_error = (np.mean(data) * 0.001) ** 2
-            estimate = data[0]; error_est = 1.0; result = []
-            for measurement in data:
-                priori_est = estimate; priori_error = error_est + process_variance
-                gain = priori_error / (priori_error + measurement_error)
-                estimate = priori_est + gain * (measurement - priori_est)
-                error_est = (1 - gain) * priori_error
-                result.append(estimate)
-            return np.array(result)
-        
-        # Smooth 'price_close' to reduce idiosyncratic noise impact
-        df['price_raw'] = df['price_close']
-        df['price_close'] = apply_kalman(df['price_close'].values)
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
         # ── Phase 10: 'Honest Quant' Pre-processing ──
-        # These 3 features are independent and crucial for macro context.
+        # Macro & Volatility Features
         df['vol_surge'] = df['volume'] / (df['volume'].rolling(20).mean().fillna(df['volume']))
         spy_df = prices_full[prices_full['ticker']=='SPY'][['date','daily_return_pct']].rename(columns={'daily_return_pct':'spy_ret'})
         vix_df = prices_full[prices_full['ticker']=='^VIX'][['date','daily_return_pct']].rename(columns={'daily_return_pct':'vix_ret'})
         df = df.merge(spy_df, on='date', how='left').merge(vix_df, on='date', how='left')
-        df['spy_ret'] = df['spy_ret'].fillna(0)
-        df['vix_ret'] = df['vix_ret'].fillna(0)
+        df['spy_ret'] = df['spy_ret'].fillna(0); df['vix_ret'] = df['vix_ret'].fillna(0)
         
         df['quality_score_norm'] = quality_score / 100.0
         ticker_vol = df['daily_return_pct'].tail(60).std()
         spy_vol_s  = prices_full[prices_full['ticker']=='SPY']['daily_return_pct'].tail(60)
         spy_vol    = spy_vol_s.std() if not spy_vol_s.empty else 1.0
         
+        # 🛡️ ADAPTIVE CLIPPING UNIT (v7.0)
+        # Dynamic band based on relative volatility
+        vol_ratio = ticker_vol / (spy_vol + 1e-6)
+        dynamic_clamp = 0.05 + min(0.05, 0.02 * vol_ratio) # Base 5%, Max 10%
+        
         if ticker_vol > 2.0 * spy_vol:   lstm_w,arima_w,lookback = 0.70,0.30,min(lookback,45)
         elif ticker_vol < 0.8 * spy_vol: lstm_w,arima_w,lookback = 0.40,0.60,120
         else:                             lstm_w,arima_w,lookback = 0.60,0.40,75
         
-        # ── Phase 10: 'Honest Quant' Indepedent Feature Set ──
-        # We only use features that are simple to project recursively.
+        # ── Feature Set ──
         features = ['price_close','daily_return_pct','spy_ret','vix_ret','vol_surge','quality_score_norm']
         df_clean = df[features].dropna()
-        if len(df_clean) < lookback * 2: return None, None
+        if len(df_clean) < lookback + forecast_days + 30: return None, None
         data = df_clean.values.astype(np.float32)
+
         price_scaler = MinMaxScaler(feature_range=(-1,1))
-        price_scaler.fit(data[:,0:1])
+        price_scaler.fit(df['price_close'].values.reshape(-1, 1))
         scaler = MinMaxScaler(feature_range=(-1,1))
         scaled_data = scaler.fit_transform(data)
+        
+        # ── DATA PREP (v7.0: Multi-step Y) ──
         X, y = [], []
-        for i in range(len(scaled_data)-lookback):
-            X.append(scaled_data[i:(i+lookback),:])
-            y.append(scaled_data[i+lookback,0])
-        X = np.array(X); y = np.array(y).reshape(-1,1)
-        X_t, y_t = torch.FloatTensor(X), torch.FloatTensor(y)
+        for i in range(len(scaled_data) - lookback - forecast_days):
+            X.append(scaled_data[i:(i+lookback), :])
+            # y is now a vector of future prices
+            y.append(scaled_data[i+lookback : i+lookback+forecast_days, 0])
+        
+        X_t = torch.FloatTensor(np.array(X)).to(device)
+        y_t = torch.FloatTensor(np.array(y)).to(device)
+        
+        # 🛡️ TEMPORAL FEATURE DECAY (v7.0)
+        # Increase weight for recent observations in the sequence
+        decay_weights = torch.exp(torch.linspace(-0.5, 0, lookback)).to(device).view(1, lookback, 1)
+        X_t = X_t * decay_weights
+        
         ticker_id    = df_ticker['ticker'].iloc[0] if not df_ticker.empty else "unknown"
-        MODEL_VERSION = "v4_dynamic_lookback"
+        MODEL_VERSION = f"v7_direct_{forecast_days}"
         if "optuna_cache" not in st.session_state or st.session_state.get("optuna_version") != MODEL_VERSION:
-            st.session_state.optuna_cache = {}
-            st.session_state.optuna_version = MODEL_VERSION
+            st.session_state.optuna_cache = {}; st.session_state.optuna_version = MODEL_VERSION
+            
         if ticker_id in st.session_state.optuna_cache:
             best = st.session_state.optuna_cache[ticker_id]
         else:
@@ -2530,50 +2520,31 @@ with tab_ai:
             X_hpo, y_hpo = X_t[:hpo_split], y_t[:hpo_split]
             def objective(trial):
                 h  = trial.suggest_categorical("hidden_size",[32,64,128])
-                nl = trial.suggest_int("num_layers",1,3)
-                lr = trial.suggest_float("lr",1e-4,1e-3,log=True) # Slightly tighter LR for stability
-                m  = StockLSTM(input_size=len(features),hidden_size=h,num_layers=nl)
-                # Phase 3: Huber Loss (Robust to outliers)
+                nl = trial.suggest_int("num_layers",1,2)
+                lr = trial.suggest_float("lr",5e-4,2e-3,log=True)
+                m  = StockLSTM(input_size=len(features),hidden_size=h,num_layers=nl,output_size=forecast_days).to(device)
                 cr = torch.nn.HuberLoss(delta=1.0)
                 op = torch.optim.Adam(m.parameters(),lr=lr)
                 m.train()
-                
-                # Pre-calculate Directional Baseline (last price in sequence)
-                # X_hpo is [batch, seq, features], price is feature index 0
-                y_baseline = X_hpo[:, -1, 0].unsqueeze(1)
-                
-                for _ in range(40):
-                    op.zero_grad(); o=m(X_hpo); l_core=cr(o,y_hpo)
-                    
-                    # Directional Penalty logic
-                    pred_diff = o - y_baseline
-                    true_diff = y_hpo - y_baseline
-                    # Phase 3 Refinement: Softer Directional Penalty (2.0 -> 0.5)
-                    penalty = torch.mean(torch.clamp(-pred_diff * true_diff, min=0)) * 0.5
-                    loss = l_core + penalty
-                    
-                    if torch.isnan(loss): return 1e6
-                    loss.backward(); op.step()
-                return loss.item()
-            with st.spinner(f"🧠 Tuning Deep Intelligence for {ticker_id}..."):
+                for _ in range(30):
+                    op.zero_grad(); o=m(X_hpo); l=cr(o,y_hpo); l.backward(); op.step()
+                return l.item()
+            with st.spinner(f"🧠 Tuning Direct Intelligence for {ticker_id}..."):
                 study = optuna.create_study(direction="minimize")
-                # Phase 2: Higher Fidelity Optimization
-                study.optimize(objective, n_trials=25, timeout=30)
-                best = study.best_params; best['epochs']=60
+                study.optimize(objective, n_trials=15, timeout=25)
+                best = study.best_params; best['epochs']=80
                 st.session_state.optuna_cache[ticker_id] = best
-        model = StockLSTM(input_size=len(features),hidden_size=best['hidden_size'],num_layers=best['num_layers'])
-        # Main Training Loop with Huber Loss
-        cr = torch.nn.HuberLoss(delta=1.0)
-        op = torch.optim.Adam(model.parameters(),lr=best['lr'])
-        model.train()
+        
+        # ── Final Training (v7.2: Direct Multi-step Architecture) ──
+        model = StockLSTM(input_size=len(features), hidden_size=best['hidden_size'], num_layers=best['num_layers'], output_size=forecast_days).to(device)
+        cr = torch.nn.HuberLoss(delta=1.0); op = torch.optim.Adam(model.parameters(), lr=best['lr'])
+        model.train(); prev_loss = 1e9
         
         y_baseline_total = X_t[:, -1, 0].unsqueeze(1)
-        prev_loss = 1e9
         for epoch in range(best['epochs']):
             op.zero_grad(); o=model(X_t); l_core=cr(o,y_t)
             
-            # Apply Directional Penalty to main training
-            # Phase 3 Refinement: Softer Directional Penalty (2.0 -> 0.5)
+            # Multi-step Directional Penalty (Broadcasting baseline over forecast window)
             pred_diff = o - y_baseline_total
             true_diff = y_t - y_baseline_total
             penalty = torch.mean(torch.clamp(-pred_diff * true_diff, min=0)) * 0.5
@@ -2581,62 +2552,53 @@ with tab_ai:
             
             if torch.isnan(l): break
             l_val = l.item()
-            if abs(prev_loss - l_val) < (prev_loss * 0.0005) and epoch > 25: break
-            prev_loss = l_val
-            l.backward(); op.step()
+            if abs(prev_loss - l_val) < (prev_loss * 5e-5) and epoch > 30: break
+            prev_loss = l_val; l.backward(); op.step()
+            
+        # ── INFERENCE (v7.2: Single Shot Direct) ──
         model.eval()
-        lstm_scaled=[]; cur_seq=scaled_data[-lookback:].copy()
+        last_seq = scaled_data[-lookback:].copy()
+        last_seq_t = torch.FloatTensor(last_seq).unsqueeze(0).to(device)
+        last_seq_t = last_seq_t * decay_weights # Apply temporal decay to inference input
         with torch.no_grad():
-            p_prev = cur_seq[-1,0]
-            for _ in range(forecast_days):
-                s=torch.FloatTensor(cur_seq).unsqueeze(0)
-                p=model(s).item()
-                
-                # ── Phase 10: Clean Recursive Path ──
-                nr = cur_seq[-1].copy()
-                nr[0] = p # Target Price
-                nr[1] = p - p_prev # Return proxy
-                
-                lstm_scaled.append(p)
-                cur_seq = np.append(cur_seq[1:],[nr],axis=0)
-                p_prev = p
-        lstm_predicted_prices = price_scaler.inverse_transform(np.array(lstm_scaled).reshape(-1,1)).flatten()
+            preds_scaled = model(last_seq_t).cpu().numpy().flatten()
         
-        # ── Phase 10: Raw ARIMA (Capture market trend, not internal filters) ──
-        ts_raw = df['price_raw'].values
+        lstm_predicted_prices = price_scaler.inverse_transform(preds_scaled.reshape(-1,1)).flatten()
+        
+        # ── Raw ARIMA ──
+        ts_raw = df['price_close'].values
         try:
             from pmdarima import auto_arima
-            arima_predicted_prices = auto_arima(ts_raw, seasonal=False, stepwise=True, suppress_warnings=True, max_p=3, max_q=2).predict(n_periods=forecast_days)
+            arima_predicted_prices = auto_arima(ts_raw, seasonal=False, stepwise=True, suppress_warnings=True).predict(n_periods=forecast_days)
         except Exception:
             try:
                 from statsmodels.tsa.arima.model import ARIMA
-                arima_predicted_prices = ARIMA(ts_raw,order=(2,1,2)).fit().forecast(steps=forecast_days)
+                arima_predicted_prices = ARIMA(ts_raw,order=(1,1,1)).fit().forecast(steps=forecast_days)
             except Exception:
                 arima_predicted_prices = np.full(forecast_days,ts_raw[-1])
-        w_l_final, w_a_final = lstm_w, arima_w
-        ensemble_prices = (w_l_final * lstm_predicted_prices) + (w_a_final * arima_predicted_prices)
         
-        # ── Phase 10: Institutional Guardrails (Volatility Clipping) ──
+        ensemble_prices = (lstm_w * lstm_predicted_prices) + (arima_w * arima_predicted_prices)
+        
+        # 🛡️ ADAPTIVE VOLATILITY CLIPPING (v7.2)
         clamped_prices = [df_ticker['price_close'].iloc[-1]]
         for t in range(len(ensemble_prices)):
             p_raw = ensemble_prices[t]
             p_prev = clamped_prices[-1]
-            p_clamped = np.clip(p_raw, p_prev * 0.95, p_prev * 1.05)
+            p_clamped = np.clip(p_raw, p_prev * (1 - dynamic_clamp), p_prev * (1 + dynamic_clamp))
             clamped_prices.append(p_clamped)
-        # Final result check
+            
         current_price = data[-1,0]
         if np.isnan(ensemble_prices[-1]) or current_price==0: return None,None,None
         
-        # ── EXPLAINABILITY: Feature Importance ──
         model.eval()
-        X_explain = X_t[-1:].clone().requires_grad_(True)
+        X_explain = last_seq_t.clone().requires_grad_(True)
         out_explain = model(X_explain)
-        out_explain.backward()
+        torch.sum(out_explain).backward() # Backprop through entire multi-step output
         importances = torch.abs(X_explain.grad[0]).mean(dim=0).cpu().numpy()
         importances = importances / (np.sum(importances) + 1e-9) * 100
         feat_imp_dict = dict(zip(features, importances))
 
-        return ensemble_prices, (ensemble_prices[-1]-current_price)/current_price, feat_imp_dict
+        return clamped_prices[1:], (clamped_prices[-1]-clamped_prices[0])/clamped_prices[0], feat_imp_dict
 
     def calculate_backtest_accuracy(df_full, sector_name=None, quality_score=50, test_size=21):
         """Phase 10: Honest Backtest - Strict Train/Test Separation"""
