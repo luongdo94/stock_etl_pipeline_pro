@@ -2171,7 +2171,7 @@ with tab_portfolio:
                 st.markdown("<br>", unsafe_allow_html=True)
 
                 # Two-column layout: Pie chart + Weight cards
-                pie_col, card_col = st.columns([1, 1])
+                pie_col, card_col = st.columns([3, 2])
                 
                 with pie_col:
                     fig_pie = go.Figure(go.Pie(
@@ -2179,17 +2179,18 @@ with tab_portfolio:
                         values=[round(w * 100, 1) for w in opt_w],
                         hole=0.45,
                         textinfo="label+percent",
-                        textfont=dict(size=11),
+                        textfont=dict(size=13),
                         marker=dict(colors=[
                             f"hsl({int(i * 360 / n_assets)}, 70%, 55%)" for i in range(n_assets)
                         ])
                     ))
                     fig_pie.update_layout(
-                        template="plotly_dark", height=350,
-                        showlegend=False,
-                        margin=dict(t=20, b=10, l=10, r=10),
+                        template="plotly_dark", height=500,
+                        showlegend=True,
+                        legend=dict(orientation="h", y=-0.05, font=dict(size=11)),
+                        margin=dict(t=30, b=10, l=10, r=10),
                         annotations=[dict(text="OPTIMAL<br>MIX", x=0.5, y=0.5,
-                                          font_size=12, showarrow=False, font_color="#aaa")]
+                                          font_size=14, showarrow=False, font_color="#ccc")]
                     )
                     st.plotly_chart(fig_pie, use_container_width=True)
                 
