@@ -687,6 +687,7 @@ alert_count = len(hot_alerts)
 
 # ── GLOBAL KPI HEADER (Pure HTML Grid — Guaranteed Symmetry) ─────────────────
 macro = fetch_macro_data()
+_macro_regime_global = get_macro_regime(macro) if macro else "NEUTRAL"
 
 regime, advice, regime_color, regime_ui_color = "NEUTRAL", "Stick to bottom-up picking.", "info", "#f39c12"
 vix_val, vix_delta_html = "N/A", ""
@@ -713,10 +714,9 @@ if macro:
 
     # ── MACRO-AWARE SCORE ADJUSTMENT ─────────────────────────────────────
     # Now that we have live macro, apply sector-specific penalty/bonus to scores
-    _macro_regime = get_macro_regime(macro)
-    if _macro_regime != "NEUTRAL":
+    if _macro_regime_global != "NEUTRAL":
         reco_df["score"] = reco_df.apply(
-            lambda r: apply_macro_adjustment(r["score"], r.get("sector", ""), _macro_regime), axis=1
+            lambda r: apply_macro_adjustment(r["score"], r.get("sector", ""), _macro_regime_global), axis=1
         )
         # Recalculate market quality index with macro-adjusted scores
         valid_reco_m = reco_df[~reco_df['ticker'].isin(indices_list)].dropna(subset=['score', 'market_cap'])
@@ -2389,7 +2389,7 @@ with tab_scanner:
 
     # 1. Prepare Master Screener Data
     @st.cache_data(ttl=3600)
-    def get_master_screener_data(_companies_df, _prices_df):
+    def get_master_screener_data(_companies_df, _prices_df, _macro_regime):
         # Exclude non-investable instruments: indices & volatility measures
         _non_equities = {"^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"}
         _non_equity_sectors = {"Benchmark", "Volatility"}
@@ -2430,6 +2430,8 @@ with tab_scanner:
                 except: score_input[col] = None
 
             ai_score = compute_score(score_input)
+            if _macro_regime != "NEUTRAL":
+                ai_score = apply_macro_adjustment(ai_score, str(row.get('sector', '')), _macro_regime)
             action = get_action(ai_score)
             
             # Additional metrics
@@ -2467,7 +2469,7 @@ with tab_scanner:
             })
         return pd.DataFrame(screener_rows)
 
-    m_df = get_master_screener_data(companies_full, prices_full)
+    m_df = get_master_screener_data(companies_full, prices_full, _macro_regime_global)
     
     # ── Quick Filter Modes (High-Fidelity Redesign) ────────────────────────────
     st.markdown("""
