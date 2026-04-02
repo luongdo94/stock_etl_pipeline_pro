@@ -2276,7 +2276,29 @@ with tab_portfolio:
                 st.markdown("---")
                 render_header("zap", "🎯 Optimal Portfolio Allocation (Max-Sharpe)", level="#####")
                 
-                # Metrics row for optimal portfolio
+                # Debug: Show AI Constraint Audit
+                with st.expander("🔍 AI Constraint Audit — (Tại sao mã X được đề xuất X%?)", expanded=False):
+                    debug_rows = []
+                    for i, ticker in enumerate(current_tickers):
+                        ai_meta = reco_df[reco_df["ticker"] == ticker]
+                        score = ai_meta.iloc[0]["score"] if not ai_meta.empty else "N/A (not in reco_df)"
+                        min_b, max_b = bounds[i]
+                        actual_w = round(opt_w[i] * 100, 1)
+                        if isinstance(score, (int, float)):
+                            zone = "🔴 SELL CAP ≤5%" if score < 40 else ("🟢 STRONG BUY ≥5%" if score > 75 else "🟡 HOLD ≤40%")
+                        else:
+                            zone = "⚪ Unknown"
+                        debug_rows.append({
+                            "Ticker": ticker,
+                            "Score": score,
+                            "Zone": zone,
+                            "Min Bound": f"{min_b*100:.0f}%",
+                            "Max Bound": f"{max_b*100:.0f}%",
+                            "Optimal Weight": f"{actual_w}%"
+                        })
+                    st.dataframe(debug_rows, use_container_width=True)
+
+
                 opc1, opc2, opc3, opc4 = st.columns(4)
                 with opc1: render_metric_tile("Optimal Return", f"{opt_r*100:.1f}%")
                 with opc2: render_metric_tile("Optimal Volatility", f"{opt_v*100:.1f}%")
