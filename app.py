@@ -2096,13 +2096,9 @@ with tab_portfolio:
                 hist_rets  = ret_matrix.mean() * 252         # Raw historical
                 
                 # ── AI-ADJUSTED EXPECTED RETURNS (Black-Litterman inspired) ──
-                # Instead of relying on pure historical returns (which makes
-                # low-volatility stocks look attractive regardless of quality),
-                # we blend history with the AI fundamental score:
-                #   adj_ret = 0.5 * hist_ret + 0.5 * (score_signal)
-                # A stock with score 38/100 → score_signal = -0.024/yr (negative!)
-                # A stock with score 80/100 → score_signal = +0.06/yr (strong pull!)
-                # This means the optimizer is FORCED to weigh low-quality stocks lower.
+                # Score signal maps [0,100] → [-0.50, +0.50] annualized return view
+                # score 38 → -0.12/yr (strong headwind, optimizer avoids this)
+                # score 80 → +0.30/yr (strong tailwind, optimizer prefers this)
                 score_lookup = {}
                 for tk in current_tickers:
                     meta = reco_df[reco_df["ticker"] == tk]
@@ -2111,12 +2107,11 @@ with tab_portfolio:
                     else:
                         score_lookup[tk] = 50.0  # Neutral fallback
                 
-                # score_signal: maps score [0,100] → return_signal [-0.10, +0.10]
-                score_arr = np.array([score_lookup[tk] for tk in current_tickers])
-                score_signal = (score_arr - 50.0) / 500.0   # score 38 → -0.024, score 80 → +0.06
+                score_arr    = np.array([score_lookup[tk] for tk in current_tickers])
+                score_signal = (score_arr - 50.0) / 100.0  # score 38 → -0.12, score 80 → +0.30
                 
-                # Blend: 40% history, 60% AI signal
-                adj_rets = 0.40 * hist_rets.values + 0.60 * score_signal
+                # Blend: 30% history, 70% AI conviction signal
+                adj_rets = 0.30 * hist_rets.values + 0.70 * score_signal
                 
                 # ── Neg-Sharpe objective using adj_rets ───────────────────────
                 def neg_sharpe(w, adj_rets, cov_matrix, rf=0.04):
@@ -2124,10 +2119,31 @@ with tab_portfolio:
                     v = np.sqrt(np.dot(w.T, np.dot(cov_matrix, w)))
                     return -(r - rf) / v if v > 0 else 0
                 
-                n_assets  = len(current_tickers)
-                bounds    = [(0.02, 0.40)] * n_assets  # Simple: 2% min, 40% max
-                constr    = [{"type": "eq", "fun": lambda w: np.sum(w) - 1}]
-                w0        = np.ones(n_assets) / n_assets
+                n_assets = len(current_tickers)
+                
+                # ── DYNAMIC BOUNDS: AI-aware per-asset limits ─────────────────
+                # Rule: If AI says SELL (score<40), the optimizer is FORBIDDEN
+                # from recommending an INCREASE over the current weight.
+                # This directly resolves the paradox: no more "SELL but buy more".
+                bounds = []
+                for i, tk in enumerate(current_tickers):
+                    curr_w = float(weights[i])         # current portfolio weight (0-1)
+                    score  = score_lookup.get(tk, 50)
+                    if score < 40:                     # SELL zone
+                        hi = min(curr_w + 0.01, 0.05)  # Can't grow beyond curr+1% or 5% max
+                        hi = max(hi, 0.00)             # Ensure hi >= 0
+                        bounds.append((0.00, hi))
+                    elif score >= 75:                  # Strong BUY
+                        bounds.append((0.02, 0.45))
+                    else:                              # HOLD / neutral
+                        bounds.append((0.00, 0.35))
+                
+                # Safety: if bounds are too tight and feasibility fails, relax them
+                if sum(b[1] for b in bounds) < 1.0:
+                    bounds = [(0.00, 0.40)] * n_assets
+                
+                constr = [{"type": "eq", "fun": lambda w: np.sum(w) - 1}]
+                w0     = np.ones(n_assets) / n_assets
                 
                 opt_result = minimize(
                     neg_sharpe, w0,
