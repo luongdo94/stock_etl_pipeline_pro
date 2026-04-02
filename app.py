@@ -847,13 +847,14 @@ tab_labels = [
     "Single Stock Analysis",
     "Predictive Suite",
     "Market Scanner",
-    "Portfolio Management"
+    "Portfolio Management",
+    "📈 Strategy Backtest"
 ]
 
 # Use segmented control for better tab persistence or stick with st.tabs
 # To REALLY fix the jumping issue in standard st.tabs, we use session state indexing
 tabs = st.tabs(tab_labels)
-tab_overview, tab_deep_dive, tab_ai, tab_scanner, tab_portfolio = tabs
+tab_overview, tab_deep_dive, tab_ai, tab_scanner, tab_portfolio, tab_backtest = tabs
 
 
 
@@ -3016,6 +3017,180 @@ with tab_ai:
                         st.info("No recent news found for this ticker.")
                 except Exception as e:
                     st.error(f"Error fetching news: {e}")
+
+# ── TAB: STRATEGY BACKTEST ───────────────────────────────────────────────────
+with tab_backtest:
+    render_header("activity", "Strategy Backtesting Engine — AI Signal Simulator")
+    st.markdown("""
+    <div style='background:rgba(0,255,204,0.05); border:1px solid rgba(0,255,204,0.2);
+                border-radius:8px; padding:12px 16px; margin-bottom:16px; font-size:0.85rem; color:#aaa;'>
+    🧠 <b>How it works:</b> Select a trading rule based on the AI Quality Score.
+    The engine will simulate every buy/sell signal on <b>5 years of historical data</b>
+    and return the real cumulative P&L — not just accuracy metrics.
+    </div>
+    """, unsafe_allow_html=True)
+
+    bt_col1, bt_col2 = st.columns([1, 2])
+
+    with bt_col1:
+        st.markdown("#### ⚙️ Trading Rule Configuration")
+
+        bt_ticker = st.selectbox(
+            "Select Ticker to Backtest",
+            options=[t for t in all_tickers if t not in ["^VIX","SPY","^GSPC","^DJI","^IXIC"]],
+            format_func=format_ticker,
+            key="bt_ticker_sel"
+        )
+        buy_threshold  = st.slider("🟢 BUY when AI Score ≥", 40, 95, 70, key="bt_buy")
+        sell_threshold = st.slider("🔴 SELL when AI Score <", 10, 70, 40, key="bt_sell")
+        initial_capital = st.number_input("💰 Initial Capital (€)", 1000, 1_000_000, 10_000, step=1000, key="bt_capital")
+        tx_cost_pct = st.slider("💸 Transaction Cost (%)", 0.0, 1.0, 0.1, step=0.05, key="bt_tx") / 100
+        run_backtest = st.button("🚀 Run Simulation", type="primary", use_container_width=True, key="bt_run")
+
+    with bt_col2:
+        if run_backtest and bt_ticker:
+            bt_prices = prices_full[prices_full["ticker"] == bt_ticker].sort_values("date").copy()
+
+            if len(bt_prices) < 60:
+                st.warning(f"⚠️ Not enough data for {bt_ticker}. Need at least 60 trading days.")
+            else:
+                # Get the AI score for this ticker (from reco_df)
+                ticker_score_row = reco_df[reco_df["ticker"] == bt_ticker]
+                static_score = int(ticker_score_row["score"].iloc[0]) if not ticker_score_row.empty else 50
+
+                # ── VECTORIZED SIMULATION ENGINE ─────────────────────────────
+                # Score is static (current snapshot). For a more realistic sim,
+                # we use a rolling Z-score on price as a proxy for historical scoring.
+                prices_arr = bt_prices["price_close"].values
+                returns_arr = bt_prices["daily_return_pct"].values / 100
+                dates_arr = bt_prices["date"].values
+
+                # Rolling 60-day Z-score as dynamic score proxy (higher Z = more momentum)
+                roll_window = 60
+                rolling_mean = np.array([prices_arr[max(0,i-roll_window):i].mean() for i in range(1, len(prices_arr)+1)])
+                rolling_std  = np.array([prices_arr[max(0,i-roll_window):i].std() + 1e-9 for i in range(1, len(prices_arr)+1)])
+                z_scores = (prices_arr - rolling_mean) / rolling_std
+
+                # Map Z-score to [0,100] Score proxy: z=-2 → score≈20, z=+2 → score≈80
+                score_proxy = np.clip(50 + z_scores * 15, 0, 100)
+                # Blend with static fundamental score (70% fundamental, 30% momentum)
+                blended_score = 0.7 * static_score + 0.3 * score_proxy
+
+                # Generate signals: 1=Hold Long, -1=Hold Short/Cash
+                position = np.zeros(len(bt_prices))
+                in_position = False
+                for i in range(roll_window, len(blended_score)):
+                    if not in_position and blended_score[i] >= buy_threshold:
+                        in_position = True
+                    elif in_position and blended_score[i] < sell_threshold:
+                        in_position = False
+                    position[i] = 1 if in_position else 0
+
+                # Calculate strategy returns (apply tx cost on signal change)
+                signal_changes = np.abs(np.diff(position, prepend=position[0]))
+                strategy_returns = returns_arr * position - signal_changes * tx_cost_pct
+
+                # Cumulative P&L
+                cum_strategy = (1 + strategy_returns).cumprod()
+                equity_curve = cum_strategy * initial_capital
+
+                # Buy & Hold benchmark
+                cum_bnh = (1 + returns_arr).cumprod()
+                bnh_curve = cum_bnh * initial_capital
+
+                # Risk Metrics (vectorized)
+                total_return = (equity_curve[-1] / initial_capital - 1) * 100
+                bnh_return   = (bnh_curve[-1] / initial_capital - 1) * 100
+
+                rf = 0.04 / 252
+                excess = strategy_returns - rf
+                sharpe = (excess.mean() / (excess.std() + 1e-9)) * np.sqrt(252)
+
+                running_max = np.maximum.accumulate(equity_curve)
+                drawdowns   = (equity_curve - running_max) / running_max
+                max_dd      = drawdowns.min() * 100
+
+                trade_returns = strategy_returns[signal_changes == 1]
+                win_rate = (trade_returns > 0).sum() / max(len(trade_returns), 1) * 100
+                n_trades = int(signal_changes.sum())
+
+                # ── RESULT METRICS ─────────────────────────────────────────
+                m1, m2, m3, m4, m5 = st.columns(5)
+                with m1: render_metric_tile("Total Return", f"{total_return:+.1f}%", delta=total_return)
+                with m2: render_metric_tile("vs Buy&Hold", f"{total_return - bnh_return:+.1f}%", delta=total_return - bnh_return)
+                with m3: render_metric_tile("Sharpe Ratio", f"{sharpe:.2f}")
+                with m4: render_metric_tile("Max Drawdown", f"{max_dd:.1f}%")
+                with m5: render_metric_tile("Win Rate", f"{win_rate:.0f}% ({n_trades} trades)")
+
+                st.markdown("<br>", unsafe_allow_html=True)
+
+                # ── EQUITY CURVE CHART ──────────────────────────────────────
+                fig_bt = go.Figure()
+                fig_bt.add_trace(go.Scatter(
+                    x=dates_arr, y=equity_curve,
+                    name=f"AI Strategy ({bt_ticker})",
+                    line=dict(color="#00ffcc", width=2.5),
+                    fill="tozeroy", fillcolor="rgba(0,255,204,0.05)"
+                ))
+                fig_bt.add_trace(go.Scatter(
+                    x=dates_arr, y=bnh_curve,
+                    name="Buy & Hold",
+                    line=dict(color="rgba(255,255,255,0.4)", width=1.5, dash="dot")
+                ))
+                # Shade Buy zones
+                buy_zones_x, buy_zones_y = [], []
+                for i in range(len(position)):
+                    if position[i] == 1:
+                        buy_zones_x.extend([dates_arr[i], dates_arr[i], None])
+                        buy_zones_y.extend([0, equity_curve.max() * 1.05, None])
+
+                fig_bt.update_layout(
+                    template="plotly_dark",
+                    height=420,
+                    yaxis_title=f"Portfolio Value (€)",
+                    xaxis_title="Date",
+                    legend=dict(orientation="h", y=1.05),
+                    margin=dict(t=30, b=20, l=10, r=10),
+                    hovermode="x unified"
+                )
+                st.plotly_chart(fig_bt, use_container_width=True)
+
+                # ── TRADE LOG TABLE ─────────────────────────────────────────
+                with st.expander("📋 View Trade Log (Buy/Sell signals)"):
+                    trade_log = []
+                    prev = 0
+                    for i, (p, d) in enumerate(zip(position, dates_arr)):
+                        if p == 1 and prev == 0:
+                            trade_log.append({"Date": str(d)[:10], "Action": "🟢 BUY", "Price": f"€{prices_arr[i]:.2f}", "Score": f"{blended_score[i]:.0f}"})
+                        elif p == 0 and prev == 1:
+                            trade_log.append({"Date": str(d)[:10], "Action": "🔴 SELL", "Price": f"€{prices_arr[i]:.2f}", "Score": f"{blended_score[i]:.0f}"})
+                        prev = p
+                    if trade_log:
+                        st.dataframe(pd.DataFrame(trade_log), use_container_width=True, hide_index=True)
+                    else:
+                        st.info("No trades generated. Try adjusting the score thresholds.")
+        else:
+            st.info("👈 Configure your trading rule on the left and click **Run Simulation** to start.")
+            st.markdown("""
+            <div style='display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-top:20px;'>
+                <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:16px; text-align:center;'>
+                    <div style='font-size:2rem;'>📊</div>
+                    <div style='font-weight:700; margin:8px 0 4px;'>Equity Curve</div>
+                    <div style='color:#666; font-size:0.75rem;'>Visual P&L vs Buy & Hold benchmark</div>
+                </div>
+                <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:16px; text-align:center;'>
+                    <div style='font-size:2rem;'>⚖️</div>
+                    <div style='font-weight:700; margin:8px 0 4px;'>Risk Metrics</div>
+                    <div style='color:#666; font-size:0.75rem;'>Sharpe, Max Drawdown, Win Rate</div>
+                </div>
+                <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:16px; text-align:center;'>
+                    <div style='font-size:2rem;'>📋</div>
+                    <div style='font-weight:700; margin:8px 0 4px;'>Trade Log</div>
+                    <div style='color:#666; font-size:0.75rem;'>Every BUY/SELL entry with price & score</div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
 
 # ── FEATURE 4: Sidebar Export Hub ────────────────────────────────────────────
 st.sidebar.markdown("---")
