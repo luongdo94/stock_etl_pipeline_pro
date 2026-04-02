@@ -2102,9 +2102,105 @@ with tab_portfolio:
                     marker=dict(color='red', size=15, symbol='star'),
                     text=["CURRENT"], textposition="top center", name="Current Portfolio"
                 ))
+                # ── OPTIMAL PORTFOLIO MARKER ──────────────────────────────────
+                from scipy.optimize import minimize
+                
+                def neg_sharpe(w, avg_rets, cov_matrix, rf=0.04):
+                    r = np.sum(avg_rets * w)
+                    v = np.sqrt(np.dot(w.T, np.dot(cov_matrix, w)))
+                    return -(r - rf) / v if v > 0 else 0
+                
+                n_assets = len(current_tickers)
+                constraints = [{"type": "eq", "fun": lambda w: np.sum(w) - 1}]
+                bounds = [(0.02, 0.60)] * n_assets   # 2% min, 60% max per asset
+                w0 = np.array([1 / n_assets] * n_assets)
+                
+                opt_result = minimize(
+                    neg_sharpe, w0,
+                    args=(avg_rets, cov_matrix),
+                    method="SLSQP",
+                    bounds=bounds,
+                    constraints=constraints,
+                    options={"maxiter": 500}
+                )
+                
+                opt_w = opt_result.x
+                opt_r = np.sum(avg_rets * opt_w)
+                opt_v = np.sqrt(np.dot(opt_w.T, np.dot(cov_matrix, opt_w)))
+                opt_sharpe = (opt_r - 0.04) / opt_v if opt_v > 0 else 0
+                
+                # Add Optimal point to chart
+                fig_mpt.add_trace(go.Scatter(
+                    x=[opt_v], y=[opt_r], mode='markers+text',
+                    marker=dict(color='#00ffcc', size=18, symbol='star'),
+                    text=["⭐ OPTIMAL"], textposition="top center",
+                    name=f"Optimal (Sharpe={opt_sharpe:.2f})"
+                ))
+                
                 fig_mpt.update_layout(template="plotly_dark", height=500, xaxis_title="Risk (Annual Vol)", yaxis_title="Annual Return")
                 st.plotly_chart(fig_mpt, use_container_width=True)
                 
+                # ── OPTIMAL WEIGHTS DISPLAY ─────────────────────────────────────
+                st.markdown("---")
+                render_header("zap", "🎯 Optimal Portfolio Allocation (Max-Sharpe)", level="#####")
+                
+                # Metrics row for optimal portfolio
+                opc1, opc2, opc3, opc4 = st.columns(4)
+                with opc1: render_metric_tile("Optimal Return", f"{opt_r*100:.1f}%")
+                with opc2: render_metric_tile("Optimal Volatility", f"{opt_v*100:.1f}%")
+                with opc3: render_metric_tile("Optimal Sharpe", f"{opt_sharpe:.2f}")
+                with opc4:
+                    sharpe_delta = opt_sharpe - sharpe
+                    render_metric_tile("vs Current Sharpe", f"{sharpe_delta:+.2f}", delta=sharpe_delta * 100)
+                
+                st.markdown("<br>", unsafe_allow_html=True)
+
+                # Two-column layout: Pie chart + Weight cards
+                pie_col, card_col = st.columns([1, 1])
+                
+                with pie_col:
+                    fig_pie = go.Figure(go.Pie(
+                        labels=current_tickers,
+                        values=[round(w * 100, 1) for w in opt_w],
+                        hole=0.45,
+                        textinfo="label+percent",
+                        textfont=dict(size=11),
+                        marker=dict(colors=[
+                            f"hsl({int(i * 360 / n_assets)}, 70%, 55%)" for i in range(n_assets)
+                        ])
+                    ))
+                    fig_pie.update_layout(
+                        template="plotly_dark", height=350,
+                        showlegend=False,
+                        margin=dict(t=20, b=10, l=10, r=10),
+                        annotations=[dict(text="OPTIMAL<br>MIX", x=0.5, y=0.5,
+                                          font_size=12, showarrow=False, font_color="#aaa")]
+                    )
+                    st.plotly_chart(fig_pie, use_container_width=True)
+                
+                with card_col:
+                    # Sort by optimal weight descending
+                    sorted_opt = sorted(zip(current_tickers, opt_w), key=lambda x: x[1], reverse=True)
+                    st.markdown("<div style='display:flex; flex-direction:column; gap:6px;'>", unsafe_allow_html=True)
+                    for tk, wt in sorted_opt:
+                        curr_wt = weights[current_tickers.index(tk)] * 100
+                        delta_wt = wt * 100 - curr_wt
+                        delta_color = "#00ffcc" if delta_wt > 0.5 else ("#ff4b4b" if delta_wt < -0.5 else "#888")
+                        delta_icon = "▲" if delta_wt > 0.5 else ("▼" if delta_wt < -0.5 else "●")
+                        action = "INCREASE" if delta_wt > 0.5 else ("REDUCE" if delta_wt < -0.5 else "HOLD")
+                        st.markdown(f"""
+                        <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08);
+                                    border-radius:6px; padding:8px 12px;
+                                    display:flex; justify-content:space-between; align-items:center;'>
+                            <span style='font-weight:800; font-size:0.85rem;'>{tk}</span>
+                            <span style='color:#aaa; font-size:0.75rem;'>Now: <b>{curr_wt:.1f}%</b></span>
+                            <span style='font-size:1rem; font-weight:900;'>→ <b>{wt*100:.1f}%</b></span>
+                            <span style='color:{delta_color}; font-size:0.7rem; font-weight:700;'>{delta_icon} {delta_wt:+.1f}% {action}</span>
+                        </div>
+                        """, unsafe_allow_html=True)
+                    st.markdown("</div>", unsafe_allow_html=True)
+                
+                st.markdown("---")
                 # Risk Decomposition
                 render_header("risk", "Global Risk Contribution", level="#####")
                 mctr = np.dot(cov_matrix, weights) / curr_v
