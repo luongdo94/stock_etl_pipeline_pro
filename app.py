@@ -1856,6 +1856,104 @@ with tab_deep_dive:
             fig_rel.update_layout(template="plotly_dark", height=450, yaxis_title="Return (%)", hovermode="x unified", margin=dict(t=20, l=10, r=10, b=10))
             st.plotly_chart(fig_rel, use_container_width=True)
 
+            # ── FEATURE: LLM RISK AUDIT (Phase 5 — Gemini AI) ──────────────────
+            st.markdown("---")
+            render_header("shield", "AI Risk Audit — Powered by Gemini LLM")
+            st.markdown("""
+            <div style='background:rgba(231,76,60,0.05); border:1px solid rgba(231,76,60,0.2);
+                        border-radius:8px; padding:10px 14px; margin-bottom:12px; font-size:0.82rem; color:#aaa;'>
+            🤖 <b>What this does:</b> Sends recent news headlines about this company to Google Gemini.
+            Gemini acts as a <b>Chief Risk Officer</b> and identifies hidden risks that numbers can't show
+            (lawsuits, CEO departures, supply chain issues, fraud signals).
+            </div>
+            """, unsafe_allow_html=True)
+
+            if st.button(f"🔍 Run LLM Risk Audit for {deep_ticker}", type="primary", key="llm_audit_btn", use_container_width=True):
+                with st.spinner(f"🤖 Gemini is reading news about {company_name}..."):
+                    try:
+                        from etl.llm_parser import analyze_risk_with_llm
+                        llm_result = analyze_risk_with_llm(deep_ticker, company_name)
+                    except Exception as e:
+                        llm_result = {
+                            "red_flag_score": 0, "sentiment": "Error",
+                            "key_insights": [f"Failed to connect to Gemini API: {str(e)[:120]}"],
+                            "risk_category": "None", "recommendation": "Check your API key in .env",
+                            "error": str(e)
+                        }
+
+                if llm_result.get("error"):
+                    st.error(f"⚠️ LLM Error: {llm_result['error']}")
+                
+                rf_score = llm_result.get("red_flag_score", 0)
+                sentiment = llm_result.get("sentiment", "N/A")
+                risk_cat = llm_result.get("risk_category", "None")
+                insights = llm_result.get("key_insights", [])
+                recommendation = llm_result.get("recommendation", "")
+                headlines_count = llm_result.get("headlines_analyzed", 0)
+
+                # Score color mapping
+                if rf_score <= 20:
+                    score_color, score_label = "#2ecc71", "LOW RISK"
+                elif rf_score <= 40:
+                    score_color, score_label = "#f1c40f", "MINOR CONCERN"
+                elif rf_score <= 60:
+                    score_color, score_label = "#e67e22", "MODERATE RISK"
+                elif rf_score <= 80:
+                    score_color, score_label = "#e74c3c", "SIGNIFICANT RISK"
+                else:
+                    score_color, score_label = "#c0392b", "🚨 CRITICAL"
+
+                # Sentiment color
+                sent_colors = {"Positive": "#2ecc71", "Neutral": "#f1c40f", "Negative": "#e74c3c", "Critical": "#c0392b"}
+                sent_color = sent_colors.get(sentiment, "#888")
+
+                # ── RESULT DISPLAY ──────────────────────────────────────────
+                llm_c1, llm_c2, llm_c3, llm_c4 = st.columns(4)
+                with llm_c1:
+                    render_metric_tile("🛡️ Risk Score", f"{rf_score}/100", delta=-rf_score if rf_score > 40 else 0)
+                with llm_c2:
+                    render_metric_tile("📊 Sentiment", sentiment)
+                with llm_c3:
+                    render_metric_tile("⚠️ Risk Category", risk_cat)
+                with llm_c4:
+                    render_metric_tile("📰 Headlines Read", str(headlines_count))
+
+                # Score bar visualization
+                st.markdown(f"""
+                <div style='margin:12px 0;'>
+                    <div style='display:flex; justify-content:space-between; margin-bottom:4px;'>
+                        <span style='font-size:0.8rem; color:#aaa;'>Risk Level</span>
+                        <span style='font-size:0.8rem; font-weight:800; color:{score_color};'>{score_label}</span>
+                    </div>
+                    <div style='background:rgba(255,255,255,0.06); border-radius:6px; height:10px; overflow:hidden;'>
+                        <div style='width:{rf_score}%; height:100%; background:{score_color}; border-radius:6px;
+                                    transition:width 0.5s ease;'></div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                # Key Insights
+                st.markdown("##### 🔎 Key Insights from Gemini")
+                for i, insight in enumerate(insights[:5]):
+                    icon = "🟢" if rf_score <= 30 else ("🟡" if rf_score <= 60 else "🔴")
+                    st.markdown(f"""
+                    <div style='background:rgba(255,255,255,0.03); border-left:3px solid {score_color};
+                                padding:8px 14px; border-radius:0 6px 6px 0; margin-bottom:6px;
+                                font-size:0.85rem; color:#d1d1d1;'>
+                    {icon} {insight}
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                # Recommendation
+                if recommendation:
+                    st.markdown(f"""
+                    <div style='background:rgba(52,152,219,0.08); border:1px solid rgba(52,152,219,0.3);
+                                border-radius:8px; padding:12px 16px; margin-top:12px;'>
+                        <span style='font-weight:800; color:#3498db;'>💼 CRO Recommendation:</span>
+                        <span style='color:#d1d1d1; font-size:0.88rem;'> {recommendation}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+
 # ── FEATURE 1.5: Correlation Matrix ──────────────────────────────────────────
 
 # ── TAB: PORTFOLIO MANAGEMENT ────────────────────────────────────────────────
