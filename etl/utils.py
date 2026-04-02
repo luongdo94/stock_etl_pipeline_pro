@@ -197,6 +197,55 @@ def compute_score(row) -> int:
     return compute_score_details(row)["total"]
 
 
+def get_macro_regime(macro_data: dict) -> str:
+    """
+    Derives the current macro regime from live market data.
+    Returns one of: 'RISK_OFF', 'INFLATION_SHOCK', 'RISK_ON', 'NEUTRAL'
+    Uses the same logic as the app.py header so scores stay consistent.
+    """
+    if not macro_data:
+        return "NEUTRAL"
+    try:
+        vix      = macro_data.get("VIX", {}).get("val", 15)
+        dxy_chg  = macro_data.get("DXY", {}).get("pct", 0)
+        tnx_chg  = macro_data.get("US10Y", {}).get("chg", 0)
+        if vix > 25 or dxy_chg > 0.5:
+            return "RISK_OFF"
+        elif tnx_chg > 0.05 and dxy_chg > 0.1:
+            return "INFLATION_SHOCK"
+        elif tnx_chg < -0.05 and vix < 20:
+            return "RISK_ON"
+    except Exception:
+        pass
+    return "NEUTRAL"
+
+
+def apply_macro_adjustment(score: int, sector: str, regime: str) -> int:
+    """
+    Applies a macro-environment overlay penalty/bonus to an individual stock score.
+
+    Rules (all capped to keep score in [0, 100]):
+      RISK_OFF        → All stocks -5. Growth/Tech -3 additional = -8 total.
+      INFLATION_SHOCK → Tech/Growth/Software -8 (rates hurt long-duration assets).
+                         Financials/Energy/Real-Estate +3 (they benefit from rising rates).
+      RISK_ON         → Tech/Growth/Software +5 bonus.
+      NEUTRAL         → No adjustment.
+    """
+    sector_lower = str(sector).lower()
+    is_tech  = any(s in sector_lower for s in ["tech", "semi", "software", "cloud", "ai", "comm"])
+    is_value = any(s in sector_lower for s in ["financial", "energy", "utilities", "real estate", "bank", "material"])
+
+    delta = 0
+    if regime == "RISK_OFF":
+        delta = -8 if is_tech else -5
+    elif regime == "INFLATION_SHOCK":
+        delta = -8 if is_tech else (3 if is_value else 0)
+    elif regime == "RISK_ON":
+        delta = 5 if is_tech else 0
+
+    return int(max(0, min(score + delta, 100)))
+
+
 def get_action(score: int) -> str:
     """Maps a quality score to a trading action label."""
     if score >= 70: return "🚀 STRONG BUY"

@@ -617,7 +617,7 @@ losers = movers.sort_values('chg_24h', ascending=True).head(5)
 
 # 2. AI Recommendation Engine (Scores)
 # Import the canonical scoring engine from etl.utils (single source of truth)
-from etl.utils import compute_score, compute_score_details
+from etl.utils import compute_score, compute_score_details, get_macro_regime, apply_macro_adjustment
 
 latest_prices_reco = prices_full.sort_values('date').groupby('ticker').tail(1).copy()
 # Note: fct_daily_returns has no 'rsi' column — only merge columns that exist
@@ -630,6 +630,8 @@ reco_df["upside_pct"] = reco_df["upside_pct"].fillna(0)
 reco_df["rsi"] = 50.0
 
 reco_df["score"] = reco_df.apply(compute_score, axis=1)
+
+
 
 valid_reco = reco_df[~reco_df['ticker'].isin(indices_list)].dropna(subset=['score', 'market_cap'])
 if not valid_reco.empty and valid_reco['market_cap'].sum() > 0:
@@ -708,6 +710,18 @@ if macro:
         regime = "RISK-ON / EXPANSION"
         advice = "Yields are falling while VIX is low. Ideal environment for Tech, Growth, and high-beta stocks."
         regime_color, regime_ui_color = "success", "#2ecc71"
+
+    # ── MACRO-AWARE SCORE ADJUSTMENT ─────────────────────────────────────
+    # Now that we have live macro, apply sector-specific penalty/bonus to scores
+    _macro_regime = get_macro_regime(macro)
+    if _macro_regime != "NEUTRAL":
+        reco_df["score"] = reco_df.apply(
+            lambda r: apply_macro_adjustment(r["score"], r.get("sector", ""), _macro_regime), axis=1
+        )
+        # Recalculate market quality index with macro-adjusted scores
+        valid_reco_m = reco_df[~reco_df['ticker'].isin(indices_list)].dropna(subset=['score', 'market_cap'])
+        if not valid_reco_m.empty and valid_reco_m['market_cap'].sum() > 0:
+            market_quality_idx = np.average(valid_reco_m['score'], weights=valid_reco_m['market_cap'])
         
     # 2. VIX card
     vix_chg = macro["VIX"]["pct"]
