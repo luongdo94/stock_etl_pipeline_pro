@@ -142,7 +142,7 @@ import os
 
 # ── PAGE CONFIG ─────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="God-Mode Stock Dashboard",
+    page_title="Creative Stock Dashboard",
     page_icon="🏙️",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -2644,7 +2644,7 @@ with tab_ai:
                                      placeholder="Choose a Ticker...",
                                      key="fc_selector_form")
         with fcol2:
-            forecast_days = st.slider("Forecast Horizon (Days)", 7, 90, 30, key="fc_days_form")
+            forecast_days = st.slider("Forecast Horizon (Days)", 7, 90, 7, key="fc_days_form")
         with fcol3:
             n_sims = st.selectbox("Monte Carlo Simulations", [500, 1000, 1500, 2000, 5000], index=1, key="n_sims_form")
             
