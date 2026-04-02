@@ -2225,7 +2225,26 @@ with tab_portfolio:
                 
                 n_assets = len(current_tickers)
                 constraints = [{"type": "eq", "fun": lambda w: np.sum(w) - 1}]
-                bounds = [(0.02, 0.60)] * n_assets   # 2% min, 60% max per asset
+                
+                # ── AI-AWARE CONSTRAINTS (Bridging Math & Logic) ─────────────
+                # Force the pure-math optimizer to respect the fundamental AI Risk Score
+                bounds = []
+                for ticker in current_tickers:
+                    ai_meta = reco_df[reco_df["ticker"] == ticker]
+                    if not ai_meta.empty:
+                        score = ai_meta.iloc[0]["score"]
+                        if score < 40:
+                            bounds.append((0.00, 0.05)) # SELL ZONE: Hard cap at 5% max
+                        elif score > 75:
+                            bounds.append((0.05, 0.60)) # STRONG BUY: Force min 5%, max 60%
+                        else:
+                            bounds.append((0.00, 0.40)) # HOLD/BUY: Max 40%
+                    else:
+                        bounds.append((0.00, 0.40))
+                
+                # Failsafe: Ensure feasible optimization mathematically
+                if sum(b[1] for b in bounds) < 1.0:
+                    bounds = [(0.00, 1.0)] * n_assets
                 w0 = np.array([1 / n_assets] * n_assets)
                 
                 opt_result = minimize(
