@@ -687,7 +687,6 @@ alert_count = len(hot_alerts)
 
 # ── GLOBAL KPI HEADER (Pure HTML Grid — Guaranteed Symmetry) ─────────────────
 macro = fetch_macro_data()
-_macro_regime_global = get_macro_regime(macro) if macro else "NEUTRAL"
 
 regime, advice, regime_color, regime_ui_color = "NEUTRAL", "Stick to bottom-up picking.", "info", "#f39c12"
 vix_val, vix_delta_html = "N/A", ""
@@ -714,9 +713,10 @@ if macro:
 
     # ── MACRO-AWARE SCORE ADJUSTMENT ─────────────────────────────────────
     # Now that we have live macro, apply sector-specific penalty/bonus to scores
-    if _macro_regime_global != "NEUTRAL":
+    _macro_regime = get_macro_regime(macro)
+    if _macro_regime != "NEUTRAL":
         reco_df["score"] = reco_df.apply(
-            lambda r: apply_macro_adjustment(r["score"], r.get("sector", ""), _macro_regime_global), axis=1
+            lambda r: apply_macro_adjustment(r["score"], r.get("sector", ""), _macro_regime), axis=1
         )
         # Recalculate market quality index with macro-adjusted scores
         valid_reco_m = reco_df[~reco_df['ticker'].isin(indices_list)].dropna(subset=['score', 'market_cap'])
@@ -1856,104 +1856,6 @@ with tab_deep_dive:
             fig_rel.update_layout(template="plotly_dark", height=450, yaxis_title="Return (%)", hovermode="x unified", margin=dict(t=20, l=10, r=10, b=10))
             st.plotly_chart(fig_rel, use_container_width=True)
 
-            # ── FEATURE: LLM RISK AUDIT (Phase 5 — Gemini AI) ──────────────────
-            st.markdown("---")
-            render_header("shield", "AI Risk Audit — Powered by Gemini LLM")
-            st.markdown("""
-            <div style='background:rgba(231,76,60,0.05); border:1px solid rgba(231,76,60,0.2);
-                        border-radius:8px; padding:10px 14px; margin-bottom:12px; font-size:0.82rem; color:#aaa;'>
-            🤖 <b>What this does:</b> Sends recent news headlines about this company to Google Gemini.
-            Gemini acts as a <b>Chief Risk Officer</b> and identifies hidden risks that numbers can't show
-            (lawsuits, CEO departures, supply chain issues, fraud signals).
-            </div>
-            """, unsafe_allow_html=True)
-
-            if st.button(f"🔍 Run LLM Risk Audit for {deep_ticker}", type="primary", key="llm_audit_btn", use_container_width=True):
-                with st.spinner(f"🤖 Gemini is reading news about {company_name}..."):
-                    try:
-                        from etl.llm_parser import analyze_risk_with_llm
-                        llm_result = analyze_risk_with_llm(deep_ticker, company_name)
-                    except Exception as e:
-                        llm_result = {
-                            "red_flag_score": 0, "sentiment": "Error",
-                            "key_insights": [f"Failed to connect to Gemini API: {str(e)[:120]}"],
-                            "risk_category": "None", "recommendation": "Check your API key in .env",
-                            "error": str(e)
-                        }
-
-                if llm_result.get("error"):
-                    st.error(f"⚠️ LLM Error: {llm_result['error']}")
-                
-                rf_score = llm_result.get("red_flag_score", 0)
-                sentiment = llm_result.get("sentiment", "N/A")
-                risk_cat = llm_result.get("risk_category", "None")
-                insights = llm_result.get("key_insights", [])
-                recommendation = llm_result.get("recommendation", "")
-                headlines_count = llm_result.get("headlines_analyzed", 0)
-
-                # Score color mapping
-                if rf_score <= 20:
-                    score_color, score_label = "#2ecc71", "LOW RISK"
-                elif rf_score <= 40:
-                    score_color, score_label = "#f1c40f", "MINOR CONCERN"
-                elif rf_score <= 60:
-                    score_color, score_label = "#e67e22", "MODERATE RISK"
-                elif rf_score <= 80:
-                    score_color, score_label = "#e74c3c", "SIGNIFICANT RISK"
-                else:
-                    score_color, score_label = "#c0392b", "🚨 CRITICAL"
-
-                # Sentiment color
-                sent_colors = {"Positive": "#2ecc71", "Neutral": "#f1c40f", "Negative": "#e74c3c", "Critical": "#c0392b"}
-                sent_color = sent_colors.get(sentiment, "#888")
-
-                # ── RESULT DISPLAY ──────────────────────────────────────────
-                llm_c1, llm_c2, llm_c3, llm_c4 = st.columns(4)
-                with llm_c1:
-                    render_metric_tile("🛡️ Risk Score", f"{rf_score}/100", delta=-rf_score if rf_score > 40 else 0)
-                with llm_c2:
-                    render_metric_tile("📊 Sentiment", sentiment)
-                with llm_c3:
-                    render_metric_tile("⚠️ Risk Category", risk_cat)
-                with llm_c4:
-                    render_metric_tile("📰 Headlines Read", str(headlines_count))
-
-                # Score bar visualization
-                st.markdown(f"""
-                <div style='margin:12px 0;'>
-                    <div style='display:flex; justify-content:space-between; margin-bottom:4px;'>
-                        <span style='font-size:0.8rem; color:#aaa;'>Risk Level</span>
-                        <span style='font-size:0.8rem; font-weight:800; color:{score_color};'>{score_label}</span>
-                    </div>
-                    <div style='background:rgba(255,255,255,0.06); border-radius:6px; height:10px; overflow:hidden;'>
-                        <div style='width:{rf_score}%; height:100%; background:{score_color}; border-radius:6px;
-                                    transition:width 0.5s ease;'></div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-                # Key Insights
-                st.markdown("##### 🔎 Key Insights from Gemini")
-                for i, insight in enumerate(insights[:5]):
-                    icon = "🟢" if rf_score <= 30 else ("🟡" if rf_score <= 60 else "🔴")
-                    st.markdown(f"""
-                    <div style='background:rgba(255,255,255,0.03); border-left:3px solid {score_color};
-                                padding:8px 14px; border-radius:0 6px 6px 0; margin-bottom:6px;
-                                font-size:0.85rem; color:#d1d1d1;'>
-                    {icon} {insight}
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                # Recommendation
-                if recommendation:
-                    st.markdown(f"""
-                    <div style='background:rgba(52,152,219,0.08); border:1px solid rgba(52,152,219,0.3);
-                                border-radius:8px; padding:12px 16px; margin-top:12px;'>
-                        <span style='font-weight:800; color:#3498db;'>💼 CRO Recommendation:</span>
-                        <span style='color:#d1d1d1; font-size:0.88rem;'> {recommendation}</span>
-                    </div>
-                    """, unsafe_allow_html=True)
-
 # ── FEATURE 1.5: Correlation Matrix ──────────────────────────────────────────
 
 # ── TAB: PORTFOLIO MANAGEMENT ────────────────────────────────────────────────
@@ -2186,142 +2088,135 @@ with tab_portfolio:
             # 5. ── ADVANCED ANALYTICS (Efficient Frontier & Risk) ──
             if len(current_tickers) > 1:
                 render_header("activity", "Markowitz Portfolio Optimization (Efficient Frontier)")
-                # Monte Carlo MPT
-                n_sims_mpt = 1000
-                sim_res = np.zeros((3, n_sims_mpt))
-                cov_matrix = ret_matrix.cov() * 252
-                avg_rets = ret_matrix.mean() * 252
                 
-                for i in range(n_sims_mpt):
-                    w = np.random.random(len(current_tickers))
-                    w /= np.sum(w)
-                    r = np.sum(avg_rets * w)
-                    v = np.sqrt(np.dot(w.T, np.dot(cov_matrix, w)))
-                    sim_res[0,i] = v
-                    sim_res[1,i] = r
-                    sim_res[2,i] = (r - 0.04) / v if v > 0 else 0
-                
-                curr_r = np.sum(avg_rets * weights)
-                curr_v = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
-                
-                fig_mpt = go.Figure()
-                fig_mpt.add_trace(go.Scatter(
-                    x=sim_res[0,:], y=sim_res[1,:], mode='markers',
-                    marker=dict(color=sim_res[2,:], colorscale='Viridis', showscale=True, size=5, opacity=0.4),
-                    name="Simulated Optima"
-                ))
-                fig_mpt.add_trace(go.Scatter(
-                    x=[curr_v], y=[curr_r], mode='markers+text',
-                    marker=dict(color='red', size=15, symbol='star'),
-                    text=["CURRENT"], textposition="top center", name="Current Portfolio"
-                ))
-                # ── OPTIMAL PORTFOLIO MARKER ──────────────────────────────────
                 from scipy.optimize import minimize
                 
-                def neg_sharpe(w, avg_rets, cov_matrix, rf=0.04):
-                    r = np.sum(avg_rets * w)
+                # ── Build base matrices ───────────────────────────────────────
+                cov_matrix = ret_matrix.cov() * 252          # Annualized
+                hist_rets  = ret_matrix.mean() * 252         # Raw historical
+                
+                # ── AI-ADJUSTED EXPECTED RETURNS (Black-Litterman inspired) ──
+                # Instead of relying on pure historical returns (which makes
+                # low-volatility stocks look attractive regardless of quality),
+                # we blend history with the AI fundamental score:
+                #   adj_ret = 0.5 * hist_ret + 0.5 * (score_signal)
+                # A stock with score 38/100 → score_signal = -0.024/yr (negative!)
+                # A stock with score 80/100 → score_signal = +0.06/yr (strong pull!)
+                # This means the optimizer is FORCED to weigh low-quality stocks lower.
+                score_lookup = {}
+                for tk in current_tickers:
+                    meta = reco_df[reco_df["ticker"] == tk]
+                    if not meta.empty:
+                        score_lookup[tk] = float(meta.iloc[0]["score"])
+                    else:
+                        score_lookup[tk] = 50.0  # Neutral fallback
+                
+                # score_signal: maps score [0,100] → return_signal [-0.10, +0.10]
+                score_arr = np.array([score_lookup[tk] for tk in current_tickers])
+                score_signal = (score_arr - 50.0) / 500.0   # score 38 → -0.024, score 80 → +0.06
+                
+                # Blend: 40% history, 60% AI signal
+                adj_rets = 0.40 * hist_rets.values + 0.60 * score_signal
+                
+                # ── Neg-Sharpe objective using adj_rets ───────────────────────
+                def neg_sharpe(w, adj_rets, cov_matrix, rf=0.04):
+                    r = np.sum(adj_rets * w)
                     v = np.sqrt(np.dot(w.T, np.dot(cov_matrix, w)))
                     return -(r - rf) / v if v > 0 else 0
                 
-                n_assets = len(current_tickers)
-                constraints = [{"type": "eq", "fun": lambda w: np.sum(w) - 1}]
-                
-                # ── AI-AWARE CONSTRAINTS (Bridging Math & Logic) ─────────────
-                # Force the pure-math optimizer to respect the fundamental AI Risk Score
-                bounds = []
-                for ticker in current_tickers:
-                    ai_meta = reco_df[reco_df["ticker"] == ticker]
-                    if not ai_meta.empty:
-                        score = ai_meta.iloc[0]["score"]
-                        if score < 40:
-                            bounds.append((0.00, 0.05)) # SELL ZONE: Hard cap at 5% max
-                        elif score > 75:
-                            bounds.append((0.05, 0.60)) # STRONG BUY: Force min 5%, max 60%
-                        else:
-                            bounds.append((0.00, 0.40)) # HOLD/BUY: Max 40%
-                    else:
-                        bounds.append((0.00, 0.40))
-                
-                # Failsafe: Ensure feasible optimization mathematically
-                if sum(b[1] for b in bounds) < 1.0:
-                    bounds = [(0.00, 1.0)] * n_assets
-                w0 = np.array([1 / n_assets] * n_assets)
+                n_assets  = len(current_tickers)
+                bounds    = [(0.02, 0.40)] * n_assets  # Simple: 2% min, 40% max
+                constr    = [{"type": "eq", "fun": lambda w: np.sum(w) - 1}]
+                w0        = np.ones(n_assets) / n_assets
                 
                 opt_result = minimize(
                     neg_sharpe, w0,
-                    args=(avg_rets, cov_matrix),
+                    args=(adj_rets, cov_matrix),
                     method="SLSQP",
                     bounds=bounds,
-                    constraints=constraints,
-                    options={"maxiter": 500}
+                    constraints=constr,
+                    options={"maxiter": 1000, "ftol": 1e-9}
                 )
-                
                 opt_w = opt_result.x
-                opt_r = np.sum(avg_rets * opt_w)
-                opt_v = np.sqrt(np.dot(opt_w.T, np.dot(cov_matrix, opt_w)))
-                opt_sharpe = (opt_r - 0.04) / opt_v if opt_v > 0 else 0
                 
-                # Add Optimal point to chart
+                # Compute portfolio stats with adj_rets for display
+                opt_r      = np.sum(adj_rets * opt_w)
+                opt_v      = np.sqrt(np.dot(opt_w.T, np.dot(cov_matrix, opt_w)))
+                opt_sharpe = (opt_r - 0.04) / opt_v if opt_v > 0 else 0
+                curr_r     = np.sum(adj_rets * weights)
+                curr_v     = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
+                
+                # ── Efficient Frontier scatter ────────────────────────────────
+                n_sims = 1000
+                sim_res = np.zeros((3, n_sims))
+                for i in range(n_sims):
+                    w_rnd  = np.random.dirichlet(np.ones(n_assets))
+                    r_rnd  = np.sum(adj_rets * w_rnd)
+                    v_rnd  = np.sqrt(np.dot(w_rnd.T, np.dot(cov_matrix, w_rnd)))
+                    sim_res[0, i] = v_rnd
+                    sim_res[1, i] = r_rnd
+                    sim_res[2, i] = (r_rnd - 0.04) / v_rnd if v_rnd > 0 else 0
+                
+                fig_mpt = go.Figure()
                 fig_mpt.add_trace(go.Scatter(
-                    x=[opt_v], y=[opt_r], mode='markers+text',
-                    marker=dict(color='#00ffcc', size=18, symbol='star'),
+                    x=sim_res[0, :], y=sim_res[1, :], mode="markers",
+                    marker=dict(color=sim_res[2, :], colorscale="Viridis",
+                                showscale=True, size=5, opacity=0.4),
+                    name="Simulated Portfolios"
+                ))
+                fig_mpt.add_trace(go.Scatter(
+                    x=[curr_v], y=[curr_r], mode="markers+text",
+                    marker=dict(color="red", size=15, symbol="star"),
+                    text=["CURRENT"], textposition="top center", name="Current"
+                ))
+                fig_mpt.add_trace(go.Scatter(
+                    x=[opt_v], y=[opt_r], mode="markers+text",
+                    marker=dict(color="#00ffcc", size=18, symbol="star"),
                     text=["⭐ OPTIMAL"], textposition="top center",
                     name=f"Optimal (Sharpe={opt_sharpe:.2f})"
                 ))
-                
-                fig_mpt.update_layout(template="plotly_dark", height=500, xaxis_title="Risk (Annual Vol)", yaxis_title="Annual Return")
+                fig_mpt.update_layout(
+                    template="plotly_dark", height=500,
+                    xaxis_title="Risk (Annual Vol)", yaxis_title="AI-Adj. Annual Return",
+                    margin=dict(t=30, b=10, l=10, r=10)
+                )
                 st.plotly_chart(fig_mpt, use_container_width=True)
                 
-                # ── OPTIMAL WEIGHTS DISPLAY ─────────────────────────────────────
+                # ── OPTIMAL WEIGHTS DISPLAY ───────────────────────────────────
                 st.markdown("---")
                 render_header("zap", "🎯 Optimal Portfolio Allocation (Max-Sharpe)", level="#####")
                 
-                # Debug: Show AI Constraint Audit
-                with st.expander("🔍 AI Constraint Audit — (Tại sao mã X được đề xuất X%?)", expanded=False):
-                    debug_rows = []
-                    for i, ticker in enumerate(current_tickers):
-                        ai_meta = reco_df[reco_df["ticker"] == ticker]
-                        score = ai_meta.iloc[0]["score"] if not ai_meta.empty else "N/A (not in reco_df)"
-                        min_b, max_b = bounds[i]
-                        actual_w = round(opt_w[i] * 100, 1)
-                        if isinstance(score, (int, float)):
-                            zone = "🔴 SELL CAP ≤5%" if score < 40 else ("🟢 STRONG BUY ≥5%" if score > 75 else "🟡 HOLD ≤40%")
-                        else:
-                            zone = "⚪ Unknown"
-                        debug_rows.append({
-                            "Ticker": ticker,
-                            "Score": score,
-                            "Zone": zone,
-                            "Min Bound": f"{min_b*100:.0f}%",
-                            "Max Bound": f"{max_b*100:.0f}%",
-                            "Optimal Weight": f"{actual_w}%"
-                        })
-                    st.dataframe(debug_rows, use_container_width=True)
-
-
+                # KPI row
                 opc1, opc2, opc3, opc4 = st.columns(4)
-                with opc1: render_metric_tile("Optimal Return", f"{opt_r*100:.1f}%")
-                with opc2: render_metric_tile("Optimal Volatility", f"{opt_v*100:.1f}%")
+                with opc1: render_metric_tile("Adj. Return", f"{opt_r*100:.1f}%")
+                with opc2: render_metric_tile("Optimal Vol.", f"{opt_v*100:.1f}%")
                 with opc3: render_metric_tile("Optimal Sharpe", f"{opt_sharpe:.2f}")
                 with opc4:
-                    sharpe_delta = opt_sharpe - sharpe
+                    sharpe_delta = opt_sharpe - ((curr_r - 0.04) / curr_v if curr_v > 0 else 0)
                     render_metric_tile("vs Current Sharpe", f"{sharpe_delta:+.2f}", delta=sharpe_delta * 100)
                 
                 st.markdown("<br>", unsafe_allow_html=True)
-
-                # Two-column layout: Pie chart + Weight cards
+                
+                # Pie + Weight cards
                 pie_col, card_col = st.columns([3, 2])
                 
                 with pie_col:
+                    # Color: green for high score, red for low
+                    pie_colors = []
+                    for tk in current_tickers:
+                        s = score_lookup.get(tk, 50)
+                        if s >= 70:   pie_colors.append("#2ecc71")
+                        elif s >= 50: pie_colors.append("#3498db")
+                        elif s >= 35: pie_colors.append("#e67e22")
+                        else:         pie_colors.append("#e74c3c")
+                    
                     fig_pie = go.Figure(go.Pie(
                         labels=current_tickers,
                         values=[round(w * 100, 1) for w in opt_w],
                         hole=0.45,
                         textinfo="label+percent",
                         textfont=dict(size=13),
-                        marker=dict(colors=[
-                            f"hsl({int(i * 360 / n_assets)}, 70%, 55%)" for i in range(n_assets)
-                        ])
+                        marker=dict(colors=pie_colors)
                     ))
                     fig_pie.update_layout(
                         template="plotly_dark", height=500,
@@ -2329,28 +2224,48 @@ with tab_portfolio:
                         legend=dict(orientation="h", y=-0.05, font=dict(size=11)),
                         margin=dict(t=30, b=10, l=10, r=10),
                         annotations=[dict(text="OPTIMAL<br>MIX", x=0.5, y=0.5,
-                                          font_size=14, showarrow=False, font_color="#ccc")]
+                                      font_size=14, showarrow=False, font_color="#ccc")]
                     )
                     st.plotly_chart(fig_pie, use_container_width=True)
                 
                 with card_col:
-                    # Sort by optimal weight descending
-                    sorted_opt = sorted(zip(current_tickers, opt_w), key=lambda x: x[1], reverse=True)
+                    sorted_opt = sorted(
+                        zip(current_tickers, opt_w),
+                        key=lambda x: x[1], reverse=True
+                    )
                     st.markdown("<div style='display:flex; flex-direction:column; gap:6px;'>", unsafe_allow_html=True)
                     for tk, wt in sorted_opt:
-                        curr_wt = weights[current_tickers.index(tk)] * 100
-                        delta_wt = wt * 100 - curr_wt
-                        delta_color = "#00ffcc" if delta_wt > 0.5 else ("#ff4b4b" if delta_wt < -0.5 else "#888")
-                        delta_icon = "▲" if delta_wt > 0.5 else ("▼" if delta_wt < -0.5 else "●")
-                        action = "INCREASE" if delta_wt > 0.5 else ("REDUCE" if delta_wt < -0.5 else "HOLD")
+                        curr_wt   = weights[current_tickers.index(tk)] * 100
+                        delta_wt  = wt * 100 - curr_wt
+                        ai_sc     = score_lookup.get(tk, 50)
+                        
+                        # Action label driven by BOTH delta AND AI score
+                        if ai_sc < 40 and wt * 100 > 5:
+                            action_lbl, d_color = "⚠️ OVERWEIGHT SELL", "#e74c3c"
+                        elif delta_wt > 1.0:
+                            action_lbl, d_color = "▲ INCREASE", "#00ffcc"
+                        elif delta_wt < -1.0:
+                            action_lbl, d_color = "▼ REDUCE", "#ff4b4b"
+                        else:
+                            action_lbl, d_color = "● HOLD", "#888"
+                        
+                        score_badge_color = "#2ecc71" if ai_sc >= 70 else ("#f1c40f" if ai_sc >= 50 else "#e74c3c")
+                        
                         st.markdown(f"""
                         <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08);
-                                    border-radius:6px; padding:8px 12px;
-                                    display:flex; justify-content:space-between; align-items:center;'>
-                            <span style='font-weight:800; font-size:0.85rem;'>{tk}</span>
-                            <span style='color:#aaa; font-size:0.75rem;'>Now: <b>{curr_wt:.1f}%</b></span>
-                            <span style='font-size:1rem; font-weight:900;'>→ <b>{wt*100:.1f}%</b></span>
-                            <span style='color:{delta_color}; font-size:0.7rem; font-weight:700;'>{delta_icon} {delta_wt:+.1f}% {action}</span>
+                                    border-radius:6px; padding:8px 12px; margin-bottom:2px;'>
+                            <div style='display:flex; justify-content:space-between; align-items:center;'>
+                                <span style='font-weight:800; font-size:0.85rem;'>{tk}</span>
+                                <span style='background:{score_badge_color}22; color:{score_badge_color};
+                                            padding:1px 5px; border-radius:3px; font-size:0.65rem; font-weight:700;'>
+                                    Score {ai_sc:.0f}
+                                </span>
+                            </div>
+                            <div style='display:flex; justify-content:space-between; align-items:center; margin-top:4px;'>
+                                <span style='color:#aaa; font-size:0.75rem;'>Now: <b>{curr_wt:.1f}%</b></span>
+                                <span style='font-size:0.9rem; font-weight:900;'>→ <b>{wt*100:.1f}%</b></span>
+                                <span style='color:{d_color}; font-size:0.7rem; font-weight:700;'>{action_lbl} ({delta_wt:+.1f}%)</span>
+                            </div>
                         </div>
                         """, unsafe_allow_html=True)
                     st.markdown("</div>", unsafe_allow_html=True)
@@ -2358,27 +2273,26 @@ with tab_portfolio:
                 st.markdown("---")
                 # Risk Decomposition
                 render_header("risk", "Global Risk Contribution", level="#####")
-                mctr = np.dot(cov_matrix, weights) / curr_v
+                mctr        = np.dot(cov_matrix, weights) / (curr_v if curr_v > 0 else 1)
                 risk_contrib = weights * mctr
-                risk_pct = risk_contrib / np.sum(risk_contrib) * 100
+                risk_pct    = risk_contrib / np.sum(np.abs(risk_contrib)) * 100
                 
                 fig_risk_b = px.bar(
-                    x=current_tickers, y=risk_pct, labels={'x': 'Ticker', 'y': 'Risk %'},
-                    template="plotly_dark", color=risk_pct, color_continuous_scale="Reds"
+                    x=current_tickers, y=risk_pct,
+                    labels={"x": "Ticker", "y": "Risk Contribution (%)"},
+                    template="plotly_dark",
+                    color=risk_pct, color_continuous_scale="Reds"
                 )
-                fig_risk_b.update_layout(height=400)
+                fig_risk_b.update_layout(height=380)
                 st.plotly_chart(fig_risk_b, use_container_width=True)
                 
                 # Correlation Heatmap
                 render_header("globe", "Asset Correlation Heatmap", level="#####")
                 corr_matrix = ret_matrix.corr()
                 fig_corr = px.imshow(
-                    corr_matrix, 
-                    text_auto=".2f", 
-                    color_continuous_scale="RdBu_r",
-                    zmin=-1, zmax=1,
-                    template="plotly_dark",
-                    aspect="auto"
+                    corr_matrix, text_auto=".2f",
+                    color_continuous_scale="RdBu_r", zmin=-1, zmax=1,
+                    template="plotly_dark", aspect="auto"
                 )
                 fig_corr.update_layout(height=400)
                 st.plotly_chart(fig_corr, use_container_width=True)
@@ -2430,7 +2344,7 @@ with tab_scanner:
 
     # 1. Prepare Master Screener Data
     @st.cache_data(ttl=3600)
-    def get_master_screener_data(_companies_df, _prices_df, _macro_regime):
+    def get_master_screener_data(_companies_df, _prices_df):
         # Exclude non-investable instruments: indices & volatility measures
         _non_equities = {"^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"}
         _non_equity_sectors = {"Benchmark", "Volatility"}
@@ -2471,8 +2385,6 @@ with tab_scanner:
                 except: score_input[col] = None
 
             ai_score = compute_score(score_input)
-            if _macro_regime != "NEUTRAL":
-                ai_score = apply_macro_adjustment(ai_score, str(row.get('sector', '')), _macro_regime)
             action = get_action(ai_score)
             
             # Additional metrics
@@ -2510,7 +2422,7 @@ with tab_scanner:
             })
         return pd.DataFrame(screener_rows)
 
-    m_df = get_master_screener_data(companies_full, prices_full, _macro_regime_global)
+    m_df = get_master_screener_data(companies_full, prices_full)
     
     # ── Quick Filter Modes (High-Fidelity Redesign) ────────────────────────────
     st.markdown("""
