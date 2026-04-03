@@ -1,9 +1,9 @@
 # etl/pipeline.py
 import logging, time, shutil, os, duckdb
 from pathlib import Path
-from etl.extract   import extract_stock_prices, extract_company_info, extract_historical_financials, extract_quarterly_financials
+from etl.extract   import extract_stock_prices, extract_company_info, extract_historical_financials, extract_quarterly_financials, extract_cashflows
 from etl.load      import get_connection, create_raw_schema, \
-                          load_stock_prices, load_company_info, load_historical_financials, load_quarterly_financials, \
+                          load_stock_prices, load_company_info, load_historical_financials, load_quarterly_financials, load_cashflows, \
                           perform_atomic_swap, DB_PATH, SHADOW_DB_PATH
 from etl.transform import run_transforms
 from etl.utils     import get_last_price_dates, needs_full_refresh
@@ -92,9 +92,10 @@ def run_pipeline(lookback_days: int = 1825, force_full: bool = False):
             lookback_days=lookback_days,
             watermarks=watermarks if is_incremental else None
         )
-        company_df   = extract_company_info()         # Always refresh fundamentals
-        financials_df = extract_historical_financials() # Always refresh financials
-        quarterly_df = extract_quarterly_financials()   # Always refresh quarterly
+        company_df   = extract_company_info()             # Always refresh fundamentals
+        financials_df = extract_historical_financials()   # Always refresh financials
+        quarterly_df = extract_quarterly_financials()     # Always refresh quarterly
+        cashflow_df  = extract_cashflows()                # v3.0: Buyback & Dividend data
 
         extract_time = time.time() - t0
         logger.info(f"   ⏱  Extract: {extract_time:.1f}s | Prices: {len(prices_df):,} rows")
@@ -120,6 +121,7 @@ def run_pipeline(lookback_days: int = 1825, force_full: bool = False):
         load_company_info(conn, company_df)
         load_historical_financials(conn, financials_df)
         load_quarterly_financials(conn, quarterly_df)
+        load_cashflows(conn, cashflow_df)                  # v3.0: Net Payout data
         logger.info(f"   ⏱  Load: {time.time()-t0:.1f}s")
 
         # ── STEP 4: TRANSFORM ────────────────────────────────────────────────

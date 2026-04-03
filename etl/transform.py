@@ -4,6 +4,18 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+
+def _table_exists(conn: duckdb.DuckDBPyConnection, schema: str, table: str) -> bool:
+    """Check if a table/view exists in the given schema."""
+    try:
+        result = conn.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=? AND table_name=?",
+            [schema, table]
+        ).fetchone()
+        return result[0] > 0
+    except Exception:
+        return False
+
 def run_transforms(conn: duckdb.DuckDBPyConnection):
     """
     Run all transform layers in order:
@@ -108,6 +120,15 @@ def _create_staging(conn):
         WHERE ticker IS NOT NULL
           AND eps IS NOT NULL
     """)
+    conn.execute("""
+        CREATE OR REPLACE VIEW staging.stg_cashflows AS
+        SELECT
+            ticker,
+            COALESCE(buyback_ttm, 0)          AS buyback_ttm,
+            COALESCE(dividends_paid_ttm, 0)   AS dividends_paid_ttm
+        FROM raw.cashflows
+        WHERE ticker IS NOT NULL
+    """) if _table_exists(conn, "raw", "cashflows") else None
     logger.info("✅ Staging views created")
 
 
@@ -295,7 +316,12 @@ def _create_marts(conn):
             b.high_5y_price,
             b.low_5y_price,
             -- 🏆 EXPERT: 5-Year Average P/E ratio
-            hpe.pe_5y_avg
+            hpe.pe_5y_avg,
+            -- v3.0 Quantitative Metrics
+            vol.volatility_30d,
+            payout.buyback_yield_pct,
+            payout.dividends_paid_yield_pct,
+            payout.net_payout_yield_pct
         FROM staging.stg_company_info c
         LEFT JOIN (
             SELECT 
@@ -308,12 +334,11 @@ def _create_marts(conn):
             GROUP BY 1
         ) b USING (ticker)
         LEFT JOIN (
-            -- 🏆 EXPERT: Historical P/E Multiples (Yearly Avg Price / Yearly EPS)
+            -- 5-Year Average P/E
             SELECT 
                 p.ticker, 
                 ROUND(AVG(p.close / NULLIF(a.eps, 0)), 2) AS pe_5y_avg
             FROM (
-                -- Get yearly average price for all tickers
                 SELECT ticker, EXTRACT(YEAR FROM date) AS year, AVG(close) AS close
                 FROM staging.stg_stock_prices
                 GROUP BY 1, 2
@@ -321,6 +346,28 @@ def _create_marts(conn):
             INNER JOIN staging.stg_historical_financials a ON p.ticker = a.ticker AND p.year = a.year
             GROUP BY 1
         ) hpe USING (ticker)
+        LEFT JOIN (
+            -- Rolling 30-day annualised volatility from daily returns
+            SELECT
+                ticker,
+                ROUND(STDDEV(daily_return_pct) OVER (
+                    PARTITION BY ticker
+                    ORDER BY date
+                    ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
+                ) * SQRT(252), 4) AS volatility_30d
+            FROM intermediate.int_stock_metrics
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) = 1
+        ) vol USING (ticker)
+        LEFT JOIN (
+            -- Buyback & Dividend Yield (Net Payout)
+            SELECT
+                cf.ticker,
+                ROUND(cf.buyback_ttm         / NULLIF(dc.market_cap, 0) * 100, 4) AS buyback_yield_pct,
+                ROUND(cf.dividends_paid_ttm  / NULLIF(dc.market_cap, 0) * 100, 4) AS dividends_paid_yield_pct,
+                ROUND((cf.buyback_ttm + cf.dividends_paid_ttm) / NULLIF(dc.market_cap, 0) * 100, 4) AS net_payout_yield_pct
+            FROM staging.stg_cashflows cf
+            JOIN staging.stg_company_info dc USING (ticker)
+        ) payout USING (ticker)
     """)
     
     # AGGREGATE: Monthly performance per ticker
