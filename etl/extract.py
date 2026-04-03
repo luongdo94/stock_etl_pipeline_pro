@@ -271,7 +271,18 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
                 "_extracted_at":   datetime.now(),
             }
             dy, tdy = info.get("dividendYield"), info.get("trailingAnnualDividendYield")
-            record["dividend_yield"] = tdy if tdy is not None and tdy < 1.0 else (dy / 100.0 if dy is not None else None)
+
+            def _sanitize_yield(val):
+                """Normalize yield to decimal form and cap at 25% to reject bad data."""
+                if val is None or (isinstance(val, float) and pd.isna(val)): return None
+                v = float(val)
+                if v > 1.0:   # yfinance sometimes returns 4.87 instead of 0.0487
+                    v = v / 100.0
+                return v if 0.0 < v <= 0.25 else None   # > 25% = data error (post-split etc.)
+
+            _tdy = _sanitize_yield(tdy)
+            _dy  = _sanitize_yield(dy)
+            record["dividend_yield"] = _tdy if _tdy is not None else _dy
             return record
         except Exception as e:
             logger.warning(f"  ⚠️ {ticker} info failed: {e}")
@@ -414,3 +425,117 @@ def extract_quarterly_financials(tickers: dict = TICKERS) -> pd.DataFrame:
     final_df = pd.concat(all_data, ignore_index=True)
     final_df["date"] = pd.to_datetime(final_df["date"])
     return final_df
+
+
+def extract_cashflows(tickers: dict = TICKERS) -> pd.DataFrame:
+    """
+    Extract annual cashflow data to derive Share Buyback Yield.
+    Specifically fetches 'Repurchase Of Capital Stock' (negative = buyback happened)
+    and 'Cash Dividends Paid' to compute Net Payout Yield.
+
+    All values are normalized to USD so they can be correctly compared against
+    market_cap (which is already in USD after extract_company_info normalization).
+
+    Returns: DataFrame with columns [ticker, buyback_ttm, dividends_paid_ttm]
+    """
+    logger.info(f"🚀 CASHFLOW EXTRACT: Fetching buyback data for {len(tickers)} companies...")
+    records = []
+
+    # ── Pre-fetch FX rates (same pattern as extract_company_info) ─────────────
+    unique_currencies = {"USD", "DKK"}   # DKK always included for ADR fallback (e.g. NVO)
+    for ticker in tickers.keys():
+        unique_currencies.add(_guess_currency(ticker))
+
+    fx_rates = {"USD": 1.0}
+    if len(unique_currencies) > 1:
+        fx_tkrs = [f"{c}USD=X" for c in unique_currencies if c != "USD"]
+        fx_data = yf.download(fx_tkrs, period="1d", progress=False)["Close"]
+        for c in unique_currencies:
+            if c == "USD":
+                continue
+            col = f"{c}USD=X"
+            if isinstance(fx_data, pd.DataFrame) and col in fx_data.columns:
+                fx_rates[c] = float(fx_data[col].iloc[-1].item() if hasattr(fx_data[col].iloc[-1], 'item') else fx_data[col].iloc[-1])
+            elif isinstance(fx_data, pd.Series) and not fx_data.empty:
+                fx_rates[c] = float(fx_data.iloc[-1].item() if hasattr(fx_data.iloc[-1], 'item') else fx_data.iloc[-1])
+
+    def fetch_single(ticker):
+        try:
+            t = yf.Ticker(ticker)
+            cf = t.cashflow
+            if cf is None or cf.empty:
+                return None
+
+            cf.columns = [str(c) for c in cf.columns]  # ensure string col names (dates)
+            cf.index = [str(i).lower() for i in cf.index]
+
+            # Take the most-recent annual column
+            latest_col = cf.columns[0]
+
+            # Buyback: negative value in yfinance means cash went out (i.e., buyback happened)
+            buyback_row = next((i for i in cf.index if "repurchase" in i and "capital" in i), None)
+            div_row     = next((i for i in cf.index if "dividend" in i and "paid" in i), None)
+
+            buyback_val = float(cf.loc[buyback_row, latest_col]) if buyback_row else 0.0
+            div_val     = float(cf.loc[div_row,     latest_col]) if div_row     else 0.0
+
+            # ── Currency detection: prefer live info() then fallback to suffix guess ──
+            # For ADRs (e.g. NVO = Novo Nordisk ADR), yfinance reports currency='USD'
+            # on the info() object but cashflow may be in the underlying DKK.
+            # We detect this by checking if the raw cashflow value is implausibly large
+            # relative to the market cap reported in USD.
+            try:
+                info_currency = t.fast_info.get("currency", None) or t.info.get("currency", None)
+            except Exception:
+                info_currency = None
+            currency = info_currency or _guess_currency(ticker)
+            fx_rate  = fx_rates.get(currency, 1.0)
+
+            raw_buyback = abs(buyback_val) if buyback_val < 0 else 0.0
+            raw_div     = abs(div_val)     if div_val     < 0 else 0.0
+
+            # ── Sanity check: if implied payout yield > 20%, likely an ADR currency mismatch ──
+            # Fetch market cap to compute implied yield for sanity test
+            try:
+                mktcap = t.fast_info.get("market_cap") or t.info.get("marketCap") or 1
+            except Exception:
+                mktcap = 1
+
+            buyback_usd = raw_buyback * fx_rate
+            div_usd     = raw_div     * fx_rate
+
+            implied_yield = (buyback_usd + div_usd) / max(float(mktcap), 1)
+            if implied_yield > 0.20:
+                # > 20% total payout yield is almost certainly an ADR/currency mismatch
+                # Attempt DKK→USD conversion as last resort
+                dkk_rate = fx_rates.get("DKK", None)
+                if dkk_rate:
+                    buyback_usd = raw_buyback * dkk_rate
+                    div_usd     = raw_div     * dkk_rate
+                    # Still unreasonable? Zero out — better no data than wrong data
+                    implied_yield2 = (buyback_usd + div_usd) / max(float(mktcap), 1)
+                    if implied_yield2 > 0.20:
+                        buyback_usd = 0.0
+                        div_usd     = 0.0
+                else:
+                    buyback_usd = 0.0
+                    div_usd     = 0.0
+
+            return {
+                "ticker":             ticker,
+                "buyback_ttm":        buyback_usd,
+                "dividends_paid_ttm": div_usd,
+            }
+        except Exception as e:
+            logger.warning(f"  ⚠️ Cashflow fetch failed for {ticker}: {e}")
+            return None
+
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        futures = {executor.submit(fetch_single, t): t for t in tickers.keys()}
+        for future in as_completed(futures):
+            res = future.result()
+            if res:
+                records.append(res)
+
+    logger.info(f"✅ Cashflow extracted for {len(records)}/{len(tickers)} tickers")
+    return pd.DataFrame(records) if records else pd.DataFrame(columns=["ticker", "buyback_ttm", "dividends_paid_ttm"])

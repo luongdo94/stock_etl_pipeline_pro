@@ -693,7 +693,7 @@ if macro:
     dxy_chg = macro["DXY"]["pct"]
     tnx_chg = macro["US10Y"]["chg"]
     
-    # 1. Macro Regime Logic
+    # 1. Market Context (Macro Regime Logic)
     if vix > 25 or dxy_chg > 0.5:
         regime = "RISK-OFF"
         advice = "Systemic fear is elevated. Capital is fleeing to Cash/Dollar. Defensive stocks outperform. Reduce leverage."
@@ -745,7 +745,7 @@ if macro:
             sign  = "+" if pct >= 0 else ""
             return f"<span class='sb-macro-delta' style='color:{color}'>{sign}{pct:.2f}%</span>"
 
-        _regime_colors = {"RISK-OFF": "#e74c3c", "INFLATION SHOCK": "#e67e22", "RISK-ON / EXPANSION": "#2ecc71", "NEUTRAL": "#f39c12"}
+        _regime_colors = {"🚨 DEFENSIVE (High Risk)": "#e74c3c", "🔥 INFLATIONARY": "#e67e22", "🚀 GROWTH MODE": "#2ecc71", "⚖️ BALANCED": "#f39c12"}
         _rc = _regime_colors.get(regime, "#f39c12")
 
         _macro_sidebar_placeholder.markdown(f"""
@@ -769,11 +769,6 @@ if macro:
             <span class='sb-macro-label'>DXY</span>
             <span class='sb-macro-val'>{_dxy_v:.2f}</span>
             {_sb_delta(_dxy_p)}
-        </div>
-        <div style='margin-top:8px; text-align:center;'>
-            <span class='sb-regime-badge' style='background:rgba(255,255,255,0.05); color:{_rc}; border:1px solid {_rc}55;'>
-                {regime}
-            </span>
         </div>
         """, unsafe_allow_html=True)
 
@@ -799,7 +794,7 @@ st.markdown(f"""
             <div style='font-size:1.1rem; font-weight:900; color:{mqi_color}; font-family:"Courier New",monospace;'>{mqi_val}<span style='font-size:0.75rem; color:#667788;'>/100</span></div>
         </div>
         <div style='text-align:center; padding-left:12px; border-left:1px solid #1a2233;'>
-            <div style='font-size:0.6rem; color:#445566; font-family:monospace; text-transform:uppercase; letter-spacing:0.1em;'>Regime</div>
+            <div style='font-size:0.6rem; color:#445566; font-family:monospace; text-transform:uppercase; letter-spacing:0.1em;'>Market Context</div>
             <div style='font-size:0.8rem; font-weight:700; color:{regime_ui_color}; font-family:"Courier New",monospace;'>{regime}</div>
         </div>
     </div>
@@ -1091,14 +1086,26 @@ with tab_overview:
 with tab_deep_dive:
     render_header("search", "Single Stock Deep Dive")
     if current_universe:
+        # Persist selection across reruns via session_state
+        # Pre-fill with active_ticker if deep_ticker_selector not yet set
+        if "deep_ticker_selector" not in st.session_state:
+            _default_deep = st.session_state.get("active_ticker", None)
+            if _default_deep and _default_deep not in current_universe:
+                _default_deep = None
+            st.session_state["deep_ticker_selector"] = _default_deep
+
         deep_ticker = st.selectbox(
-            "Select Asset to Analyze:", 
-            current_universe, 
-            index=None,
+            "Select Asset to Analyze:",
+            current_universe,
             placeholder="Search and Select an Asset...",
             format_func=format_ticker,
-            key="deep_ticker_selector"
+            key="deep_ticker_selector",
+            index=current_universe.index(st.session_state["deep_ticker_selector"])
+                  if st.session_state.get("deep_ticker_selector") in current_universe else None
         )
+        # Sync back so active_ticker stays aligned
+        if deep_ticker:
+            st.session_state.active_ticker = deep_ticker
             
         if deep_ticker:
             _meta_df = companies_full[companies_full["ticker"] == deep_ticker]
@@ -1156,7 +1163,82 @@ with tab_deep_dive:
             else:                 ai_color, ai_icon = "#e74c3c", "🔴"
 
             st.markdown("---")
+
+            # ── TRADING CONTEXT (TOP of page) — 52-Week Range & Strategic Plan ─
+            # Pre-compute all values needed for both the 52-week bar and the trading plan
+            _s1  = df_deep["price_low"].tail(20).min()
+            _r1  = df_deep["price_high"].tail(20).max()
+            _s2  = df_deep["price_low"].tail(50).min()
+            _r2  = df_deep["price_high"].tail(50).max()
+
+            def _get_rsi(series, period=14):
+                delta = series.diff()
+                gain  = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+                loss  = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+                rs    = gain / loss
+                return 100 - (100 / (1 + rs))
+            _df_rsi  = _get_rsi(df_deep['price_close'])
+            _rsi_val = _df_rsi.iloc[-1] if not _df_rsi.empty else 50
+            _ma_sig  = meta.get("ma_signal", "NEUTRAL")
+
+            _df_252  = df_deep.tail(252)
+            _w52_hi  = _df_252['price_high'].max()
+            _w52_lo  = _df_252['price_low'].min()
+            _w52_rng = _w52_hi - _w52_lo
+            _w52_pos = ((cur_p - _w52_lo) / _w52_rng * 100) if _w52_rng > 0 else 50
+            _w52_zone = "🔴 Near Low" if _w52_pos < 20 else ("🟢 Near High" if _w52_pos > 80 else "🔵 Mid-Range")
+
+            _stop_loss = _s1 * 0.96
+            _tp1       = _r1
+            _tp2       = max(target_p, _r1 * 1.10) if target_p > 0 else _r1 * 1.10
+
+            # 52-Week Position Meter
+            st.markdown(f"""
+            <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.1);
+                        border-radius:10px; padding:14px 20px; margin-bottom:10px;'>
+                <div style='display:flex; justify-content:space-between; margin-bottom:6px;'>
+                    <span style='color:#999; font-size:0.75rem; font-weight:600; text-transform:uppercase;'>52-Week Range</span>
+                    <span style='color:#fff; font-size:0.85rem; font-weight:700;'>{_w52_zone} &nbsp;|&nbsp; Position: {_w52_pos:.0f}%</span>
+                </div>
+                <div style='display:flex; align-items:center; gap:10px;'>
+                    <span style='color:#e74c3c; font-size:0.85rem; white-space:nowrap;'>Low: €{_w52_lo:.2f}</span>
+                    <div style='flex:1; background:rgba(255,255,255,0.1); border-radius:4px; height:10px; position:relative;'>
+                        <div style='width:{_w52_pos:.1f}%; height:100%; background:linear-gradient(90deg,#e74c3c,#f1c40f,#2ecc71); border-radius:4px;'></div>
+                        <div style='position:absolute; top:-3px; left:{_w52_pos:.1f}%; transform:translateX(-50%);
+                                    width:14px; height:14px; background:#fff; border-radius:50%; border:2px solid #3498db;'></div>
+                    </div>
+                    <span style='color:#2ecc71; font-size:0.85rem; white-space:nowrap;'>High: €{_w52_hi:.2f}</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            # Strategic Trading Plan
+            render_header("activity", "Strategic Trading Plan (Quantitative Setup)")
+            _plan_col1, _plan_col2 = st.columns([2, 1])
+            with _plan_col1:
+                if _rsi_val > 70:
+                    _advice = f"⚠️ OVERBOUGHT (RSI: {_rsi_val:.1f}). Reduce exposure or tighten Stop Loss. Not a fresh entry zone."
+                elif _rsi_val < 35:
+                    _advice = f"🟢 OVERSOLD (RSI: {_rsi_val:.1f}). Potential Accumulation Zone near Support."
+                else:
+                    _advice = f"🔵 NEUTRAL MOMENTUM (RSI: {_rsi_val:.1f}). Follow the primary trend: **{_ma_sig}**."
+                st.info(_advice)
+                _ac1, _ac2, _ac3 = st.columns(3)
+                with _ac1:
+                    st.markdown(f"<div style='background:rgba(46,204,113,0.1);padding:10px;border-radius:5px;border-left:5px solid #2ecc71;'><small>OPTIMAL ENTRY</small><br><b style='font-size:1.2em;color:#2ecc71;'>€{_s1:.2f} - €{cur_p:.2f}</b><br><small>Major Support (50d): €{_s2:.2f}</small></div>", unsafe_allow_html=True)
+                with _ac2:
+                    st.markdown(f"<div style='background:rgba(231,76,60,0.1);padding:10px;border-radius:5px;border-left:5px solid #e74c3c;'><small>HARD STOP LOSS</small><br><b style='font-size:1.2em;color:#e74c3c;'>€{_stop_loss:.2f}</b></div>", unsafe_allow_html=True)
+                with _ac3:
+                    st.markdown(f"<div style='background:rgba(52,152,219,0.1);padding:10px;border-radius:5px;border-left:5px solid #3498db;'><small>PROFIT TARGETS</small><br><b style='font-size:1.1em;color:#3498db;'>TP1: €{_tp1:.2f}</b><br><small>Secondary: €{_r2:.2f}</small></div>", unsafe_allow_html=True)
+            with _plan_col2:
+                _risk   = cur_p - _stop_loss
+                _reward = _tp1 - cur_p
+                _rr     = _reward / _risk if _risk > 0 else 0
+                st.markdown(f"<div style='text-align:center;padding:15px;background:rgba(255,255,255,0.05);border-radius:10px;'>Risk/Reward Ratio<br><b style='font-size:2em;'>{_rr:.2f}</b><br><small>{'High Conviction' if _rr > 2 else 'Speculative'}</small></div>", unsafe_allow_html=True)
+
+            st.markdown("---")
             render_header("activity", "Diagnostic Metrics Portfolio")
+
             _card_style = "background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:10px 4px 4px 4px;margin-bottom:4px;"
             _header_style = "color:#aabbcc;font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;padding:0 8px 6px 8px;"
             
@@ -1181,7 +1263,13 @@ with tab_deep_dive:
 
                 with kcol2:
                     st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Profit & Returns</div>", unsafe_allow_html=True)
-                    render_metric_row("Yield",        f"{meta['dividend_yield_pct']:.2f}%" if pd.notnull(meta['dividend_yield_pct']) else "0.00%")
+                    render_metric_row("Div Yield",    f"{meta['dividend_yield_pct']:.2f}%" if pd.notnull(meta['dividend_yield_pct']) else "0.00%")
+                    
+                    # Net Payout = Div + Buybacks
+                    net_payout = meta.get('net_payout_yield_pct', 0)
+                    bb_yield   = meta.get('buyback_yield_pct', 0)
+                    render_metric_row("Net Payout",   f"{net_payout:.2f}%", delta=f"BB: {bb_yield:.1f}%")
+                    
                     render_metric_row("ROE",          f"{meta.get('roe', 0)*100:.1f}%")
                     render_metric_row("Gross Margin", f"{meta.get('gross_margin', 0)*100:.0f}%")
                     rev_growth = meta.get('revenue_growth', 0) * 100
@@ -1201,9 +1289,14 @@ with tab_deep_dive:
                     
                     curr_rat  = meta.get('current_ratio', 0)
                     quick_rat = meta.get('quick_ratio', 0)
+                    
+                    # Liquidity Status Labels
+                    c_status = "🟢 Healthy" if curr_rat > 1.5 else ("🔴 Risky" if curr_rat < 1.0 else "🟡 Fair")
+                    q_status = "🟢 Solid" if quick_rat > 1.0 else ("🔴 Tight" if quick_rat < 0.7 else "🟡 Caution")
+
                     render_metric_row("Debt/Eq", debt_eq_txt)
-                    render_metric_row("Current Ratio", f"{curr_rat:.2f}")
-                    render_metric_row("Quick Ratio",   f"{quick_rat:.2f}")
+                    render_metric_row("Current Ratio", f"{curr_rat:.2f}", delta=c_status)
+                    render_metric_row("Quick Ratio",   f"{quick_rat:.2f}", delta=q_status)
                     st.markdown("</div>", unsafe_allow_html=True)
 
                 with kcol4:
@@ -1287,6 +1380,55 @@ with tab_deep_dive:
                     </div>
                     """, unsafe_allow_html=True)
 
+                # ── NEWS FEED (Auto-load, FinBERT Sentiment) ─────────────────
+                st.markdown("<div style='color:#f39c12; font-size:0.85rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-top:16px; margin-bottom:8px; border-bottom:1px solid rgba(243,156,18,0.3); padding-bottom:6px;'>📰 News Intelligence</div>", unsafe_allow_html=True)
+                try:
+                    import feedparser
+                    _rss_url = f"https://news.google.com/rss/search?q={deep_ticker}+stock&hl=en-US&gl=US&ceid=US:en"
+                    _feed = feedparser.parse(_rss_url)
+                    _news_items = _feed.entries[:10]
+                    if _news_items:
+                        _pipe = get_finbert_pipeline()
+                        _titles = [item.get("title", "").split(" - ")[0] for item in _news_items]
+                        _sent_scores = []
+                        
+                        # Pre-calculate sentiment to show mood OUTSIDE popover
+                        if _pipe:
+                            _results = _pipe(_titles)
+                            for _res in _results:
+                                _lbl = _res['label'].upper()
+                                _sc = _res['score']
+                                _sent_scores.append(_sc if _lbl == 'POSITIVE' else (-_sc if _lbl == 'NEGATIVE' else 0))
+                            
+                            if _sent_scores:
+                                _avg_sent = sum(_sent_scores) / len(_sent_scores)
+                                _mood_lbl = "🚀 BULLISH" if _avg_sent > 0.1 else ("📉 BEARISH" if _avg_sent < -0.1 else "😴 NEUTRAL")
+                                _mood_color = "#2ecc71" if _avg_sent > 0.1 else ("#e74c3c" if _avg_sent < -0.1 else "#f1c40f")
+                                st.markdown(f"<div style='margin-bottom:12px;padding:8px 12px;background:rgba(255,255,255,0.04);border-radius:6px;border-left:3px solid {_mood_color};font-size:0.85rem;'><b style='color:{_mood_color};'>{_mood_lbl}</b> &nbsp;·&nbsp; FinBERT: {abs(_avg_sent):.2f}</div>", unsafe_allow_html=True)
+                        
+                        # Popover for details
+                        with st.popover(f"View {len(_news_items)} Detailed Headlines", use_container_width=True):
+                            st.markdown("### 📰 Recent Headlines")
+                            if _pipe:
+                                for _i, _res in enumerate(_results):
+                                    _lbl = _res['label'].upper()
+                                    _sc = _res['score']
+                                    _icon = "🟢" if _lbl == 'POSITIVE' else ("🔴" if _lbl == 'NEGATIVE' else "⚪")
+                                    _entry = _news_items[_i]
+                                    with st.expander(f"{_icon} {_titles[_i][:70]}..."):
+                                        st.caption(f"**Source:** {_entry.get('source', {}).get('title', 'Google News')} | **Date:** {_entry.get('published', 'N/A')}")
+                                        st.markdown(f"[Read Article ↗]({_entry.get('link')})")
+                            else:
+                                for _entry in _news_items[:5]:
+                                    _title = _entry.get("title", "").split(" - ")[0]
+                                    with st.expander(f"📰 {_title[:70]}..."):
+                                        st.caption(f"**Date:** {_entry.get('published', 'N/A')}")
+                                        st.markdown(f"[Read Article ↗]({_entry.get('link')})")
+                    else:
+                        st.info("No recent news found for this ticker.")
+                except Exception as _e:
+                    st.caption(f"⚠️ News feed unavailable: {str(_e)[:60]}")
+
             
             # ── RIGHT: Radar Chart (Quantitative Pillar Breakdown) ────────────
             with quant_col:
@@ -1301,7 +1443,7 @@ with tab_deep_dive:
                     "Valuation":       20,
                     "Profitability":   30 if _is_tech else 25,
                     "Fin. Health":     15,
-                    "Yield":           5  if _is_tech else 10,
+                    "Net Yield":       5  if _is_tech else 10,
                     "Momentum":        20,
                     "Analyst Est.":    10
                 }
@@ -1309,7 +1451,7 @@ with tab_deep_dive:
                     "Valuation":       "Valuation",
                     "Profitability":   "Profitability",
                     "Fin. Health":     "Financial Health",
-                    "Yield":           "Shareholder Yield",
+                    "Net Yield":       "Net Payout Yield",
                     "Momentum":        "Context & Momentum",
                     "Analyst Est.":    "Analyst Estimates"
                 }
@@ -1367,83 +1509,6 @@ with tab_deep_dive:
             
             st.markdown("---")
 
-
-
-            # --- Re-compute Trading Plan variables (used by chart + plan card below) ---
-            s1 = df_deep["price_low"].tail(20).min()
-            r1 = df_deep["price_high"].tail(20).max()
-            s2 = df_deep["price_low"].tail(50).min()
-            r2 = df_deep["price_high"].tail(50).max()
-
-            def get_rsi(series, period=14):
-                delta = series.diff()
-                gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-                loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-                rs = gain / loss
-                return 100 - (100 / (1 + rs))
-
-            df_deep['rsi'] = get_rsi(df_deep['price_close'])
-            rsi_val = df_deep['rsi'].iloc[-1]
-            ma_sig = meta.get("ma_signal", "NEUTRAL")
-
-            df_252 = df_deep.tail(252)
-            w52_high = df_252['price_high'].max()
-            w52_low  = df_252['price_low'].min()
-            w52_range = w52_high - w52_low
-            w52_pos   = ((cur_p - w52_low) / w52_range * 100) if w52_range > 0 else 50
-            w52_zone  = "🔴 Near Low" if w52_pos < 20 else ("🟢 Near High" if w52_pos > 80 else "🔵 Mid-Range")
-
-            entry_low = s1 * 1.01
-            stop_loss = s1 * 0.96
-            tp1 = r1
-            tp2 = max(target_p, r1 * 1.10) if target_p > 0 else r1 * 1.10
-
-            # 52W Position Meter
-            st.markdown(f"""
-            <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.1);
-                        border-radius:10px; padding:14px 20px; margin-bottom:10px;'>
-                <div style='display:flex; justify-content:space-between; margin-bottom:6px;'>
-                    <span style='color:#999; font-size:0.75rem; font-weight:600; text-transform:uppercase;'>52-Week Range</span>
-                    <span style='color:#fff; font-size:0.85rem; font-weight:700;'>{w52_zone} &nbsp;|&nbsp; Position: {w52_pos:.0f}%</span>
-                </div>
-                <div style='display:flex; align-items:center; gap:10px;'>
-                    <span style='color:#e74c3c; font-size:0.85rem; white-space:nowrap;'>Low: €{w52_low:.2f}</span>
-                    <div style='flex:1; background:rgba(255,255,255,0.1); border-radius:4px; height:10px; position:relative;'>
-                        <div style='width:{w52_pos:.1f}%; height:100%; background:linear-gradient(90deg,#e74c3c,#f1c40f,#2ecc71); border-radius:4px;'></div>
-                        <div style='position:absolute; top:-3px; left:{w52_pos:.1f}%; transform:translateX(-50%);
-                                    width:14px; height:14px; background:#fff; border-radius:50%; border:2px solid #3498db;'></div>
-                    </div>
-                    <span style='color:#2ecc71; font-size:0.85rem; white-space:nowrap;'>High: €{w52_high:.2f}</span>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-            # Strategic Trading Plan
-            render_header("activity", "Strategic Trading Plan (Quantitative Setup)")
-            plan_col1, plan_col2 = st.columns([2, 1])
-            with plan_col1:
-                if rsi_val > 70:
-                    advice_txt = f"⚠️ OVERBOUGHT (RSI: {rsi_val:.1f}). Reduce exposure or tighten Stop Loss. Not a fresh entry zone."
-                elif rsi_val < 35:
-                    advice_txt = f"🟢 OVERSOLD (RSI: {rsi_val:.1f}). Potential Accumulation Zone near Support."
-                else:
-                    advice_txt = f"🔵 NEUTRAL MOMENTUM (RSI: {rsi_val:.1f}). Follow the primary trend: **{ma_sig}**."
-                st.info(advice_txt)
-                acol1, acol2, acol3 = st.columns(3)
-                with acol1:
-                    st.markdown(f"<div style='background:rgba(46,204,113,0.1);padding:10px;border-radius:5px;border-left:5px solid #2ecc71;'><small>OPTIMAL ENTRY</small><br><b style='font-size:1.2em;color:#2ecc71;'>€{s1:.2f} - €{cur_p:.2f}</b><br><small>Major Support (50d): €{s2:.2f}</small></div>", unsafe_allow_html=True)
-                with acol2:
-                    st.markdown(f"<div style='background:rgba(231,76,60,0.1);padding:10px;border-radius:5px;border-left:5px solid #e74c3c;'><small>HARD STOP LOSS</small><br><b style='font-size:1.2em;color:#e74c3c;'>€{stop_loss:.2f}</b></div>", unsafe_allow_html=True)
-                with acol3:
-                    st.markdown(f"<div style='background:rgba(52,152,219,0.1);padding:10px;border-radius:5px;border-left:5px solid #3498db;'><small>PROFIT TARGETS</small><br><b style='font-size:1.1em;color:#3498db;'>TP1: €{tp1:.2f}</b><br><small>Secondary (50d): €{r2:.2f}</small></div>", unsafe_allow_html=True)
-            with plan_col2:
-                risk   = cur_p - stop_loss
-                reward = tp1 - cur_p
-                rr_ratio = reward / risk if risk > 0 else 0
-                st.markdown(f"<div style='text-align:center;padding:15px;background:rgba(255,255,255,0.05);border-radius:10px;'>Risk/Reward Ratio<br><b style='font-size:2em;'>{rr_ratio:.2f}</b><br><small>{'High Conviction' if rr_ratio > 2 else 'Speculative'}</small></div>", unsafe_allow_html=True)
-
-            st.markdown("---")
-
             # Main Technical Chart (Full Width)
 
             fig_tech = make_subplots(rows=2, cols=1, shared_xaxes=True, 
@@ -1467,38 +1532,39 @@ with tab_deep_dive:
             
             # Support/Resistance → Scatter traces (appear in legend, not as annotations)
             dates_range = df_deep['date'].tolist()
+            df_deep['rsi'] = _df_rsi  # reuse already-computed RSI
             fig_tech.add_trace(go.Scatter(
-                x=[dates_range[0], dates_range[-1]], y=[s1, s1],
-                name=f'S1 Support  €{s1:.2f}', mode='lines',
+                x=[dates_range[0], dates_range[-1]], y=[_s1, _s1],
+                name=f'S1 Support  €{_s1:.2f}', mode='lines',
                 line=dict(color='#2ecc71', width=1, dash='dot'), opacity=0.8
             ), row=1, col=1)
             fig_tech.add_trace(go.Scatter(
-                x=[dates_range[0], dates_range[-1]], y=[r1, r1],
-                name=f'R1 Resistance  €{r1:.2f}', mode='lines',
+                x=[dates_range[0], dates_range[-1]], y=[_r1, _r1],
+                name=f'R1 Resistance  €{_r1:.2f}', mode='lines',
                 line=dict(color='#e74c3c', width=1, dash='dot'), opacity=0.8
             ), row=1, col=1)
             fig_tech.add_trace(go.Scatter(
-                x=[dates_range[0], dates_range[-1]], y=[s2, s2],
-                name=f'S2 Major Support  €{s2:.2f}', mode='lines',
+                x=[dates_range[0], dates_range[-1]], y=[_s2, _s2],
+                name=f'S2 Major Support  €{_s2:.2f}', mode='lines',
                 line=dict(color='#27ae60', width=1.5, dash='dash'), opacity=0.7
             ), row=1, col=1)
             fig_tech.add_trace(go.Scatter(
-                x=[dates_range[0], dates_range[-1]], y=[r2, r2],
-                name=f'R2 Major Resistance  €{r2:.2f}', mode='lines',
+                x=[dates_range[0], dates_range[-1]], y=[_r2, _r2],
+                name=f'R2 Major Resistance  €{_r2:.2f}', mode='lines',
                 line=dict(color='#c0392b', width=1.5, dash='dash'), opacity=0.7
             ), row=1, col=1)
             fig_tech.add_trace(go.Scatter(
-                x=[dates_range[0], dates_range[-1]], y=[w52_high, w52_high],
-                name=f'52W High  €{w52_high:.2f}', mode='lines',
+                x=[dates_range[0], dates_range[-1]], y=[_w52_hi, _w52_hi],
+                name=f'52W High  €{_w52_hi:.2f}', mode='lines',
                 line=dict(color='rgba(46,204,113,0.6)', width=1, dash='dashdot'), opacity=0.6
             ), row=1, col=1)
             fig_tech.add_trace(go.Scatter(
-                x=[dates_range[0], dates_range[-1]], y=[w52_low, w52_low],
-                name=f'52W Low  €{w52_low:.2f}', mode='lines',
+                x=[dates_range[0], dates_range[-1]], y=[_w52_lo, _w52_lo],
+                name=f'52W Low  €{_w52_lo:.2f}', mode='lines',
                 line=dict(color='rgba(231,76,60,0.6)', width=1, dash='dashdot'), opacity=0.6
             ), row=1, col=1)
             # 52W shaded band
-            fig_tech.add_hrect(y0=w52_low, y1=w52_high,
+            fig_tech.add_hrect(y0=_w52_lo, y1=_w52_hi,
                                fillcolor="rgba(255,255,255,0.02)", line_width=0,
                                row=1, col=1)
             
@@ -2844,7 +2910,7 @@ with tab_ai:
             <b style='color:#3498db; font-size:1rem;'>AI Strategist Guide</b>
         </div>
         <div style='font-size:0.92rem; color:#e0e0e0; line-height:1.5;'>
-            Current Regime: <b style='color:{regime_ui_color};'>{regime}</b><br>
+            Market Context: <b style='color:{regime_ui_color};'>{regime}</b><br>
             Recommended Model: <b style='color:#00ffcc;'>{_rec_model}</b><br>
             Rationale: <i>{_rec_reason}</i>
         </div>
@@ -3111,44 +3177,6 @@ with tab_ai:
             else:
                 st.info("Insufficient data for SHAP analysis.")
 
-            # ── FEATURE 5: News Sentiment Analysis ────────────────────────────────────────
-            st.markdown("---")
-            render_header("layers", f"AI News Sentiment Analysis: {fc_ticker}", level="###")
-            st.write("Fetches recent headlines and uses **NLP (Natural Language Processing)** to analyze the market mood.")
-            
-            if fc_ticker:
-                import feedparser
-                try:
-                    rss_url = f"https://news.google.com/rss/search?q={fc_ticker}+stock&hl=en-US&gl=US&ceid=US:en"
-                    feed = feedparser.parse(rss_url)
-                    news_items = feed.entries[:10]
-                    if news_items:
-                        titles = [item.get("title", "").split(" - ")[0] for item in news_items]
-                        pipe = get_finbert_pipeline()
-                        if pipe:
-                            results = pipe(titles)
-                            sent_scores = []
-                            for i, res in enumerate(results):
-                                clean_title = titles[i]
-                                entry = news_items[i]
-                                label = res['label'].upper()
-                                score = res['score']
-                                numeric_score = score if label == 'POSITIVE' else (-score if label == 'NEGATIVE' else 0)
-                                sent_scores.append(numeric_score)
-                                icon = "🟢" if label == 'POSITIVE' else ("🔴" if label == 'NEGATIVE' else "⚪")
-                                with st.expander(f"{icon} {label} ({score:.2f}) | {clean_title}"):
-                                    st.write(f"**Source:** {entry.get('source', {}).get('title', 'Google News')}")
-                                    st.write(f"**Date:** {entry.get('published', 'N/A')}")
-                                    st.write(f"**Link:** [Read Article]({entry.get('link')})")
-                            avg_sent = np.mean(sent_scores) if sent_scores else 0
-                            mood = "BULLISH 🚀" if avg_sent > 0.1 else ("BEARISH 📉" if avg_sent < -0.1 else "NEUTRAL 😴")
-                            st.metric("FinBERT Market Mood", mood, delta=f"{avg_sent:.2f} confidence")
-                        else:
-                            st.error("FinBERT engine unavailable. Please check internet connection.")
-                    else:
-                        st.info("No recent news found for this ticker.")
-                except Exception as e:
-                    st.error(f"Error fetching news: {e}")
 
 # ── TAB: STRATEGY BACKTEST ───────────────────────────────────────────────────
 with tab_backtest:
@@ -3167,49 +3195,47 @@ with tab_backtest:
     with bt_col1:
         st.markdown("#### Trading Rule Configuration")
 
-        bt_ticker = st.selectbox(
-            "Select Ticker to Backtest",
-            options=[t for t in all_tickers if t not in ["^VIX","SPY","^GSPC","^DJI","^IXIC"]],
-            format_func=format_ticker,
-            key="bt_ticker_sel"
-        )
-        buy_threshold  = st.slider("BUY when AI Score ≥", 40, 95, 70, key="bt_buy")
-        sell_threshold = st.slider("SELL when AI Score <", 10, 70, 40, key="bt_sell")
-        initial_capital = st.number_input("Initial Capital (€)", 1000, 1_000_000, 10_000, step=1000, key="bt_capital")
-        tx_cost_pct = st.slider("Transaction Cost (%)", 0.0, 1.0, 0.1, step=0.05, key="bt_tx") / 100
-        run_backtest = st.button("Run Simulation", type="primary", use_container_width=True, key="bt_run")
+        _bt_options = [t for t in all_tickers if t not in ["^VIX","SPY","^GSPC","^DJI","^IXIC"]]
+
+        with st.form("backtest_form"):
+            bt_ticker = st.selectbox(
+                "Select Ticker to Backtest",
+                options=_bt_options,
+                format_func=format_ticker,
+                key="bt_ticker_form"
+            )
+            buy_threshold   = st.slider("BUY when AI Score ≥", 40, 95, 70, key="bt_buy_f")
+            sell_threshold  = st.slider("SELL when AI Score <", 10, 70, 40, key="bt_sell_f")
+            initial_capital = st.number_input("Initial Capital (€)", 1000, 1_000_000, 10_000, step=1000, key="bt_capital_f")
+            tx_cost_pct     = st.slider("Transaction Cost (%)", 0.0, 1.0, 0.1, step=0.05, key="bt_tx_f")
+            run_backtest    = st.form_submit_button("▶ Run Simulation", use_container_width=True, type="primary")
+
+        tx_cost_pct = tx_cost_pct / 100  # convert after form
 
     with bt_col2:
+        # ── Run simulation and store results ──────────────────────────────────
         if run_backtest and bt_ticker:
             bt_prices = prices[prices["ticker"] == bt_ticker].sort_values("date").copy()
 
             if len(bt_prices) < 60:
                 st.warning(f"Not enough data for {bt_ticker}. Need at least 60 trading days.")
+                st.session_state.pop("bt_results", None)
             else:
-                # Get the AI score for this ticker (from reco_df)
                 ticker_score_row = reco_df[reco_df["ticker"] == bt_ticker]
                 static_score = int(ticker_score_row["score"].iloc[0]) if not ticker_score_row.empty else 50
 
-                # ── VECTORIZED SIMULATION ENGINE ─────────────────────────────
-                # Score is static (current snapshot). For a more realistic sim,
-                # we use a rolling Z-score on price as a proxy for historical scoring.
-                prices_arr = bt_prices["price_close"].values
+                prices_arr  = bt_prices["price_close"].values
                 returns_arr = bt_prices["daily_return_pct"].values / 100
-                dates_arr = bt_prices["date"].values
+                dates_arr   = bt_prices["date"].values
 
-                # Rolling 60-day Z-score as dynamic score proxy (higher Z = more momentum)
-                roll_window = 60
+                roll_window  = 60
                 rolling_mean = np.array([prices_arr[max(0,i-roll_window):i].mean() for i in range(1, len(prices_arr)+1)])
                 rolling_std  = np.array([prices_arr[max(0,i-roll_window):i].std() + 1e-9 for i in range(1, len(prices_arr)+1)])
-                z_scores = (prices_arr - rolling_mean) / rolling_std
-
-                # Map Z-score to [0,100] Score proxy: z=-2 → score≈20, z=+2 → score≈80
-                score_proxy = np.clip(50 + z_scores * 15, 0, 100)
-                # Blend with static fundamental score (70% fundamental, 30% momentum)
+                z_scores     = (prices_arr - rolling_mean) / rolling_std
+                score_proxy  = np.clip(50 + z_scores * 15, 0, 100)
                 blended_score = 0.7 * static_score + 0.3 * score_proxy
 
-                # Generate signals: 1=Hold Long, -1=Hold Short/Cash
-                position = np.zeros(len(bt_prices))
+                position   = np.zeros(len(bt_prices))
                 in_position = False
                 for i in range(roll_window, len(blended_score)):
                     if not in_position and blended_score[i] >= buy_threshold:
@@ -3218,110 +3244,89 @@ with tab_backtest:
                         in_position = False
                     position[i] = 1 if in_position else 0
 
-                # Calculate strategy returns (apply tx cost on signal change)
-                signal_changes = np.abs(np.diff(position, prepend=position[0]))
+                signal_changes   = np.abs(np.diff(position, prepend=position[0]))
                 strategy_returns = returns_arr * position - signal_changes * tx_cost_pct
+                cum_strategy     = (1 + strategy_returns).cumprod()
+                equity_curve     = cum_strategy * initial_capital
+                cum_bnh          = (1 + returns_arr).cumprod()
+                bnh_curve        = cum_bnh * initial_capital
+                total_return     = (equity_curve[-1] / initial_capital - 1) * 100
+                bnh_return       = (bnh_curve[-1] / initial_capital - 1) * 100
+                rf               = 0.04 / 252
+                excess           = strategy_returns - rf
+                sharpe           = (excess.mean() / (excess.std() + 1e-9)) * np.sqrt(252)
+                running_max      = np.maximum.accumulate(equity_curve)
+                drawdowns        = (equity_curve - running_max) / running_max
+                max_dd           = drawdowns.min() * 100
+                trade_returns    = strategy_returns[signal_changes == 1]
+                win_rate         = (trade_returns > 0).sum() / max(len(trade_returns), 1) * 100
+                n_trades         = int(signal_changes.sum())
 
-                # Cumulative P&L
-                cum_strategy = (1 + strategy_returns).cumprod()
-                equity_curve = cum_strategy * initial_capital
+                # Build trade log
+                trade_log = []
+                prev = 0
+                for i, (p, d) in enumerate(zip(position, dates_arr)):
+                    if p == 1 and prev == 0:
+                        trade_log.append({"Date": str(d)[:10], "Action": "🟢 BUY", "Price": f"€{prices_arr[i]:.2f}", "Score": f"{blended_score[i]:.0f}"})
+                    elif p == 0 and prev == 1:
+                        trade_log.append({"Date": str(d)[:10], "Action": "🔴 SELL", "Price": f"€{prices_arr[i]:.2f}", "Score": f"{blended_score[i]:.0f}"})
+                    prev = p
 
-                # Buy & Hold benchmark
-                cum_bnh = (1 + returns_arr).cumprod()
-                bnh_curve = cum_bnh * initial_capital
+                # ── Persist results so rerun doesn't erase them ───────────────
+                st.session_state["bt_results"] = {
+                    "ticker": bt_ticker,
+                    "total_return": total_return, "bnh_return": bnh_return,
+                    "sharpe": sharpe, "max_dd": max_dd,
+                    "win_rate": win_rate, "n_trades": n_trades,
+                    "dates_arr": dates_arr, "equity_curve": equity_curve,
+                    "bnh_curve": bnh_curve, "position": position,
+                    "blended_score": blended_score, "prices_arr": prices_arr,
+                    "signal_changes": signal_changes, "trade_log": trade_log,
+                }
+                st.toast(f"✅ Simulation complete for {bt_ticker}!", icon="🚀")
 
-                # Risk Metrics (vectorized)
-                total_return = (equity_curve[-1] / initial_capital - 1) * 100
-                bnh_return   = (bnh_curve[-1] / initial_capital - 1) * 100
+        # ── Render results (persistent across reruns) ─────────────────────────
+        if "bt_results" in st.session_state:
+            r = st.session_state["bt_results"]
+            st.caption(f"Showing results for: **{r['ticker']}**")
 
-                rf = 0.04 / 252
-                excess = strategy_returns - rf
-                sharpe = (excess.mean() / (excess.std() + 1e-9)) * np.sqrt(252)
+            m1, m2, m3, m4, m5 = st.columns(5)
+            with m1: render_metric_tile("Total Return",  f"{r['total_return']:+.1f}%", delta=r["total_return"])
+            with m2: render_metric_tile("vs Buy&Hold",   f"{r['total_return']-r['bnh_return']:+.1f}%", delta=r["total_return"]-r["bnh_return"])
+            with m3: render_metric_tile("Sharpe Ratio",  f"{r['sharpe']:.2f}")
+            with m4: render_metric_tile("Max Drawdown",  f"{r['max_dd']:.1f}%")
+            with m5: render_metric_tile("Win Rate",      f"{r['win_rate']:.0f}% ({r['n_trades']} trades)")
 
-                running_max = np.maximum.accumulate(equity_curve)
-                drawdowns   = (equity_curve - running_max) / running_max
-                max_dd      = drawdowns.min() * 100
+            st.markdown("<br>", unsafe_allow_html=True)
 
-                trade_returns = strategy_returns[signal_changes == 1]
-                win_rate = (trade_returns > 0).sum() / max(len(trade_returns), 1) * 100
-                n_trades = int(signal_changes.sum())
+            fig_bt = go.Figure()
+            fig_bt.add_trace(go.Scatter(
+                x=r["dates_arr"], y=r["equity_curve"],
+                name=f"AI Strategy ({r['ticker']})",
+                line=dict(color="#00ffcc", width=2.5),
+                fill="tozeroy", fillcolor="rgba(0,255,204,0.05)"
+            ))
+            fig_bt.add_trace(go.Scatter(
+                x=r["dates_arr"], y=r["bnh_curve"],
+                name="Buy & Hold",
+                line=dict(color="rgba(255,255,255,0.4)", width=1.5, dash="dot")
+            ))
+            fig_bt.update_layout(
+                template="plotly_dark", height=420,
+                yaxis_title="Portfolio Value (€)", xaxis_title="Date",
+                legend=dict(orientation="h", y=1.05),
+                margin=dict(t=30, b=20, l=10, r=10),
+                hovermode="x unified"
+            )
+            st.plotly_chart(fig_bt, use_container_width=True)
 
-                # ── RESULT METRICS ─────────────────────────────────────────
-                m1, m2, m3, m4, m5 = st.columns(5)
-                with m1: render_metric_tile("Total Return", f"{total_return:+.1f}%", delta=total_return)
-                with m2: render_metric_tile("vs Buy&Hold", f"{total_return - bnh_return:+.1f}%", delta=total_return - bnh_return)
-                with m3: render_metric_tile("Sharpe Ratio", f"{sharpe:.2f}")
-                with m4: render_metric_tile("Max Drawdown", f"{max_dd:.1f}%")
-                with m5: render_metric_tile("Win Rate", f"{win_rate:.0f}% ({n_trades} trades)")
-
-                st.markdown("<br>", unsafe_allow_html=True)
-
-                # ── EQUITY CURVE CHART ──────────────────────────────────────
-                fig_bt = go.Figure()
-                fig_bt.add_trace(go.Scatter(
-                    x=dates_arr, y=equity_curve,
-                    name=f"AI Strategy ({bt_ticker})",
-                    line=dict(color="#00ffcc", width=2.5),
-                    fill="tozeroy", fillcolor="rgba(0,255,204,0.05)"
-                ))
-                fig_bt.add_trace(go.Scatter(
-                    x=dates_arr, y=bnh_curve,
-                    name="Buy & Hold",
-                    line=dict(color="rgba(255,255,255,0.4)", width=1.5, dash="dot")
-                ))
-                # Shade Buy zones
-                buy_zones_x, buy_zones_y = [], []
-                for i in range(len(position)):
-                    if position[i] == 1:
-                        buy_zones_x.extend([dates_arr[i], dates_arr[i], None])
-                        buy_zones_y.extend([0, equity_curve.max() * 1.05, None])
-
-                fig_bt.update_layout(
-                    template="plotly_dark",
-                    height=420,
-                    yaxis_title=f"Portfolio Value (€)",
-                    xaxis_title="Date",
-                    legend=dict(orientation="h", y=1.05),
-                    margin=dict(t=30, b=20, l=10, r=10),
-                    hovermode="x unified"
-                )
-                st.plotly_chart(fig_bt, use_container_width=True)
-
-                # ── TRADE LOG TABLE ─────────────────────────────────────────
-                with st.expander("📋 View Trade Log (Buy/Sell signals)"):
-                    trade_log = []
-                    prev = 0
-                    for i, (p, d) in enumerate(zip(position, dates_arr)):
-                        if p == 1 and prev == 0:
-                            trade_log.append({"Date": str(d)[:10], "Action": "🟢 BUY", "Price": f"€{prices_arr[i]:.2f}", "Score": f"{blended_score[i]:.0f}"})
-                        elif p == 0 and prev == 1:
-                            trade_log.append({"Date": str(d)[:10], "Action": "🔴 SELL", "Price": f"€{prices_arr[i]:.2f}", "Score": f"{blended_score[i]:.0f}"})
-                        prev = p
-                    if trade_log:
-                        st.dataframe(pd.DataFrame(trade_log), use_container_width=True, hide_index=True)
-                    else:
-                        st.info("No trades generated. Try adjusting the score thresholds.")
+            with st.expander("📋 View Trade Log (Buy/Sell signals)"):
+                if r["trade_log"]:
+                    st.dataframe(pd.DataFrame(r["trade_log"]), use_container_width=True, hide_index=True)
+                else:
+                    st.info("No trades generated. Try adjusting the score thresholds.")
         else:
             st.info("👈 Configure your trading rule on the left and click **Run Simulation** to start.")
-            st.markdown("""
-            <div style='display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-top:20px;'>
-                <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:16px; text-align:center;'>
-                    <div style='font-size:2rem;'>📊</div>
-                    <div style='font-weight:700; margin:8px 0 4px;'>Equity Curve</div>
-                    <div style='color:#666; font-size:0.75rem;'>Visual P&L vs Buy & Hold benchmark</div>
-                </div>
-                <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:16px; text-align:center;'>
-                    <div style='font-size:2rem;'>⚖️</div>
-                    <div style='font-weight:700; margin:8px 0 4px;'>Risk Metrics</div>
-                    <div style='color:#666; font-size:0.75rem;'>Sharpe, Max Drawdown, Win Rate</div>
-                </div>
-                <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:16px; text-align:center;'>
-                    <div style='font-size:2rem;'>📋</div>
-                    <div style='font-weight:700; margin:8px 0 4px;'>Trade Log</div>
-                    <div style='color:#666; font-size:0.75rem;'>Every BUY/SELL entry with price & score</div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
 
 
 # ── FEATURE 4: Sidebar Export Hub ────────────────────────────────────────────

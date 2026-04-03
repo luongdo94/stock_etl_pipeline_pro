@@ -141,7 +141,34 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
             PRIMARY KEY (ticker, date)
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS raw.cashflows (
+            ticker               VARCHAR PRIMARY KEY,
+            buyback_ttm          DOUBLE,
+            dividends_paid_ttm   DOUBLE,
+            _loaded_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     logger.info("✅ Raw schema created")
+
+
+def load_cashflows(
+    conn: duckdb.DuckDBPyConnection,
+    df: pd.DataFrame
+):
+    """Load cashflow (buyback + dividend) data. Full replace each run."""
+    if df.empty:
+        logger.info("  ⚠️ No cashflow data to load — skipping")
+        return
+    conn.execute("DELETE FROM raw.cashflows")
+    conn.register("df_tmp", df)
+    conn.execute("""
+        INSERT INTO raw.cashflows (ticker, buyback_ttm, dividends_paid_ttm, _loaded_at)
+        SELECT ticker, buyback_ttm, dividends_paid_ttm, CURRENT_TIMESTAMP FROM df_tmp
+    """)
+    conn.unregister("df_tmp")
+    logger.info(f"✅ Loaded {len(df)} cashflow records → raw.cashflows")
+
 
 
 def load_stock_prices(
