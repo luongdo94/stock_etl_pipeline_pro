@@ -15,18 +15,18 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# ── Gemini Client Initialization ────────────────────────────────────────────
-_GEMINI_KEY = os.getenv("GEMINI_API_KEY", "")
+# ── Cohere Client Initialization ──────────────────────────────────────────────
+_COHERE_KEY = os.getenv("COHERE_API_KEY", "")
 _client = None
 
 def _get_client():
-    """Lazy-initialize the Gemini client (avoids import-time errors if key is missing)."""
+    """Lazy-initialize the Cohere client (avoids import-time errors if key is missing)."""
     global _client
     if _client is None:
-        if not _GEMINI_KEY:
-            raise ValueError("GEMINI_API_KEY not found in .env file.")
-        from google import genai
-        _client = genai.Client(api_key=_GEMINI_KEY)
+        if not _COHERE_KEY:
+            raise ValueError("COHERE_API_KEY not found in .env file.")
+        import cohere
+        _client = cohere.ClientV2(api_key=_COHERE_KEY)
     return _client
 
 
@@ -118,19 +118,22 @@ def analyze_risk_with_llm(ticker: str, company_name: str) -> dict:
             company=company_name, ticker=ticker, headlines=headlines_text
         )
 
-        # 3. Call Gemini
+        # 3. Call Cohere
         client = _get_client()
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=prompt,
+        response = client.chat(
+            model="command-r-plus-08-2024",
+            messages=[{"role": "user", "content": prompt}]
         )
 
-        raw_text = response.text.strip()
+        raw_text = response.message.content[0].text.strip()
 
         # 4. Parse JSON (with fallback for markdown code fences)
         if raw_text.startswith("```"):
-            # Strip ```json ... ``` wrapper
-            raw_text = raw_text.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
+            if "```json" in raw_text:
+                raw_text = raw_text.split("```json")[-1].split("```")[0].strip()
+            else:
+                raw_text = raw_text.split("```")[-1].split("```")[0].strip()
+
 
         result = json.loads(raw_text)
 
