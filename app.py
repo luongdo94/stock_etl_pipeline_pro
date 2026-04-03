@@ -1157,78 +1157,9 @@ with tab_deep_dive:
             _header_style = "color:#aabbcc;font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;padding:0 8px 6px 8px;"
             
             with st.container():
-                kcol1, kcol2, kcol3, kcol4, kcol5, kcol6 = st.columns(6)
+                kcol1, kcol2, kcol3, kcol4, kcol5 = st.columns(5)
 
                 with kcol1:
-                    st.markdown(f"""
-                    <div style='{_card_style}; border: 1px solid {ai_color}40; background: {ai_color}08;'>
-                        <div style='{_header_style} color:{ai_color};'>Institutional AI Score</div>
-                        <div style='padding: 0 8px 8px 8px; text-align:center;'>
-                            <div style='font-size:2.2rem; font-weight:800; color:{ai_color}; line-height:1;'>{ai_score}</div>
-                            <div style='font-size:0.75rem; font-weight:700; color:{ai_color}; margin-top:4px;'>{ai_icon} {ai_action}</div>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # --- AI PILLAR ANALYSIS POPOVER ---
-                    full_score_data = compute_score_details(meta_enriched)
-                    score_details = full_score_data["breakdown"]
-                    with st.popover("🔍 Analyze Pillars", use_container_width=True):
-                        st.markdown(f"### Score Breakdown: {deep_ticker}")
-                        
-                        # Robust sector detection
-                        _sector_lower = meta.get("sector", "").lower() if meta.get("sector") else ""
-                        is_tech_growth = any(s in _sector_lower for s in ["tech", "semi", "software", "cloud", "comm", "ai"])
-                        
-                        max_points = {
-                            "Valuation": 20,
-                            "Profitability": 30 if is_tech_growth else 25,
-                            "Financial Health": 15,
-                            "Shareholder Yield": 5 if is_tech_growth else 10,
-                            "Context & Momentum": 20,
-                            "Analyst Estimates": 10
-                        }
-                        
-                        for cat, m_p in max_points.items():
-                            act = score_details.get(cat, 0)
-                            pct = (act / m_p) * 100
-                            p_color = "#e74c3c" if pct < 35 else ("#f1c40f" if pct < 60 else "#2ecc71")
-                            
-                            st.markdown(f"""
-                            <div style='margin-bottom: 12px;'>
-                                <div style='display:flex; justify-content:space-between; margin-bottom:2px;'>
-                                    <span style='color:#bbb; font-size:0.8rem; font-weight:600;'>{cat}</span>
-                                    <span style='color:{p_color}; font-size:0.8rem; font-weight:700;'>{act} / {m_p}</span>
-                                </div>
-                                <div style='background:rgba(255,255,255,0.08); height:4px; border-radius:2px;'>
-                                    <div style='width:{pct}%; background:{p_color}; height:100%; border-radius:2px;'></div>
-                                </div>
-                            </div>
-                            """, unsafe_allow_html=True)
-                        
-                        st.caption(f"Weights: {'Tech-Optimized' if is_tech_growth else 'Standard Mode'}")
-
-                        # --- LIVE DIAGNOSTICS (For Debugging Zero Scores) ---
-                        with st.expander("🛠 Scoring Diagnostics"):
-                            st.write("### AI Component Debug")
-                            diag_data = {
-                                "Score Keys": list(score_details.keys()),
-                                "Momentum Pillar Data": {
-                                    "RSI": meta_enriched.get('rsi'),
-                                    "MA Signal": meta_enriched.get('ma_signal'),
-                                    "Z-Score": meta_enriched.get('price_z_score')
-                                },
-                                "Fundamental Pillar Data": {
-                                    "PE": meta_enriched.get('pe_ratio'),
-                                    "FCF Margin": meta_enriched.get('fcf_margin'),
-                                    "ROE": meta_enriched.get('roe'),
-                                    "Debt": meta_enriched.get('total_debt')
-                                }
-                            }
-                            st.json(diag_data)
-                            st.write("Raw Pillar Scores:", score_details)
-
-                with kcol2:
                     st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Valuation & Size</div>", unsafe_allow_html=True)
                     m_cap = meta.get('market_cap', 0)
                     if m_cap >= 1e12: m_cap_txt = f"€{m_cap/1e12:.2f}T"
@@ -1244,7 +1175,7 @@ with tab_deep_dive:
                     render_metric_row("Price/Sales",f"{meta.get('price_to_sales', 0):.2f}")
                     st.markdown("</div>", unsafe_allow_html=True)
 
-                with kcol3:
+                with kcol2:
                     st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Profit & Returns</div>", unsafe_allow_html=True)
                     render_metric_row("Yield",        f"{meta['dividend_yield_pct']:.2f}%" if pd.notnull(meta['dividend_yield_pct']) else "0.00%")
                     render_metric_row("ROE",          f"{meta.get('roe', 0)*100:.1f}%")
@@ -1256,7 +1187,7 @@ with tab_deep_dive:
                     render_metric_row("Free CF",      fcf_txt)
                     st.markdown("</div>", unsafe_allow_html=True)
 
-                with kcol4:
+                with kcol3:
                     st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Solvency</div>", unsafe_allow_html=True)
                     debt_eq_raw = meta.get('debt_to_equity', 0)
                     debt_eq   = (debt_eq_raw / 100.0) if pd.notnull(debt_eq_raw) else 0.0
@@ -1267,7 +1198,7 @@ with tab_deep_dive:
                     render_metric_row("Quick Ratio",   f"{quick_rat:.2f}")
                     st.markdown("</div>", unsafe_allow_html=True)
 
-                with kcol5:
+                with kcol4:
                     st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Risk & Volume</div>", unsafe_allow_html=True)
                     beta_val = meta.get('beta', 1.0)
                     if pd.notnull(beta_val) and beta_val != 0:
@@ -1281,7 +1212,7 @@ with tab_deep_dive:
                     render_metric_row("Short Float", f"{meta.get('short_percent_of_float', 0)*100:.1f}%")
                     st.markdown("</div>", unsafe_allow_html=True)
 
-                with kcol6:
+                with kcol5:
                     st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Price & Context</div>", unsafe_allow_html=True)
                     render_metric_row("Target",       f"€{target_p:.2f}", delta=upside, is_pct=True)
                     
