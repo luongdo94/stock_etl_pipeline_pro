@@ -869,14 +869,18 @@ tab_labels = [
     "Strategy Backtest"
 ]
 
-# Use segmented control for better tab persistence or stick with st.tabs
-# To REALLY fix the jumping issue in standard st.tabs, we use session state indexing
-tabs = st.tabs(tab_labels)
-tab_overview, tab_deep_dive, tab_ai, tab_scanner, tab_portfolio, tab_backtest = tabs
+st.markdown("<style>.stSegmentedControl { margin-bottom: 20px; }</style>", unsafe_allow_html=True)
+active_tab = st.segmented_control(
+    "Navigation",
+    options=tab_labels,
+    selection_mode="single",
+    default="Strategic Overview",
+    label_visibility="collapsed",
+    key="main_nav_tabs"
+)
+if not active_tab: active_tab = "Strategic Overview"
 
-
-
-with tab_overview:
+if active_tab == "Strategic Overview":
     # ── TIER 1: Market Heatmap (Global Heat) ───────────────────────────────
 
     # tree_df is now computed globally
@@ -1095,7 +1099,7 @@ with tab_overview:
 
 
 # ── TAB: SINGLE STOCK ANALYSIS ───────────────────────────────────────────────
-with tab_deep_dive:
+if active_tab == "Single Stock Analysis":
     render_header("search", "Single Stock Deep Dive")
     if current_universe:
         deep_ticker = st.selectbox(
@@ -1941,7 +1945,7 @@ with tab_deep_dive:
 # ── FEATURE 1.5: Correlation Matrix ──────────────────────────────────────────
 
 # ── TAB: PORTFOLIO MANAGEMENT ────────────────────────────────────────────────
-with tab_portfolio:
+if active_tab == "Portfolio Management":
     render_header("package", "Professional Bulk Portfolio Suite", level="###")
     st.write("Craft your portfolio by selecting tickers and entering your holdings below. High-density quantitative analysis will follow.")
 
@@ -2291,7 +2295,7 @@ with tab_portfolio:
 # ── FEATURE 3: AI Price & Monte Carlo Forecasting ────────────────────────────
 
 # ── TAB: MARKET SCANNER & OPPORTUNITY RADAR ──────────────────────────────────
-with tab_scanner:
+if active_tab == "Market Scanner":
     render_header("search", "Market Scanner & Opportunity Radar", level="###")
     st.write("Scan the entire ticker universe for institutional-grade opportunities based on Valuation, Momentum, and AI Scores.")
 
@@ -2539,7 +2543,7 @@ with tab_scanner:
 
 
 # ── TAB: PREDICTIVE SUITE (AI Forecasting) — LAZY LOADED ────────────────────
-with tab_ai:
+if active_tab == "Predictive Suite":
     # ── LAZY LOADING: All heavy ML imports live here. They only execute when
     # the user clicks this tab — saving ~3-5 seconds of startup time.
     import torch
@@ -3140,7 +3144,7 @@ with tab_ai:
                     st.error(f"Error fetching news: {e}")
 
 # ── TAB: STRATEGY BACKTEST ───────────────────────────────────────────────────
-with tab_backtest:
+if active_tab == "Strategy Backtest":
     render_header("activity", "Strategy Backtesting Engine — AI Signal Simulator")
     st.markdown("""
     <div style='background:rgba(0,255,204,0.05); border:1px solid rgba(0,255,204,0.2);
