@@ -468,47 +468,64 @@ if not prices_full.empty:
 else:
     stock_count = 0
 
-# ── TIER 0: Institutional Control Header ─────────────────────────────────────
-st.title("LuongDo | Quant Analytics Workspace")
-st.markdown(f"**Personalized Institutional Terminal** / {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')} / Ticker Universe: {stock_count} Stocks")
-
-# ── Sidebar Filters ──────────────────────────────────────────────────────────
+# ── Sidebar: Institutional Mission Control ───────────────────────────────────
 if not prices_full.empty:
     min_db_date = prices_full["date"].min().date()
     max_db_date = prices_full["date"].max().date()
-    # Institutional Default: 12 Months
-    default_start = max(min_db_date, max_db_date - pd.Timedelta(days=365))
 
-    render_header("activity", "Dashboard Control Panel", color="#8899aa")
+    indices = ["^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"]
 
-    def clear_filters():
-        st.session_state.sector_dropdown_form = "All Sectors"
-        st.session_state.ticker_multiselect_form = []
-        st.session_state.time_horizon_form = "1Y"
+    # ── STICKY CONTEXT: Unified Asset Selection across Tabs ───────────────────
+    if 'active_ticker' not in st.session_state:
+        st.session_state.active_ticker = "AAPL"
 
+    # ── SIDEBAR CSS ───────────────────────────────────────────────────────────
+    st.sidebar.markdown("""
+    <style>
+    [data-testid="stSidebar"] { background: #0a0e1a; }
+    .sb-section-label {
+        font-family: 'Courier New', monospace;
+        font-size: 0.6rem;
+        letter-spacing: 0.15em;
+        color: #445566;
+        text-transform: uppercase;
+        margin: 14px 0 6px 0;
+        border-bottom: 1px solid #1a2233;
+        padding-bottom: 4px;
+    }
+    .sb-macro-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 6px 10px;
+        border-radius: 5px;
+        margin-bottom: 4px;
+        background: rgba(255,255,255,0.025);
+        border: 1px solid rgba(255,255,255,0.05);
+        font-family: 'Courier New', monospace;
+    }
+    .sb-macro-label { font-size: 0.68rem; color: #667788; }
+    .sb-macro-val   { font-size: 0.85rem; font-weight: 700; color: #dde4ee; }
+    .sb-macro-delta { font-size: 0.68rem; font-weight: 700; }
+    .sb-regime-badge {
+        display: inline-block;
+        padding: 3px 10px;
+        border-radius: 20px;
+        font-size: 0.65rem;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        font-family: 'Courier New', monospace;
+        margin-top: 6px;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    # ── LIVE MACRO PULSE (computed later but rendered immediately via placeholder) ─
+    _macro_sidebar_placeholder = st.sidebar.empty()
+
+    # ── TIME HORIZON FORM ─────────────────────────────────────────────────────
+    st.sidebar.markdown("<div class='sb-section-label'>Temporal Control</div>", unsafe_allow_html=True)
     with st.sidebar.form("global_filters"):
-        render_header("activity", "Terminal Control Panel", color="#8899aa")
-        
-        # Sector Dropdown
-        all_sectors = ["All Sectors"] + sorted(companies["sector"].dropna().unique().tolist())
-        selected_sector = st.selectbox("Filter by Sector", all_sectors, key="sector_dropdown_form")
-
-        # Ticker Search / Dropdown
-        indices = ["^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"]
-        if selected_sector != "All Sectors":
-            filtered_companies_sidebar = companies_full[(companies_full["sector"] == selected_sector) & (~companies_full["ticker"].isin(indices))]
-        else:
-            filtered_companies_sidebar = companies_full[~companies_full["ticker"].isin(indices)]
-            
-        ticker_options = sorted(filtered_companies_sidebar.apply(lambda x: f"{x['ticker']}: {x['company']}", axis=1).tolist())
-        selected_display_names = st.multiselect(
-            "Search Tickers (Leave empty for all)", 
-            options=ticker_options, 
-            key="ticker_multiselect_form"
-        )
-        
-        # Time Horizon
-        st.markdown("### ⏱ Time Horizon")
         horizon_options = ["1D", "1W", "1M", "3M", "6M", "1Y", "YTD", "3Y", "5Y", "ALL", "Custom"]
         selected_horizon = st.segmented_control(
             "Horizon",
@@ -518,37 +535,23 @@ if not prices_full.empty:
             label_visibility="collapsed",
             key="time_horizon_form"
         )
-        
-        submitted = st.form_submit_button("🚀 APPLY ANALYSIS & SYNC", use_container_width=True, type="primary")
+        submitted = st.form_submit_button("APPLY TEMPORAL SYNC", use_container_width=True, type="primary")
 
     # Global State Sync
     if not submitted and 'first_run' not in st.session_state:
         st.session_state.first_run = True
-        selected_tickers = []
-        selected_sector = "All Sectors"
         selected_horizon = "1Y"
     else:
-        selected_tickers = [name.split(":")[0] for name in st.session_state.ticker_multiselect_form]
-        selected_sector = st.session_state.sector_dropdown_form
         selected_horizon = st.session_state.time_horizon_form
 
-    # Apply filters to main dataframes
-    if selected_sector != "All Sectors":
-        companies = companies_full[(companies_full["sector"] == selected_sector)]
-    else:
-        companies = companies_full.copy()
-        
-    if len(selected_tickers) > 0:
-        companies = companies[companies["ticker"].isin(selected_tickers)]
-        prices = prices_full[prices_full["ticker"].isin(selected_tickers + indices)]
-        monthly = monthly_full[monthly_full["ticker"].isin(selected_tickers)]
-    else:
-        prices = prices_full.copy()
-        monthly = monthly_full.copy()
+    # Universal Data Scope (Time only, no Ticker/Sector restriction)
+    companies = companies_full.copy()
+    prices    = prices_full.copy()
+    monthly   = monthly_full.copy()
 
     # Horizon Logic
     end_date = max_db_date
-    if selected_horizon == "1D": start_date = max_db_date - timedelta(days=1)
+    if selected_horizon == "1D":  start_date = max_db_date - timedelta(days=1)
     elif selected_horizon == "1W": start_date = max_db_date - timedelta(days=7)
     elif selected_horizon == "1M": start_date = max_db_date - timedelta(days=30)
     elif selected_horizon == "3M": start_date = max_db_date - timedelta(days=90)
@@ -558,7 +561,7 @@ if not prices_full.empty:
     elif selected_horizon == "5Y": start_date = max_db_date - timedelta(days=1825)
     elif selected_horizon == "ALL": start_date = min_db_date
     elif selected_horizon == "Custom":
-        with st.sidebar.expander("🛠️ Custom Range", expanded=True):
+        with st.sidebar.expander("Custom Range", expanded=True):
             custom_range = st.date_input(
                 "Pick Dates",
                 value=(max_db_date - timedelta(days=365), max_db_date),
@@ -570,33 +573,32 @@ if not prices_full.empty:
         else:
             start_date = custom_range if not isinstance(custom_range, (list, tuple)) else custom_range[0]
             end_date   = max_db_date
-    else:  # fallback 1Y
+    else:
         start_date = max_db_date - timedelta(days=365)
 
     # Clamp to DB boundaries
     start_date = max(start_date, min_db_date)
     end_date   = min(end_date, max_db_date)
 
-    st.sidebar.caption(f"📅 {start_date:%b %d, %Y}  →  {end_date:%b %d, %Y}")
+    st.sidebar.caption(f"Range: {start_date:%b %d, %Y}  →  {end_date:%b %d, %Y}")
 
-    # Apply filters (use Timestamps for reliable comparison with datetime64 columns)
+    # Apply time filters
     t_start = pd.Timestamp(start_date)
     t_end   = pd.Timestamp(end_date)
     prices      = prices[(prices["date"] >= t_start) & (prices["date"] <= t_end)]
     spy_prices  = spy_prices[(spy_prices["date"] >= t_start) & (spy_prices["date"] <= t_end)]
     monthly     = monthly[(monthly["month"] >= t_start) & (monthly["month"] <= t_end)]
 
-    # 💡 EXCLUDE INDICES FROM MAIN ANALYSIS (Overview, Deep Dive, AI, Scanner)
-    # We keep indices in prices_full/companies_full for the KPI Header only.
-    indices = ["^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"]
+    # Exclude indices from analysis tabs
     companies = companies[~companies["ticker"].isin(indices)]
-    prices = prices[~prices["ticker"].isin(indices)]
-    monthly = monthly[~monthly["ticker"].isin(indices)]
+    prices    = prices[~prices["ticker"].isin(indices)]
+    monthly   = monthly[~monthly["ticker"].isin(indices)]
 
-    # 💡 Define the Current Universe for Tab-Specific Selectors
+    # Current Universe for tab selectors
     current_universe = sorted(prices["ticker"].unique().tolist())
-    if not current_universe: # Fallback if everything is filtered out
+    if not current_universe:
         current_universe = sorted([t for t in all_tickers if t not in indices])
+
 
 st.sidebar.markdown("---")
 
@@ -737,65 +739,80 @@ if macro:
     spy_sign = "+" if spy_chg >= 0 else ""
     spy_hud_color = "#2ecc71" if spy_chg >= 0 else "#e74c3c"
     spy_delta_html = f'<div class="kpi-delta" style="color:{spy_hud_color}">{spy_sign}{spy_chg:.2f}%</div>'
-    spy_val = f"€{spy:.2f}"
+    # ── RENDER SIDEBAR MACRO PULSE (via placeholder created earlier) ──────────
+    if macro:
+        _spy_v   = macro["SPY"]["val"];  _spy_p   = macro["SPY"]["pct"]
+        _vix_v   = macro["VIX"]["val"];  _vix_p   = macro["VIX"]["pct"]
+        _tnx_v   = macro["US10Y"]["val"];_tnx_p   = macro["US10Y"]["pct"]
+        _dxy_v   = macro["DXY"]["val"];  _dxy_p   = macro["DXY"]["pct"]
 
+        def _sb_delta(pct, invert=False):
+            good = "#2ecc71"; bad = "#e74c3c"
+            color = (bad if pct >= 0 else good) if invert else (good if pct >= 0 else bad)
+            sign  = "+" if pct >= 0 else ""
+            return f"<span class='sb-macro-delta' style='color:{color}'>{sign}{pct:.2f}%</span>"
+
+        _regime_colors = {"RISK-OFF": "#e74c3c", "INFLATION SHOCK": "#e67e22", "RISK-ON / EXPANSION": "#2ecc71", "NEUTRAL": "#f39c12"}
+        _rc = _regime_colors.get(regime, "#f39c12")
+
+        _macro_sidebar_placeholder.markdown(f"""
+        <div class='sb-section-label'>Live Macro Pulse</div>
+        <div class='sb-macro-row'>
+            <span class='sb-macro-label'>SPY</span>
+            <span class='sb-macro-val'>€{_spy_v:.2f}</span>
+            {_sb_delta(_spy_p)}
+        </div>
+        <div class='sb-macro-row'>
+            <span class='sb-macro-label'>VIX</span>
+            <span class='sb-macro-val'>{_vix_v:.2f}</span>
+            {_sb_delta(_vix_p, invert=True)}
+        </div>
+        <div class='sb-macro-row'>
+            <span class='sb-macro-label'>US10Y</span>
+            <span class='sb-macro-val'>{_tnx_v:.2f}%</span>
+            {_sb_delta(_tnx_p, invert=True)}
+        </div>
+        <div class='sb-macro-row'>
+            <span class='sb-macro-label'>DXY</span>
+            <span class='sb-macro-val'>{_dxy_v:.2f}</span>
+            {_sb_delta(_dxy_p)}
+        </div>
+        <div style='margin-top:8px; text-align:center;'>
+            <span class='sb-regime-badge' style='background:rgba(255,255,255,0.05); color:{_rc}; border:1px solid {_rc}55;'>
+                {regime}
+            </span>
+        </div>
+        """, unsafe_allow_html=True)
 
 mqi_val = f"{market_quality_idx:.1f}"
 mqi_color = "#2ecc71" if market_quality_idx >= 65 else ("#f1c40f" if market_quality_idx >= 45 else "#e74c3c")
 
+# ── MAIN HEADER (Compact — Macro moved to Sidebar) ─────────────────────────
 st.markdown(f"""
-<style>
-.kpi-grid {{
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    gap: 12px;
-    margin-bottom: 5px;
-}}
-.kpi-card {{
-    background: linear-gradient(135deg, rgba(255,255,255,0.05) 0%, rgba(255,255,255,0.02) 100%);
-    backdrop-filter: blur(10px);
-    border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 8px;
-    padding: 12px 16px;
-    height: 85px;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    transition: all 0.3s ease;
-    box-sizing: border-box;
-}}
-.kpi-card:hover {{
-    border: 1px solid rgba(255,255,255,0.25);
-    background: rgba(255,255,255,0.07);
-    transform: translateY(-1px);
-}}
-.kpi-delta {{
-    font-size: 0.75rem;
-    font-weight: 700;
-    margin-top: 2px;
-}}
-</style>
-<div class="kpi-grid">
-  <div class="kpi-card">
-    <div class="kpi-label">Macro Phase</div>
-    <div class="kpi-value" style="color:{regime_ui_color};font-size:1.0rem;margin-top:2px;">{regime}</div>
-  </div>
-  <div class="kpi-card">
-    <div class="kpi-label">Volatility (VIX)</div>
-    <div class="kpi-value">{vix_val}</div>
-    {vix_delta_html}
-  </div>
-  <div class="kpi-card">
-    <div class="kpi-label">S&amp;P 500 (SPY)</div>
-    <div class="kpi-value">{spy_val}</div>
-    {spy_delta_html}
-  </div>
-  <div class="kpi-card">
-    <div class="kpi-label">Quality Index</div>
-    <div class="kpi-value" style="color:{mqi_color}">{mqi_val}<span style="font-size:0.85rem;font-weight:400;color:#888">/100</span></div>
-  </div>
+<div style='display:flex; align-items:center; justify-content:space-between;
+            padding:10px 16px; background:rgba(255,255,255,0.02);
+            border:1px solid rgba(255,255,255,0.06); border-radius:8px; margin-bottom:16px;'>
+    <div>
+        <span style='font-size:1.3rem; font-weight:900; color:#e8eaf6; font-family: "Courier New", monospace;'>
+            LuongDo | Quant Analytics Workspace
+        </span>
+        <span style='font-size:0.72rem; color:#556677; margin-left:12px;'>
+            {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')} UTC &nbsp;|&nbsp; {stock_count} Tickers
+        </span>
+    </div>
+    <div style='display:flex; gap:12px; align-items:center;'>
+        <div style='text-align:center;'>
+            <div style='font-size:0.6rem; color:#445566; font-family:monospace; text-transform:uppercase; letter-spacing:0.1em;'>Quality Index</div>
+            <div style='font-size:1.1rem; font-weight:900; color:{mqi_color}; font-family:"Courier New",monospace;'>{mqi_val}<span style='font-size:0.75rem; color:#667788;'>/100</span></div>
+        </div>
+        <div style='text-align:center; padding-left:12px; border-left:1px solid #1a2233;'>
+            <div style='font-size:0.6rem; color:#445566; font-family:monospace; text-transform:uppercase; letter-spacing:0.1em;'>Regime</div>
+            <div style='font-size:0.8rem; font-weight:700; color:{regime_ui_color}; font-family:"Courier New",monospace;'>{regime}</div>
+        </div>
+    </div>
 </div>
 """, unsafe_allow_html=True)
+
 
 # Alert details expander (below header)
 if alert_count > 0 or macro:
@@ -849,7 +866,7 @@ tab_labels = [
     "Predictive Suite",
     "Market Scanner",
     "Portfolio Management",
-    "📈 Strategy Backtest"
+    "Strategy Backtest"
 ]
 
 # Use segmented control for better tab persistence or stick with st.tabs
@@ -935,13 +952,8 @@ with tab_overview:
     monthly_strategic = monthly_full[(monthly_full["month"].dt.date >= start_date) & 
                                      (monthly_full["month"].dt.date <= end_date)].copy()
     
-    # Apply sector filter if any
-    if selected_sector != "All Sectors":
-        # We need to merge sector info first if not present in monthly_full
-        if 'sector' not in monthly_strategic.columns:
-            monthly_strategic = monthly_strategic.merge(companies_full[['ticker', 'sector', 'company']], on='ticker', how='left')
-        monthly_strategic = monthly_strategic[monthly_strategic["sector"] == selected_sector]
-    elif 'sector' not in monthly_strategic.columns:
+    # Merge sector info (Strategic Overview shows Global Universe)
+    if 'sector' not in monthly_strategic.columns:
         monthly_strategic = monthly_strategic.merge(companies_full[['ticker', 'sector', 'company']], on='ticker', how='left')
 
     risk_return_strategic = monthly_strategic.groupby("ticker").agg(
@@ -957,10 +969,9 @@ with tab_overview:
     plot_df['volatility'] = plot_df['volatility'] * (12 ** 0.5)
     plot_df['sharpe_ratio'] = plot_df['avg_return'] / plot_df['volatility'].replace(0, 0.001)
 
-    # Highlight Top 10 by Cap or Currently Selected tickers
-    selected_list = selected_tickers if len(selected_tickers) > 0 else []
+    # Highlight Top 10 by Cap (global ticker filter removed)
     top_10_tickers = plot_df.sort_values("market_cap", ascending=False).head(10)['ticker'].tolist()
-    highlight_tickers = list(set(top_10_tickers + selected_list))
+    highlight_tickers = list(set(top_10_tickers))
     
     median_vol = plot_df['volatility'].median()
     median_ret = plot_df['avg_return'].median()
@@ -1190,10 +1201,14 @@ with tab_deep_dive:
                 with kcol3:
                     st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Solvency</div>", unsafe_allow_html=True)
                     debt_eq_raw = meta.get('debt_to_equity', 0)
-                    debt_eq   = (debt_eq_raw / 100.0) if pd.notnull(debt_eq_raw) else 0.0
+                    if pd.notnull(debt_eq_raw) and debt_eq_raw != 0:
+                        debt_eq_txt = f"{(debt_eq_raw / 100.0):.2f}x"
+                    else:
+                        debt_eq_txt = "N/A (Neg Equity)" if meta.get('total_debt', 0) > 0 else "0.00x"
+                    
                     curr_rat  = meta.get('current_ratio', 0)
                     quick_rat = meta.get('quick_ratio', 0)
-                    render_metric_row("Debt/Eq",       f"{debt_eq:.2f}x")
+                    render_metric_row("Debt/Eq", debt_eq_txt)
                     render_metric_row("Current Ratio", f"{curr_rat:.2f}")
                     render_metric_row("Quick Ratio",   f"{quick_rat:.2f}")
                     st.markdown("</div>", unsafe_allow_html=True)
@@ -3136,7 +3151,7 @@ with tab_backtest:
     st.markdown("""
     <div style='background:rgba(0,255,204,0.05); border:1px solid rgba(0,255,204,0.2);
                 border-radius:8px; padding:12px 16px; margin-bottom:16px; font-size:0.85rem; color:#aaa;'>
-    🧠 <b>How it works:</b> Select a trading rule based on the AI Quality Score.
+    <span style='color:#00ffcc; font-weight:900;'>[INFO]</span> <b>How it works:</b> Select a trading rule based on the AI Quality Score.
     The engine will simulate every buy/sell signal on <b>5 years of historical data</b>
     and return the real cumulative P&L — not just accuracy metrics.
     </div>
@@ -3145,7 +3160,7 @@ with tab_backtest:
     bt_col1, bt_col2 = st.columns([1, 2])
 
     with bt_col1:
-        st.markdown("#### ⚙️ Trading Rule Configuration")
+        st.markdown("#### Trading Rule Configuration")
 
         bt_ticker = st.selectbox(
             "Select Ticker to Backtest",
@@ -3153,18 +3168,18 @@ with tab_backtest:
             format_func=format_ticker,
             key="bt_ticker_sel"
         )
-        buy_threshold  = st.slider("🟢 BUY when AI Score ≥", 40, 95, 70, key="bt_buy")
-        sell_threshold = st.slider("🔴 SELL when AI Score <", 10, 70, 40, key="bt_sell")
-        initial_capital = st.number_input("💰 Initial Capital (€)", 1000, 1_000_000, 10_000, step=1000, key="bt_capital")
-        tx_cost_pct = st.slider("💸 Transaction Cost (%)", 0.0, 1.0, 0.1, step=0.05, key="bt_tx") / 100
-        run_backtest = st.button("🚀 Run Simulation", type="primary", use_container_width=True, key="bt_run")
+        buy_threshold  = st.slider("BUY when AI Score ≥", 40, 95, 70, key="bt_buy")
+        sell_threshold = st.slider("SELL when AI Score <", 10, 70, 40, key="bt_sell")
+        initial_capital = st.number_input("Initial Capital (€)", 1000, 1_000_000, 10_000, step=1000, key="bt_capital")
+        tx_cost_pct = st.slider("Transaction Cost (%)", 0.0, 1.0, 0.1, step=0.05, key="bt_tx") / 100
+        run_backtest = st.button("Run Simulation", type="primary", use_container_width=True, key="bt_run")
 
     with bt_col2:
         if run_backtest and bt_ticker:
-            bt_prices = prices_full[prices_full["ticker"] == bt_ticker].sort_values("date").copy()
+            bt_prices = prices[prices["ticker"] == bt_ticker].sort_values("date").copy()
 
             if len(bt_prices) < 60:
-                st.warning(f"⚠️ Not enough data for {bt_ticker}. Need at least 60 trading days.")
+                st.warning(f"Not enough data for {bt_ticker}. Need at least 60 trading days.")
             else:
                 # Get the AI score for this ticker (from reco_df)
                 ticker_score_row = reco_df[reco_df["ticker"] == bt_ticker]

@@ -9,3 +9,7 @@ airflow/*.db
 # warehouse/*.duckdb  # Keeping this for now if the user explicitly tracked it
 /tmp/
 # warehouse/*.duckdb
+.agents
+.github/workflows
+dbt
+legacy
