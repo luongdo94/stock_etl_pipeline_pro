@@ -58,7 +58,14 @@ def needs_full_refresh(conn: duckdb.DuckDBPyConnection, force_weekly: bool = Tru
 # and the ETL email report (Airflow). Any changes here propagate everywhere.
 
 def compute_score_details(row) -> dict:
-    """Institutional-Grade Categorized Quality Score — 6 pillars, strictly 100 points."""
+    """Institutional-Grade Categorized Quality Score v2.0 — 6 pillars, strictly 100 points.
+    
+    v2.0 vs v1.0 changes:
+    - Valuation: P/E thresholds now sector-aware (Tech band up to P/E<50).
+    - Profitability: FCF floor lowered 20%->12% (max), 10%->5% (partial).
+    - Red Flags: High-growth unprofitable companies penalized only -5 (not -20).
+    - Red Flags: Debt Crisis threshold raised from >8x to >10x Debt/EBITDA.
+    """
     categories = {
         "Valuation": 0,             # PEG, P/E, P/B           — Max 20
         "Profitability": 0,         # FCF Margin, ROE         — Max 25 (or 30 for Tech)
@@ -85,31 +92,40 @@ def compute_score_details(row) -> dict:
     is_financial_utility = any(s in sector for s in ["financial", "utilities", "real estate", "bank"])
 
     # 1. Valuation (PEG, P/E, P/B) — Max 20
+    # v2.0: P/E thresholds are now sector-aware.
+    # Standard sectors:  P/E < 22 excellent, < 35 acceptable.
+    # Tech/Growth sector: P/E < 35 excellent, < 50 acceptable.
     pe  = get_num("pe_ratio", 999)
     pb  = get_num("price_to_book", 99)
     peg = get_num("peg_ratio", 999)
     roe = get_num("roe", 0)
     
-    if peg > 0 and peg < 1.1:   categories["Valuation"] += 12
-    elif peg > 0 and peg < 1.8: categories["Valuation"] += 7
-    elif pe > 0 and pe < 16:    categories["Valuation"] += 10
-    elif pe > 0 and pe < 28:    categories["Valuation"] += 5  
+    if peg > 0 and peg < 1.5:    categories["Valuation"] += 12   # v2.0: was < 1.1
+    elif peg > 0 and peg < 2.5:  categories["Valuation"] += 6    # v2.0: was < 1.8
+    elif is_tech_growth:
+        if pe > 0 and pe < 35:   categories["Valuation"] += 10   # v2.0 NEW: Tech band
+        elif pe > 0 and pe < 50: categories["Valuation"] += 5    # v2.0 NEW: Tech band
+    else:
+        if pe > 0 and pe < 22:   categories["Valuation"] += 10   # v2.0: was < 16
+        elif pe > 0 and pe < 35: categories["Valuation"] += 5    # v2.0: was < 28
 
-    if pb > 0 and pb < 3.5:     categories["Valuation"] += 8
-    elif pb > 0 and pb < 6.0:   categories["Valuation"] += 4
-    if roe > 0.25:              categories["Valuation"] += 5 # High efficiency premium
+    if pb > 0 and pb < 3.5:      categories["Valuation"] += 8
+    elif pb > 0 and pb < 6.0:    categories["Valuation"] += 4
+    if roe > 0.25:                categories["Valuation"] += 5   # High efficiency premium
     
     categories["Valuation"] = min(categories["Valuation"], 20)
 
     # 2. Profitability (FCF Margin, ROE) — Max 25 (30 for Tech)
+    # v2.0: Lowered FCF bar. 12% is efficient, 5% is marginal, > 0 still earns 3 pts.
     fcf = get_num("fcf_margin", 0)
-    if fcf > 20:         categories["Profitability"] += 15
-    elif fcf > 10:       categories["Profitability"] += 8
+    if fcf > 12:         categories["Profitability"] += 15   # v2.0: was > 20
+    elif fcf > 5:        categories["Profitability"] += 8    # v2.0: was > 10
+    elif fcf > 0:        categories["Profitability"] += 3    # v2.0 NEW: marginal FCF
     
     if roe * 100 > 18:   categories["Profitability"] += 10
     elif roe * 100 > 10: categories["Profitability"] += 5
     
-    if is_tech_growth and fcf > 25: categories["Profitability"] += 5
+    if is_tech_growth and fcf > 20: categories["Profitability"] += 5  # Bonus: exceptional tech
 
     categories["Profitability"] = min(categories["Profitability"], 30 if is_tech_growth else 25)
 
@@ -164,13 +180,19 @@ def compute_score_details(row) -> dict:
 
     categories["Analyst Estimates"] = min(categories["Analyst Estimates"], 10)
 
-    # 7. RED FLAGS (Instant penalties that bypass the 100-point limit)
-    # A. Unprofitable Negative P/E (-20 points)
-    if pe < 0: 
-        categories["Red Flags"] -= 20
+    # 7. RED FLAGS (Instant penalties)
+    # A. Unprofitable Negative P/E — v2.0: High-growth exception
+    # If losing money BUT revenue growing fast (>25%), it's strategic investment.
+    # (e.g., Amazon 2012, Uber early days). Penalty reduced from -20 to -5.
+    rev_growth = get_num("revenue_growth", 0) or 0  # stored as decimal e.g. 0.30 = 30%
+    if pe < 0:
+        if rev_growth * 100 > 25:
+            categories["Red Flags"] -= 5   # Growth exception
+        else:
+            categories["Red Flags"] -= 20  # Unprofitable with no growth = red flag
     
-    # B. Debt Crisis (-15 points)
-    if not is_financial_utility and ratio > 8.0 and ratio != 999:
+    # B. Debt Crisis — v2.0: Threshold raised from >8.0x to >10.0x
+    if not is_financial_utility and ratio > 10.0 and ratio != 999:
         categories["Red Flags"] -= 15
         
     # C. Value Trap (-10 points)
