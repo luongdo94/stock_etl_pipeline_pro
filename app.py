@@ -1296,63 +1296,61 @@ with tab_deep_dive:
             st.markdown("---")
             
             # ── AI RISK AUDIT (COHERE NLP) ───────────────────────────────────
-            render_header("zap", "Real-Time AI Risk Audit (NLP Engine)")
-            st.markdown("<p style='color:#bbb; font-size:0.9rem;'>Scan real-time headlines and regulatory filings using Cohere Command-R Plus to detect hidden qualitative risks missing from numerical data.</p>", unsafe_allow_html=True)
+            render_header("zap", "Real-Time AI Risk Audit", level="####")
+            st.markdown("<p style='color:#bbb; font-size:0.85rem; margin-bottom: 5px;'>Scan real-time headlines using Cohere Command-R Plus to detect hidden qualitative risks.</p>", unsafe_allow_html=True)
             
-            if st.button("🧠 Run Real-Time AI Risk Audit", type="primary", use_container_width=True):
-                with st.spinner(f"Reading real-time news & context for {meta['company']}..."):
-                    llm_res = analyze_risk_with_llm(deep_ticker, meta['company'])
-                    
-                    if llm_res.get("error"):
-                        st.error(f"⚠️ NLP Engine Error: {llm_res['error']}")
-                    else:
-                        score = llm_res.get("red_flag_score", 0)
-                        sentiment = llm_res.get("sentiment", "Neutral")
-                        reco = llm_res.get("recommendation", "N/A")
-                        insights = llm_res.get("key_insights", [])
+            ai_main_col, _ = st.columns([1, 1])  # Squeeze into left half
+            with ai_main_col:
+                if st.button("🧠 Run Real-Time AI Risk Audit", type="primary", use_container_width=True):
+                    with st.spinner(f"Reading real-time news & context for {meta['company']}..."):
+                        llm_res = analyze_risk_with_llm(deep_ticker, meta['company'])
                         
-                        # Determine colors based on score
-                        if score <= 25:
-                            bg_color = "rgba(46, 204, 113, 0.1)"
-                            border = "#2ecc71"
-                            status_text = "Low Risk (Safe)"
-                        elif score <= 50:
-                            bg_color = "rgba(241, 196, 15, 0.1)"
-                            border = "#f1c40f"
-                            status_text = "Moderate Risk"
-                        elif score <= 75:
-                            bg_color = "rgba(230, 126, 34, 0.1)"
-                            border = "#e67e22"
-                            status_text = "Elevated Risk"
+                        if llm_res.get("error"):
+                            st.error(f"⚠️ NLP Engine Error: {llm_res['error']}")
                         else:
-                            bg_color = "rgba(231, 76, 60, 0.1)"
-                            border = "#e74c3c"
-                            status_text = "High / Critical Risk"
+                            score = llm_res.get("red_flag_score", 0)
+                            sentiment = llm_res.get("sentiment", "Neutral")
+                            reco = llm_res.get("recommendation", "N/A")
+                            insights = llm_res.get("key_insights", [])
                             
-                        # Layout
-                        ai_c1, ai_c2 = st.columns([1, 2])
-                        with ai_c1:
+                            # Determine colors based on score
+                            if score <= 25:
+                                bg_color = "rgba(46, 204, 113, 0.1)"
+                                border = "#2ecc71"
+                                status_text = "Low Risk (Safe)"
+                            elif score <= 50:
+                                bg_color = "rgba(241, 196, 15, 0.1)"
+                                border = "#f1c40f"
+                                status_text = "Moderate Risk"
+                            elif score <= 75:
+                                bg_color = "rgba(230, 126, 34, 0.1)"
+                                border = "#e67e22"
+                                status_text = "Elevated Risk"
+                            else:
+                                bg_color = "rgba(231, 76, 60, 0.1)"
+                                border = "#e74c3c"
+                                status_text = "High Risk"
+                                
+                            # Compact Layout
                             st.markdown(f"""
-                            <div style='background:{bg_color}; border:2px solid {border}; border-radius:10px; padding:20px; text-align:center;'>
-                                <div style='font-size:1rem; color:#bbb; text-transform:uppercase;'>Red Flag Score</div>
-                                <div style='font-size:3.5rem; font-weight:900; color:{border};'>{score}<span style='font-size:1.5rem;color:#666;'>/100</span></div>
-                                <div style='font-size:1.1rem; font-weight:700; color:{border}; margin-top:5px;'>{status_text}</div>
-                            </div>
-                            <div style='margin-top:15px; text-align:center;'>
-                                <span style='background:rgba(255,255,255,0.1); padding:5px 12px; border-radius:15px; font-size:0.9rem;'>Sentiment: <b>{sentiment}</b></span>
+                            <div style='display:flex; gap:15px; margin-top:10px;'>
+                                <div style='flex:1; background:{bg_color}; border:1px solid {border}; border-radius:8px; padding:12px; text-align:center;'>
+                                    <div style='font-size:0.8rem; color:#bbb; text-transform:uppercase;'>Red Flag Score</div>
+                                    <div style='font-size:2.2rem; font-weight:900; color:{border}; line-height:1.1;'>{score}<span style='font-size:1rem;color:#666;'>/100</span></div>
+                                    <div style='font-size:0.85rem; font-weight:700; color:{border}; margin-top:3px;'>{status_text}</div>
+                                    <div style='margin-top:8px;'><span style='background:rgba(255,255,255,0.1); padding:3px 8px; border-radius:10px; font-size:0.75rem;'>Sentiment: <b>{sentiment}</b></span></div>
+                                </div>
+                                <div style='flex:2; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:12px;'>
+                                    <div style='margin-top:0; color:#3498db; font-size:0.9rem; font-weight:bold;'>💡 CRO Verdict</div>
+                                    <div style='font-size:0.9rem; font-style:italic; border-left:2px solid #3498db; padding-left:8px; margin:5px 0 10px 0; color:#eee;'>"{reco}"</div>
+                                    <div style='color:#cfd8dc; font-size:0.8rem; font-weight:bold;'>Key Insights:</div>
+                                    <ul style='color:#bbb; font-size:0.8rem; line-height:1.4; padding-left:15px; margin-bottom:0;'>
+                                        {"".join([f"<li>{item}</li>" for item in insights])}
+                                    </ul>
+                                </div>
                             </div>
                             """, unsafe_allow_html=True)
-                        with ai_c2:
-                            st.markdown(f"""
-                            <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.1); border-radius:10px; padding:20px; height:100%;'>
-                                <h4 style='margin-top:0; color:#3498db;'>💡 Chief Risk Officer's Verdict</h4>
-                                <p style='font-size:1.05rem; font-style:italic; border-left:3px solid #3498db; padding-left:10px;'>"{reco}"</p>
-                                <h5 style='margin-top:15px; color:#cfd8dc;'>Key NLP Insights ({llm_res.get("headlines_analyzed", 0)} sources):</h5>
-                                <ul style='color:#bbb; font-size:0.95rem; line-height:1.5;'>
-                                    {"".join([f"<li>{item}</li>" for item in insights])}
-                                </ul>
-                            </div>
-                            """, unsafe_allow_html=True)
+
 
             st.markdown("---")
 
