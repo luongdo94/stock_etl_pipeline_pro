@@ -1295,61 +1295,141 @@ with tab_deep_dive:
 
             st.markdown("---")
             
-            # ── AI RISK AUDIT (COHERE NLP) ───────────────────────────────────
-            render_header("zap", "Real-Time AI Risk Audit", level="####")
-            st.markdown("<p style='color:#bbb; font-size:0.85rem; margin-bottom: 5px;'>Scan real-time headlines using Cohere Command-R Plus to detect hidden qualitative risks.</p>", unsafe_allow_html=True)
+            # ── QUAL vs QUANT: Full-Width 50/50 Split View ───────────────────
+            render_header("zap", "Qualitative vs. Quantitative Risk Analysis", level="####")
+            st.caption("Left: NLP-powered real-time sentiment from news headlines (Cohere AI). Right: Quantitative pillar breakdown from fundamental data.")
             
-            ai_main_col, _ = st.columns([1, 1])  # Squeeze into left half
-            with ai_main_col:
-                if st.button("🧠 Run Real-Time AI Risk Audit", type="primary", use_container_width=True):
-                    with st.spinner(f"Reading real-time news & context for {meta['company']}..."):
+            qual_col, quant_col = st.columns([1, 1])
+            
+            # ── LEFT: NLP Qualitative Audit ──────────────────────────────────
+            with qual_col:
+                st.markdown("<div style='background:rgba(52,152,219,0.06); border:1px solid rgba(52,152,219,0.25); border-radius:10px; padding:14px; min-height:340px;'>", unsafe_allow_html=True)
+                st.markdown("<div style='color:#3498db; font-size:0.85rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:10px;'>🧠 Qualitative NLP Audit</div>", unsafe_allow_html=True)
+                
+                if st.button("Run Real-Time AI Risk Audit", type="primary", use_container_width=True):
+                    with st.spinner(f"Scanning news for {meta['company']}..."):
                         llm_res = analyze_risk_with_llm(deep_ticker, meta['company'])
                         
                         if llm_res.get("error"):
-                            st.error(f"⚠️ NLP Engine Error: {llm_res['error']}")
+                            st.error(f"NLP Error: {llm_res['error'][:80]}")
                         else:
-                            score = llm_res.get("red_flag_score", 0)
-                            sentiment = llm_res.get("sentiment", "Neutral")
-                            reco = llm_res.get("recommendation", "N/A")
-                            insights = llm_res.get("key_insights", [])
+                            nlp_score     = llm_res.get("red_flag_score", 0)
+                            nlp_sentiment = llm_res.get("sentiment", "Neutral")
+                            nlp_reco      = llm_res.get("recommendation", "N/A")
+                            nlp_insights  = llm_res.get("key_insights", [])
+                            nlp_category  = llm_res.get("risk_category", "None")
                             
-                            # Determine colors based on score
-                            if score <= 25:
-                                bg_color = "rgba(46, 204, 113, 0.1)"
-                                border = "#2ecc71"
-                                status_text = "Low Risk (Safe)"
-                            elif score <= 50:
-                                bg_color = "rgba(241, 196, 15, 0.1)"
-                                border = "#f1c40f"
-                                status_text = "Moderate Risk"
-                            elif score <= 75:
-                                bg_color = "rgba(230, 126, 34, 0.1)"
-                                border = "#e67e22"
-                                status_text = "Elevated Risk"
-                            else:
-                                bg_color = "rgba(231, 76, 60, 0.1)"
-                                border = "#e74c3c"
-                                status_text = "High Risk"
-                                
-                            # Compact Layout
+                            if nlp_score <= 25:   nlp_border, nlp_badge = "#2ecc71", "✅ LOW RISK"
+                            elif nlp_score <= 50: nlp_border, nlp_badge = "#f1c40f", "🟡 MODERATE"
+                            elif nlp_score <= 75: nlp_border, nlp_badge = "#e67e22", "🟠 ELEVATED"
+                            else:                 nlp_border, nlp_badge = "#e74c3c", "🔴 HIGH RISK"
+                            
+                            # Score badge row
                             st.markdown(f"""
-                            <div style='display:flex; gap:15px; margin-top:10px;'>
-                                <div style='flex:1; background:{bg_color}; border:1px solid {border}; border-radius:8px; padding:12px; text-align:center;'>
-                                    <div style='font-size:0.8rem; color:#bbb; text-transform:uppercase;'>Red Flag Score</div>
-                                    <div style='font-size:2.2rem; font-weight:900; color:{border}; line-height:1.1;'>{score}<span style='font-size:1rem;color:#666;'>/100</span></div>
-                                    <div style='font-size:0.85rem; font-weight:700; color:{border}; margin-top:3px;'>{status_text}</div>
-                                    <div style='margin-top:8px;'><span style='background:rgba(255,255,255,0.1); padding:3px 8px; border-radius:10px; font-size:0.75rem;'>Sentiment: <b>{sentiment}</b></span></div>
+                            <div style='display:flex; align-items:center; gap:12px; margin-bottom:12px; padding:10px; background:rgba(255,255,255,0.03); border-radius:8px; border-left:3px solid {nlp_border};'>
+                                <div style='text-align:center; min-width:55px;'>
+                                    <div style='font-size:1.8rem; font-weight:900; color:{nlp_border}; line-height:1;'>{nlp_score}</div>
+                                    <div style='font-size:0.6rem; color:#888;'>/100</div>
                                 </div>
-                                <div style='flex:2; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:12px;'>
-                                    <div style='margin-top:0; color:#3498db; font-size:0.9rem; font-weight:bold;'>💡 CRO Verdict</div>
-                                    <div style='font-size:0.9rem; font-style:italic; border-left:2px solid #3498db; padding-left:8px; margin:5px 0 10px 0; color:#eee;'>"{reco}"</div>
-                                    <div style='color:#cfd8dc; font-size:0.8rem; font-weight:bold;'>Key Insights:</div>
-                                    <ul style='color:#bbb; font-size:0.8rem; line-height:1.4; padding-left:15px; margin-bottom:0;'>
-                                        {"".join([f"<li>{item}</li>" for item in insights])}
-                                    </ul>
+                                <div>
+                                    <div style='font-size:0.75rem; font-weight:700; color:{nlp_border};'>{nlp_badge}</div>
+                                    <div style='font-size:0.72rem; color:#aaa;'>Sentiment: <b>{nlp_sentiment}</b> · Category: <b>{nlp_category}</b></div>
                                 </div>
                             </div>
+                            <div style='font-size:0.8rem; font-style:italic; color:#ddd; border-left:2px solid #3498db; padding-left:8px; margin-bottom:10px;'>"{nlp_reco}"</div>
+                            <div style='color:#999; font-size:0.72rem; font-weight:700; margin-bottom:5px;'>KEY INSIGHTS ({llm_res.get("headlines_analyzed", 0)} sources):</div>
+                            <ul style='color:#bbb; font-size:0.78rem; line-height:1.5; padding-left:14px; margin:0;'>
+                                {"".join([f"<li>{item}</li>" for item in nlp_insights])}
+                            </ul>
                             """, unsafe_allow_html=True)
+                else:
+                    st.markdown("""
+                    <div style='text-align:center; padding:40px 20px; color:#666;'>
+                        <div style='font-size:2rem;'>🧠</div>
+                        <div style='font-size:0.85rem; margin-top:10px;'>Click the button above to scan real-time<br>news headlines and detect hidden risks.</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                st.markdown("</div>", unsafe_allow_html=True)
+            
+            # ── RIGHT: Radar Chart (Quantitative Pillar Breakdown) ────────────
+            with quant_col:
+                st.markdown("<div style='background:rgba(0,255,204,0.04); border:1px solid rgba(0,255,204,0.2); border-radius:10px; padding:14px; min-height:340px;'>", unsafe_allow_html=True)
+                st.markdown("<div style='color:#00ffcc; font-size:0.85rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:10px;'>📊 Quantitative Pillar Breakdown</div>", unsafe_allow_html=True)
+                
+                # Build radar from score_details
+                _radar_sd = compute_score_details(meta_enriched)
+                _radar_breakdown = _radar_sd.get("breakdown", {})
+                _sector_lc = meta.get("sector", "").lower() if meta.get("sector") else ""
+                _is_tech = any(s in _sector_lc for s in ["tech", "semi", "software", "cloud", "comm", "ai"])
+                _max_pts = {
+                    "Valuation":       20,
+                    "Profitability":   30 if _is_tech else 25,
+                    "Fin. Health":     15,
+                    "Yield":           5  if _is_tech else 10,
+                    "Momentum":        20,
+                    "Analyst Est.":    10
+                }
+                _pillar_keys = {
+                    "Valuation":       "Valuation",
+                    "Profitability":   "Profitability",
+                    "Fin. Health":     "Financial Health",
+                    "Yield":           "Shareholder Yield",
+                    "Momentum":        "Context & Momentum",
+                    "Analyst Est.":    "Analyst Estimates"
+                }
+                _radar_labels = list(_max_pts.keys())
+                _radar_vals   = [
+                    round((_radar_breakdown.get(_pillar_keys[k], 0) / _max_pts[k]) * 100, 1)
+                    for k in _radar_labels
+                ]
+                # Close the polygon
+                _radar_labels_closed = _radar_labels + [_radar_labels[0]]
+                _radar_vals_closed   = _radar_vals   + [_radar_vals[0]]
+                
+                fig_radar = go.Figure()
+                fig_radar.add_trace(go.Scatterpolar(
+                    r=_radar_vals_closed,
+                    theta=_radar_labels_closed,
+                    fill="toself",
+                    fillcolor="rgba(0,255,204,0.08)",
+                    line=dict(color="#00ffcc", width=2),
+                    name=deep_ticker
+                ))
+                fig_radar.update_layout(
+                    polar=dict(
+                        bgcolor="rgba(0,0,0,0)",
+                        radialaxis=dict(
+                            visible=True, range=[0, 100],
+                            tickfont=dict(size=9, color="#666"),
+                            gridcolor="rgba(255,255,255,0.06)",
+                            linecolor="rgba(255,255,255,0.08)"
+                        ),
+                        angularaxis=dict(
+                            tickfont=dict(size=11, color="#bbb"),
+                            gridcolor="rgba(255,255,255,0.06)"
+                        )
+                    ),
+                    showlegend=False,
+                    template="plotly_dark",
+                    height=290,
+                    margin=dict(t=20, b=10, l=40, r=40),
+                    paper_bgcolor="rgba(0,0,0,0)"
+                )
+                st.plotly_chart(fig_radar, use_container_width=True)
+                
+                # Score summary under radar
+                _q_score = ai_score
+                _q_pct   = f"{_q_score}/100"
+                _q_color = ai_color
+                st.markdown(f"""
+                <div style='text-align:center; font-size:0.8rem; color:#aaa; margin-top:-5px;'>
+                    Institutional AI Score: <span style='color:{_q_color}; font-weight:900; font-size:1rem;'>{_q_pct}</span>
+                    &nbsp;·&nbsp; <span style='color:{_q_color};'>{ai_icon} {ai_action}</span>
+                </div>
+                """, unsafe_allow_html=True)
+                st.markdown("</div>", unsafe_allow_html=True)
+            
+            st.markdown("---")
 
 
             st.markdown("---")
