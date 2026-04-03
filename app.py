@@ -1234,7 +1234,7 @@ with tab_deep_dive:
             
             # ── LEFT: NLP Qualitative Audit ──────────────────────────────────
             with qual_col:
-                st.markdown("<div style='color:#3498db; font-size:0.85rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; border-bottom:1px solid rgba(52,152,219,0.3); padding-bottom:6px;'>🧠 Qualitative NLP Audit</div>", unsafe_allow_html=True)
+                st.markdown("<div style='color:#3498db; font-size:0.85rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; border-bottom:1px solid rgba(52,152,219,0.3); padding-bottom:6px;'>Qualitative NLP Audit</div>", unsafe_allow_html=True)
                 
                 if st.button("Run Real-Time AI Risk Audit", type="primary", use_container_width=True):
                     with st.spinner(f"Scanning news for {meta['company']}..."):
@@ -1249,10 +1249,10 @@ with tab_deep_dive:
                             nlp_insights  = llm_res.get("key_insights", [])
                             nlp_category  = llm_res.get("risk_category", "None")
                             
-                            if nlp_score <= 25:   nlp_border, nlp_badge = "#2ecc71", "✅ LOW RISK"
-                            elif nlp_score <= 50: nlp_border, nlp_badge = "#f1c40f", "🟡 MODERATE"
-                            elif nlp_score <= 75: nlp_border, nlp_badge = "#e67e22", "🟠 ELEVATED"
-                            else:                 nlp_border, nlp_badge = "#e74c3c", "🔴 HIGH RISK"
+                            if nlp_score <= 25:   nlp_border, nlp_badge = "#2ecc71", "LOW RISK"
+                            elif nlp_score <= 50: nlp_border, nlp_badge = "#f1c40f", "MODERATE"
+                            elif nlp_score <= 75: nlp_border, nlp_badge = "#e67e22", "ELEVATED"
+                            else:                 nlp_border, nlp_badge = "#e74c3c", "HIGH RISK"
                             
                             st.markdown(f"""
                             <div style='display:flex; align-items:center; gap:12px; margin-bottom:12px; padding:10px; background:rgba(255,255,255,0.03); border-radius:8px; border-left:3px solid {nlp_border};'>
@@ -1274,7 +1274,7 @@ with tab_deep_dive:
                 else:
                     st.markdown("""
                     <div style='text-align:center; padding:40px 20px; color:#666;'>
-                        <div style='font-size:2rem;'>🧠</div>
+                        <div style='font-size:2rem; font-weight: 800; font-family: monospace; letter-spacing: -2px;'>NLP</div>
                         <div style='font-size:0.85rem; margin-top:10px;'>Click the button above to scan real-time<br>news headlines and detect hidden risks.</div>
                     </div>
                     """, unsafe_allow_html=True)
@@ -1282,7 +1282,7 @@ with tab_deep_dive:
             
             # ── RIGHT: Radar Chart (Quantitative Pillar Breakdown) ────────────
             with quant_col:
-                st.markdown("<div style='color:#00ffcc; font-size:0.85rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; border-bottom:1px solid rgba(0,255,204,0.25); padding-bottom:6px;'>📊 Quantitative Pillar Breakdown</div>", unsafe_allow_html=True)
+                st.markdown("<div style='color:#00ffcc; font-size:0.85rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; border-bottom:1px solid rgba(0,255,204,0.25); padding-bottom:6px;'>Quantitative Pillar Breakdown</div>", unsafe_allow_html=True)
                 
                 # Build radar from score_details
                 _radar_sd = compute_score_details(meta_enriched)
