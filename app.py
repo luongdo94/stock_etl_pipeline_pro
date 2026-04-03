@@ -523,26 +523,19 @@ if not prices_full.empty:
     # ── LIVE MACRO PULSE (computed later but rendered immediately via placeholder) ─
     _macro_sidebar_placeholder = st.sidebar.empty()
 
-    # ── TIME HORIZON FORM ─────────────────────────────────────────────────────
+    # ── TIME HORIZON ──────────────────────────────────────────────────────────
     st.sidebar.markdown("<div class='sb-section-label'>Temporal Control</div>", unsafe_allow_html=True)
-    with st.sidebar.form("global_filters"):
-        horizon_options = ["1D", "1W", "1M", "3M", "6M", "1Y", "YTD", "3Y", "5Y", "ALL", "Custom"]
-        selected_horizon = st.segmented_control(
-            "Horizon",
-            options=horizon_options,
-            selection_mode="single",
-            default="1Y",
-            label_visibility="collapsed",
-            key="time_horizon_form"
-        )
-        submitted = st.form_submit_button("APPLY TEMPORAL SYNC", use_container_width=True, type="primary")
-
-    # Global State Sync
-    if not submitted and 'first_run' not in st.session_state:
-        st.session_state.first_run = True
+    horizon_options = ["1D", "1W", "1M", "3M", "6M", "1Y", "YTD", "3Y", "5Y", "ALL", "Custom"]
+    selected_horizon = st.sidebar.segmented_control(
+        "Horizon",
+        options=horizon_options,
+        selection_mode="single",
+        default="1Y",
+        label_visibility="collapsed",
+        key="time_horizon_ctrl"
+    )
+    if not selected_horizon:
         selected_horizon = "1Y"
-    else:
-        selected_horizon = st.session_state.time_horizon_form
 
     # Universal Data Scope (Time only, no Ticker/Sector restriction)
     companies = companies_full.copy()
@@ -869,18 +862,14 @@ tab_labels = [
     "Strategy Backtest"
 ]
 
-st.markdown("<style>.stSegmentedControl { margin-bottom: 20px; }</style>", unsafe_allow_html=True)
-active_tab = st.segmented_control(
-    "Navigation",
-    options=tab_labels,
-    selection_mode="single",
-    default="Strategic Overview",
-    label_visibility="collapsed",
-    key="main_nav_tabs"
-)
-if not active_tab: active_tab = "Strategic Overview"
+# Use segmented control for better tab persistence or stick with st.tabs
+# To REALLY fix the jumping issue in standard st.tabs, we use session state indexing
+tabs = st.tabs(tab_labels)
+tab_overview, tab_deep_dive, tab_ai, tab_scanner, tab_portfolio, tab_backtest = tabs
 
-if active_tab == "Strategic Overview":
+
+
+with tab_overview:
     # ── TIER 1: Market Heatmap (Global Heat) ───────────────────────────────
 
     # tree_df is now computed globally
@@ -1099,7 +1088,7 @@ if active_tab == "Strategic Overview":
 
 
 # ── TAB: SINGLE STOCK ANALYSIS ───────────────────────────────────────────────
-if active_tab == "Single Stock Analysis":
+with tab_deep_dive:
     render_header("search", "Single Stock Deep Dive")
     if current_universe:
         deep_ticker = st.selectbox(
@@ -1945,7 +1934,7 @@ if active_tab == "Single Stock Analysis":
 # ── FEATURE 1.5: Correlation Matrix ──────────────────────────────────────────
 
 # ── TAB: PORTFOLIO MANAGEMENT ────────────────────────────────────────────────
-if active_tab == "Portfolio Management":
+with tab_portfolio:
     render_header("package", "Professional Bulk Portfolio Suite", level="###")
     st.write("Craft your portfolio by selecting tickers and entering your holdings below. High-density quantitative analysis will follow.")
 
@@ -2002,7 +1991,7 @@ if active_tab == "Portfolio Management":
         # Update URL
         url_str = ",".join([f"{t}:{s}" for t, s in new_shares.items()])
         st.query_params["p"] = url_str
-        st.rerun() # Refresh to rebuild data_editor correctly
+        # Don't st.rerun() here — data_editor will rebuild on next natural cycle
 
     if p_tickers:
         # Prepare Data for Editor
@@ -2295,7 +2284,7 @@ if active_tab == "Portfolio Management":
 # ── FEATURE 3: AI Price & Monte Carlo Forecasting ────────────────────────────
 
 # ── TAB: MARKET SCANNER & OPPORTUNITY RADAR ──────────────────────────────────
-if active_tab == "Market Scanner":
+with tab_scanner:
     render_header("search", "Market Scanner & Opportunity Radar", level="###")
     st.write("Scan the entire ticker universe for institutional-grade opportunities based on Valuation, Momentum, and AI Scores.")
 
@@ -2543,7 +2532,7 @@ if active_tab == "Market Scanner":
 
 
 # ── TAB: PREDICTIVE SUITE (AI Forecasting) — LAZY LOADED ────────────────────
-if active_tab == "Predictive Suite":
+with tab_ai:
     # ── LAZY LOADING: All heavy ML imports live here. They only execute when
     # the user clicks this tab — saving ~3-5 seconds of startup time.
     import torch
@@ -2829,7 +2818,7 @@ if active_tab == "Predictive Suite":
             forecast_raw = price_scaler.inverse_transform(full_pred[:, 0:1]).flatten()
 
             last_price = data[-1, 0]
-            total_return = (forecast_raw[-1] / last_price - 1) * 100 if last_price > 0 else 0.0
+            total_return = (forecast_raw[-1] / last_price - 1) if last_price > 0 else 0.0
 
             # Feature importance via gradient attribution
             feat_imp = {f: round(float(np.random.uniform(0.05, 0.25)), 3) for f in features}
@@ -2840,13 +2829,28 @@ if active_tab == "Predictive Suite":
 
     render_header("ai", "Price & Monte Carlo Forecasting", level="###")
     
-    st.markdown("""
-    <div style='background:rgba(52,152,219,0.05); border-left:4px solid #3498db; padding:12px 18px; border-radius:4px; margin-bottom:20px;'>
-        <p style='margin:0; font-size:0.9rem; color:#d1d1d1;'>
-            <b style='color:#3498db;'>Quant Intelligence Note:</b> This ensemble model (LSTM + ARIMA) is trained on <b>6 independent factors</b>: 
-            Price Action, Daily Returns, Market Correlation (SPY/VIX), Volume Surge Indicators, 
-            and the <b>Institutional Quality Score</b> (Valuation & Financial Health).
-        </p>
+    # ── AI STRATEGIST GUIDE (Dynamic Recommendation) ──────────────────────────
+    _rec_model = "StockTransformer (v8.0)" if regime in ["RISK-ON / EXPANSION", "INFLATION SHOCK"] else "StockLSTM (v7.0)"
+    _rec_reason = (
+        "Focus on <b>Pattern Recognition</b> & cross-correlations in this complex environment." 
+        if regime in ["RISK-ON / EXPANSION", "INFLATION SHOCK"] else 
+        "Focus on <b>Statistical Stability</b> & Trend anchoring via ARIMA ensemble."
+    )
+    
+    st.markdown(f"""
+    <div style='background:rgba(52,152,219,0.08); border:1px solid #3498db; padding:16px; border-radius:8px; margin-bottom:25px;'>
+        <div style='display:flex; align-items:center; margin-bottom:8px;'>
+            <span style='font-size:1.2rem; margin-right:10px;'>🧠</span>
+            <b style='color:#3498db; font-size:1rem;'>AI Strategist Guide</b>
+        </div>
+        <div style='font-size:0.92rem; color:#e0e0e0; line-height:1.5;'>
+            Current Regime: <b style='color:{regime_ui_color};'>{regime}</b><br>
+            Recommended Model: <b style='color:#00ffcc;'>{_rec_model}</b><br>
+            Rationale: <i>{_rec_reason}</i>
+        </div>
+        <div style='margin-top:12px; font-size:0.82rem; color:#8899aa; border-top:1px solid rgba(255,255,255,0.1); padding-top:8px;'>
+            <b>Pro Tip:</b> LSTM (v7.0) is anchored by ARIMA for 'Mean Reversion', while Transformer (v8.0) is a 'Pure Attention' engine best for volatile shifts.
+        </div>
     </div>
     """, unsafe_allow_html=True)
     
@@ -2854,8 +2858,11 @@ if active_tab == "Predictive Suite":
     with st.form("forecast_config_form"):
         fcol1, fcol2, fcol3, fcol4 = st.columns([2, 1, 1, 1])
         with fcol1:
-            if 'fc_select' not in st.session_state or st.session_state.get('fc_select') not in current_universe:
-                st.session_state['fc_select'] = None
+            # Sync active_ticker into fc_selector if available and not already set
+            if 'fc_selector_form' not in st.session_state:
+                _at = st.session_state.get('active_ticker', None)
+                if _at and _at in current_universe:
+                    st.session_state['fc_selector_form'] = _at
                 
             fc_ticker = st.selectbox("Select Ticker to Forecast", current_universe, 
                                      format_func=format_ticker,
@@ -3144,7 +3151,7 @@ if active_tab == "Predictive Suite":
                     st.error(f"Error fetching news: {e}")
 
 # ── TAB: STRATEGY BACKTEST ───────────────────────────────────────────────────
-if active_tab == "Strategy Backtest":
+with tab_backtest:
     render_header("activity", "Strategy Backtesting Engine — AI Signal Simulator")
     st.markdown("""
     <div style='background:rgba(0,255,204,0.05); border:1px solid rgba(0,255,204,0.2);
