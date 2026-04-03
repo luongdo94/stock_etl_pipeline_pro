@@ -2404,8 +2404,8 @@ with tab_scanner:
     
     st.markdown("#### Intelligence Presets")
 
-    # Compact button row: 5 presets + 1 small reset
-    scan_col1, scan_col2, scan_col3, scan_col4, scan_col5, scan_reset = st.columns([2, 2, 2, 2, 2, 1.2])
+    # Compact button row: 4 presets + 1 small reset
+    scan_col1, scan_col2, scan_col3, scan_col4, scan_reset = st.columns([2, 2, 2, 2, 1.2])
     
     # Use session state to track scan mode for "active" feel (logic-wise)
     if 'scan_mode' not in st.session_state:
@@ -2418,8 +2418,6 @@ with tab_scanner:
     with scan_col3:
         if st.button("Expert Value", use_container_width=True): st.session_state.scan_mode = "Expert"
     with scan_col4:
-        if st.button("Top Picks", use_container_width=True): st.session_state.scan_mode = "AI"
-    with scan_col5:
         if st.button("Safety & Yield", use_container_width=True): st.session_state.scan_mode = "Yield"
     with scan_reset:
         if st.button("🔄 Reset", use_container_width=True): st.session_state.scan_mode = "All Stocks"
@@ -2438,10 +2436,6 @@ with tab_scanner:
         # Institutional Bottom-Fishing: Deep Value (Z < -1.5) and Decent Quality
         f_df = f_df[(f_df["Z-Score"] < -1.5) & (f_df["Quality"] > 55)]
         st.success("🏆 **Expert Value**: Institutional Deep Value — Z-Score < -1.5 (Historical Extreme) & Quality > 55")
-    elif scan_mode == "AI":
-        # Synced with STRONG BUY threshold (>= 70)
-        f_df = f_df[f_df["Quality"] >= 70]
-        st.warning("🎯 **Top Picks**: High Conviction Quality Score >= 70 (STRONG BUY threshold)")
     elif scan_mode == "Yield":
         f_df = f_df[(f_df["Yield (%)"] >= 2.0) & (f_df["Debt/EBITDA"] <= 4.0) & (f_df["Quality"] >= 45)]
         st.info("🛡️ **Safety & Yield**: Dividend Yield >= 2%, Debt/EBITDA <= 4, Quality >= 45 (Defensive Income)")
