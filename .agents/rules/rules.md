@@ -54,6 +54,7 @@ trigger: always_on
      - Lệnh xoá / move / chmod trên file system.
      - Lệnh cài đặt package toàn hệ (`pip install` global, `apt`, `brew`, v.v.).
      - Lệnh network tới môi trường ngoài.
+     - lệnh push, pull git trừ khi có lệnh của người dùng.
    - Nếu cần, luôn:
      - Hiển thị lệnh rõ ràng.
      - Viết: “Hãy xem và xác nhận trước khi chạy lệnh này”.
@@ -119,4 +120,4 @@ trigger: always_on
   - Dùng `async` / `await` khi có I/O.
 - Angular:
   - Component nhỏ, tránh “god component”.
-  - Rõ ràng 
+  - Rõ ràng
