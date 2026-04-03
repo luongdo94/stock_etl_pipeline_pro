@@ -1432,7 +1432,6 @@ with tab_deep_dive:
             st.markdown("---")
 
 
-            st.markdown("---")
 
             # --- Re-compute Trading Plan variables (used by chart + plan card below) ---
             s1 = df_deep["price_low"].tail(20).min()
