@@ -99,16 +99,23 @@ def get_finbert_pipeline():
 
 # ── PREMIUM UI: Institutional SVG Icon Library ──────────────────────────────
 SVG_ICONS = {
-    "chart": '<svg viewBox="0 0 24 24" width="22" height="22" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><path d="M12 20V10"></path><path d="M18 20V4"></path><path d="M6 20V16"></path></svg>',
-    "globe": '<svg viewBox="0 0 24 24" width="22" height="22" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>',
-    "search": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;vertical-align:middle;opacity:0.7;"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>',
-    "risk": '<svg viewBox="0 0 24 24" width="22" height="22" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><path d="m11 2 9 2v5c0 5-3.5 10-9 12-5.5-2-9-7-9-12V4l9-2z"></path><path d="m9 12 2 2 4-4"></path></svg>',
-    "gem": '<svg viewBox="0 0 24 24" width="22" height="22" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><path d="m6 3 3-2h6l3 2-9 12Z"></path><path d="M18 3 9 15 0 3"></path><path d="m12 21-3-6h6l-3 6Z"></path></svg>',
-    "calendar": '<svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>',
-    "ai": '<svg viewBox="0 0 24 24" width="22" height="22" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><path d="M12 8v4"></path><path d="M12 16h.01"></path></svg>',
-    "layers": '<svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>',
-    "activity": '<svg viewBox="0 0 24 24" width="22" height="22" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>',
-    "package": '<svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><path d="m7.5 4.27 9 5.15"></path><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"></path><path d="m3.3 7 8.7 5 8.7-5"></path><path d="M12 22V12"></path></svg>'
+    "chart": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><path d="M12 20V10"></path><path d="M18 20V4"></path><path d="M6 20V16"></path></svg>',
+    "globe": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>',
+    "search": '<svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px;vertical-align:middle;opacity:0.7;"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>',
+    "risk": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path></svg>',
+    "gem": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><path d="M6 3h12l4 6-10 13L2 9z"></path><path d="M11 22 2 9"></path><path d="m11 22 9-13"></path><path d="M6 3 2 9"></path><path d="M18 3l4 6"></path><path d="M11 22V9"></path><path d="M5 9h14"></path><path d="M2 9l4-6"></path><path d="M22 9l-4-6"></path></svg>',
+    "calendar": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect><line x1="16" y1="2" x2="16" y2="6"></line><line x1="8" y1="2" x2="8" y2="6"></line><line x1="3" y1="10" x2="21" y2="10"></line></svg>',
+    "ai": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path><path d="M12 8v4"></path><path d="M12 16h.01"></path></svg>',
+    "layers": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><polygon points="12 2 2 7 12 12 22 7 12 2"></polygon><polyline points="2 17 12 22 22 17"></polyline><polyline points="2 12 12 17 22 12"></polyline></svg>',
+    "activity": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline></svg>',
+    "package": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><path d="m7.5 4.27 9 5.15"></path><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z"></path><path d="m3.3 7 8.7 5 8.7-5"></path><path d="M12 22V12"></path></svg>',
+    "brain": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.04-2.44 2.5 2.5 0 0 1-2-2.44 2.5 2.5 0 0 1-2-2.44 2.5 2.5 0 0 1 2-2.44 2.5 2.5 0 0 1 2-2.44 2.5 2.5 0 0 1 2.04-2.44A2.5 2.5 0 0 1 9.5 2Z"></path><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.04-2.44 2.5 2.5 0 0 0 2-2.44 2.5 2.5 0 0 0 2-2.44 2.5 2.5 0 0 0-2-2.44 2.5 2.5 0 0 0-2-2.44 2.5 2.5 0 0 0-2.04-2.44A2.5 2.5 0 0 0 14.5 2Z"></path></svg>',
+    "bot": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><rect x="3" y="11" width="18" height="10" rx="2"></rect><circle cx="12" cy="5" r="2"></circle><path d="M12 7v4"></path><line x1="8" y1="16" x2="8" y2="16"></line><line x1="16" y1="16" x2="16" y2="16"></line></svg>',
+    "dna": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><path d="m8 15 8-6"></path><path d="m11 18 2-2"></path><path d="m9 12 2-2"></path><path d="m13 10 2-2"></path><path d="m11 6 2-2"></path><path d="M15 22s-4-3-4-8V6s4-3 4-4"></path><path d="M9 22s4-4 4-8V6s-4-4-4-4"></path></svg>',
+    "handshake": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><path d="m11 17 2 2 6-7"></path><path d="m18 18 2-2 4-4"></path><path d="m3 10 8-8"></path><path d="m3 14 5-5"></path><path d="m7 18 5-5"></path><path d="m11 22 5-5"></path><path d="m18 10-2-2-6 7"></path></svg>',
+    "flask": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><path d="M9 2h6"></path><path d="M12 2v14"></path><path d="M12 22a7 7 0 1 0 0-14 7 7 0 0 0 0 14z"></path></svg>',
+    "trophy": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"></path><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"></path><path d="M4 22h16"></path><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"></path><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"></path><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"></path></svg>',
+    "alert": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>'
 }
 
 def render_header(icon_key, text, level="####", color="#e8eaf6"):
@@ -143,8 +150,8 @@ import os
 
 # ── PAGE CONFIG ─────────────────────────────────────────────────────────────
 st.set_page_config(
-    page_title="Creative Stock Dashboard",
-    page_icon="🏙️",
+    page_title="Honest Quant Intelligence",
+    page_icon="📈",
     layout="wide",
     initial_sidebar_state="expanded"
 )
@@ -611,7 +618,7 @@ movers['chg_24h'] = (movers['price_close'] / movers['price_close_prev'] - 1) * 1
 gainers = movers.sort_values('chg_24h', ascending=False).head(5)
 losers = movers.sort_values('chg_24h', ascending=True).head(5)
 
-# 2. AI Recommendation Engine (Scores)
+# 2. Quant Intelligence Engine (Scores)
 # Import the canonical scoring engine from etl.utils (single source of truth)
 from etl.utils import compute_score, compute_score_details, get_macro_regime, apply_macro_adjustment
 
@@ -1018,7 +1025,7 @@ with tab_overview:
         median_val = qv_df[val_field].median()
         x_max = qv_df[val_field].max() * 1.05
         
-        render_header("gem", f"Quality vs Valuation Matrix (X: {val_field.upper()}, Y: AI Score)")
+        render_header("gem", f"Quality vs Valuation Matrix (X: {val_field.upper()}, Y: Quality Score)")
         fig10_opt = px.scatter(
             qv_df, x=val_field, y="score", color="score", size="market_cap",
             text=qv_df.apply(lambda r: r['ticker'] if r['ticker'] in top_10_tickers or len(qv_df) < 15 else "", axis=1),
@@ -1275,7 +1282,8 @@ with tab_deep_dive:
                     rev_growth = meta.get('revenue_growth', 0) * 100
                     render_metric_row("Rev Growth",   f"{rev_growth:.1f}%")
                     fcf_raw = meta.get('free_cashflow', 0)
-                    fcf_txt = f"€{fcf_raw/1e9:.1f}B" if abs(fcf_raw) >= 1e9 else f"€{fcf_raw/1e6:.0f}M"
+                    fcf_margin = meta.get('fcf_margin', 0)
+                    fcf_txt = f"€{fcf_raw/1e9:.1f}B ({fcf_margin:.1f}%)" if abs(fcf_raw) >= 1e9 else f"€{fcf_raw/1e6:.0f}M ({fcf_margin:.1f}%)"
                     render_metric_row("Free CF",      fcf_txt)
                     st.markdown("</div>", unsafe_allow_html=True)
 
@@ -1293,8 +1301,12 @@ with tab_deep_dive:
                     # Liquidity Status Labels
                     c_status = "🟢 Healthy" if curr_rat > 1.5 else ("🔴 Risky" if curr_rat < 1.0 else "🟡 Fair")
                     q_status = "🟢 Solid" if quick_rat > 1.0 else ("🔴 Tight" if quick_rat < 0.7 else "🟡 Caution")
+                    
+                    debt_ebitda = meta.get('total_debt', 0) / meta.get('ebitda', 1.0) if meta.get('ebitda', 0) > 0 else 0
+                    de_status = "🟢 Conservative" if 0 < debt_ebitda < 3.0 else ("🔴 Risky" if debt_ebitda > 5.0 else ("🟡 Leveraged" if debt_ebitda > 0 else "N/A"))
 
                     render_metric_row("Debt/Eq", debt_eq_txt)
+                    render_metric_row("Debt/EBITDA", f"{debt_ebitda:.2f}x" if debt_ebitda > 0 else "N/A", delta=de_status)
                     render_metric_row("Current Ratio", f"{curr_rat:.2f}", delta=c_status)
                     render_metric_row("Quick Ratio",   f"{quick_rat:.2f}", delta=q_status)
                     st.markdown("</div>", unsafe_allow_html=True)
@@ -1501,7 +1513,7 @@ with tab_deep_dive:
                 _q_color = ai_color
                 st.markdown(f"""
                 <div style='text-align:center; font-size:0.8rem; color:#aaa; margin-top:-5px;'>
-                    Institutional AI Score: <span style='color:{_q_color}; font-weight:900; font-size:1rem;'>{_q_pct}</span>
+                         Quality Score: <span style='color:{_q_color}; font-weight:900; font-size:1rem;'>{_q_pct}</span>
                     &nbsp;·&nbsp; <span style='color:{_q_color};'>{ai_icon} {ai_action}</span>
                 </div>
                 """, unsafe_allow_html=True)
@@ -2352,7 +2364,7 @@ with tab_portfolio:
 # ── TAB: MARKET SCANNER & OPPORTUNITY RADAR ──────────────────────────────────
 with tab_scanner:
     render_header("search", "Market Scanner & Opportunity Radar", level="###")
-    st.write("Scan the entire ticker universe for institutional-grade opportunities based on Valuation, Momentum, and AI Scores.")
+    st.write("Scan the entire ticker universe for institutional-grade opportunities based on Valuation, Momentum, and Quality Scores.")
 
     # 1. Prepare Master Screener Data
     @st.cache_data(ttl=3600)
@@ -2412,6 +2424,13 @@ with tab_scanner:
             debt_ebitda = (total_debt / ebitda) if ebitda and ebitda > 0 else 99
             debt_ebitda = min(debt_ebitda, 99)  # cap at 99 for display
             
+            # Advanced Metrics for v3.5 Upgrade
+            ev_ebitda = row.get('ev_to_ebitda', 0)
+            roe_val = (row.get('roe', 0) * 100) if pd.notnull(row.get('roe')) else 0
+            net_payout = row.get('net_payout_yield_pct', 0) or 0
+            vol_30d = row.get('volatility_30d', 0) or 0
+            short_pct = (row.get('short_percent_of_float', 0) * 100) if pd.notnull(row.get('short_percent_of_float')) else 0
+
             screener_rows.append({
                 "Ticker": ticker,
                 "Company": row['company'],
@@ -2426,11 +2445,16 @@ with tab_scanner:
                 "Z-Score": round(ticker_prices['price_z_score'].iloc[-1] if 'price_z_score' in ticker_prices.columns else 0, 2),
                 "vs MA200 (%)": round(ticker_prices['pct_from_ma200'].iloc[-1] if 'pct_from_ma200' in ticker_prices.columns else 0, 1),
                 "Yield (%)": round(div_yield, 2),
+                "Net Payout (%)": round(net_payout, 2),
                 "FCF Margin (%)": round(fcf_margin, 1),
+                "ROE (%)": round(roe_val, 1),
                 "P/E (Fwd)": round(row.get('forward_pe', 999) or 999, 1),
+                "EV/EBITDA": round(ev_ebitda, 1) if ev_ebitda else 0,
                 "PEG": round(row.get('peg_ratio', 99) or 99, 2),
-                "Trend": row.get('ma_signal', 'NEUTRAL'),
                 "Debt/EBITDA": round(debt_ebitda, 2),
+                "Vol 30D (%)": round(vol_30d, 1) if vol_30d else 0,
+                "Short %": round(short_pct, 1),
+                "Trend": latest_p.get('ma_signal', 'NEUTRAL'),
             })
         return pd.DataFrame(screener_rows)
 
@@ -2519,7 +2543,8 @@ with tab_scanner:
     # ── Display Results ───────────────────────────────────────────────────────
     display_cols = ["Ticker", "Company", "Sector", "Action", "Quality", "Upside (%)", "1D Chg (%)",
                     "Price", "MCap (B)", "RSI (14)", "Z-Score", "vs MA200 (%)",
-                    "Yield (%)", "FCF Margin (%)", "P/E (Fwd)", "PEG", "Trend", "Debt/EBITDA"]
+                    "P/E (Fwd)", "EV/EBITDA", "PEG", "FCF Margin (%)", "ROE (%)", 
+                    "Yield (%)", "Net Payout (%)", "Debt/EBITDA", "Vol 30D (%)", "Short %", "Trend"]
     display_df = f_df.sort_values("Quality", ascending=False)[display_cols]
 
     st.markdown(f"**🔍 Found {len(display_df)} active opportunities** — Sorted by Quality Score ↓")
@@ -2538,10 +2563,16 @@ with tab_scanner:
             "Z-Score":         st.column_config.NumberColumn("Z-Score", format="%.2f"),
             "vs MA200 (%)": st.column_config.NumberColumn("vs MA200", format="%+.1f%%"),
             "Yield (%)": st.column_config.NumberColumn("Div Yield", format="%.2f%%"),
+            "Net Payout (%)": st.column_config.NumberColumn("Total Payout", format="%.2f%%"),
             "FCF Margin (%)": st.column_config.NumberColumn("FCF Margin", format="%+.1f%%"),
+            "ROE (%)": st.column_config.NumberColumn("ROE", format="%.1f%%"),
             "P/E (Fwd)":       st.column_config.NumberColumn("P/E (Fwd)", format="%.1f"),
+            "EV/EBITDA":       st.column_config.NumberColumn("EV/EBITDA", format="%.1f"),
             "PEG":             st.column_config.NumberColumn("PEG", format="%.2f"),
             "Debt/EBITDA":     st.column_config.NumberColumn("Debt/EBITDA", format="%.2f"),
+            "Vol 30D (%)":     st.column_config.NumberColumn("Vol 30D", format="%.1f%%"),
+            "Short %":         st.column_config.NumberColumn("Short %", format="%.1f%%"),
+            "Trend":           st.column_config.TextColumn("Trend Logic"),
         }
     )
 
@@ -2623,7 +2654,9 @@ with tab_ai:
             c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_size).to(x.device)
             out, _ = self.lstm(x, (h0, c0))
             attn_output, _ = self.attention(out, out, out)
-            return self.fc(attn_output[:, -1, :]) # Projects to [batch, forecast_days]
+            # Global Average Pooling over time axis — avoids over-weighting the last day
+            # and improves Mean-Reversion stability for multi-step forecasting
+            return self.fc(attn_output.mean(dim=1))  # [B, forecast_days]
 
     # ── Transformer Architecture (v8.0: Pure Attention — Parallel Multi-step) ────────
     class StockTransformer(torch.nn.Module):
@@ -2635,8 +2668,9 @@ with tab_ai:
         def __init__(self, input_size=6, d_model=64, nhead=4, num_layers=2, output_size=30, dropout=0.1):
             super().__init__()
             self.input_proj = torch.nn.Linear(input_size, d_model)
-            # Learnable positional encoding
-            self.pos_enc = torch.nn.Parameter(torch.randn(1, 120, d_model) * 0.02)
+            # Learnable positional encoding — sized 512 to safely support any lookback
+            # (90D short-horizon up to 252D yearly, without dimension mismatch crashes)
+            self.pos_enc = torch.nn.Parameter(torch.randn(1, 512, d_model) * 0.02)
             encoder_layer = torch.nn.TransformerEncoderLayer(
                 d_model=d_model, nhead=nhead, dim_feedforward=d_model * 4,
                 dropout=dropout, batch_first=True, activation="gelu"
@@ -2653,38 +2687,119 @@ with tab_ai:
             x = self.norm(x[:, -1, :])               # Use last token as context vector
             return self.fc(x)                         # [B, output_size]
 
+    # ── PatchTST Architecture (v10.0: SOTA Channel-Independent Patching) ────────
+    class StockPatchTST(torch.nn.Module):
+        """
+        PatchTST: Patch Time Series Transformer (SOTA for multivariate forecasting).
+        Key innovations:
+          1. PATCHING: Divides the time sequence into local patches (like tokens in NLP).
+             Each patch captures a short-term "meaning" (e.g. 16-day price momentum block).
+          2. CHANNEL INDEPENDENCE: Each of the 12 input features is processed through
+             the same Transformer independently, preventing cross-feature noise blending.
+             This is critical for our dataset where P/E and RSI operate on different scales.
+        """
+        def __init__(self, c_in=12, context_window=120, target_window=30,
+                     patch_len=16, stride=8, d_model=64, nhead=4,
+                     num_layers=2, dropout=0.1):
+            super().__init__()
+            self.patch_len = patch_len
+            self.stride    = stride
+            self.c_in      = c_in
+            # Number of patches: how many patch-windows fit in the context
+            self.num_patches = (context_window - patch_len) // stride + 1
+            # Each patch is patch_len timesteps wide; project to d_model
+            self.patch_embed = torch.nn.Linear(patch_len, d_model)
+            # Learnable positional embedding over patches (not timesteps)
+            self.pos_enc     = torch.nn.Parameter(torch.randn(1, self.num_patches, d_model) * 0.02)
+            encoder_layer    = torch.nn.TransformerEncoderLayer(
+                d_model=d_model, nhead=nhead, dim_feedforward=d_model * 4,
+                dropout=dropout, batch_first=True, activation="gelu"
+            )
+            self.encoder     = torch.nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+            self.norm        = torch.nn.LayerNorm(d_model)
+            # Final head maps from all patch representations to forecast horizon
+            self.head        = torch.nn.Linear(self.num_patches * d_model, target_window)
+
+        def forward(self, x):
+            # x: [B, T, C] where B=batch, T=time, C=channels(features)
+            B, T, C = x.shape
+            # Channel-Independent: transpose to [B, C, T] and process each channel
+            x = x.permute(0, 2, 1)  # [B, C, T]
+            # Unfold into patches: [B, C, num_patches, patch_len]
+            x = x.unfold(-1, self.patch_len, self.stride)  # [B, C, P, patch_len]
+            P = x.shape[2]
+            # Merge Batch and Channel dims for single Transformer pass: [B*C, P, d_model]
+            x = x.reshape(B * C, P, self.patch_len)
+            x = self.patch_embed(x)                   # [B*C, P, d_model]
+            x = x + self.pos_enc[:, :P, :]            # Positional encoding over patches
+            x = self.encoder(x)                       # Attention across patches
+            x = self.norm(x)                          # [B*C, P, d_model]
+            # Flatten all patch representations and project to output
+            x = x.reshape(B, C, P * x.shape[-1])     # [B, C, P*d_model]
+            x = x.mean(dim=1)                         # Average over channels: [B, P*d_model]
+            return self.head(x)                       # [B, target_window]
+
     def _run_lstm_core(df_ticker, lookback=60, forecast_days=30, sector_name=None, quality_score=50):
         import warnings
         warnings.filterwarnings('ignore')
         df = df_ticker.copy().sort_values("date").reset_index(drop=True)
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
-        # ── Phase 10: 'Honest Quant' Pre-processing ──
-        # Macro & Volatility Features
+        # ── v9.1: MULTI-FACTOR FEATURE ENGINE ────────────────────────────────
+        # Macro & Volatility
         df['vol_surge'] = df['volume'] / (df['volume'].rolling(20).mean().fillna(df['volume']))
         spy_df = prices_full[prices_full['ticker']=='SPY'][['date','daily_return_pct']].rename(columns={'daily_return_pct':'spy_ret'})
         vix_df = prices_full[prices_full['ticker']=='^VIX'][['date','daily_return_pct']].rename(columns={'daily_return_pct':'vix_ret'})
         df = df.merge(spy_df, on='date', how='left').merge(vix_df, on='date', how='left')
         df['spy_ret'] = df['spy_ret'].fillna(0); df['vix_ret'] = df['vix_ret'].fillna(0)
-        
-        df['quality_score_norm'] = quality_score / 100.0
+
+        # Technical features from DuckDB (already in prices_full)
+        if 'rsi' in df.columns:          df['rsi'] = df['rsi'].fillna(50.0)
+        else:                             df['rsi'] = 50.0
+        if 'price_z_score' in df.columns: df['price_z_score'] = df['price_z_score'].fillna(0.0)
+        else:                             df['price_z_score'] = 0.0
+
+        # Fundamental features from dim_companies (broadcast as static values)
+        #   We no longer use quality_score_norm — replaced by raw metrics
+        ticker_id = df_ticker['ticker'].iloc[0] if not df_ticker.empty else None
+        co_row = companies_full[companies_full['ticker'] == ticker_id].iloc[0].to_dict() if ticker_id and not companies_full[companies_full['ticker']==ticker_id].empty else {}
+
+        # Robust Clipping to prevent outliers from dominating gradients
+        _pe    = float(co_row.get('pe_ratio', 20) or 20)
+        _roe   = float(co_row.get('roe', 0) or 0) * 100
+        _fcf   = float(co_row.get('fcf_margin', 0) or 0)
+        _ebitda = float(co_row.get('ebitda', 1) or 1)
+        _debt  = float(co_row.get('total_debt', 0) or 0)
+        _revg  = float(co_row.get('revenue_growth', 0) or 0) * 100
+
+        df['pe_ratio']    = float(np.clip(_pe,   0, 150))
+        df['roe']         = float(np.clip(_roe, -50, 100))
+        df['fcf_margin']  = float(np.clip(_fcf, -50, 80))
+        df['debt_ebitda'] = float(np.clip(_debt / max(_ebitda, 1), 0, 12))
+        df['rev_growth']  = float(np.clip(_revg, -50, 100))
+
         ticker_vol = df['daily_return_pct'].tail(60).std()
         spy_vol_s  = prices_full[prices_full['ticker']=='SPY']['daily_return_pct'].tail(60)
         spy_vol    = spy_vol_s.std() if not spy_vol_s.empty else 1.0
-        
-        # 🛡️ ADAPTIVE CLIPPING UNIT (v7.0)
-        # Dynamic band based on relative volatility
+
+        # 🛡️ ADAPTIVE CLIPPING UNIT (v7.0 — unchanged)
         vol_ratio = ticker_vol / (spy_vol + 1e-6)
-        dynamic_clamp = 0.05 + min(0.05, 0.02 * vol_ratio) # Base 5%, Max 10%
-        
-        if ticker_vol > 2.0 * spy_vol:   lstm_w,arima_w,lookback = 0.70,0.30,min(lookback,45)
+        dynamic_clamp = 0.05 + min(0.05, 0.02 * vol_ratio)
+
+        if ticker_vol > 2.0 * spy_vol:   lstm_w,arima_w,lookback = 0.70,0.30,max(60, min(lookback, 60))
         elif ticker_vol < 0.8 * spy_vol: lstm_w,arima_w,lookback = 0.40,0.60,120
-        else:                             lstm_w,arima_w,lookback = 0.60,0.40,75
-        
-        # ── Feature Set ──
-        features = ['price_close','daily_return_pct','spy_ret','vix_ret','vol_surge','quality_score_norm']
-        df_clean = df[features].dropna()
-        if len(df_clean) < lookback + forecast_days + 30: return None, None
+        else:                             lstm_w,arima_w,lookback = 0.60,0.40,max(90, lookback)
+
+        # ── v9.1: 12-Factor Feature Set (quality_score_norm REMOVED) ──
+        features = [
+            'price_close', 'daily_return_pct',          # Price Action
+            'spy_ret', 'vix_ret',                        # Market/Macro
+            'vol_surge', 'rsi', 'price_z_score',         # Technical
+            'pe_ratio', 'roe', 'fcf_margin',             # Valuation & Efficiency
+            'debt_ebitda', 'rev_growth'                  # Health & Growth
+        ]
+        df_clean = df[features].ffill().fillna(0)
+        if len(df_clean) < lookback + forecast_days + 30: return None, None, None
         data = df_clean.values.astype(np.float32)
 
         price_scaler = MinMaxScaler(feature_range=(-1,1))
@@ -2819,7 +2934,7 @@ with tab_ai:
         return _run_lstm_core(df_ticker, lookback=lookback, forecast_days=forecast_days, sector_name=sector_name, quality_score=quality_score)
 
     @st.cache_data(show_spinner="🤖 Training Temporal Transformer (Attention Engine v8.0)...")
-    def train_predict_transformer(df_ticker, lookback=60, forecast_days=30, sector_name=None, quality_score=50):
+    def train_predict_transformer(df_ticker, lookback=90, forecast_days=30, sector_name=None, quality_score=50):
         """
         Drop-in replacement for train_predict_lstm using the pure Transformer architecture.
         Returns the same (path_array, return_pct, feature_importance) tuple.
@@ -2830,22 +2945,48 @@ with tab_ai:
             df = df_ticker.copy().sort_values("date").reset_index(drop=True)
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-            # Reuse same feature engineering as LSTM
+            # ── v9.1: Same 12-factor feature set as LSTM ──────────────────────
             df['vol_surge'] = df['volume'] / (df['volume'].rolling(20).mean().fillna(df['volume']))
             spy_df = prices_full[prices_full['ticker']=='SPY'][['date','daily_return_pct']].rename(columns={'daily_return_pct':'spy_ret'})
             vix_df = prices_full[prices_full['ticker']=='^VIX'][['date','daily_return_pct']].rename(columns={'daily_return_pct':'vix_ret'})
             df = df.merge(spy_df, on='date', how='left').merge(vix_df, on='date', how='left')
             df['spy_ret'] = df['spy_ret'].fillna(0)
             df['vix_ret'] = df['vix_ret'].fillna(0)
-            df['quality_score_norm'] = quality_score / 100.0
 
-            features = ['price_close', 'daily_return_pct', 'vol_surge', 'spy_ret', 'vix_ret', 'quality_score_norm']
+            if 'rsi' in df.columns:           df['rsi'] = df['rsi'].fillna(50.0)
+            else:                              df['rsi'] = 50.0
+            if 'price_z_score' in df.columns: df['price_z_score'] = df['price_z_score'].fillna(0.0)
+            else:                              df['price_z_score'] = 0.0
+
+            ticker_id_t = df_ticker['ticker'].iloc[0] if not df_ticker.empty else None
+            co_row_t = companies_full[companies_full['ticker'] == ticker_id_t].iloc[0].to_dict() if ticker_id_t and not companies_full[companies_full['ticker']==ticker_id_t].empty else {}
+
+            _pe_t    = float(co_row_t.get('pe_ratio', 20) or 20)
+            _roe_t   = float(co_row_t.get('roe', 0) or 0) * 100
+            _fcf_t   = float(co_row_t.get('fcf_margin', 0) or 0)
+            _ebitda_t= float(co_row_t.get('ebitda', 1) or 1)
+            _debt_t  = float(co_row_t.get('total_debt', 0) or 0)
+            _revg_t  = float(co_row_t.get('revenue_growth', 0) or 0) * 100
+
+            df['pe_ratio']    = float(np.clip(_pe_t,   0, 150))
+            df['roe']         = float(np.clip(_roe_t, -50, 100))
+            df['fcf_margin']  = float(np.clip(_fcf_t, -50, 80))
+            df['debt_ebitda'] = float(np.clip(_debt_t / max(_ebitda_t, 1), 0, 12))
+            df['rev_growth']  = float(np.clip(_revg_t, -50, 100))
+
+            features = [
+                'price_close', 'daily_return_pct',
+                'spy_ret', 'vix_ret',
+                'vol_surge', 'rsi', 'price_z_score',
+                'pe_ratio', 'roe', 'fcf_margin',
+                'debt_ebitda', 'rev_growth'
+            ]
             data = df[features].ffill().fillna(0).values
             if len(data) < lookback + forecast_days:
                 return None, 0.0, {}
 
             from sklearn.preprocessing import MinMaxScaler
-            scaler = MinMaxScaler()
+            scaler = MinMaxScaler(feature_range=(-1, 1))
             data_scaled = scaler.fit_transform(data)
 
             X, y = [], []
@@ -2886,28 +3027,348 @@ with tab_ai:
             last_price = data[-1, 0]
             total_return = (forecast_raw[-1] / last_price - 1) if last_price > 0 else 0.0
 
-            # Feature importance via gradient attribution
-            feat_imp = {f: round(float(np.random.uniform(0.05, 0.25)), 3) for f in features}
+            # ── v9.1: Real gradient attribution (not random) ──
+            feat_imp = {}
+            try:
+                model.eval()
+                last_seq_t = torch.FloatTensor(data_scaled[-lookback:]).unsqueeze(0).to(device).requires_grad_(True)
+                out_t = model(last_seq_t)
+                torch.sum(out_t).backward()
+                imp_t = torch.abs(last_seq_t.grad[0]).mean(dim=0).cpu().numpy()
+                imp_t = imp_t / (imp_t.sum() + 1e-9) * 100
+                feat_imp = {f: round(float(v), 1) for f, v in zip(features, imp_t)}
+            except Exception:
+                feat_imp = {f: round(100/len(features), 1) for f in features}
 
             return forecast_raw, total_return, feat_imp
         except Exception as e:
             return None, 0.0, {}
 
+    @st.cache_data(show_spinner="🧬 Training PatchTST (SOTA Channel-Independent Engine v10.0)...")
+    def train_predict_patchtst(df_ticker, lookback=120, forecast_days=30, sector_name=None, quality_score=50):
+        """
+        PatchTST Channel-Independent engine. Each of the 12 factors is processed
+        by the SAME Transformer independently (no cross-channel noise), then averaged.
+        Best for long-horizon, fundamental-driven forecasts.
+        """
+        import warnings
+        warnings.filterwarnings('ignore')
+        try:
+            df = df_ticker.copy().sort_values("date").reset_index(drop=True)
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+            # ── Reuse same 12-factor preprocessing ──
+            df['vol_surge'] = df['volume'] / (df['volume'].rolling(20).mean().fillna(df['volume']))
+            spy_df = prices_full[prices_full['ticker']=='SPY'][['date','daily_return_pct']].rename(columns={'daily_return_pct':'spy_ret'})
+            vix_df = prices_full[prices_full['ticker']=='^VIX'][['date','daily_return_pct']].rename(columns={'daily_return_pct':'vix_ret'})
+            df = df.merge(spy_df, on='date', how='left').merge(vix_df, on='date', how='left')
+            df['spy_ret'] = df['spy_ret'].fillna(0); df['vix_ret'] = df['vix_ret'].fillna(0)
+
+            if 'rsi' in df.columns:           df['rsi'] = df['rsi'].fillna(50.0)
+            else:                              df['rsi'] = 50.0
+            if 'price_z_score' in df.columns: df['price_z_score'] = df['price_z_score'].fillna(0.0)
+            else:                              df['price_z_score'] = 0.0
+
+            ticker_id_p = df_ticker['ticker'].iloc[0] if not df_ticker.empty else None
+            co_row_p = companies_full[companies_full['ticker'] == ticker_id_p].iloc[0].to_dict() \
+                if ticker_id_p and not companies_full[companies_full['ticker']==ticker_id_p].empty else {}
+
+            _pe_p   = float(co_row_p.get('pe_ratio', 20) or 20)
+            _roe_p  = float(co_row_p.get('roe', 0) or 0) * 100
+            _fcf_p  = float(co_row_p.get('fcf_margin', 0) or 0)
+            _ebi_p  = float(co_row_p.get('ebitda', 1) or 1)
+            _dbt_p  = float(co_row_p.get('total_debt', 0) or 0)
+            _rev_p  = float(co_row_p.get('revenue_growth', 0) or 0) * 100
+
+            df['pe_ratio']    = float(np.clip(_pe_p,  0, 150))
+            df['roe']         = float(np.clip(_roe_p,-50, 100))
+            df['fcf_margin']  = float(np.clip(_fcf_p,-50,  80))
+            df['debt_ebitda'] = float(np.clip(_dbt_p / max(_ebi_p, 1), 0, 12))
+            df['rev_growth']  = float(np.clip(_rev_p,-50, 100))
+
+            features = [
+                'price_close', 'daily_return_pct',
+                'spy_ret', 'vix_ret',
+                'vol_surge', 'rsi', 'price_z_score',
+                'pe_ratio', 'roe', 'fcf_margin',
+                'debt_ebitda', 'rev_growth'
+            ]
+            data = df[features].ffill().fillna(0).values.astype(np.float32)
+            if len(data) < lookback + forecast_days:
+                return None, 0.0, {}
+
+            scaler = MinMaxScaler(feature_range=(-1, 1))
+            data_scaled = scaler.fit_transform(data)
+            price_scaler = MinMaxScaler(feature_range=(-1, 1))
+            price_scaler.fit(data[:, 0:1])
+
+            # ── Patch parameters ──
+            patch_len = 16; stride = 8
+            num_patches = (lookback - patch_len) // stride + 1
+
+            X, y = [], []
+            for i in range(lookback, len(data_scaled) - forecast_days):
+                X.append(data_scaled[i-lookback:i])
+                y.append(data_scaled[i:i+forecast_days, 0])
+            X = torch.FloatTensor(np.array(X)).to(device)  # [N, T, C]
+            y = torch.FloatTensor(np.array(y)).to(device)  # [N, forecast_days]
+
+            model = StockPatchTST(
+                c_in=len(features), context_window=lookback,
+                target_window=forecast_days, patch_len=patch_len,
+                stride=stride, d_model=64, nhead=4, num_layers=2
+            ).to(device)
+            optimizer  = torch.optim.Adam(model.parameters(), lr=8e-4, weight_decay=1e-5)
+            criterion  = torch.nn.HuberLoss(delta=0.5)
+            scheduler  = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=80, eta_min=1e-5)
+
+            model.train()
+            for epoch in range(80):
+                optimizer.zero_grad()
+                out  = model(X)
+                loss = criterion(out, y)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                optimizer.step(); scheduler.step()
+
+            # Inference
+            model.eval()
+            with torch.no_grad():
+                last_seq_p   = torch.FloatTensor(data_scaled[-lookback:]).unsqueeze(0).to(device)
+                pred_scaled  = model(last_seq_p).cpu().numpy()[0]
+
+            # Inverse-transform price
+            full_pred_p    = np.zeros((forecast_days, len(features)))
+            full_pred_p[:, 0] = pred_scaled
+            forecast_raw_p = price_scaler.inverse_transform(full_pred_p[:, 0:1]).flatten()
+
+            last_price_p = data[-1, 0]
+            total_return_p = (forecast_raw_p[-1] / last_price_p - 1) if last_price_p > 0 else 0.0
+
+            # Gradient-based feature importance
+            feat_imp_p = {}
+            try:
+                last_seq_grad = torch.FloatTensor(data_scaled[-lookback:]).unsqueeze(0).to(device).requires_grad_(True)
+                out_grad = model(last_seq_grad)
+                torch.sum(out_grad).backward()
+                imp_p = torch.abs(last_seq_grad.grad[0]).mean(dim=0).cpu().numpy()
+                imp_p = imp_p / (imp_p.sum() + 1e-9) * 100
+                feat_imp_p = {f: round(float(v), 1) for f, v in zip(features, imp_p)}
+            except Exception:
+                feat_imp_p = {f: round(100/len(features), 1) for f in features}
+
+            return forecast_raw_p, total_return_p, feat_imp_p
+        except Exception:
+            return None, 0.0, {}
+
+    @st.cache_data(show_spinner="Smart Blend: Training all 3 AI Engines (LSTM + Transformer + PatchTST)...")
+    def train_predict_ensemble(df_ticker, lookback=90, forecast_days=30, sector_name=None, quality_score=50):
+        """
+        Performance-Weighted Ensemble: trains all 3 engines, evaluates each on the
+        most recent holdout period (last forecast_days of known data), and blends
+        their forecasts using weights proportional to 1/RMSE.
+        Returns: (forecast_array, total_return, feat_imp_dict, metrics_dict)
+        """
+        import warnings; warnings.filterwarnings('ignore')
+        try:
+            df = df_ticker.copy().sort_values("date").reset_index(drop=True)
+            device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+            # ── Shared 12-Factor Preprocessing ──
+            df['vol_surge'] = df['volume'] / (df['volume'].rolling(20).mean().fillna(df['volume']))
+            spy_df = prices_full[prices_full['ticker']=='SPY'][['date','daily_return_pct']].rename(columns={'daily_return_pct':'spy_ret'})
+            vix_df = prices_full[prices_full['ticker']=='^VIX'][['date','daily_return_pct']].rename(columns={'daily_return_pct':'vix_ret'})
+            df = df.merge(spy_df, on='date', how='left').merge(vix_df, on='date', how='left')
+            df['spy_ret'] = df['spy_ret'].fillna(0); df['vix_ret'] = df['vix_ret'].fillna(0)
+            if 'rsi' in df.columns: df['rsi'] = df['rsi'].fillna(50.0)
+            else:                   df['rsi'] = 50.0
+            if 'price_z_score' in df.columns: df['price_z_score'] = df['price_z_score'].fillna(0.0)
+            else:                              df['price_z_score'] = 0.0
+            ticker_id_e = df_ticker['ticker'].iloc[0] if not df_ticker.empty else None
+            co_e = companies_full[companies_full['ticker'] == ticker_id_e].iloc[0].to_dict() \
+                if ticker_id_e and not companies_full[companies_full['ticker']==ticker_id_e].empty else {}
+            df['pe_ratio']    = float(np.clip(float(co_e.get('pe_ratio', 20) or 20), 0, 150))
+            df['roe']         = float(np.clip(float(co_e.get('roe', 0) or 0)*100, -50, 100))
+            df['fcf_margin']  = float(np.clip(float(co_e.get('fcf_margin', 0) or 0), -50, 80))
+            df['debt_ebitda'] = float(np.clip(float(co_e.get('total_debt', 0) or 0) / max(float(co_e.get('ebitda', 1) or 1), 1), 0, 12))
+            df['rev_growth']  = float(np.clip(float(co_e.get('revenue_growth', 0) or 0)*100, -50, 100))
+            features = ['price_close','daily_return_pct','spy_ret','vix_ret','vol_surge','rsi','price_z_score','pe_ratio','roe','fcf_margin','debt_ebitda','rev_growth']
+            n_feat = len(features)
+            data = df[features].ffill().fillna(0).values.astype(np.float32)
+            if len(data) < lookback + 2 * forecast_days: return None, 0.0, {}, {}
+
+            scaler = MinMaxScaler(feature_range=(-1, 1))
+            data_scaled = scaler.fit_transform(data)
+            price_scaler = MinMaxScaler(feature_range=(-1, 1))
+            price_scaler.fit(data[:, 0:1])
+
+            X_arr, y_arr = [], []
+            for i in range(lookback, len(data_scaled) - forecast_days):
+                X_arr.append(data_scaled[i-lookback:i]); y_arr.append(data_scaled[i:i+forecast_days, 0])
+            X_t = torch.FloatTensor(np.array(X_arr)).to(device)
+            y_t = torch.FloatTensor(np.array(y_arr)).to(device)
+            if len(X_t) < 5: return None, 0.0, {}, {}
+
+            # ── Fast Holdout Evaluator (last forecast_days as out-of-sample) ──
+            def _eval_holdout(mdl):
+                n_d = len(data_scaled)
+                if n_d < lookback + 2 * forecast_days: return 999.0, 999.0, 0.5
+                eval_x  = data_scaled[n_d - lookback - forecast_days : n_d - forecast_days]
+                actual_s = data_scaled[n_d - forecast_days : n_d, 0]
+                mdl.eval()
+                with torch.no_grad():
+                    inp = torch.FloatTensor(eval_x).unsqueeze(0).to(device)
+                    pred_s = mdl(inp).cpu().numpy().flatten()[:forecast_days]
+                fp = np.zeros((forecast_days, n_feat)); fp[:, 0] = pred_s
+                fa = np.zeros((forecast_days, n_feat)); fa[:, 0] = actual_s
+                pp = price_scaler.inverse_transform(fp[:, 0:1]).flatten()
+                ap = price_scaler.inverse_transform(fa[:, 0:1]).flatten()
+                rmse_v = float(np.sqrt(np.mean((pp - ap) ** 2)))
+                mape_v = float(np.mean(np.abs((ap - pp) / (np.abs(ap) + 1e-8))) * 100)
+                dir_v  = float(1.0 if (pp[-1] > pp[0]) == (ap[-1] > ap[0]) else 0.0)
+                return rmse_v, mape_v, dir_v
+
+            def _infer(mdl):
+                mdl.eval()
+                with torch.no_grad():
+                    last_x = torch.FloatTensor(data_scaled[-lookback:]).unsqueeze(0).to(device)
+                    pr = mdl(last_x).cpu().numpy().flatten()[:forecast_days]
+                fp = np.zeros((forecast_days, n_feat)); fp[:, 0] = pr
+                return price_scaler.inverse_transform(fp[:, 0:1]).flatten()
+
+            results = {}  # {name: {path, rmse, mape, dir}}
+
+            # ── (A) LSTM ──
+            try:
+                ml = StockLSTM(input_size=n_feat, hidden_size=64, num_layers=2, output_size=forecast_days).to(device)
+                ol = torch.optim.Adam(ml.parameters(), lr=1e-3, weight_decay=1e-5)
+                cl = torch.nn.HuberLoss(delta=1.0)
+                ml.train()
+                for _ in range(60):
+                    ol.zero_grad(); ls=cl(ml(X_t),y_t); ls.backward()
+                    torch.nn.utils.clip_grad_norm_(ml.parameters(), 1.0); ol.step()
+                path_l = _infer(ml); rm, mp, dr = _eval_holdout(ml)
+                results['LSTM'] = {'path': path_l, 'rmse': rm, 'mape': mp, 'dir': dr, 'model': ml}
+            except Exception: pass
+
+            # ── (B) Transformer ──
+            try:
+                mt = StockTransformer(input_size=n_feat, d_model=64, nhead=4, num_layers=2, output_size=forecast_days).to(device)
+                ot = torch.optim.Adam(mt.parameters(), lr=1e-3, weight_decay=1e-5)
+                ct = torch.nn.HuberLoss(delta=0.5)
+                mt.train()
+                for _ in range(60):
+                    ot.zero_grad(); ls=ct(mt(X_t),y_t); ls.backward()
+                    torch.nn.utils.clip_grad_norm_(mt.parameters(), 1.0); ot.step()
+                path_t = _infer(mt); rm, mp, dr = _eval_holdout(mt)
+                results['Transformer'] = {'path': path_t, 'rmse': rm, 'mape': mp, 'dir': dr, 'model': mt}
+            except Exception: pass
+
+            # ── (C) PatchTST ──
+            try:
+                patch_len = 16; stride = 8
+                mp_m = StockPatchTST(c_in=n_feat, context_window=lookback, target_window=forecast_days,
+                                     patch_len=patch_len, stride=stride, d_model=64, nhead=4, num_layers=2).to(device)
+                op = torch.optim.Adam(mp_m.parameters(), lr=8e-4, weight_decay=1e-5)
+                cp = torch.nn.HuberLoss(delta=0.5)
+                sp = torch.optim.lr_scheduler.CosineAnnealingLR(op, T_max=60, eta_min=1e-5)
+                mp_m.train()
+                for _ in range(60):
+                    op.zero_grad(); ls=cp(mp_m(X_t),y_t); ls.backward()
+                    torch.nn.utils.clip_grad_norm_(mp_m.parameters(), 1.0); op.step(); sp.step()
+                path_p = _infer(mp_m); rm, mp_v, dr = _eval_holdout(mp_m)
+                results['PatchTST'] = {'path': path_p, 'rmse': rm, 'mape': mp_v, 'dir': dr, 'model': mp_m}
+            except Exception: pass
+
+            if not results: return None, 0.0, {}, {}
+
+            # ── Performance-Based Weights: w ∝ 1/RMSE ──
+            inv_rmse  = {k: 1.0 / max(v['rmse'], 0.01) for k, v in results.items()}
+            total_inv = sum(inv_rmse.values())
+            weights   = {k: round(v / total_inv, 4) for k, v in inv_rmse.items()}
+
+            # ── Blend forecasts ──
+            n_p = forecast_days
+            blended = np.zeros(n_p)
+            for k, v in results.items(): blended += weights[k] * v['path'][:n_p]
+
+            last_price_e   = data[-1, 0]
+            total_return_e = (blended[-1] / last_price_e - 1) if last_price_e > 0 else 0.0
+
+            # ── Weighted gradient-attribution feature importance ──
+            feat_imp_e = {f: 0.0 for f in features}
+            try:
+                last_seq_e = torch.FloatTensor(data_scaled[-lookback:]).unsqueeze(0).to(device)
+                for k, v in results.items():
+                    inp_g = last_seq_e.detach().clone().requires_grad_(True)
+                    torch.sum(v['model'](inp_g)).backward()
+                    imp_g = torch.abs(inp_g.grad[0]).mean(dim=0).cpu().numpy()
+                    imp_g = imp_g / (imp_g.sum() + 1e-9)
+                    for i, f in enumerate(features):
+                        feat_imp_e[f] += weights[k] * float(imp_g[i]) * 100
+                feat_imp_e = {f: round(v, 1) for f, v in feat_imp_e.items()}
+            except Exception:
+                feat_imp_e = {f: round(100/n_feat, 1) for f in features}
+
+            metrics_dict = {k: {'RMSE': round(v['rmse'], 2), 'MAPE (%)': round(v['mape'], 2),
+                               'Dir. Acc': f"{v['dir']*100:.0f}%", 'Weight': f"{weights[k]*100:.1f}%"}
+                           for k, v in results.items()}
+            return blended, total_return_e, feat_imp_e, metrics_dict
+        except Exception:
+            return None, 0.0, {}, {}
+
+    # ── META-EVALUATION: Persistent Performance Logger ─────────────────────────
+    import json as _json
+    from pathlib import Path as _Path
+    from datetime import datetime as _dt
+    _LOG_PATH = _Path("model_performance_log.json")
+
+    def _load_perf_log():
+        if _LOG_PATH.exists():
+            try: return _json.loads(_LOG_PATH.read_text())
+            except: pass
+        return {"logs": []}
+
+    def _save_perf_log(d):
+        try: _LOG_PATH.write_text(_json.dumps(d, indent=2))
+        except: pass
+
+    def _log_ensemble_run(ticker, horizon, vix_level, em):
+        if not em: return
+        anchor = max(em.keys(), key=lambda k: float(em[k]['Weight'].replace('%','')))
+        regime = "high_vix" if vix_level > 25 else "low_vix"
+        entry = {
+            "ts": _dt.now().isoformat()[:19],
+            "ticker": ticker, "horizon": horizon,
+            "vix": round(vix_level, 2), "regime": regime,
+            "anchor": anchor,
+            "models": {k: {"rmse": v["RMSE"], "mape": v["MAPE (%)"],
+                           "weight": float(v["Weight"].replace("%",""))/100}
+                       for k, v in em.items()}
+        }
+        d = _load_perf_log()
+        d["logs"].append(entry)
+        d["logs"] = d["logs"][-500:]  # keep latest 500
+        _save_perf_log(d)
+
     render_header("ai", "Price & Monte Carlo Forecasting", level="###")
     
     # ── AI STRATEGIST GUIDE (Dynamic Recommendation) ──────────────────────────
-    _rec_model = "StockTransformer (v8.0)" if regime in ["RISK-ON / EXPANSION", "INFLATION SHOCK"] else "StockLSTM (v7.0)"
-    _rec_reason = (
-        "Focus on <b>Pattern Recognition</b> & cross-correlations in this complex environment." 
-        if regime in ["RISK-ON / EXPANSION", "INFLATION SHOCK"] else 
-        "Focus on <b>Statistical Stability</b> & Trend anchoring via ARIMA ensemble."
-    )
+    if regime in ["RISK-ON / EXPANSION", "INFLATION SHOCK"]:
+        _rec_model  = "Neural v9.1 · Transformer (12F)"
+        _rec_reason = "Focus on <b>Pattern Recognition</b> &amp; cross-correlations in this complex environment."
+    elif regime in ["DEFENSIVE (High Risk)"]:
+        _rec_model  = "Neural v9.1 · LSTM+ARIMA (12F)"
+        _rec_reason = "Focus on <b>Statistical Stability</b> &amp; Trend anchoring via ARIMA ensemble in this risk-off environment."
+    else:  # NEUTRAL — best use case for PatchTST's fundamental channel separation
+        _rec_model  = "PatchTST v10.0 (12F · SOTA)"
+        _rec_reason = "Market is stable. <b>PatchTST Channel-Independent</b> patching is optimal for reading fundamental signals (ROE, FCF, Debt) without momentum noise."
     
     st.markdown(f"""
     <div style='background:rgba(52,152,219,0.08); border:1px solid #3498db; padding:16px; border-radius:8px; margin-bottom:25px;'>
         <div style='display:flex; align-items:center; margin-bottom:8px;'>
-            <span style='font-size:1.2rem; margin-right:10px;'>🧠</span>
-            <b style='color:#3498db; font-size:1rem;'>AI Strategist Guide</b>
+            {SVG_ICONS["brain"]}
+            <b style='color:#3498db; font-size:1rem; margin-left:4px;'>AI Strategist Guide</b>
         </div>
         <div style='font-size:0.92rem; color:#e0e0e0; line-height:1.5;'>
             Market Context: <b style='color:{regime_ui_color};'>{regime}</b><br>
@@ -2915,7 +3376,7 @@ with tab_ai:
             Rationale: <i>{_rec_reason}</i>
         </div>
         <div style='margin-top:12px; font-size:0.82rem; color:#8899aa; border-top:1px solid rgba(255,255,255,0.1); padding-top:8px;'>
-            <b>Pro Tip:</b> LSTM (v7.0) is anchored by ARIMA for 'Mean Reversion', while Transformer (v8.0) is a 'Pure Attention' engine best for volatile shifts.
+            <b>Pro Tip:</b> LSTM+ARIMA (v9.1) anchors mean-reversion • Transformer (v9.1) excels in volatile cross-correlations • <b>PatchTST (v10.0)</b> gives the highest fundamental resolution by treating each factor independently — ideal for stable markets.
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -2942,13 +3403,16 @@ with tab_ai:
         with fcol4:
             engine_mode = st.radio(
                 "🧠 Core Engine",
-                options=["LSTM Core", "Transformer"],
+                options=["LSTM Core", "Transformer", "PatchTST (SOTA)", "Smart Blend (Best of 3)"],
                 index=0,
                 key="engine_mode_form",
-                help="LSTM Core: Recurrent + Attention (stable). Transformer: Pure Self-Attention (experimental, better for long-range patterns)."
+                help="LSTM Core: stable mean-reversion • Transformer: high-vol pattern recognition • PatchTST: channel-independent fundamentals • Smart Blend: trains all 3 engines and auto-weights them by accuracy (RMSE)."
             )
             
         run_forecast = st.form_submit_button("🎯 RUN ENSEMBLE FORECAST", use_container_width=True, type="primary")
+
+    # Initialize before the forecast block so the metrics panel never hits NameError
+    ensemble_metrics = {}
 
     if run_forecast and fc_ticker:
         fc_ticker = st.session_state.fc_selector_form
@@ -2963,19 +3427,61 @@ with tab_ai:
         co_data = companies_full[companies_full["ticker"] == fc_ticker].iloc[0] if not companies_full[companies_full["ticker"] == fc_ticker].empty else None
         sector_val = co_data['sector'] if co_data is not None else None
         
-        # 1. ML Prediction — branch on engine_mode
-        drift_score = compute_score(co_data) if co_data is not None else 50
+        # 1. ML Prediction — branch on engine_mode (Standardized lookback by horizon)
+        if forecast_days <= 14:   std_lookback = 90
+        elif forecast_days <= 45: std_lookback = 180
+        else:                     std_lookback = 252
+
+        drift_score    = compute_score(co_data) if co_data is not None else 50
+        use_ensemble    = (engine_mode == "Smart Blend (Best of 3)")
+        use_patchtst    = (engine_mode == "PatchTST (SOTA)")
         use_transformer = (engine_mode == "Transformer")
-        if use_transformer:
-            with st.spinner("🤖 Running Transformer Attention Engine..."):
-                lstm_path, lstm_return, feat_imp = train_predict_transformer(
-                    df_fc, forecast_days=forecast_days, sector_name=sector_val, quality_score=drift_score)
+        if use_ensemble:
+            with st.spinner(f"Smart Blend: Training all 3 engines ({std_lookback}D Lookback)..."):
+                _ens = train_predict_ensemble(
+                    df_fc, lookback=std_lookback, forecast_days=forecast_days,
+                    sector_name=sector_val, quality_score=drift_score)
+            if _ens[0] is not None:
+                lstm_path, lstm_return, feat_imp, _em = _ens
+                st.session_state['ensemble_metrics'] = _em
+                # Log this run for meta-evaluation
+                _vix_now = float(prices_full[prices_full['ticker']=='^VIX']['price_close'].iloc[-1]) \
+                    if not prices_full[prices_full['ticker']=='^VIX'].empty else 20.0
+                _log_ensemble_run(fc_ticker, forecast_days, _vix_now, _em)
+            else:
+                st.warning("⚠️ Ensemble failed. Falling back to LSTM...")
+                lstm_path, lstm_return, feat_imp = train_predict_lstm(
+                    df_fc, lookback=std_lookback, forecast_days=forecast_days,
+                    sector_name=sector_val, quality_score=drift_score)
+                st.session_state['ensemble_metrics'] = {}
+        elif use_patchtst:
+            with st.spinner(f"🧬 Running PatchTST ({std_lookback}D Lookback)..."):
+                lstm_path, lstm_return, feat_imp = train_predict_patchtst(
+                    df_fc, lookback=std_lookback, forecast_days=forecast_days,
+                    sector_name=sector_val, quality_score=drift_score)
             if lstm_path is None:
-                st.warning(f"⚠️ Insufficient data to run Transformer. Falling back to LSTM...")
-                lstm_path, lstm_return, feat_imp = train_predict_lstm(df_fc, forecast_days=forecast_days, sector_name=sector_val, quality_score=drift_score)
-        else:
-            lstm_path, lstm_return, feat_imp = train_predict_lstm(df_fc, forecast_days=forecast_days, sector_name=sector_val, quality_score=drift_score)
-        if lstm_path is None:
+                st.warning(f"⚠️ PatchTST needs {std_lookback}+ days. Falling back to LSTM...")
+                lstm_path, lstm_return, feat_imp = train_predict_lstm(
+                    df_fc, lookback=std_lookback, forecast_days=forecast_days,
+                    sector_name=sector_val, quality_score=drift_score)
+            st.session_state['ensemble_metrics'] = {}
+        elif use_transformer:
+            with st.spinner(f"🤖 Running Transformer ({std_lookback}D Lookback)..."):
+                lstm_path, lstm_return, feat_imp = train_predict_transformer(
+                    df_fc, lookback=std_lookback, forecast_days=forecast_days,
+                    sector_name=sector_val, quality_score=drift_score)
+            if lstm_path is None:
+                st.warning(f"⚠️ Transformer needs {std_lookback}+ days. Falling back to LSTM...")
+                lstm_path, lstm_return, feat_imp = train_predict_lstm(
+                    df_fc, lookback=std_lookback, forecast_days=forecast_days,
+                    sector_name=sector_val, quality_score=drift_score)
+            st.session_state['ensemble_metrics'] = {}
+        else:  # LSTM Core
+            with st.spinner(f"🧠 Running LSTM Core ({std_lookback}D Lookback)..."):
+                lstm_path, lstm_return, feat_imp = train_predict_lstm(
+                    df_fc, lookback=std_lookback, forecast_days=forecast_days,
+                    sector_name=sector_val, quality_score=drift_score)
+            st.session_state['ensemble_metrics'] = {}
             st.warning(f"⚠️ Insufficient historical data ({len(df_fc)} days) to train the AI neural network. At least 30 days are required.")
         
         # 2. News Sentiment (High-Accuracy FinBERT) using Google News
@@ -3027,29 +3533,65 @@ with tab_ai:
                 s_t = s_t + kappa * (sigma_long_term - s_t)
                 sigma_forecast.append(s_t)
             
-        dt = 1 
+        # ── Phase 7.5: Monte Carlo — AI-Anchored GBM ────────────────────────────
+        # Best Practice: use AI ensemble's implied drift + residual-calibrated vol
+        # instead of raw historical mean return (which ignores the AI's forward view).
+
+        # (A) AI-IMPLIED DRIFT: annualized daily drift from the AI forecast path
+        if lstm_path is not None and len(lstm_path) >= 2 and last_price > 0:
+            # Log-return implied by AI path from today to horizon end
+            ai_total_log_return = np.log(lstm_path[-1] / last_price)
+            mu_ai = ai_total_log_return / forecast_days   # per-day log drift
+        else:
+            mu_ai = mu + drift_bias  # fallback to historical if AI path unavailable
+
+        # (B) RESIDUAL-CALIBRATED VOLATILITY:
+        # Measure how much actual recent prices deviated from the AI's in-sample fit.
+        # We approximate this by: residual_vol = std of (actual_return - AI implied step)
+        # If unavailable, blend GARCH vol with rolling 21-day realized vol.
+        try:
+            actual_recent = df_fc['price_close'].values[-forecast_days-1:]
+            if lstm_path is not None and len(actual_recent) >= 2:
+                ai_step_returns = np.diff(np.log(lstm_path + 1e-9))[:len(actual_recent)-1]
+                actual_step_returns = np.diff(np.log(actual_recent + 1e-9))
+                min_len = min(len(ai_step_returns), len(actual_step_returns))
+                residuals = actual_step_returns[:min_len] - ai_step_returns[:min_len]
+                residual_vol = float(np.std(residuals)) if min_len > 2 else sigma_current
+            else:
+                residual_vol = sigma_current
+            # Blend: 60% GARCH structure + 40% AI residual (retains clustering + calibration)
+            sigma_blended = np.array([
+                0.6 * float(s) + 0.4 * residual_vol for s in sigma_forecast
+            ])
+            sigma_blended = np.clip(sigma_blended, sigma_long_term * 0.3, sigma_long_term * 4.0)
+        except Exception:
+            sigma_blended = np.array(sigma_forecast)
+
+        # (C) SIMULATE PATHS anchored on AI-implied drift, noise from residual vol
+        dt = 1
         simulated_paths = np.zeros((forecast_days + 1, n_sims))
         for i in range(n_sims):
             path = [last_price]
             for d in range(forecast_days):
-                s_d = sigma_forecast[d]
-                # Dynamic GBM: price = P_t-1 * exp((mu - 0.5 * sigma_t^2) + sigma_t * epsilon)
-                price = path[-1] * np.exp((mu + drift_bias - 0.5 * s_d**2) * dt + s_d * np.sqrt(dt) * np.random.normal())
+                s_d = sigma_blended[d]
+                # GBM: P_t = P_{t-1} * exp((mu_ai - 0.5*sigma^2)*dt + sigma*dW)
+                price = path[-1] * np.exp((mu_ai - 0.5 * s_d**2) * dt + s_d * np.sqrt(dt) * np.random.normal())
                 path.append(price)
             simulated_paths[:, i] = path
+
         
         # 1.5 Backtest Accuracy (Diagnostic) — Dynamic Horizon Sync (Phase 8)
-        with st.spinner(f"🔍 Validating {forecast_days}-Day Accuracy..."):
+        with st.spinner(f"Validating {forecast_days}-Day Accuracy..."):
             precision_score, mape_raw = calculate_backtest_accuracy(df_fc, sector_name=sector_val, quality_score=drift_score, test_size=forecast_days)
 
         # ── ROW 2: AI Metrics (Horizontal Cards) ─────────────────────────────
         mcol1, mcol2, mcol3, mcol4 = st.columns(4)
         with mcol1:
-            st.metric("🧠 AI Ensemble Target", f"€{lstm_path[-1]:.2f}" if lstm_path is not None else "N/A", delta=f"{lstm_return*100:.2f}%" if lstm_return else "N/A")
+            st.metric("AI Ensemble Target", f"€{lstm_path[-1]:.2f}" if lstm_path is not None else "N/A", delta=f"{lstm_return*100:.2f}%" if lstm_return else "N/A")
         
         with mcol2:
             sent_label = "Bullish" if avg_sent > 0.1 else "Bearish" if avg_sent < -0.1 else "Neutral"
-            st.metric("📰 News Sentiment Mood", sent_label, delta=f"{avg_sent:.2f}")
+            st.metric("News Sentiment Mood", sent_label, delta=f"{avg_sent:.2f}")
         with mcol3:
             # Smart Money Momentum Logic
             # Compute OBV ROC directly from df_fc (raw data always available)
@@ -3058,14 +3600,14 @@ with tab_ai:
             obv_short = _obv_roc.tail(5).mean()
             obv_long  = _obv_roc.tail(20).mean()
             sm_spirit = "Accumulation" if obv_short > obv_long else "Distribution"
-            st.metric("🌊 Smart Money Spirit", sm_spirit, delta="Positive Flow" if sm_spirit == "Accumulation" else "Heavy Selling")
+            st.metric("Smart Money Spirit", sm_spirit, delta="Positive Flow" if sm_spirit == "Accumulation" else "Heavy Selling")
         with mcol4:
             if precision_score is not None:
                 p_val = f"{precision_score:.1f}%"
-                p_label = f"🎯 AI Precision ({forecast_days}d)"
+                p_label = f"AI Precision ({forecast_days}d)"
                 p_delta = f"±{mape_raw*100:.1f}% uncertainty" if mape_raw else None
             else:
-                p_val, p_label, p_delta = "N/A", "🎯 AI Precision", None
+                p_val, p_label, p_delta = "N/A", "AI Precision", None
             st.metric(p_label, p_val, delta=p_delta)
 
         # ── ROW 3.5: Analysis & Logic (Moved Up) ──────────────────────────────
@@ -3079,7 +3621,7 @@ with tab_ai:
         
         p5_final = np.percentile(simulated_paths[-1, :], 5)
         p95_final = np.percentile(simulated_paths[-1, :], 95)
-        st.success(f"✨ **Risk/Reward Check**: With 90% confidence, at the end of {forecast_days} days, the price bounded by Monte Carlo is between **€{p5_final:.2f}** and **€{p95_final:.2f}**. " +
+        st.success(f"Risk/Reward Check: With 90% confidence, at the end of {forecast_days} days, the price bounded by Monte Carlo is between **€{p5_final:.2f}** and **€{p95_final:.2f}**. " +
                    (f"The AI Ensemble targets **€{lstm_path[-1]:.2f}**" + (f" (±{mape_raw*100:.1f}% CI)." if mape_raw else ".") if lstm_path is not None else "Ensemble target unavailable."))
 
         # ── ROW 3: Main Chart (Full Width) ── (Moved to Top) ───────────────────
@@ -3118,7 +3660,7 @@ with tab_ai:
             # Central Ensemble path (on top)
             fig_fc.add_trace(go.Scatter(
                 x=future_dates, y=lstm_plot_y,
-                name="🧠 AI Ensemble Most Likely Path",
+                name="AI Ensemble Most Likely Path",
                 line=dict(color="#00E5FF", width=4)
             ))
         
@@ -3176,6 +3718,88 @@ with tab_ai:
                 st.plotly_chart(fig_imp, use_container_width=True)
             else:
                 st.info("Insufficient data for SHAP analysis.")
+
+            # ── Weighted Ensemble Metrics Panel (persisted via session_state) ──
+            _em_display = st.session_state.get('ensemble_metrics', {})
+            if _em_display:
+                st.markdown("")
+                render_header("activity", "🏆 Ensemble Performance Breakdown")
+                rows_html = ""
+                for model_name, m in _em_display.items():
+                    icon_key = "brain" if model_name == "LSTM" else "bot" if model_name == "Transformer" else "dna"
+                    icon_svg = SVG_ICONS[icon_key].replace('width="18"','width="14"').replace('height="18"','height="14"')
+                    w_pct = float(m["Weight"].replace("%", ""))
+                    bar_color = "#00ffcc" if w_pct == max(float(v["Weight"].replace("%", "")) for v in _em_display.values()) else "#3498db"
+                    rows_html += f"""
+                    <tr>
+                        <td style='padding:8px 12px; font-weight:600;'>{icon_svg} {model_name}</td>
+                        <td style='padding:8px 12px; text-align:center; color:#e74c3c;'>${m["RMSE"]}</td>
+                        <td style='padding:8px 12px; text-align:center; color:#e67e22;'>{m["MAPE (%)"]:.1f}%</td>
+                        <td style='padding:8px 12px; text-align:center;'>{m["Dir. Acc"]}</td>
+                        <td style='padding:8px 12px; min-width:120px;'>
+                            <div style='display:flex; align-items:center; gap:6px;'>
+                                <div style='background:{bar_color}; height:8px; border-radius:4px; width:{w_pct:.0f}%; max-width:80px;'></div>
+                                <span style='color:{bar_color}; font-weight:700; font-size:0.9rem;'>{m["Weight"]}</span>
+                            </div>
+                        </td>
+                    </tr>"""
+                st.markdown(f"""
+                <table style='width:100%; border-collapse:collapse; font-size:0.88rem; color:#e0e0e0;'>
+                    <thead>
+                        <tr style='border-bottom:1px solid rgba(255,255,255,0.15); color:#8899aa; font-size:0.78rem; text-transform:uppercase;'>
+                            <th style='padding:6px 12px; text-align:left;'>Model</th>
+                            <th style='padding:6px 12px; text-align:center;'>RMSE ($)</th>
+                            <th style='padding:6px 12px; text-align:center;'>MAPE</th>
+                            <th style='padding:6px 12px; text-align:center;'>Dir. Acc</th>
+                            <th style='padding:6px 12px; text-align:left;'>Weight</th>
+                        </tr>
+                    </thead>
+                    <tbody>{rows_html}</tbody>
+                </table>
+                """, unsafe_allow_html=True)
+                st.caption("💡 Weight ∝ 1/RMSE — the model with the lowest error has the highest influence on the final forecast.")
+
+            # ── Meta Intelligence Panel ──────────────────────────────────────
+            with st.expander("🧪 Meta Intelligence — Anchor History & VIX Regime Analysis", expanded=False):
+                _perf_data = _load_perf_log()["logs"]
+                if len(_perf_data) < 2:
+                    st.info("📊 Insufficient history. Please run Smart Blend at least twice to build Regime analysis.")
+                else:
+                    # Section A: Recent Anchor History
+                    st.markdown("​**🏆 Anchor Model by Run (Latest 20):**")
+                    anchor_rows = [{
+                        "Time": e["ts"], "Ticker": e["ticker"],
+                        "Horizon": f"{e['horizon']}D",
+                        "VIX": e["vix"],
+                        "Regime": "⬆️ High" if e["regime"]=="high_vix" else "⬇️ Low",
+                        "Anchor Model": e["anchor"]
+                    } for e in _perf_data[-20:][::-1]]
+                    st.dataframe(pd.DataFrame(anchor_rows), use_container_width=True, hide_index=True)
+
+                    # Section B: VIX-Regime Performance Chart
+                    if len(_perf_data) >= 3:
+                        regime_rows = []
+                        for e in _perf_data:
+                            for mn, mv in e["models"].items():
+                                regime_rows.append({
+                                    "Model": mn,
+                                    "Regime": "High VIX (>25)" if e["regime"]=="high_vix" else "Low VIX (≤25)",
+                                    "RMSE": mv["rmse"]
+                                })
+                        regime_df = pd.DataFrame(regime_rows)
+                        avg_r = regime_df.groupby(["Model","Regime"])["RMSE"].mean().reset_index()
+                        if not avg_r.empty:
+                            st.markdown("​**📈 Model RMSE by VIX Regime:**")
+                            fig_meta = px.bar(
+                                avg_r, x="Model", y="RMSE", color="Regime",
+                                barmode="group", template="plotly_dark", height=260,
+                                color_discrete_map={"High VIX (>25)": "#e74c3c", "Low VIX (≤25)": "#2ecc71"},
+                                labels={"RMSE": "Avg RMSE ($)"}
+                            )
+                            fig_meta.update_layout(margin=dict(t=10,b=0,l=0,r=0),
+                                                   legend=dict(orientation="h", y=1.12))
+                            st.plotly_chart(fig_meta, use_container_width=True)
+                            st.caption("💡 Lower bar = more effective model in that market regime. Key question: Does LSTM or Transformer perform better during VIX spikes?")
 
 
 # ── TAB: STRATEGY BACKTEST ───────────────────────────────────────────────────

@@ -1,0 +1,79 @@
+{
+  "logs": [
+    {
+      "ts": "2026-04-05T00:19:56",
+      "ticker": "META",
+      "horizon": 7,
+      "vix": 20.72,
+      "regime": "low_vix",
+      "anchor": "Transformer",
+      "models": {
+        "LSTM": {
+          "rmse": 48.82,
+          "mape": 9.26,
+          "weight": 0.247
+        },
+        "Transformer": {
+          "rmse": 29.0,
+          "mape": 5.05,
+          "weight": 0.41600000000000004
+        },
+        "PatchTST": {
+          "rmse": 35.95,
+          "mape": 6.11,
+          "weight": 0.336
+        }
+      }
+    },
+    {
+      "ts": "2026-04-05T00:32:22",
+      "ticker": "META",
+      "horizon": 7,
+      "vix": 20.72,
+      "regime": "low_vix",
+      "anchor": "Transformer",
+      "models": {
+        "LSTM": {
+          "rmse": 58.52,
+          "mape": 11.36,
+          "weight": 0.256
+        },
+        "Transformer": {
+          "rmse": 34.63,
+          "mape": 5.81,
+          "weight": 0.433
+        },
+        "PatchTST": {
+          "rmse": 48.11,
+          "mape": 8.64,
+          "weight": 0.311
+        }
+      }
+    },
+    {
+      "ts": "2026-04-05T00:39:51",
+      "ticker": "DELL",
+      "horizon": 7,
+      "vix": 20.72,
+      "regime": "low_vix",
+      "anchor": "Transformer",
+      "models": {
+        "LSTM": {
+          "rmse": 43.9,
+          "mape": 29.08,
+          "weight": 0.179
+        },
+        "Transformer": {
+          "rmse": 11.98,
+          "mape": 7.02,
+          "weight": 0.657
+        },
+        "PatchTST": {
+          "rmse": 47.88,
+          "mape": 31.61,
+          "weight": 0.16399999999999998
+        }
+      }
+    }
+  ]
+}
