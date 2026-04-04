@@ -25,10 +25,18 @@ def load_tickers_config():
 TICKERS = load_tickers_config()
 
 def _guess_currency(ticker: str) -> str:
-    """Heuristic to guess currency from ticker suffix for fast FX pre-fetching."""
+    """Heuristic to guess currency for fast FX pre-fetching."""
     if ticker.endswith(".T"): return "JPY"
-    if any(ticker.endswith(s) for s in [".DE", ".PA", ".AS"]): return "EUR"
+    if any(ticker.endswith(s) for s in [".DE", ".PA", ".AS", ".MI", ".MC", ".LS", ".BR"]): return "EUR"
     if ".CO" in ticker: return "DKK"
+    if ".HK" in ticker: return "HKD"
+    if any(ticker.endswith(s) for s in [".SS", ".SZ"]): return "CNY"
+    if any(ticker.endswith(s) for s in [".L", ".IL"]): return "GBP"
+    if any(ticker.endswith(s) for s in [".TO", ".V"]): return "CAD"
+    if ".AX" in ticker: return "AUD"
+    if ".ST" in ticker: return "SEK"
+    if ".HE" in ticker: return "EUR" # Finland
+    if ".OL" in ticker: return "NOK"
     return "USD"
 
 def extract_stock_prices(
@@ -204,22 +212,41 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
     logger.info(f"🚀 TURBO METADATA: Fetching info for {len(tickers)} companies in parallel...")
     records = []
     
-    # 1. Pre-fetch FX rates globally
-    unique_currencies = {"USD"}
-    for ticker in tickers.keys():
-        unique_currencies.add(_guess_currency(ticker))
+    # 1. Pre-fetch FX rates globally with robust currency detection
+    logger.info("   🔍 Detecting currencies and FX rates...")
+    ticker_currencies = {}
+    
+    def get_ticker_cur(t):
+        try:
+            # fast_info is better than heuristic guessing
+            return t, yf.Ticker(t).fast_info.get("currency", _guess_currency(t))
+        except:
+            return t, _guess_currency(t)
+            
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        _cur_results = list(executor.map(get_ticker_cur, tickers.keys()))
+        ticker_currencies = dict(_cur_results)
+    
+    unique_currencies = {c for c in ticker_currencies.values() if c != "USD"}
     
     fx_rates = {"USD": 1.0}
-    if len(unique_currencies) > 1:
-        fx_tkrs = [f"{c}USD=X" for c in unique_currencies if c != "USD"]
-        fx_data = yf.download(fx_tkrs, period="1d", progress=False)["Close"]
+    if unique_currencies:
+        fx_tkrs = [f"{c}USD=X" for c in unique_currencies]
+        fx_data = yf.download(fx_tkrs, period="2d", progress=False)["Close"]
+        
         for c in unique_currencies:
-            if c == "USD": continue
             col = f"{c}USD=X"
-            if col in fx_data.columns:
-                fx_rates[c] = float(fx_data[col].iloc[-1].item() if hasattr(fx_data[col].iloc[-1], 'item') else fx_data[col].iloc[-1])
-            elif not fx_data.empty: # Single currency case
-                fx_rates[c] = float(fx_data.iloc[-1].item() if hasattr(fx_data.iloc[-1], 'item') else fx_data.iloc[-1])
+            try:
+                if isinstance(fx_data, pd.DataFrame) and col in fx_data.columns:
+                    rate = fx_data[col].ffill().iloc[-1]
+                elif not fx_data.empty: # Single currency download
+                    rate = fx_data.ffill().iloc[-1]
+                else:
+                    rate = 1.0
+                fx_rates[c] = float(rate.item() if hasattr(rate, "item") else rate)
+            except:
+                logger.warning(f"  ⚠️ Could not fetch FX for {c}, defaulting to 1.0")
+                fx_rates[c] = 1.0
 
     def fetch_single_ticker_info(ticker):
         try:
