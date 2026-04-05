@@ -398,10 +398,11 @@ def get_db_connection(read_only=False):
     finally:
         conn.close()
 
+@st.cache_data(ttl=3600, show_spinner="📉 Loading Institutional Data Warehouse...")
 def load_data():
-    """Load all required data with proper connection handling."""
+    """Load all required data, normalize currencies, and pre-compute técnicos inside cache."""
     with get_db_connection(read_only=True) as conn:
-        prices_full = conn.execute("""
+        prices_f = conn.execute("""
             SELECT f.date, f.ticker, d.company, d.sector, d.region,
                    f.price_open, f.price_high, f.price_low, f.price_close, 
                    f.daily_return_pct, f.volume,
@@ -413,13 +414,13 @@ def load_data():
             ORDER BY f.date
         """).df()
 
-        companies_full = pd.read_sql("SELECT * FROM marts.dim_companies", conn)
-        monthly_full = pd.read_sql("SELECT * FROM marts.agg_monthly_performance ORDER BY month, ticker", conn)
-        annual_fin = conn.execute("SELECT * FROM marts.dim_annual_financials").df()
+        companies_f = pd.read_sql("SELECT * FROM marts.dim_companies", conn)
+        monthly_f = pd.read_sql("SELECT * FROM marts.agg_monthly_performance ORDER BY month, ticker", conn)
+        annual_f = conn.execute("SELECT * FROM marts.dim_annual_financials").df()
         try:
-            quarterly_fin = conn.execute("SELECT * FROM marts.dim_quarterly_financials").df()
+            quarterly_f = conn.execute("SELECT * FROM marts.dim_quarterly_financials").df()
         except Exception:
-            quarterly_fin = pd.DataFrame()
+            quarterly_f = pd.DataFrame()
             
         try:
             earnings_calendar = conn.execute("SELECT * FROM raw.earnings_calendar").df()
@@ -427,64 +428,49 @@ def load_data():
                 earnings_calendar["earnings_date"] = pd.to_datetime(earnings_calendar["earnings_date"])
         except Exception:
             earnings_calendar = pd.DataFrame()
-        
-    return prices_full, companies_full, monthly_full, annual_fin, quarterly_fin, earnings_calendar
-
-prices_full, companies_full, monthly_full, annual_fin, quarterly_fin, earnings_cal = load_data()
-all_tickers = sorted(prices_full["ticker"].unique().tolist())
-
-# Ensure datetime types for filtering
-prices_full["date"] = pd.to_datetime(prices_full["date"])
-monthly_full["month"] = pd.to_datetime(monthly_full["month"])
-
-prices_full = prices_full.sort_values(['ticker', 'date'])
-prices_full['rsi'] = prices_full.groupby('ticker', group_keys=False).apply(lambda x: get_rsi_vectorized(x), include_groups=False)
-
-companies = companies_full[companies_full["ticker"] != "SPY"].copy()
-spy_prices = prices_full[prices_full["ticker"] == "SPY"].copy()
-prices = prices_full[prices_full["ticker"] != "SPY"].copy()
-
-monthly_full = monthly_full[monthly_full["ticker"] != "SPY"].copy()
-monthly = monthly_full.copy()
-
-with st.spinner("🌍 Rebalancing Global Portfolio to €..."):
-    # The ETL pipeline (etl/extract.py) already normalizes everything to USD!
+            
+    # ── PRE-PROCESSING INSIDE CACHE ──
+    prices_f["date"] = pd.to_datetime(prices_f["date"])
+    monthly_f["month"] = pd.to_datetime(monthly_f["month"])
+    prices_f = prices_f.sort_values(['ticker', 'date'])
+    
+    # Vectorized RSI (only for those missing it or to ensure consistency)
+    prices_f['rsi'] = prices_f.groupby('ticker', group_keys=False).apply(lambda x: get_rsi_vectorized(x), include_groups=False)
+    
+    # ── CURRENCY NORMALIZATION INSIDE CACHE ──
     usdeur_rate = get_forex_rates(target="EUR")
     
-    prices_full['curr_mult'] = usdeur_rate
-    for col in ['price_open', 'price_high', 'price_low', 'price_close']:
-        if col in prices_full.columns:
-            prices_full[col] = prices_full[col] * prices_full['curr_mult']
-    prices_full.drop(columns=['curr_mult'], inplace=True)
-    
-    companies_full['curr_mult'] = usdeur_rate
-    monetary_cols = ['market_cap', 'ebitda', 'total_revenue', 'total_debt', 'free_cashflow', 'operating_cashflow',
-                     'target_high_price', 'target_low_price', 'target_mean_price', 'target_median_price']
-    for col in monetary_cols:
-        if col in companies_full.columns:
-            companies_full[col] = companies_full[col].astype(float) * companies_full['curr_mult']
-    companies_full.drop(columns=['curr_mult'], inplace=True)
-    
-    annual_fin['curr_mult'] = usdeur_rate
-    for col in ['revenue', 'net_income', 'eps', 'free_cashflow']:
-        if col in annual_fin.columns:
-            annual_fin[col] = annual_fin[col].astype(float) * annual_fin['curr_mult']
-    annual_fin.drop(columns=['curr_mult'], inplace=True)
-    
-    if not quarterly_fin.empty:
-        quarterly_fin['curr_mult'] = usdeur_rate
-        for col in ['revenue', 'net_income', 'eps', 'free_cashflow']:
-            if col in quarterly_fin.columns:
-                quarterly_fin[col] = quarterly_fin[col].astype(float) * quarterly_fin['curr_mult']
-        quarterly_fin.drop(columns=['curr_mult'], inplace=True)
+    for df in [prices_f, companies_f, annual_f, quarterly_f]:
+        if df.empty: continue
+        # Handle specific columns for each DF to avoid overhead
+        if 'price_close' in df.columns:
+            for col in ['price_open', 'price_high', 'price_low', 'price_close']:
+                df[col] = df[col] * usdeur_rate
+        if 'market_cap' in df.columns:
+            monetary_cols = ['market_cap', 'ebitda', 'total_revenue', 'total_debt', 'free_cashflow', 'operating_cashflow',
+                             'target_high_price', 'target_low_price', 'target_mean_price', 'target_median_price']
+            for col in monetary_cols:
+                if col in df.columns:
+                    df[col] = df[col].astype(float) * usdeur_rate
+        if 'revenue' in df.columns and 'ticker' in df.columns: # financials
+            for col in ['revenue', 'net_income', 'eps', 'free_cashflow']:
+                if col in df.columns:
+                    df[col] = df[col].astype(float) * usdeur_rate
+                    
+    return prices_f, companies_f, monthly_f, annual_f, quarterly_f, earnings_calendar
 
-# Rebuild safe views
-companies = companies_full[companies_full["ticker"] != "SPY"].copy()
-spy_prices = prices_full[prices_full["ticker"] == "SPY"].copy()
-prices = prices_full[prices_full["ticker"] != "SPY"].copy()
+# Primary Data Load (Cached)
+prices_full, companies_full, monthly_full, annual_fin, quarterly_fin, earnings_cal = load_data()
 
-# Create a mapping for pretty display in selectboxes
+# Shared Global Views (Filtered from the cached full datasets)
+all_tickers = sorted(prices_full["ticker"].unique().tolist())
 ticker_to_name = dict(zip(companies_full['ticker'], companies_full['company']))
+
+# Clean non-benchmark views
+companies = companies_full[companies_full["ticker"] != "SPY"]
+spy_prices = prices_full[prices_full["ticker"] == "SPY"]
+prices = prices_full[prices_full["ticker"] != "SPY"]
+monthly = monthly_full[monthly_full["ticker"] != "SPY"]
 
 def format_ticker(ticker):
     name = ticker_to_name.get(ticker)
