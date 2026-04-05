@@ -115,6 +115,7 @@ def _create_staging(conn):
             EXTRACT(YEAR FROM date) AS year,
             revenue,
             eps,
+            free_cashflow,
             _loaded_at
         FROM raw.historical_financials
         WHERE ticker IS NOT NULL
@@ -236,7 +237,49 @@ def _create_marts(conn):
     Naming: fct_{fact} / dim_{dimension}
     """
     conn.execute("CREATE SCHEMA IF NOT EXISTS marts")
-    
+
+    # ── STEP 0: Financials dimensions FIRST (dependency for FMI in dim_companies) ──
+    conn.execute("""
+        CREATE OR REPLACE TABLE marts.dim_quarterly_financials AS
+        SELECT
+            ticker,
+            EXTRACT(YEAR FROM date) AS year,
+            EXTRACT(QUARTER FROM date) AS quarter,
+            date AS report_date,
+            revenue,
+            eps,
+            eps_diluted,
+            free_cashflow,
+            -- Calculate Growth
+            ROUND((revenue - LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(revenue) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS revenue_growth_qoq_pct,
+            ROUND((eps - LAG(eps) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(eps) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS eps_growth_qoq_pct,
+            ROUND((free_cashflow - LAG(free_cashflow) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(free_cashflow) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS fcf_growth_qoq_pct,
+            
+            ROUND((revenue - LAG(revenue, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(revenue, 4) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS revenue_growth_yoy_pct,
+            ROUND((eps - LAG(eps, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(eps, 4) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS eps_growth_yoy_pct,
+            ROUND((free_cashflow - LAG(free_cashflow, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(free_cashflow, 4) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS fcf_growth_yoy_pct,
+            -- Margins
+            ROUND(free_cashflow / NULLIF(revenue, 0) * 100, 2) AS fcf_margin
+        FROM raw.quarterly_financials
+        ORDER BY ticker, date
+    """)
+    conn.execute("""
+        CREATE OR REPLACE TABLE marts.dim_annual_financials AS
+        SELECT
+            ticker,
+            EXTRACT(YEAR FROM date) AS year,
+            date AS report_date,
+            revenue, eps, eps_diluted, free_cashflow,
+            ROUND((revenue - LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(revenue) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS revenue_growth_pct,
+            ROUND((eps - LAG(eps) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(eps) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS eps_growth_pct,
+            ROUND((free_cashflow - LAG(free_cashflow) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(free_cashflow) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS fcf_growth_pct,
+            -- Margins
+            ROUND(free_cashflow / NULLIF(revenue, 0) * 100, 2) AS fcf_margin
+        FROM raw.historical_financials
+        ORDER BY ticker, year
+    """)
+    logger.info("Step 0: Financial dimension tables created (quarterly + annual).")
+
     # FACT TABLE: Daily returns
     conn.execute("""
         CREATE OR REPLACE TABLE marts.fct_daily_returns AS
@@ -321,7 +364,12 @@ def _create_marts(conn):
             vol.volatility_30d,
             payout.buyback_yield_pct,
             payout.dividends_paid_yield_pct,
-            payout.net_payout_yield_pct
+            payout.net_payout_yield_pct,
+            -- v4.0 Fundamental Momentum Index (FMI) components
+            fmi.fmi_rev_acceleration,
+            fmi.fmi_eps_acceleration,
+            fmi.fmi_margin_trend,
+            fmi.fmi_quarters_of_growth
         FROM staging.stg_company_info c
         LEFT JOIN (
             SELECT 
@@ -368,6 +416,60 @@ def _create_marts(conn):
             FROM staging.stg_cashflows cf
             JOIN staging.stg_company_info dc USING (ticker)
         ) payout USING (ticker)
+        LEFT JOIN (
+            -- v4.0: Fundamental Momentum Index (FMI) pre-computation
+            -- Uses last 4 quarters of data (TTM) vs the prior 4 quarters to measure acceleration.
+            WITH ranked AS (
+                SELECT
+                    ticker,
+                    report_date,
+                    revenue,
+                    eps,
+                    revenue_growth_qoq_pct,
+                    eps_growth_qoq_pct,
+                    revenue_growth_yoy_pct,
+                    eps_growth_yoy_pct,
+                    ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY report_date DESC) AS rn
+                FROM marts.dim_quarterly_financials
+            ),
+            recent   AS (SELECT * FROM ranked WHERE rn <= 4),
+            prior    AS (SELECT * FROM ranked WHERE rn BETWEEN 5 AND 8),
+            recent_agg AS (
+                SELECT
+                    ticker,
+                    -- Revenue: avg QoQ growth rate over latest 4 quarters
+                    ROUND(AVG(revenue_growth_qoq_pct), 2)       AS rev_qoq_recent,
+                    ROUND(AVG(revenue_growth_yoy_pct), 2)       AS rev_yoy_recent,
+                    -- EPS: avg QoQ growth rate over latest 4 quarters
+                    ROUND(AVG(eps_growth_qoq_pct), 2)           AS eps_qoq_recent,
+                    ROUND(AVG(eps_growth_yoy_pct), 2)           AS eps_yoy_recent,
+                    -- Consistency: how many of the 4 quarters had positive EPS growth YoY
+                    SUM(CASE WHEN eps_growth_yoy_pct > 0 THEN 1 ELSE 0 END) AS quarters_of_growth
+                FROM recent
+                GROUP BY ticker
+            ),
+            prior_agg AS (
+                SELECT
+                    ticker,
+                    ROUND(AVG(revenue_growth_qoq_pct), 2) AS rev_qoq_prior,
+                    ROUND(AVG(eps_growth_qoq_pct), 2)     AS eps_qoq_prior
+                FROM prior
+                GROUP BY ticker
+            )
+            SELECT
+                r.ticker,
+                -- Revenue Acceleration = recent QoQ avg - prior QoQ avg  (positive = speeding up)
+                ROUND(r.rev_qoq_recent - COALESCE(p.rev_qoq_prior, r.rev_qoq_recent), 2) AS fmi_rev_acceleration,
+                -- EPS Acceleration    = recent QoQ avg - prior QoQ avg
+                ROUND(r.eps_qoq_recent - COALESCE(p.eps_qoq_prior, r.eps_qoq_recent), 2) AS fmi_eps_acceleration,
+                -- Margin Trend proxy: if most-recent revenue_yoy > eps_yoy then margins compressing, else expanding
+                -- Positive number indicates EPS growing faster than revenue = margin expansion
+                ROUND(r.eps_yoy_recent - r.rev_yoy_recent, 2) AS fmi_margin_trend,
+                -- Streak: 0-4 quarters with positive EPS YoY
+                r.quarters_of_growth                          AS fmi_quarters_of_growth
+            FROM recent_agg r
+            LEFT JOIN prior_agg p USING (ticker)
+        ) fmi USING (ticker)
     """)
     
     # AGGREGATE: Monthly performance per ticker

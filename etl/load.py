@@ -149,6 +149,15 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
             _loaded_at           TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS raw.earnings_calendar (
+            ticker          VARCHAR PRIMARY KEY,
+            earnings_date   DATE,
+            eps_avg         DOUBLE,
+            rev_avg         DOUBLE,
+            _loaded_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     logger.info("✅ Raw schema created")
 
 
@@ -168,6 +177,33 @@ def load_cashflows(
     """)
     conn.unregister("df_tmp")
     logger.info(f"✅ Loaded {len(df)} cashflow records → raw.cashflows")
+
+
+def load_earnings_calendar(
+    conn: duckdb.DuckDBPyConnection,
+    df: pd.DataFrame
+):
+    """Load upcoming earnings calendar data (upsert)."""
+    if df.empty:
+        logger.info("  ⚠️ No earnings calendar data to load")
+        return
+        
+    tickers = df["ticker"].unique().tolist()
+    conn.execute("DELETE FROM raw.earnings_calendar WHERE ticker = ANY(?)", [tickers])
+    
+    conn.register("df_tmp", df)
+    conn.execute("""
+        INSERT INTO raw.earnings_calendar
+        SELECT 
+            ticker, 
+            CAST(earnings_date AS DATE), 
+            eps_avg, 
+            rev_avg, 
+            CURRENT_TIMESTAMP 
+        FROM df_tmp
+    """)
+    conn.unregister("df_tmp")
+    logger.info(f"✅ Loaded {len(df)} earnings calendar records → raw.earnings_calendar")
 
 
 

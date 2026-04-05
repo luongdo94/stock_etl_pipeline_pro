@@ -358,7 +358,12 @@ def extract_historical_financials(tickers: dict = TICKERS) -> pd.DataFrame:
             fin = t.financials
             if fin.empty: return None
             
-            row_map = {"total revenue": "revenue", "basic eps": "eps", "diluted eps": "eps_diluted"}
+            row_map = {
+                "total revenue": "revenue", 
+                "basic eps": "eps", 
+                "diluted eps": "eps_diluted",
+                "free cash flow": "free_cashflow"
+            }
             df_fin = fin.T
             df_fin.columns = [str(c).lower() for c in df_fin.columns]
             found_rows = [c for c in df_fin.columns if c in row_map.keys()]
@@ -368,7 +373,7 @@ def extract_historical_financials(tickers: dict = TICKERS) -> pd.DataFrame:
             df_filtered.index.name = "date"
             df_filtered = df_filtered.reset_index()
             df_filtered = df_filtered.rename(columns=row_map)
-            for col in ["revenue", "eps", "eps_diluted"]:
+            for col in ["revenue", "eps", "eps_diluted", "free_cashflow"]:
                 if col in df_filtered.columns:
                     df_filtered[col] = df_filtered[col] * fx_rate
             df_filtered["ticker"] = ticker
@@ -423,7 +428,12 @@ def extract_quarterly_financials(tickers: dict = TICKERS) -> pd.DataFrame:
             fin = t.quarterly_financials
             if fin.empty: return None
             
-            row_map = {"total revenue": "revenue", "basic eps": "eps", "diluted eps": "eps_diluted"}
+            row_map = {
+                "total revenue": "revenue", 
+                "basic eps": "eps", 
+                "diluted eps": "eps_diluted",
+                "free cash flow": "free_cashflow"
+            }
             df_fin = fin.T
             df_fin.columns = [str(c).lower() for c in df_fin.columns]
             found_rows = [c for c in df_fin.columns if c in row_map.keys()]
@@ -433,7 +443,7 @@ def extract_quarterly_financials(tickers: dict = TICKERS) -> pd.DataFrame:
             df_filtered.index.name = "date"
             df_filtered = df_filtered.reset_index()
             df_filtered = df_filtered.rename(columns=row_map)
-            for col in ["revenue", "eps", "eps_diluted"]:
+            for col in ["revenue", "eps", "eps_diluted", "free_cashflow"]:
                 if col in df_filtered.columns:
                     df_filtered[col] = df_filtered[col] * fx_rate
             df_filtered["ticker"] = ticker
@@ -566,3 +576,61 @@ def extract_cashflows(tickers: dict = TICKERS) -> pd.DataFrame:
 
     logger.info(f"✅ Cashflow extracted for {len(records)}/{len(tickers)} tickers")
     return pd.DataFrame(records) if records else pd.DataFrame(columns=["ticker", "buyback_ttm", "dividends_paid_ttm"])
+
+
+def extract_earnings_calendar(tickers: dict = TICKERS) -> pd.DataFrame:
+    """
+    Parallelized extraction of upcoming earnings dates and estimates.
+    """
+    logger.info(f"🚀 EARNINGS CALENDAR: Fetching upcoming dates for {len(tickers)} tickers...")
+    records = []
+
+    def fetch_single(ticker):
+        try:
+            t = yf.Ticker(ticker)
+            cal = t.calendar
+            if cal is None or (isinstance(cal, dict) and not cal) or (isinstance(cal, pd.DataFrame) and cal.empty):
+                return None
+            
+            # yfinance returns different formats (dict or DF) depending on version and ticker
+            res = {"ticker": ticker, "earnings_date": None, "eps_avg": None, "rev_avg": None}
+            
+            if isinstance(cal, dict):
+                # Format: {'Earnings Date': [datetime.datetime(...)], 'Earnings Average': 1.23, ...}
+                ed = cal.get("Earnings Date")
+                if isinstance(ed, list) and len(ed) > 0:
+                    res["earnings_date"] = ed[0] # Use only the nearest date
+                res["eps_avg"] = cal.get("Earnings Average")
+                res["rev_avg"] = cal.get("Revenue Average")
+            elif isinstance(cal, pd.DataFrame):
+                # Format: 0
+                # Earnings Date    2024-07-30
+                # Earnings Average       1.23
+                if "Earnings Date" in cal.index:
+                    ed = cal.loc["Earnings Date", 0]
+                    if isinstance(ed, list): ed = ed[0]
+                    res["earnings_date"] = ed
+                if "Earnings Average" in cal.index:
+                    res["eps_avg"] = cal.loc["Earnings Average", 0]
+                if "Revenue Average" in cal.index:
+                    res["rev_avg"] = cal.loc["Revenue Average", 0]
+
+            if res["earnings_date"]:
+                # Ensure it's a datetime object
+                if isinstance(res["earnings_date"], (pd.Timestamp, datetime)):
+                    res["earnings_date"] = res["earnings_date"].date()
+                return res
+            return None
+        except Exception as e:
+            logger.warning(f"  ⚠️ {ticker} earnings failed: {e}")
+            return None
+
+    with ThreadPoolExecutor(max_workers=20) as executor:
+        futures = {executor.submit(fetch_single, t): t for t in tickers.keys()}
+        for future in as_completed(futures):
+            res = future.result()
+            if res:
+                records.append(res)
+    
+    logger.info(f"✅ Earnings Calendar extracted for {len(records)}/{len(tickers)} tickers")
+    return pd.DataFrame(records) if records else pd.DataFrame(columns=["ticker", "earnings_date", "eps_avg", "rev_avg"])

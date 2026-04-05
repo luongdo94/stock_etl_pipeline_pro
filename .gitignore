@@ -6,10 +6,18 @@ __pycache__/
 .vscode/
 airflow/logs/
 airflow/*.db
-# warehouse/*.duckdb  # Keeping this for now if the user explicitly tracked it
 /tmp/
-# warehouse/*.duckdb
 .agents
 .github/workflows
 dbt
 legacy
+airflow
+
+# Databases (Data Warehouse)
+warehouse/*.duckdb
+*.db
+*.duckdb
+
+# Logs & Meta
+*.log
+model_performance_log.json

@@ -236,6 +236,165 @@ def compute_score(row) -> int:
     return compute_score_details(row)["total"]
 
 
+# ── FUNDAMENTAL MOMENTUM INDEX (FMI) — Independent Score v4.0 ────────────────
+# FMI measures the *acceleration* of fundamental growth, not the level.
+# A mature utility may have great Quality (80+) but poor FMI (30).
+# A hyper-growth tech may have a lower Quality but an FMI of 90+.
+# Combined usage: Quality Score (safety/value) + FMI (momentum/growth catalyst)
+
+def compute_fmi_details(row) -> dict:
+    """
+    Fundamental Momentum Index (FMI) — Score: 0-100.
+
+    Four components:
+      1. Revenue Acceleration (max 30): Is revenue growth speeding up vs prior period?
+      2. EPS Acceleration     (max 30): Is EPS growth speeding up vs prior period?
+      3. Margin Expansion     (max 25): Is EPS growing faster than revenue (expanding margins)?
+      4. Earnings Consistency (max 15): How many of the last 4 quarters showed positive YoY EPS growth?
+
+    All components use np.interp to avoid cliff effects.
+    Data sourced from fmi_* columns added to marts.dim_companies by ETL v4.0.
+    Falls back to 50 (neutral) if data is unavailable.
+    """
+    def get_num(key, default=None):
+        val = row.get(key)
+        if val is None or (isinstance(val, float) and np.isnan(val)):
+            return default
+        try:
+            return float(val)
+        except Exception:
+            return default
+
+    components = {
+        "Revenue Acceleration": 0,  # Max 30
+        "EPS Acceleration":     0,  # Max 30
+        "Margin Expansion":     0,  # Max 25
+        "Earnings Consistency": 0,  # Max 15
+    }
+
+    # Check if FMI data is available at all
+    rev_accel  = get_num("fmi_rev_acceleration")
+    eps_accel  = get_num("fmi_eps_acceleration")
+    margin_trend = get_num("fmi_margin_trend")
+    quarters   = get_num("fmi_quarters_of_growth")
+
+    if rev_accel is None and eps_accel is None:
+        # No quarterly data at all — return a neutral score
+        return {"total": 50, "components": components, "label": "No Data"}
+
+    # ── 1. Revenue Acceleration (Max 30) ──────────────────────────────────────
+    # Positive acceleration = revenue growth speeding up.
+    # -20%: 0pts (decelerating sharply), 0%: 10pts (stable), +10%: 25pts, +20%: 30pts
+    if rev_accel is not None:
+        score = np.interp(rev_accel, [-20, -5, 0, 10, 20], [0, 5, 10, 25, 30])
+        components["Revenue Acceleration"] = int(round(score))
+
+    # ── 2. EPS Acceleration (Max 30) ──────────────────────────────────────────
+    # EPS acceleration matters more than revenue (profitability signal).
+    # Wider bands because EPS is more volatile quarter-to-quarter.
+    if eps_accel is not None:
+        score = np.interp(eps_accel, [-30, -10, 0, 15, 30], [0, 5, 10, 25, 30])
+        components["EPS Acceleration"] = int(round(score))
+
+    # ── 3. Margin Expansion (Max 25) ──────────────────────────────────────────
+    # fmi_margin_trend = eps_yoy_recent - rev_yoy_recent
+    # Positive = EPS growing faster than revenue = margins expanding (rare and valuable).
+    if margin_trend is not None:
+        score = np.interp(margin_trend, [-20, -5, 0, 10, 25], [0, 5, 12, 20, 25])
+        components["Margin Expansion"] = int(round(score))
+
+    # ── 4. Earnings Consistency (Max 15) ──────────────────────────────────────
+    # Number of last 4 quarters with positive EPS YoY growth.
+    # 0 quarters: 0pts, 2 quarters: 5pts, 3 quarters: 10pts, 4 quarters: 15pts.
+    if quarters is not None:
+        score = np.interp(quarters, [0, 1, 2, 3, 4], [0, 2, 5, 10, 15])
+        components["Earnings Consistency"] = int(round(score))
+
+    total = sum(components.values())
+    total = int(max(0, min(total, 100)))
+
+    return {"total": total, "components": components, "label": get_fmi_label(total)}
+
+
+def compute_fmi_score(row) -> int:
+    """Returns FMI Score (0-100). Convenience wrapper."""
+    return compute_fmi_details(row)["total"]
+
+
+def compute_fmi_live(df_quarterly, df_annual) -> dict:
+    """
+    Computes FMI using both quarterly and annual financials, adapted for free-tier APIs
+    (like yfinance) that only return 5 quarters of history.
+    
+    Acceleration compares the latest quarter's YoY growth (the only one available) 
+    against the baseline of the most recent FULL year's growth.
+    """
+    import pandas as pd
+    default_res = {"total": 50, "components": {
+        "Revenue Acceleration": 0, "EPS Acceleration": 0,
+        "Margin Expansion": 0, "Earnings Consistency": 0
+    }, "label": "No Data"}
+
+    if df_quarterly is None or df_quarterly.empty or df_annual is None or df_annual.empty:
+        return default_res
+
+    q_df = df_quarterly.sort_values("report_date")
+    a_df = df_annual.sort_values("year")
+    
+    if len(q_df) < 5 or len(a_df) < 2:
+        return default_res
+
+    # Latest quarter YoY growth
+    q_latest = q_df.iloc[-1]
+    rev_yoy_q = pd.to_numeric(q_latest.get("revenue_growth_yoy_pct"), errors="coerce")
+    eps_yoy_q = pd.to_numeric(q_latest.get("eps_growth_yoy_pct"), errors="coerce")
+    
+    # Fallback to annualized QoQ if YoY is missing (due to yfinance 4-quarter API limit)
+    if pd.isna(rev_yoy_q):
+        rev_qoq = pd.to_numeric(q_latest.get("revenue_growth_qoq_pct"), errors="coerce")
+        if not pd.isna(rev_qoq) and rev_qoq != 0: rev_yoy_q = rev_qoq * 4
+    if pd.isna(eps_yoy_q):
+        eps_qoq = pd.to_numeric(q_latest.get("eps_growth_qoq_pct"), errors="coerce")
+        if not pd.isna(eps_qoq) and eps_qoq != 0: eps_yoy_q = eps_qoq * 4
+    
+    # Previous full year growth baseline
+    a_latest = a_df.iloc[-1]
+    rev_yoy_a = pd.to_numeric(a_latest.get("revenue_growth_pct"), errors="coerce")
+    eps_yoy_a = pd.to_numeric(a_latest.get("eps_growth_pct"), errors="coerce")
+
+    # If any essential metric is still NaN, return Neutral (50) instead of punishing the score with 0
+    if pd.isna(rev_yoy_q) or pd.isna(eps_yoy_q) or pd.isna(rev_yoy_a) or pd.isna(eps_yoy_a):
+        return default_res
+
+    # Acceleration = Latest Quarter YoY vs Last Full Year Baseline
+    rev_accel   = rev_yoy_q - rev_yoy_a
+    eps_accel   = eps_yoy_q - eps_yoy_a
+    
+    # Margin Expansion = EPS growing faster than Rev
+    margin_trend = eps_yoy_q - rev_yoy_q
+
+    # Consistency = How many of the last 4 *years* had positive EPS growth
+    eps_a_col = pd.to_numeric(a_df.tail(4).get("eps_growth_pct", pd.Series(dtype=float)), errors="coerce")
+    quarters_of_growth = int((eps_a_col > 0).sum())
+
+    synthetic_row = {
+        "fmi_rev_acceleration":   rev_accel,
+        "fmi_eps_acceleration":   eps_accel,
+        "fmi_margin_trend":       margin_trend,
+        "fmi_quarters_of_growth": quarters_of_growth,  # Reusing this var to mean 'periods of growth'
+    }
+    return compute_fmi_details(synthetic_row)
+
+
+def get_fmi_label(score: int) -> str:
+    """Maps an FMI score to a human-readable momentum label."""
+    if score >= 75: return "Accelerating"
+    if score >= 55: return "Improving"
+    if score >= 40: return "Stable"
+    if score >= 25: return "Decelerating"
+    return "Contracting"
+
+
 def get_macro_regime(macro_data: dict) -> str:
     """
     Derives the current macro regime from live market data.
