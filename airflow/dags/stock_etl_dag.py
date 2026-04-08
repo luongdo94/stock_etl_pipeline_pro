@@ -1,6 +1,7 @@
 # airflow/dags/stock_etl_dag.py
 from airflow import DAG
 from airflow.operators.python import PythonOperator, BranchPythonOperator
+from airflow.operators.bash   import BashOperator
 from airflow.operators.email  import EmailOperator
 from airflow.utils.dates      import days_ago
 from datetime import timedelta
@@ -55,11 +56,22 @@ loads into DuckDB, and runs dbt-style transformations.
 
     def _validate(**context):
         import pandas as pd
+        # 1. Validate Daily Prices
         prices_df = pd.read_parquet("/tmp/prices.parquet")
-        assert not prices_df.empty
-        assert prices_df["close"].gt(0).all()
+        assert not prices_df.empty, "❌ Prices dataframe is empty!"
+        assert prices_df["close"].gt(0).all(), "❌ Zero/Negative closing price detected!"
+        
+        # 2. Validate Financials (Revenue > 0)
+        annual_df = pd.read_parquet("/tmp/fin_annual.parquet")
+        if not annual_df.empty:
+            assert annual_df["revenue"].gt(0).all(), "❌ Zero/Negative ANNUAL revenue detected!"
+            
+        quarterly_df = pd.read_parquet("/tmp/fin_quarterly.parquet")
+        if not quarterly_df.empty:
+            assert quarterly_df["revenue"].gt(0).all(), "❌ Zero/Negative QUARTERLY revenue detected!"
+            
         row_count = context["ti"].xcom_pull(task_ids="extract", key="row_count")
-        return f"Validated {row_count} rows"
+        return f"Validated {row_count} rows and financials."
 
     def _load(**context):
         import pandas as pd
@@ -114,8 +126,15 @@ loads into DuckDB, and runs dbt-style transformations.
         trigger_rule = "none_failed_min_one_success",
     )
 
+    # ── New: Pre-flight Code Validation ──────────────────
+    t_test_code = BashOperator(
+        task_id      = "test_code_quality",
+        bash_command = "cd /opt/project && python3 -m pytest tests/",
+        doc_md       = "Runs all unit tests (pytest) before data extraction.",
+    )
+
     # ── Task Dependencies ────────────────────────────
-    t_extract >> t_validate >> t_load >> t_branch
+    t_test_code >> t_extract >> t_validate >> t_load >> t_branch
     t_branch  >> [t_transform, t_skip]
     t_transform >> t_report >> t_prep_mail
     [t_prep_mail, t_skip] >> t_notify

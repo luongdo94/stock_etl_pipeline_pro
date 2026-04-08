@@ -16,14 +16,15 @@ class TestDuckDBConnection:
         conn = duckdb.connect(':memory:')
         create_raw_schema(conn)
         
-        # Verify tables exist
-        tables = conn.execute("SHOW TABLES").fetchall()
-        table_names = [t[0] for t in tables]
+        # Verify tables exist in the 'raw' schema
+        tables = conn.execute("SHOW ALL TABLES").fetchall()
+        # 'SHOW ALL TABLES' returns (database, schema, name, column_count, ...)
+        table_names = [f"{t[1]}.{t[2]}" for t in tables]
         
-        assert 'stock_prices' in table_names
-        assert 'company_info' in table_names
-        assert 'historical_financials' in table_names
-        assert 'quarterly_financials' in table_names
+        assert 'raw.stock_prices' in table_names
+        assert 'raw.company_info' in table_names
+        assert 'raw.historical_financials' in table_names
+        assert 'raw.quarterly_financials' in table_names
         
         conn.close()
     

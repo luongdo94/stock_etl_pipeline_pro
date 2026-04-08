@@ -21,3 +21,5 @@ transformers
 sentencepiece
 protobuf
 shap
+pytest
+pytest-mock

@@ -14,6 +14,17 @@ _WAREHOUSE_DIR = Path(__file__).parent.parent / "warehouse"
 DB_PATH = str(_WAREHOUSE_DIR / "stock_dw.duckdb")
 SHADOW_DB_PATH = str(_WAREHOUSE_DIR / "stock_dw_shadow.duckdb")
 
+def _table_exists(conn: duckdb.DuckDBPyConnection, schema: str, table: str) -> bool:
+    """Check if a table/view exists in the given schema."""
+    try:
+        result = conn.execute(
+            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=? AND table_name=?",
+            [schema, table]
+        ).fetchone()
+        return result[0] > 0
+    except Exception:
+        return False
+
 def _connect_with_retries(retries: int, delay: float, use_shadow: bool) -> duckdb.DuckDBPyConnection:
     """Internal connection logic with retry backoff."""
     _WAREHOUSE_DIR.mkdir(parents=True, exist_ok=True)
@@ -90,7 +101,6 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
             employees       INTEGER,
             country         VARCHAR,
             currency        VARCHAR,
-            free_cashflow   BIGINT,
             total_debt      BIGINT,
             ebitda          BIGINT,
             gross_margin    DOUBLE,
@@ -98,6 +108,7 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
             trailing_eps    DOUBLE,
             forward_eps     DOUBLE,
             roe             DOUBLE,
+            free_cashflow   DOUBLE,
             price_to_book   DOUBLE,
             beta            DOUBLE,
             target_mean_price DOUBLE,
@@ -253,19 +264,79 @@ def load_company_info(
     Writes to a staging table first; only swaps into production on full success.
     Uses atomic RENAME to avoid data loss on failure.
     """
+    if df.empty:
+        logger.warning("  ⚠️ No company info data to load — skipping atomic swap")
+        return
+
     conn.execute("BEGIN TRANSACTION")
     try:
-        conn.execute("CREATE TABLE raw.company_info_new AS SELECT * FROM raw.company_info LIMIT 0")
+        # 1. Start with the standard fixed schema to prevent columns vanishing (Bug #3)
+        conn.execute("DROP TABLE IF EXISTS raw.company_info_new")
+        conn.execute("""
+            CREATE TABLE raw.company_info_new (
+                ticker          VARCHAR PRIMARY KEY,
+                company         VARCHAR,
+                sector          VARCHAR,
+                region          VARCHAR,
+                market_cap      BIGINT,
+                pe_ratio        DOUBLE,
+                forward_pe      DOUBLE,
+                revenue_ttm     BIGINT,
+                employees       INTEGER,
+                country         VARCHAR,
+                currency        VARCHAR,
+                total_debt      BIGINT,
+                ebitda          BIGINT,
+                gross_margin    DOUBLE,
+                operating_margin DOUBLE,
+                trailing_eps    DOUBLE,
+                forward_eps     DOUBLE,
+                roe             DOUBLE,
+                free_cashflow   DOUBLE,
+                price_to_book   DOUBLE,
+                beta            DOUBLE,
+                target_mean_price DOUBLE,
+                recommendation_key VARCHAR,
+                peg_ratio       DOUBLE,
+                price_to_sales  DOUBLE,
+                ev_to_ebitda    DOUBLE,
+                revenue_growth  DOUBLE,
+                earnings_growth DOUBLE,
+                current_ratio   DOUBLE,
+                quick_ratio     DOUBLE,
+                debt_to_equity  DOUBLE,
+                short_ratio     DOUBLE,
+                short_percent_of_float DOUBLE,
+                inst_ownership  DOUBLE,
+                insider_ownership DOUBLE,
+                _extracted_at   TIMESTAMP,
+                dividend_yield  DOUBLE,
+                _loaded_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # 2. Register and Insert into the rigid schema
         conn.register("df_tmp", df)
-        conn.execute("INSERT INTO raw.company_info_new SELECT *, CURRENT_TIMESTAMP FROM df_tmp")
+        
+        # We explicitly list columns to ensure correct mapping even if yfinance columns change order
+        cols = [c for c in df.columns if c != "_loaded_at"]
+        col_list = ", ".join(cols)
+        conn.execute(f"INSERT INTO raw.company_info_new ({col_list}) SELECT {col_list} FROM df_tmp")
         conn.unregister("df_tmp")
-        conn.execute("ALTER TABLE raw.company_info RENAME TO company_info_old")
-        conn.execute("ALTER TABLE raw.company_info_new RENAME TO company_info")
-        conn.execute("DROP TABLE raw.company_info_old")
+
+        # 3. Atomic swap: handle existing table upgrade
+        if _table_exists(conn, "raw", "company_info"):
+            conn.execute("DROP TABLE IF EXISTS raw.company_info_old")
+            conn.execute("ALTER TABLE raw.company_info RENAME TO company_info_old")
+            conn.execute("ALTER TABLE raw.company_info_new RENAME TO company_info")
+            conn.execute("DROP TABLE raw.company_info_old")
+        else:
+            conn.execute("ALTER TABLE raw.company_info_new RENAME TO company_info")
+            
         conn.execute("COMMIT")
-        logger.info(f"✅ Loaded {len(df)} companies → raw.company_info (atomic swap)")
+        logger.info(f"✅ Loaded {len(df)} companies → raw.company_info (atomic swap with rigid schema)")
     except Exception as e:
-        conn.execute("ROLLBACK")
+        if conn: conn.execute("ROLLBACK")
         raise e
 
 def load_historical_financials(

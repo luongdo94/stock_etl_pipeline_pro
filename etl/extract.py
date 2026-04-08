@@ -271,7 +271,6 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
                 "employees":       info.get("fullTimeEmployees"),
                 "country":         info.get("country"),
                 "currency":        currency,
-                "free_cashflow":   norm_val(info.get("freeCashflow")),
                 "total_debt":      norm_val(info.get("totalDebt")),
                 "ebitda":          norm_val(info.get("ebitda")),
                 "gross_margin":    info.get("grossMargins"),
@@ -279,6 +278,7 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
                 "trailing_eps":    norm_val(info.get("trailingEps")),
                 "forward_eps":     norm_val(info.get("forwardEps")),
                 "roe":             info.get("returnOnEquity"),
+                "free_cashflow":   norm_val(info.get("freeCashflow")),
                 "price_to_book":   info.get("priceToBook"),
                 "beta":            info.get("beta"),
                 "target_mean_price": norm_val(info.get("targetMeanPrice")),
@@ -361,8 +361,7 @@ def extract_historical_financials(tickers: dict = TICKERS) -> pd.DataFrame:
             row_map = {
                 "total revenue": "revenue", 
                 "basic eps": "eps", 
-                "diluted eps": "eps_diluted",
-                "free cash flow": "free_cashflow"
+                "diluted eps": "eps_diluted"
             }
             df_fin = fin.T
             df_fin.columns = [str(c).lower() for c in df_fin.columns]
@@ -373,7 +372,7 @@ def extract_historical_financials(tickers: dict = TICKERS) -> pd.DataFrame:
             df_filtered.index.name = "date"
             df_filtered = df_filtered.reset_index()
             df_filtered = df_filtered.rename(columns=row_map)
-            for col in ["revenue", "eps", "eps_diluted", "free_cashflow"]:
+            for col in ["revenue", "eps", "eps_diluted"]:
                 if col in df_filtered.columns:
                     df_filtered[col] = df_filtered[col] * fx_rate
             df_filtered["ticker"] = ticker
@@ -431,8 +430,7 @@ def extract_quarterly_financials(tickers: dict = TICKERS) -> pd.DataFrame:
             row_map = {
                 "total revenue": "revenue", 
                 "basic eps": "eps", 
-                "diluted eps": "eps_diluted",
-                "free cash flow": "free_cashflow"
+                "diluted eps": "eps_diluted"
             }
             df_fin = fin.T
             df_fin.columns = [str(c).lower() for c in df_fin.columns]
@@ -443,7 +441,7 @@ def extract_quarterly_financials(tickers: dict = TICKERS) -> pd.DataFrame:
             df_filtered.index.name = "date"
             df_filtered = df_filtered.reset_index()
             df_filtered = df_filtered.rename(columns=row_map)
-            for col in ["revenue", "eps", "eps_diluted", "free_cashflow"]:
+            for col in ["revenue", "eps", "eps_diluted"]:
                 if col in df_filtered.columns:
                     df_filtered[col] = df_filtered[col] * fx_rate
             df_filtered["ticker"] = ticker

@@ -399,6 +399,456 @@
           "weight": 0.317
         }
       }
+    },
+    {
+      "ts": "2026-04-06T00:53:39",
+      "ticker": "GOOGL",
+      "horizon": 7,
+      "vix": 20.72,
+      "regime": "low_vix",
+      "anchor": "LSTM",
+      "models": {
+        "LSTM": {
+          "rmse": 39.36,
+          "mape": 15.27,
+          "weight": 0.365
+        },
+        "Transformer": {
+          "rmse": 48.27,
+          "mape": 16.98,
+          "weight": 0.298
+        },
+        "PatchTST": {
+          "rmse": 42.74,
+          "mape": 15.8,
+          "weight": 0.337
+        }
+      }
+    },
+    {
+      "ts": "2026-04-06T15:54:15",
+      "ticker": "AAPL",
+      "horizon": 7,
+      "vix": 20.65,
+      "regime": "low_vix",
+      "anchor": "Transformer",
+      "models": {
+        "LSTM": {
+          "rmse": 24.76,
+          "mape": 11.25,
+          "weight": 0.331
+        },
+        "Transformer": {
+          "rmse": 22.47,
+          "mape": 9.84,
+          "weight": 0.365
+        },
+        "PatchTST": {
+          "rmse": 27.03,
+          "mape": 11.7,
+          "weight": 0.303
+        }
+      }
+    },
+    {
+      "ts": "2026-04-06T15:54:44",
+      "ticker": "MRVL",
+      "horizon": 7,
+      "vix": 20.65,
+      "regime": "low_vix",
+      "anchor": "Transformer",
+      "models": {
+        "LSTM": {
+          "rmse": 12.53,
+          "mape": 12.59,
+          "weight": 0.375
+        },
+        "Transformer": {
+          "rmse": 11.79,
+          "mape": 12.13,
+          "weight": 0.39899999999999997
+        },
+        "PatchTST": {
+          "rmse": 20.86,
+          "mape": 19.47,
+          "weight": 0.226
+        }
+      }
+    },
+    {
+      "ts": "2026-04-06T22:07:18",
+      "ticker": "1810.HK",
+      "horizon": 7,
+      "vix": 20.0,
+      "regime": "low_vix",
+      "anchor": "LSTM",
+      "models": {
+        "LSTM": {
+          "rmse": 0.61,
+          "mape": 16.7,
+          "weight": 0.42700000000000005
+        },
+        "Transformer": {
+          "rmse": 0.99,
+          "mape": 22.1,
+          "weight": 0.262
+        },
+        "PatchTST": {
+          "rmse": 0.83,
+          "mape": 22.04,
+          "weight": 0.311
+        }
+      }
+    },
+    {
+      "ts": "2026-04-06T23:35:36",
+      "ticker": "META",
+      "horizon": 7,
+      "vix": 20.0,
+      "regime": "BEARISH / CAUTION",
+      "anchor": "Transformer",
+      "models": {
+        "LSTM": {
+          "rmse": 49.93,
+          "mape": 9.76,
+          "weight": 0.337
+        },
+        "Transformer": {
+          "rmse": 45.66,
+          "mape": 9.16,
+          "weight": 0.369
+        },
+        "PatchTST": {
+          "rmse": 57.27,
+          "mape": 10.29,
+          "weight": 0.294
+        }
+      }
+    },
+    {
+      "ts": "2026-04-07T13:09:45",
+      "ticker": "ELV",
+      "horizon": 7,
+      "vix": 20.0,
+      "regime": "BEARISH / CAUTION",
+      "anchor": "Transformer",
+      "models": {
+        "LSTM": {
+          "rmse": 101.23,
+          "mape": 39.68,
+          "weight": 0.321
+        },
+        "Transformer": {
+          "rmse": 95.26,
+          "mape": 36.82,
+          "weight": 0.341
+        },
+        "PatchTST": {
+          "rmse": 96.31,
+          "mape": 35.07,
+          "weight": 0.33799999999999997
+        }
+      }
+    },
+    {
+      "ts": "2026-04-07T13:25:12",
+      "ticker": "RWE.DE",
+      "horizon": 7,
+      "vix": 20.0,
+      "regime": "BEARISH / CAUTION",
+      "anchor": "Transformer",
+      "models": {
+        "LSTM": {
+          "rmse": 15.13,
+          "mape": 26.26,
+          "weight": 0.32299999999999995
+        },
+        "Transformer": {
+          "rmse": 13.68,
+          "mape": 20.89,
+          "weight": 0.358
+        },
+        "PatchTST": {
+          "rmse": 15.32,
+          "mape": 25.98,
+          "weight": 0.319
+        }
+      }
+    },
+    {
+      "ts": "2026-04-07T13:25:46",
+      "ticker": "RWE.DE",
+      "horizon": 7,
+      "vix": 20.0,
+      "regime": "BEARISH / CAUTION",
+      "anchor": "Transformer",
+      "models": {
+        "LSTM": {
+          "rmse": 15.13,
+          "mape": 26.26,
+          "weight": 0.32299999999999995
+        },
+        "Transformer": {
+          "rmse": 13.68,
+          "mape": 20.89,
+          "weight": 0.358
+        },
+        "PatchTST": {
+          "rmse": 15.32,
+          "mape": 25.98,
+          "weight": 0.319
+        }
+      }
+    },
+    {
+      "ts": "2026-04-07T15:45:35",
+      "ticker": "ZAL.DE",
+      "horizon": 7,
+      "vix": 20.0,
+      "regime": "BEARISH / CAUTION",
+      "anchor": "LSTM",
+      "models": {
+        "LSTM": {
+          "rmse": 5.96,
+          "mape": 28.93,
+          "weight": 0.365
+        },
+        "Transformer": {
+          "rmse": 6.8,
+          "mape": 32.91,
+          "weight": 0.32
+        },
+        "PatchTST": {
+          "rmse": 6.89,
+          "mape": 31.04,
+          "weight": 0.316
+        }
+      }
+    },
+    {
+      "ts": "2026-04-07T15:47:25",
+      "ticker": "UNH",
+      "horizon": 7,
+      "vix": 20.0,
+      "regime": "BEARISH / CAUTION",
+      "anchor": "LSTM",
+      "models": {
+        "LSTM": {
+          "rmse": 121.45,
+          "mape": 50.96,
+          "weight": 0.397
+        },
+        "Transformer": {
+          "rmse": 130.01,
+          "mape": 54.71,
+          "weight": 0.371
+        },
+        "PatchTST": {
+          "rmse": 207.8,
+          "mape": 83.91,
+          "weight": 0.23199999999999998
+        }
+      }
+    },
+    {
+      "ts": "2026-04-07T15:53:35",
+      "ticker": "ELV",
+      "horizon": 7,
+      "vix": 20.0,
+      "regime": "BEARISH / CAUTION",
+      "anchor": "Transformer",
+      "models": {
+        "LSTM": {
+          "rmse": 97.98,
+          "mape": 38.1,
+          "weight": 0.371
+        },
+        "Transformer": {
+          "rmse": 94.7,
+          "mape": 36.84,
+          "weight": 0.384
+        },
+        "PatchTST": {
+          "rmse": 147.8,
+          "mape": 56.19,
+          "weight": 0.24600000000000002
+        }
+      }
+    },
+    {
+      "ts": "2026-04-07T17:59:00",
+      "ticker": "PANW",
+      "horizon": 7,
+      "vix": 20.0,
+      "regime": "BEARISH / CAUTION",
+      "anchor": "LSTM",
+      "models": {
+        "LSTM": {
+          "rmse": 17.4,
+          "mape": 12.26,
+          "weight": 0.408
+        },
+        "Transformer": {
+          "rmse": 20.52,
+          "mape": 14.89,
+          "weight": 0.34600000000000003
+        },
+        "PatchTST": {
+          "rmse": 28.77,
+          "mape": 17.32,
+          "weight": 0.247
+        }
+      }
+    },
+    {
+      "ts": "2026-04-07T18:07:10",
+      "ticker": "PATH",
+      "horizon": 7,
+      "vix": 20.0,
+      "regime": "BEARISH / CAUTION",
+      "anchor": "LSTM",
+      "models": {
+        "LSTM": {
+          "rmse": 3.99,
+          "mape": 41.86,
+          "weight": 0.35
+        },
+        "Transformer": {
+          "rmse": 4.22,
+          "mape": 44.2,
+          "weight": 0.331
+        },
+        "PatchTST": {
+          "rmse": 4.39,
+          "mape": 38.81,
+          "weight": 0.319
+        }
+      }
+    },
+    {
+      "ts": "2026-04-07T18:18:39",
+      "ticker": "NKE",
+      "horizon": 7,
+      "vix": 20.0,
+      "regime": "BEARISH / CAUTION",
+      "anchor": "LSTM",
+      "models": {
+        "LSTM": {
+          "rmse": 18.47,
+          "mape": 45.37,
+          "weight": 0.358
+        },
+        "Transformer": {
+          "rmse": 18.63,
+          "mape": 45.73,
+          "weight": 0.355
+        },
+        "PatchTST": {
+          "rmse": 23.1,
+          "mape": 49.2,
+          "weight": 0.28600000000000003
+        }
+      }
+    },
+    {
+      "ts": "2026-04-07T18:19:59",
+      "ticker": "NKE",
+      "horizon": 7,
+      "vix": 20.0,
+      "regime": "BEARISH / CAUTION",
+      "anchor": "LSTM",
+      "models": {
+        "LSTM": {
+          "rmse": 18.47,
+          "mape": 45.37,
+          "weight": 0.358
+        },
+        "Transformer": {
+          "rmse": 18.63,
+          "mape": 45.73,
+          "weight": 0.355
+        },
+        "PatchTST": {
+          "rmse": 23.1,
+          "mape": 49.2,
+          "weight": 0.28600000000000003
+        }
+      }
+    },
+    {
+      "ts": "2026-04-08T11:43:56",
+      "ticker": "AAPL",
+      "horizon": 7,
+      "vix": 20.0,
+      "regime": "BEARISH / CAUTION",
+      "anchor": "PatchTST",
+      "models": {
+        "LSTM": {
+          "rmse": 25.9,
+          "mape": 11.77,
+          "weight": 0.263
+        },
+        "Transformer": {
+          "rmse": 21.47,
+          "mape": 9.49,
+          "weight": 0.317
+        },
+        "PatchTST": {
+          "rmse": 16.24,
+          "mape": 7.03,
+          "weight": 0.42
+        }
+      }
+    },
+    {
+      "ts": "2026-04-08T11:55:39",
+      "ticker": "AAPL",
+      "horizon": 7,
+      "vix": 20.0,
+      "regime": "BEARISH / CAUTION",
+      "anchor": "PatchTST",
+      "models": {
+        "LSTM": {
+          "rmse": 25.9,
+          "mape": 11.77,
+          "weight": 0.263
+        },
+        "Transformer": {
+          "rmse": 21.47,
+          "mape": 9.49,
+          "weight": 0.317
+        },
+        "PatchTST": {
+          "rmse": 16.24,
+          "mape": 7.03,
+          "weight": 0.42
+        }
+      }
+    },
+    {
+      "ts": "2026-04-08T11:57:38",
+      "ticker": "AAPL",
+      "horizon": 7,
+      "vix": 20.0,
+      "regime": "BEARISH / CAUTION",
+      "anchor": "PatchTST",
+      "models": {
+        "LSTM": {
+          "rmse": 25.9,
+          "mape": 11.77,
+          "weight": 0.263
+        },
+        "Transformer": {
+          "rmse": 21.47,
+          "mape": 9.49,
+          "weight": 0.317
+        },
+        "PatchTST": {
+          "rmse": 16.24,
+          "mape": 7.03,
+          "weight": 0.42
+        }
+      }
     }
   ]
 }

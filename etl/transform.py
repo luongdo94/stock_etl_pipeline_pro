@@ -53,8 +53,9 @@ def _create_staging(conn):
             CASE WHEN volume = 0 THEN TRUE ELSE FALSE END AS _is_zero_volume,
             _extracted_at
         FROM raw.stock_prices
-        -- Filter out invalid rows
+        -- Filter out invalid rows (including zero volume which causes DQ failure)
         WHERE close > 0
+          AND volume > 0
           AND date IS NOT NULL
           AND ticker IS NOT NULL
     """)
@@ -68,7 +69,6 @@ def _create_staging(conn):
             region,
             country,
             currency,
-            free_cashflow,
             total_debt,
             ebitda,
             gross_margin,
@@ -76,6 +76,7 @@ def _create_staging(conn):
             trailing_eps,
             forward_eps,
             roe,
+            free_cashflow,
             dividend_yield,
             price_to_book,
             beta,
@@ -115,7 +116,6 @@ def _create_staging(conn):
             EXTRACT(YEAR FROM date) AS year,
             revenue,
             eps,
-            free_cashflow,
             _loaded_at
         FROM raw.historical_financials
         WHERE ticker IS NOT NULL
@@ -191,7 +191,11 @@ def _create_intermediate(conn):
                 *,
                 -- Relative Strength (RS) = AvgGain / AvgLoss
                 -- RSI = 100 - (100 / (1 + RS))
-                ROUND(100 - (100 / (1 + NULLIF(avg_gain/NULLIF(avg_loss, 0), 0))), 2) AS rsi,
+                CASE 
+                    WHEN avg_loss = 0 THEN 100
+                    WHEN avg_gain = 0 THEN 0
+                    ELSE ROUND(100 - (100 / (1 + (avg_gain / avg_loss))), 2)
+                END AS rsi,
                 -- Volume moving average
                 ROUND(AVG(volume) OVER (w ROWS BETWEEN 19 PRECEDING AND CURRENT ROW), 0) AS volume_ma_20,
                 -- 52-week high/low
@@ -249,17 +253,12 @@ def _create_marts(conn):
             revenue,
             eps,
             eps_diluted,
-            free_cashflow,
             -- Calculate Growth
-            ROUND((revenue - LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(revenue) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS revenue_growth_qoq_pct,
-            ROUND((eps - LAG(eps) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(eps) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS eps_growth_qoq_pct,
-            ROUND((free_cashflow - LAG(free_cashflow) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(free_cashflow) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS fcf_growth_qoq_pct,
+            ROUND((revenue - LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS revenue_growth_qoq_pct,
+            ROUND((eps - LAG(eps) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(eps) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS eps_growth_qoq_pct,
             
-            ROUND((revenue - LAG(revenue, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(revenue, 4) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS revenue_growth_yoy_pct,
-            ROUND((eps - LAG(eps, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(eps, 4) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS eps_growth_yoy_pct,
-            ROUND((free_cashflow - LAG(free_cashflow, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(free_cashflow, 4) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS fcf_growth_yoy_pct,
-            -- Margins
-            ROUND(free_cashflow / NULLIF(revenue, 0) * 100, 2) AS fcf_margin
+            ROUND((revenue - LAG(revenue, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(revenue, 4) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS revenue_growth_yoy_pct,
+            ROUND((eps - LAG(eps, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(eps, 4) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS eps_growth_yoy_pct
         FROM raw.quarterly_financials
         ORDER BY ticker, date
     """)
@@ -269,12 +268,9 @@ def _create_marts(conn):
             ticker,
             EXTRACT(YEAR FROM date) AS year,
             date AS report_date,
-            revenue, eps, eps_diluted, free_cashflow,
-            ROUND((revenue - LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(revenue) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS revenue_growth_pct,
-            ROUND((eps - LAG(eps) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(eps) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS eps_growth_pct,
-            ROUND((free_cashflow - LAG(free_cashflow) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(free_cashflow) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS fcf_growth_pct,
-            -- Margins
-            ROUND(free_cashflow / NULLIF(revenue, 0) * 100, 2) AS fcf_margin
+            revenue, eps, eps_diluted,
+            ROUND((revenue - LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS revenue_growth_pct,
+            ROUND((eps - LAG(eps) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(eps) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS eps_growth_pct
         FROM raw.historical_financials
         ORDER BY ticker, year
     """)
@@ -327,7 +323,6 @@ def _create_marts(conn):
             forward_pe,
             revenue_ttm,
             employees,
-            free_cashflow,
             total_debt,
             ebitda,
             gross_margin,
@@ -352,7 +347,8 @@ def _create_marts(conn):
             short_percent_of_float,
             inst_ownership,
             insider_ownership,
-            ROUND(free_cashflow / NULLIF(revenue_ttm, 0) * 100, 2) AS fcf_margin,
+            -- 🏆 v3.0 Profitability: Self-calculated FCF Margin
+            ROUND((free_cashflow / NULLIF(revenue_ttm, 0)) * 100, 2) AS fcf_margin,
             -- 🏆 EXPERT: Historical Baselines (Joined from aggregates)
             b.avg_5y_price,
             b.std_dev_5y_price,
@@ -505,8 +501,8 @@ def _create_marts(conn):
             eps,
             eps_diluted,
             -- Calculate YoY Growth
-            ROUND((revenue - LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(revenue) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS revenue_growth_pct,
-            ROUND((eps - LAG(eps) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(eps) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS eps_growth_pct
+            ROUND((revenue - LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS revenue_growth_pct,
+            ROUND((eps - LAG(eps) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(eps) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS eps_growth_pct
         FROM raw.historical_financials
         ORDER BY ticker, year
     """)
@@ -523,11 +519,11 @@ def _create_marts(conn):
             eps,
             eps_diluted,
             -- Calculate QoQ Growth
-            ROUND((revenue - LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(revenue) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS revenue_growth_qoq_pct,
-            ROUND((eps - LAG(eps) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(eps) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS eps_growth_qoq_pct,
+            ROUND((revenue - LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS revenue_growth_qoq_pct,
+            ROUND((eps - LAG(eps) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(eps) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS eps_growth_qoq_pct,
             -- Calculate YoY Growth (lag 4 quarters)
-            ROUND((revenue - LAG(revenue, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(revenue, 4) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS revenue_growth_yoy_pct,
-            ROUND((eps - LAG(eps, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(eps, 4) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS eps_growth_yoy_pct
+            ROUND((revenue - LAG(revenue, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(revenue, 4) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS revenue_growth_yoy_pct,
+            ROUND((eps - LAG(eps, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(eps, 4) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS eps_growth_yoy_pct
         FROM raw.quarterly_financials
         ORDER BY ticker, date
     """)
@@ -538,9 +534,10 @@ def _create_marts(conn):
 def _run_data_quality_checks(conn):
     """
     Data Quality Tests (equivalent to dbt tests).
-    Raises an exception if any violation is found.
+    Differentiates between CRITICAL (Abort) and SOFT (Warning) failures.
     """
     checks = {
+        # --- CRITICAL: MUST PASS FOR TRADING LOGIC ---
         "fct_no_nulls_ticker": """
             SELECT COUNT(*) FROM marts.fct_daily_returns WHERE ticker IS NULL
         """,
@@ -558,17 +555,72 @@ def _run_data_quality_checks(conn):
                 HAVING cnt > 1
             )
         """,
+        "fct_no_zero_volume": """
+            SELECT COUNT(*) FROM marts.fct_daily_returns WHERE volume = 0
+        """,
+        # --- SOFT: SHOULD PASS BUT OK TO WARNING ---
+        "dim_no_null_revenue": """
+            SELECT COUNT(*) FROM marts.dim_companies 
+            WHERE (revenue_ttm IS NULL OR revenue_ttm < 0)
+              AND ticker NOT LIKE '^%' -- Indices naturally lack revenue
+        """,
+        "dim_no_null_market_cap": """
+            SELECT COUNT(*) FROM marts.dim_companies 
+            WHERE (market_cap IS NULL OR market_cap <= 0)
+              AND ticker NOT LIKE '^%' -- Indices naturally lack market cap
+        """,
+        "dim_no_null_fundamental_data": """
+            SELECT COUNT(*) FROM marts.dim_companies 
+            WHERE (roe IS NULL OR fcf_margin IS NULL)
+              AND ticker NOT LIKE '^%'
+        """,
     }
     
+    critical_checks = [
+        "fct_no_nulls_ticker", "fct_no_nulls_date", "fct_no_negative_price", 
+        "fct_unique_date_ticker", "fct_no_zero_volume"
+    ]
+    
+    # ── Phase 2: Professional DQ Persistence ──────────────────────────────────
+    conn.execute("CREATE SCHEMA IF NOT EXISTS marts")
+    conn.execute("""
+        CREATE OR REPLACE TABLE marts.dq_warnings (
+            check_name      VARCHAR,
+            violations      INTEGER,
+            status          VARCHAR,
+            is_critical     BOOLEAN,
+            checked_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     print("\n-- DATA QUALITY CHECKS ------------------------------------------")
-    all_passed = True
+    all_critical_passed = True
+    
     for check_name, query in checks.items():
         result = conn.execute(query).fetchone()[0]
-        status = "✅ PASS" if result == 0 else f"❌ FAIL ({result} violations)"
-        print(f"  {status}  {check_name}")
-        if result > 0:
-            all_passed = False
+        is_critical = check_name in critical_checks
+        
+        if result == 0:
+            status_txt = "✅ PASS"
+            status_db  = "PASS"
+        else:
+            if is_critical:
+                status_txt = f"❌ FAIL (CRITICAL: {result} violations)"
+                status_db  = "CRITICAL"
+                all_critical_passed = False
+            else:
+                status_txt = f"⚠️ WARN (SOFT: {result} violations)"
+                status_db  = "WARNING"
+                
+            # Log to DB for Dashboard consumption (Bug #4)
+            conn.execute("""
+                INSERT INTO marts.dq_warnings (check_name, violations, status, is_critical)
+                VALUES (?, ?, ?, ?)
+            """, [check_name, result, status_db, is_critical])
+        
+        print(f"  {status_txt:35s}  {check_name}")
     
-    if not all_passed:
-        raise ValueError("❌ Data quality checks failed! Pipeline aborted.")
-    print("  All checks passed!\n")
+    if not all_critical_passed:
+        raise ValueError("❌ CRITICAL Data quality checks failed! Pipeline aborted.")
+    
+    print("  Pipeline consistency verified! Fundamentals gaps logged to marts.dq_warnings.\n")

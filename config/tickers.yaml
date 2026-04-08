@@ -186,6 +186,10 @@ tickers:
     name: "Monolithic Power Systems, Inc."
     sector: "Semiconductors"
     region: "US"
+  QRVO:
+    name: "Qorvo, Inc."
+    sector: "Semiconductors"
+    region: "US"
 
   # US Healthcare & Biotech
   UNH:
@@ -234,6 +238,22 @@ tickers:
     region: "US"
   MOH:
     name: "Molina Healthcare"
+    sector: "Healthcare"
+    region: "US"
+  LLY:
+    name: "Eli Lilly and Company"
+    sector: "Healthcare"
+    region: "US"
+  AMGN:
+    name: "Amgen Inc."
+    sector: "Healthcare"
+    region: "US"
+  ISRG:
+    name: "Intuitive Surgical, Inc."
+    sector: "Healthcare"
+    region: "US"
+  BIIB:
+    name: "Biogen Inc."
     sector: "Healthcare"
     region: "US"
 
@@ -285,6 +305,14 @@ tickers:
   ADP:
     name: "Automatic Data Processing, Inc."
     sector: "Fintech"
+    region: "US"
+  CB:
+    name: "Chubb Limited"
+    sector: "Financials"
+    region: "US"
+  MCO:
+    name: "Moody's Corporation"
+    sector: "Financials"
     region: "US"
 
   # US Tech & Misc
@@ -435,6 +463,24 @@ tickers:
   LEU:
     name: "Centrus Energy Corp."
     sector: "Energy"
+    region: "US"
+  CVX:
+    name: "Chevron Corporation"
+    sector: "Energy"
+    region: "US"
+  OXY:
+    name: "Occidental Petroleum Corporation"
+    sector: "Energy"
+    region: "US"
+
+  # US Industrials
+  DE:
+    name: "Deere & Company"
+    sector: "Industrials"
+    region: "US"
+  BA:
+    name: "The Boeing Company"
+    sector: "Industrials"
     region: "US"
 
   # EU Tech

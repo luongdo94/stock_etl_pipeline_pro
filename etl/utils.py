@@ -73,8 +73,8 @@ def compute_score_details(row) -> dict:
         "Profitability": 0,         # FCF Margin, ROE         — Max 25 (or 30 for Tech)
         "Financial Health": 0,      # Debt/EBITDA             — Max 15
         "Net Payout Yield": 0,      # Dividend + Buyback      — Max 10 (or 5 for Tech cap)
-        "Context & Momentum": 0,    # Z-Score, RSI, MA Signal — Max 20
-        "Analyst Estimates": 0,     # Upside & Consensus      — Max 10
+        "Context & Momentum": 0,    # Z-Score, RSI, MA Signal — Max 25
+        "Analyst Estimates": 0,     # Upside & Consensus      — Max 5
         "Red Flags": 0              # Hard penalties          — (Negative only)
     }
 
@@ -164,33 +164,33 @@ def compute_score_details(row) -> dict:
     rsi = get_num("rsi", 50) or 50
     z   = get_num("price_z_score", 0) or 0
 
-    if "BULL" in sig:       categories["Context & Momentum"] += 10
+    if "BULL" in sig:       categories["Context & Momentum"] += 12
     elif "NEUTRAL" in sig:  categories["Context & Momentum"] += 4
 
     # RSI: ideal buy zone 35-60, penalise overbought (>75) smoothly
     if 35 <= rsi <= 60:
-        categories["Context & Momentum"] += 10
+        categories["Context & Momentum"] += 12
     elif rsi > 60:
         categories["Context & Momentum"] += max(0, np.interp(rsi, [60, 75, 90], [8, 0, -5]))
     else:
         categories["Context & Momentum"] += np.interp(rsi, [20, 35], [0, 5])
 
     # Z-Score bonus/penalty
-    categories["Context & Momentum"] += np.interp(z, [-3, -1.5, 0, 1.8, 3], [5, 5, 0, -3, -5])
+    categories["Context & Momentum"] += np.interp(z, [-3, -1.5, 0, 1.8, 3], [6, 6, 0, -3, -5])
 
-    categories["Context & Momentum"] = max(0, min(int(round(categories["Context & Momentum"])), 20))
+    categories["Context & Momentum"] = max(0, min(int(round(categories["Context & Momentum"])), 25))
 
     # ── 6. ANALYST ESTIMATES (Max 10) — smooth upside scoring ─────────────────
     upside_raw = row.get("upside_pct", 0)
     upside = float(upside_raw) if pd.notnull(upside_raw) else 0
     consensus = str(row.get("recommendation_key", "") or "").lower()
 
-    categories["Analyst Estimates"] += np.interp(upside, [0, 5, 15, 30, 50], [0, 2, 5, 6, 6])
+    categories["Analyst Estimates"] += np.interp(upside, [0, 5, 15, 30, 50], [0, 1, 1.5, 2.5, 3])
 
-    if "strong buy" in consensus: categories["Analyst Estimates"] += 4
-    elif "buy"      in consensus: categories["Analyst Estimates"] += 2
+    if "strong buy" in consensus: categories["Analyst Estimates"] += 2
+    elif "buy"      in consensus: categories["Analyst Estimates"] += 1
 
-    categories["Analyst Estimates"] = min(int(round(categories["Analyst Estimates"])), 10)
+    categories["Analyst Estimates"] = min(int(round(categories["Analyst Estimates"])), 5)
 
     # ── 7. RED FLAGS (Instant penalties) ──────────────────────────────────────
     rev_growth = get_num("revenue_growth", 0) or 0
@@ -198,20 +198,20 @@ def compute_score_details(row) -> dict:
         if rev_growth * 100 > 25:
             categories["Red Flags"] -= 5   # Growth exception
         else:
-            categories["Red Flags"] -= 20  # Unprofitable no-growth
+            categories["Red Flags"] -= 10  # Unprofitable no-growth (Reduced from -20)
 
     if not is_financial_utility and ratio > 10.0 and ratio != 999:
-        categories["Red Flags"] -= 15  # Debt crisis
+        categories["Red Flags"] -= 10  # Debt crisis (Reduced from -15)
 
     if z < -1.5 and ("sell" in consensus or "underperform" in consensus):
-        categories["Red Flags"] -= 10  # Value trap
+        categories["Red Flags"] -= 5   # Value trap (Reduced from -10)
 
     # ── v3.0: BETA RISK ADJUSTMENT ────────────────────────────────────────────
     beta = get_num("beta", None)
     if beta is not None:
         if beta > 1.8:
-            # High-volatility penalty (smooth, max -8)
-            categories["Red Flags"] -= int(round(np.interp(beta, [1.8, 2.5, 3.5], [3, 6, 8])))
+            # High-volatility penalty (smooth, max -5 per user request)
+            categories["Red Flags"] -= int(round(np.interp(beta, [1.8, 2.5, 3.5], [1, 3, 5])))
         elif beta < 0.8 and not is_tech_growth:
             # Defensive bonus: low-beta, non-tech stocks (e.g. Utilities, Consumer Staples)
             categories["Red Flags"] += int(round(np.interp(beta, [0.0, 0.4, 0.8], [5, 5, 2])))
@@ -446,7 +446,7 @@ def apply_macro_adjustment(score: int, sector: str, regime: str) -> int:
 
 def get_action(score: int) -> str:
     """Maps a quality score to a trading action label."""
-    if score >= 70: return "🚀 STRONG BUY"
+    if score >= 75: return "🚀 STRONG BUY"
     if score >= 55: return "✅ BUY"
     if score >= 35: return "🟡 HOLD"
     return "🔴 SELL"

@@ -1,0 +1,1247 @@
+diff --git a/airflow/dags/stock_etl_dag.py b/airflow/dags/stock_etl_dag.py
+index 4ee6f46..3e0e436 100644
+--- a/airflow/dags/stock_etl_dag.py
++++ b/airflow/dags/stock_etl_dag.py
+@@ -1,6 +1,7 @@
+ # airflow/dags/stock_etl_dag.py
+ from airflow import DAG
+ from airflow.operators.python import PythonOperator, BranchPythonOperator
++from airflow.operators.bash   import BashOperator
+ from airflow.operators.email  import EmailOperator
+ from airflow.utils.dates      import days_ago
+ from datetime import timedelta
+@@ -55,11 +56,22 @@ loads into DuckDB, and runs dbt-style transformations.
+ 
+     def _validate(**context):
+         import pandas as pd
++        # 1. Validate Daily Prices
+         prices_df = pd.read_parquet("/tmp/prices.parquet")
+-        assert not prices_df.empty
+-        assert prices_df["close"].gt(0).all()
++        assert not prices_df.empty, "❌ Prices dataframe is empty!"
++        assert prices_df["close"].gt(0).all(), "❌ Zero/Negative closing price detected!"
++        
++        # 2. Validate Financials (Revenue > 0)
++        annual_df = pd.read_parquet("/tmp/fin_annual.parquet")
++        if not annual_df.empty:
++            assert annual_df["revenue"].gt(0).all(), "❌ Zero/Negative ANNUAL revenue detected!"
++            
++        quarterly_df = pd.read_parquet("/tmp/fin_quarterly.parquet")
++        if not quarterly_df.empty:
++            assert quarterly_df["revenue"].gt(0).all(), "❌ Zero/Negative QUARTERLY revenue detected!"
++            
+         row_count = context["ti"].xcom_pull(task_ids="extract", key="row_count")
+-        return f"Validated {row_count} rows"
++        return f"Validated {row_count} rows and financials."
+ 
+     def _load(**context):
+         import pandas as pd
+@@ -114,8 +126,15 @@ loads into DuckDB, and runs dbt-style transformations.
+         trigger_rule = "none_failed_min_one_success",
+     )
+ 
++    # ── New: Pre-flight Code Validation ──────────────────
++    t_test_code = BashOperator(
++        task_id      = "test_code_quality",
++        bash_command = "cd /opt/project && python3 -m pytest tests/",
++        doc_md       = "Runs all unit tests (pytest) before data extraction.",
++    )
++
+     # ── Task Dependencies ────────────────────────────
+-    t_extract >> t_validate >> t_load >> t_branch
++    t_test_code >> t_extract >> t_validate >> t_load >> t_branch
+     t_branch  >> [t_transform, t_skip]
+     t_transform >> t_report >> t_prep_mail
+     [t_prep_mail, t_skip] >> t_notify
+diff --git a/config/tickers.yaml b/config/tickers.yaml
+index b3f3ec2..b6db9b0 100644
+--- a/config/tickers.yaml
++++ b/config/tickers.yaml
+@@ -186,6 +186,10 @@ tickers:
+     name: "Monolithic Power Systems, Inc."
+     sector: "Semiconductors"
+     region: "US"
++  QRVO:
++    name: "Qorvo, Inc."
++    sector: "Semiconductors"
++    region: "US"
+ 
+   # US Healthcare & Biotech
+   UNH:
+@@ -236,6 +240,22 @@ tickers:
+     name: "Molina Healthcare"
+     sector: "Healthcare"
+     region: "US"
++  LLY:
++    name: "Eli Lilly and Company"
++    sector: "Healthcare"
++    region: "US"
++  AMGN:
++    name: "Amgen Inc."
++    sector: "Healthcare"
++    region: "US"
++  ISRG:
++    name: "Intuitive Surgical, Inc."
++    sector: "Healthcare"
++    region: "US"
++  BIIB:
++    name: "Biogen Inc."
++    sector: "Healthcare"
++    region: "US"
+ 
+   # US Fintech & Crypto
+   COIN:
+@@ -286,6 +306,14 @@ tickers:
+     name: "Automatic Data Processing, Inc."
+     sector: "Fintech"
+     region: "US"
++  CB:
++    name: "Chubb Limited"
++    sector: "Financials"
++    region: "US"
++  MCO:
++    name: "Moody's Corporation"
++    sector: "Financials"
++    region: "US"
+ 
+   # US Tech & Misc
+   BMNR:
+@@ -436,6 +464,24 @@ tickers:
+     name: "Centrus Energy Corp."
+     sector: "Energy"
+     region: "US"
++  CVX:
++    name: "Chevron Corporation"
++    sector: "Energy"
++    region: "US"
++  OXY:
++    name: "Occidental Petroleum Corporation"
++    sector: "Energy"
++    region: "US"
++
++  # US Industrials
++  DE:
++    name: "Deere & Company"
++    sector: "Industrials"
++    region: "US"
++  BA:
++    name: "The Boeing Company"
++    sector: "Industrials"
++    region: "US"
+ 
+   # EU Tech
+   SAP:
+diff --git a/etl/extract.py b/etl/extract.py
+index b6bbeb2..971edad 100644
+--- a/etl/extract.py
++++ b/etl/extract.py
+@@ -271,7 +271,6 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
+                 "employees":       info.get("fullTimeEmployees"),
+                 "country":         info.get("country"),
+                 "currency":        currency,
+-                "free_cashflow":   norm_val(info.get("freeCashflow")),
+                 "total_debt":      norm_val(info.get("totalDebt")),
+                 "ebitda":          norm_val(info.get("ebitda")),
+                 "gross_margin":    info.get("grossMargins"),
+@@ -279,6 +278,7 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
+                 "trailing_eps":    norm_val(info.get("trailingEps")),
+                 "forward_eps":     norm_val(info.get("forwardEps")),
+                 "roe":             info.get("returnOnEquity"),
++                "free_cashflow":   norm_val(info.get("freeCashflow")),
+                 "price_to_book":   info.get("priceToBook"),
+                 "beta":            info.get("beta"),
+                 "target_mean_price": norm_val(info.get("targetMeanPrice")),
+@@ -361,8 +361,7 @@ def extract_historical_financials(tickers: dict = TICKERS) -> pd.DataFrame:
+             row_map = {
+                 "total revenue": "revenue", 
+                 "basic eps": "eps", 
+-                "diluted eps": "eps_diluted",
+-                "free cash flow": "free_cashflow"
++                "diluted eps": "eps_diluted"
+             }
+             df_fin = fin.T
+             df_fin.columns = [str(c).lower() for c in df_fin.columns]
+@@ -373,7 +372,7 @@ def extract_historical_financials(tickers: dict = TICKERS) -> pd.DataFrame:
+             df_filtered.index.name = "date"
+             df_filtered = df_filtered.reset_index()
+             df_filtered = df_filtered.rename(columns=row_map)
+-            for col in ["revenue", "eps", "eps_diluted", "free_cashflow"]:
++            for col in ["revenue", "eps", "eps_diluted"]:
+                 if col in df_filtered.columns:
+                     df_filtered[col] = df_filtered[col] * fx_rate
+             df_filtered["ticker"] = ticker
+@@ -431,8 +430,7 @@ def extract_quarterly_financials(tickers: dict = TICKERS) -> pd.DataFrame:
+             row_map = {
+                 "total revenue": "revenue", 
+                 "basic eps": "eps", 
+-                "diluted eps": "eps_diluted",
+-                "free cash flow": "free_cashflow"
++                "diluted eps": "eps_diluted"
+             }
+             df_fin = fin.T
+             df_fin.columns = [str(c).lower() for c in df_fin.columns]
+@@ -443,7 +441,7 @@ def extract_quarterly_financials(tickers: dict = TICKERS) -> pd.DataFrame:
+             df_filtered.index.name = "date"
+             df_filtered = df_filtered.reset_index()
+             df_filtered = df_filtered.rename(columns=row_map)
+-            for col in ["revenue", "eps", "eps_diluted", "free_cashflow"]:
++            for col in ["revenue", "eps", "eps_diluted"]:
+                 if col in df_filtered.columns:
+                     df_filtered[col] = df_filtered[col] * fx_rate
+             df_filtered["ticker"] = ticker
+diff --git a/etl/load.py b/etl/load.py
+index 88605dc..db21c67 100644
+--- a/etl/load.py
++++ b/etl/load.py
+@@ -14,6 +14,17 @@ _WAREHOUSE_DIR = Path(__file__).parent.parent / "warehouse"
+ DB_PATH = str(_WAREHOUSE_DIR / "stock_dw.duckdb")
+ SHADOW_DB_PATH = str(_WAREHOUSE_DIR / "stock_dw_shadow.duckdb")
+ 
++def _table_exists(conn: duckdb.DuckDBPyConnection, schema: str, table: str) -> bool:
++    """Check if a table/view exists in the given schema."""
++    try:
++        result = conn.execute(
++            "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema=? AND table_name=?",
++            [schema, table]
++        ).fetchone()
++        return result[0] > 0
++    except Exception:
++        return False
++
+ def _connect_with_retries(retries: int, delay: float, use_shadow: bool) -> duckdb.DuckDBPyConnection:
+     """Internal connection logic with retry backoff."""
+     _WAREHOUSE_DIR.mkdir(parents=True, exist_ok=True)
+@@ -90,7 +101,6 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
+             employees       INTEGER,
+             country         VARCHAR,
+             currency        VARCHAR,
+-            free_cashflow   BIGINT,
+             total_debt      BIGINT,
+             ebitda          BIGINT,
+             gross_margin    DOUBLE,
+@@ -98,6 +108,7 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
+             trailing_eps    DOUBLE,
+             forward_eps     DOUBLE,
+             roe             DOUBLE,
++            free_cashflow   DOUBLE,
+             price_to_book   DOUBLE,
+             beta            DOUBLE,
+             target_mean_price DOUBLE,
+@@ -253,19 +264,79 @@ def load_company_info(
+     Writes to a staging table first; only swaps into production on full success.
+     Uses atomic RENAME to avoid data loss on failure.
+     """
++    if df.empty:
++        logger.warning("  ⚠️ No company info data to load — skipping atomic swap")
++        return
++
+     conn.execute("BEGIN TRANSACTION")
+     try:
+-        conn.execute("CREATE TABLE raw.company_info_new AS SELECT * FROM raw.company_info LIMIT 0")
++        # 1. Start with the standard fixed schema to prevent columns vanishing (Bug #3)
++        conn.execute("DROP TABLE IF EXISTS raw.company_info_new")
++        conn.execute("""
++            CREATE TABLE raw.company_info_new (
++                ticker          VARCHAR PRIMARY KEY,
++                company         VARCHAR,
++                sector          VARCHAR,
++                region          VARCHAR,
++                market_cap      BIGINT,
++                pe_ratio        DOUBLE,
++                forward_pe      DOUBLE,
++                revenue_ttm     BIGINT,
++                employees       INTEGER,
++                country         VARCHAR,
++                currency        VARCHAR,
++                total_debt      BIGINT,
++                ebitda          BIGINT,
++                gross_margin    DOUBLE,
++                operating_margin DOUBLE,
++                trailing_eps    DOUBLE,
++                forward_eps     DOUBLE,
++                roe             DOUBLE,
++                free_cashflow   DOUBLE,
++                price_to_book   DOUBLE,
++                beta            DOUBLE,
++                target_mean_price DOUBLE,
++                recommendation_key VARCHAR,
++                peg_ratio       DOUBLE,
++                price_to_sales  DOUBLE,
++                ev_to_ebitda    DOUBLE,
++                revenue_growth  DOUBLE,
++                earnings_growth DOUBLE,
++                current_ratio   DOUBLE,
++                quick_ratio     DOUBLE,
++                debt_to_equity  DOUBLE,
++                short_ratio     DOUBLE,
++                short_percent_of_float DOUBLE,
++                inst_ownership  DOUBLE,
++                insider_ownership DOUBLE,
++                _extracted_at   TIMESTAMP,
++                dividend_yield  DOUBLE,
++                _loaded_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
++            )
++        """)
++
++        # 2. Register and Insert into the rigid schema
+         conn.register("df_tmp", df)
+-        conn.execute("INSERT INTO raw.company_info_new SELECT *, CURRENT_TIMESTAMP FROM df_tmp")
++        
++        # We explicitly list columns to ensure correct mapping even if yfinance columns change order
++        cols = [c for c in df.columns if c != "_loaded_at"]
++        col_list = ", ".join(cols)
++        conn.execute(f"INSERT INTO raw.company_info_new ({col_list}) SELECT {col_list} FROM df_tmp")
+         conn.unregister("df_tmp")
+-        conn.execute("ALTER TABLE raw.company_info RENAME TO company_info_old")
+-        conn.execute("ALTER TABLE raw.company_info_new RENAME TO company_info")
+-        conn.execute("DROP TABLE raw.company_info_old")
++
++        # 3. Atomic swap: handle existing table upgrade
++        if _table_exists(conn, "raw", "company_info"):
++            conn.execute("DROP TABLE IF EXISTS raw.company_info_old")
++            conn.execute("ALTER TABLE raw.company_info RENAME TO company_info_old")
++            conn.execute("ALTER TABLE raw.company_info_new RENAME TO company_info")
++            conn.execute("DROP TABLE raw.company_info_old")
++        else:
++            conn.execute("ALTER TABLE raw.company_info_new RENAME TO company_info")
++            
+         conn.execute("COMMIT")
+-        logger.info(f"✅ Loaded {len(df)} companies → raw.company_info (atomic swap)")
++        logger.info(f"✅ Loaded {len(df)} companies → raw.company_info (atomic swap with rigid schema)")
+     except Exception as e:
+-        conn.execute("ROLLBACK")
++        if conn: conn.execute("ROLLBACK")
+         raise e
+ 
+ def load_historical_financials(
+diff --git a/etl/transform.py b/etl/transform.py
+index 03d5e60..d19703a 100644
+--- a/etl/transform.py
++++ b/etl/transform.py
+@@ -53,8 +53,9 @@ def _create_staging(conn):
+             CASE WHEN volume = 0 THEN TRUE ELSE FALSE END AS _is_zero_volume,
+             _extracted_at
+         FROM raw.stock_prices
+-        -- Filter out invalid rows
++        -- Filter out invalid rows (including zero volume which causes DQ failure)
+         WHERE close > 0
++          AND volume > 0
+           AND date IS NOT NULL
+           AND ticker IS NOT NULL
+     """)
+@@ -68,7 +69,6 @@ def _create_staging(conn):
+             region,
+             country,
+             currency,
+-            free_cashflow,
+             total_debt,
+             ebitda,
+             gross_margin,
+@@ -76,6 +76,7 @@ def _create_staging(conn):
+             trailing_eps,
+             forward_eps,
+             roe,
++            free_cashflow,
+             dividend_yield,
+             price_to_book,
+             beta,
+@@ -115,7 +116,6 @@ def _create_staging(conn):
+             EXTRACT(YEAR FROM date) AS year,
+             revenue,
+             eps,
+-            free_cashflow,
+             _loaded_at
+         FROM raw.historical_financials
+         WHERE ticker IS NOT NULL
+@@ -191,7 +191,11 @@ def _create_intermediate(conn):
+                 *,
+                 -- Relative Strength (RS) = AvgGain / AvgLoss
+                 -- RSI = 100 - (100 / (1 + RS))
+-                ROUND(100 - (100 / (1 + NULLIF(avg_gain/NULLIF(avg_loss, 0), 0))), 2) AS rsi,
++                CASE 
++                    WHEN avg_loss = 0 THEN 100
++                    WHEN avg_gain = 0 THEN 0
++                    ELSE ROUND(100 - (100 / (1 + (avg_gain / avg_loss))), 2)
++                END AS rsi,
+                 -- Volume moving average
+                 ROUND(AVG(volume) OVER (w ROWS BETWEEN 19 PRECEDING AND CURRENT ROW), 0) AS volume_ma_20,
+                 -- 52-week high/low
+@@ -249,17 +253,12 @@ def _create_marts(conn):
+             revenue,
+             eps,
+             eps_diluted,
+-            free_cashflow,
+             -- Calculate Growth
+-            ROUND((revenue - LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(revenue) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS revenue_growth_qoq_pct,
+-            ROUND((eps - LAG(eps) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(eps) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS eps_growth_qoq_pct,
+-            ROUND((free_cashflow - LAG(free_cashflow) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(free_cashflow) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS fcf_growth_qoq_pct,
++            ROUND((revenue - LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS revenue_growth_qoq_pct,
++            ROUND((eps - LAG(eps) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(eps) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS eps_growth_qoq_pct,
+             
+-            ROUND((revenue - LAG(revenue, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(revenue, 4) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS revenue_growth_yoy_pct,
+-            ROUND((eps - LAG(eps, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(eps, 4) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS eps_growth_yoy_pct,
+-            ROUND((free_cashflow - LAG(free_cashflow, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(free_cashflow, 4) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS fcf_growth_yoy_pct,
+-            -- Margins
+-            ROUND(free_cashflow / NULLIF(revenue, 0) * 100, 2) AS fcf_margin
++            ROUND((revenue - LAG(revenue, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(revenue, 4) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS revenue_growth_yoy_pct,
++            ROUND((eps - LAG(eps, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(eps, 4) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS eps_growth_yoy_pct
+         FROM raw.quarterly_financials
+         ORDER BY ticker, date
+     """)
+@@ -269,12 +268,9 @@ def _create_marts(conn):
+             ticker,
+             EXTRACT(YEAR FROM date) AS year,
+             date AS report_date,
+-            revenue, eps, eps_diluted, free_cashflow,
+-            ROUND((revenue - LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(revenue) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS revenue_growth_pct,
+-            ROUND((eps - LAG(eps) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(eps) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS eps_growth_pct,
+-            ROUND((free_cashflow - LAG(free_cashflow) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(free_cashflow) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS fcf_growth_pct,
+-            -- Margins
+-            ROUND(free_cashflow / NULLIF(revenue, 0) * 100, 2) AS fcf_margin
++            revenue, eps, eps_diluted,
++            ROUND((revenue - LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS revenue_growth_pct,
++            ROUND((eps - LAG(eps) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(eps) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS eps_growth_pct
+         FROM raw.historical_financials
+         ORDER BY ticker, year
+     """)
+@@ -327,7 +323,6 @@ def _create_marts(conn):
+             forward_pe,
+             revenue_ttm,
+             employees,
+-            free_cashflow,
+             total_debt,
+             ebitda,
+             gross_margin,
+@@ -352,7 +347,8 @@ def _create_marts(conn):
+             short_percent_of_float,
+             inst_ownership,
+             insider_ownership,
+-            ROUND(free_cashflow / NULLIF(revenue_ttm, 0) * 100, 2) AS fcf_margin,
++            -- 🏆 v3.0 Profitability: Self-calculated FCF Margin
++            ROUND((free_cashflow / NULLIF(revenue_ttm, 0)) * 100, 2) AS fcf_margin,
+             -- 🏆 EXPERT: Historical Baselines (Joined from aggregates)
+             b.avg_5y_price,
+             b.std_dev_5y_price,
+@@ -505,8 +501,8 @@ def _create_marts(conn):
+             eps,
+             eps_diluted,
+             -- Calculate YoY Growth
+-            ROUND((revenue - LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(revenue) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS revenue_growth_pct,
+-            ROUND((eps - LAG(eps) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(eps) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS eps_growth_pct
++            ROUND((revenue - LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS revenue_growth_pct,
++            ROUND((eps - LAG(eps) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(eps) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS eps_growth_pct
+         FROM raw.historical_financials
+         ORDER BY ticker, year
+     """)
+@@ -523,11 +519,11 @@ def _create_marts(conn):
+             eps,
+             eps_diluted,
+             -- Calculate QoQ Growth
+-            ROUND((revenue - LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(revenue) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS revenue_growth_qoq_pct,
+-            ROUND((eps - LAG(eps) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(eps) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS eps_growth_qoq_pct,
++            ROUND((revenue - LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS revenue_growth_qoq_pct,
++            ROUND((eps - LAG(eps) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(eps) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS eps_growth_qoq_pct,
+             -- Calculate YoY Growth (lag 4 quarters)
+-            ROUND((revenue - LAG(revenue, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(revenue, 4) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS revenue_growth_yoy_pct,
+-            ROUND((eps - LAG(eps, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(LAG(eps, 4) OVER (PARTITION BY ticker ORDER BY date), 0) * 100, 2) AS eps_growth_yoy_pct
++            ROUND((revenue - LAG(revenue, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(revenue, 4) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS revenue_growth_yoy_pct,
++            ROUND((eps - LAG(eps, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(eps, 4) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS eps_growth_yoy_pct
+         FROM raw.quarterly_financials
+         ORDER BY ticker, date
+     """)
+@@ -538,9 +534,10 @@ def _create_marts(conn):
+ def _run_data_quality_checks(conn):
+     """
+     Data Quality Tests (equivalent to dbt tests).
+-    Raises an exception if any violation is found.
++    Differentiates between CRITICAL (Abort) and SOFT (Warning) failures.
+     """
+     checks = {
++        # --- CRITICAL: MUST PASS FOR TRADING LOGIC ---
+         "fct_no_nulls_ticker": """
+             SELECT COUNT(*) FROM marts.fct_daily_returns WHERE ticker IS NULL
+         """,
+@@ -558,17 +555,72 @@ def _run_data_quality_checks(conn):
+                 HAVING cnt > 1
+             )
+         """,
++        "fct_no_zero_volume": """
++            SELECT COUNT(*) FROM marts.fct_daily_returns WHERE volume = 0
++        """,
++        # --- SOFT: SHOULD PASS BUT OK TO WARNING ---
++        "dim_no_null_revenue": """
++            SELECT COUNT(*) FROM marts.dim_companies 
++            WHERE (revenue_ttm IS NULL OR revenue_ttm < 0)
++              AND ticker NOT LIKE '^%' -- Indices naturally lack revenue
++        """,
++        "dim_no_null_market_cap": """
++            SELECT COUNT(*) FROM marts.dim_companies 
++            WHERE (market_cap IS NULL OR market_cap <= 0)
++              AND ticker NOT LIKE '^%' -- Indices naturally lack market cap
++        """,
++        "dim_no_null_fundamental_data": """
++            SELECT COUNT(*) FROM marts.dim_companies 
++            WHERE (roe IS NULL OR fcf_margin IS NULL)
++              AND ticker NOT LIKE '^%'
++        """,
+     }
+     
++    critical_checks = [
++        "fct_no_nulls_ticker", "fct_no_nulls_date", "fct_no_negative_price", 
++        "fct_unique_date_ticker", "fct_no_zero_volume"
++    ]
++    
++    # ── Phase 2: Professional DQ Persistence ──────────────────────────────────
++    conn.execute("CREATE SCHEMA IF NOT EXISTS marts")
++    conn.execute("""
++        CREATE OR REPLACE TABLE marts.dq_warnings (
++            check_name      VARCHAR,
++            violations      INTEGER,
++            status          VARCHAR,
++            is_critical     BOOLEAN,
++            checked_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
++        )
++    """)
++
+     print("\n-- DATA QUALITY CHECKS ------------------------------------------")
+-    all_passed = True
++    all_critical_passed = True
++    
+     for check_name, query in checks.items():
+         result = conn.execute(query).fetchone()[0]
+-        status = "✅ PASS" if result == 0 else f"❌ FAIL ({result} violations)"
+-        print(f"  {status}  {check_name}")
+-        if result > 0:
+-            all_passed = False
++        is_critical = check_name in critical_checks
++        
++        if result == 0:
++            status_txt = "✅ PASS"
++            status_db  = "PASS"
++        else:
++            if is_critical:
++                status_txt = f"❌ FAIL (CRITICAL: {result} violations)"
++                status_db  = "CRITICAL"
++                all_critical_passed = False
++            else:
++                status_txt = f"⚠️ WARN (SOFT: {result} violations)"
++                status_db  = "WARNING"
++                
++            # Log to DB for Dashboard consumption (Bug #4)
++            conn.execute("""
++                INSERT INTO marts.dq_warnings (check_name, violations, status, is_critical)
++                VALUES (?, ?, ?, ?)
++            """, [check_name, result, status_db, is_critical])
++        
++        print(f"  {status_txt:35s}  {check_name}")
++    
++    if not all_critical_passed:
++        raise ValueError("❌ CRITICAL Data quality checks failed! Pipeline aborted.")
+     
+-    if not all_passed:
+-        raise ValueError("❌ Data quality checks failed! Pipeline aborted.")
+-    print("  All checks passed!\n")
++    print("  Pipeline consistency verified! Fundamentals gaps logged to marts.dq_warnings.\n")
+diff --git a/etl/utils.py b/etl/utils.py
+index 54339aa..5d51e3e 100644
+--- a/etl/utils.py
++++ b/etl/utils.py
+@@ -73,8 +73,8 @@ def compute_score_details(row) -> dict:
+         "Profitability": 0,         # FCF Margin, ROE         — Max 25 (or 30 for Tech)
+         "Financial Health": 0,      # Debt/EBITDA             — Max 15
+         "Net Payout Yield": 0,      # Dividend + Buyback      — Max 10 (or 5 for Tech cap)
+-        "Context & Momentum": 0,    # Z-Score, RSI, MA Signal — Max 20
+-        "Analyst Estimates": 0,     # Upside & Consensus      — Max 10
++        "Context & Momentum": 0,    # Z-Score, RSI, MA Signal — Max 25
++        "Analyst Estimates": 0,     # Upside & Consensus      — Max 5
+         "Red Flags": 0              # Hard penalties          — (Negative only)
+     }
+ 
+@@ -164,33 +164,33 @@ def compute_score_details(row) -> dict:
+     rsi = get_num("rsi", 50) or 50
+     z   = get_num("price_z_score", 0) or 0
+ 
+-    if "BULL" in sig:       categories["Context & Momentum"] += 10
++    if "BULL" in sig:       categories["Context & Momentum"] += 12
+     elif "NEUTRAL" in sig:  categories["Context & Momentum"] += 4
+ 
+     # RSI: ideal buy zone 35-60, penalise overbought (>75) smoothly
+     if 35 <= rsi <= 60:
+-        categories["Context & Momentum"] += 10
++        categories["Context & Momentum"] += 12
+     elif rsi > 60:
+         categories["Context & Momentum"] += max(0, np.interp(rsi, [60, 75, 90], [8, 0, -5]))
+     else:
+         categories["Context & Momentum"] += np.interp(rsi, [20, 35], [0, 5])
+ 
+     # Z-Score bonus/penalty
+-    categories["Context & Momentum"] += np.interp(z, [-3, -1.5, 0, 1.8, 3], [5, 5, 0, -3, -5])
++    categories["Context & Momentum"] += np.interp(z, [-3, -1.5, 0, 1.8, 3], [6, 6, 0, -3, -5])
+ 
+-    categories["Context & Momentum"] = max(0, min(int(round(categories["Context & Momentum"])), 20))
++    categories["Context & Momentum"] = max(0, min(int(round(categories["Context & Momentum"])), 25))
+ 
+     # ── 6. ANALYST ESTIMATES (Max 10) — smooth upside scoring ─────────────────
+     upside_raw = row.get("upside_pct", 0)
+     upside = float(upside_raw) if pd.notnull(upside_raw) else 0
+     consensus = str(row.get("recommendation_key", "") or "").lower()
+ 
+-    categories["Analyst Estimates"] += np.interp(upside, [0, 5, 15, 30, 50], [0, 2, 5, 6, 6])
++    categories["Analyst Estimates"] += np.interp(upside, [0, 5, 15, 30, 50], [0, 1, 1.5, 2.5, 3])
+ 
+-    if "strong buy" in consensus: categories["Analyst Estimates"] += 4
+-    elif "buy"      in consensus: categories["Analyst Estimates"] += 2
++    if "strong buy" in consensus: categories["Analyst Estimates"] += 2
++    elif "buy"      in consensus: categories["Analyst Estimates"] += 1
+ 
+-    categories["Analyst Estimates"] = min(int(round(categories["Analyst Estimates"])), 10)
++    categories["Analyst Estimates"] = min(int(round(categories["Analyst Estimates"])), 5)
+ 
+     # ── 7. RED FLAGS (Instant penalties) ──────────────────────────────────────
+     rev_growth = get_num("revenue_growth", 0) or 0
+@@ -198,20 +198,20 @@ def compute_score_details(row) -> dict:
+         if rev_growth * 100 > 25:
+             categories["Red Flags"] -= 5   # Growth exception
+         else:
+-            categories["Red Flags"] -= 20  # Unprofitable no-growth
++            categories["Red Flags"] -= 10  # Unprofitable no-growth (Reduced from -20)
+ 
+     if not is_financial_utility and ratio > 10.0 and ratio != 999:
+-        categories["Red Flags"] -= 15  # Debt crisis
++        categories["Red Flags"] -= 10  # Debt crisis (Reduced from -15)
+ 
+     if z < -1.5 and ("sell" in consensus or "underperform" in consensus):
+-        categories["Red Flags"] -= 10  # Value trap
++        categories["Red Flags"] -= 5   # Value trap (Reduced from -10)
+ 
+     # ── v3.0: BETA RISK ADJUSTMENT ────────────────────────────────────────────
+     beta = get_num("beta", None)
+     if beta is not None:
+         if beta > 1.8:
+-            # High-volatility penalty (smooth, max -8)
+-            categories["Red Flags"] -= int(round(np.interp(beta, [1.8, 2.5, 3.5], [3, 6, 8])))
++            # High-volatility penalty (smooth, max -5 per user request)
++            categories["Red Flags"] -= int(round(np.interp(beta, [1.8, 2.5, 3.5], [1, 3, 5])))
+         elif beta < 0.8 and not is_tech_growth:
+             # Defensive bonus: low-beta, non-tech stocks (e.g. Utilities, Consumer Staples)
+             categories["Red Flags"] += int(round(np.interp(beta, [0.0, 0.4, 0.8], [5, 5, 2])))
+@@ -446,7 +446,7 @@ def apply_macro_adjustment(score: int, sector: str, regime: str) -> int:
+ 
+ def get_action(score: int) -> str:
+     """Maps a quality score to a trading action label."""
+-    if score >= 70: return "🚀 STRONG BUY"
++    if score >= 75: return "🚀 STRONG BUY"
+     if score >= 55: return "✅ BUY"
+     if score >= 35: return "🟡 HOLD"
+     return "🔴 SELL"
+diff --git a/model_performance_log.json b/model_performance_log.json
+index 0efbbb2..1f9f623 100644
+--- a/model_performance_log.json
++++ b/model_performance_log.json
+@@ -399,6 +399,456 @@
+           "weight": 0.317
+         }
+       }
++    },
++    {
++      "ts": "2026-04-06T00:53:39",
++      "ticker": "GOOGL",
++      "horizon": 7,
++      "vix": 20.72,
++      "regime": "low_vix",
++      "anchor": "LSTM",
++      "models": {
++        "LSTM": {
++          "rmse": 39.36,
++          "mape": 15.27,
++          "weight": 0.365
++        },
++        "Transformer": {
++          "rmse": 48.27,
++          "mape": 16.98,
++          "weight": 0.298
++        },
++        "PatchTST": {
++          "rmse": 42.74,
++          "mape": 15.8,
++          "weight": 0.337
++        }
++      }
++    },
++    {
++      "ts": "2026-04-06T15:54:15",
++      "ticker": "AAPL",
++      "horizon": 7,
++      "vix": 20.65,
++      "regime": "low_vix",
++      "anchor": "Transformer",
++      "models": {
++        "LSTM": {
++          "rmse": 24.76,
++          "mape": 11.25,
++          "weight": 0.331
++        },
++        "Transformer": {
++          "rmse": 22.47,
++          "mape": 9.84,
++          "weight": 0.365
++        },
++        "PatchTST": {
++          "rmse": 27.03,
++          "mape": 11.7,
++          "weight": 0.303
++        }
++      }
++    },
++    {
++      "ts": "2026-04-06T15:54:44",
++      "ticker": "MRVL",
++      "horizon": 7,
++      "vix": 20.65,
++      "regime": "low_vix",
++      "anchor": "Transformer",
++      "models": {
++        "LSTM": {
++          "rmse": 12.53,
++          "mape": 12.59,
++          "weight": 0.375
++        },
++        "Transformer": {
++          "rmse": 11.79,
++          "mape": 12.13,
++          "weight": 0.39899999999999997
++        },
++        "PatchTST": {
++          "rmse": 20.86,
++          "mape": 19.47,
++          "weight": 0.226
++        }
++      }
++    },
++    {
++      "ts": "2026-04-06T22:07:18",
++      "ticker": "1810.HK",
++      "horizon": 7,
++      "vix": 20.0,
++      "regime": "low_vix",
++      "anchor": "LSTM",
++      "models": {
++        "LSTM": {
++          "rmse": 0.61,
++          "mape": 16.7,
++          "weight": 0.42700000000000005
++        },
++        "Transformer": {
++          "rmse": 0.99,
++          "mape": 22.1,
++          "weight": 0.262
++        },
++        "PatchTST": {
++          "rmse": 0.83,
++          "mape": 22.04,
++          "weight": 0.311
++        }
++      }
++    },
++    {
++      "ts": "2026-04-06T23:35:36",
++      "ticker": "META",
++      "horizon": 7,
++      "vix": 20.0,
++      "regime": "BEARISH / CAUTION",
++      "anchor": "Transformer",
++      "models": {
++        "LSTM": {
++          "rmse": 49.93,
++          "mape": 9.76,
++          "weight": 0.337
++        },
++        "Transformer": {
++          "rmse": 45.66,
++          "mape": 9.16,
++          "weight": 0.369
++        },
++        "PatchTST": {
++          "rmse": 57.27,
++          "mape": 10.29,
++          "weight": 0.294
++        }
++      }
++    },
++    {
++      "ts": "2026-04-07T13:09:45",
++      "ticker": "ELV",
++      "horizon": 7,
++      "vix": 20.0,
++      "regime": "BEARISH / CAUTION",
++      "anchor": "Transformer",
++      "models": {
++        "LSTM": {
++          "rmse": 101.23,
++          "mape": 39.68,
++          "weight": 0.321
++        },
++        "Transformer": {
++          "rmse": 95.26,
++          "mape": 36.82,
++          "weight": 0.341
++        },
++        "PatchTST": {
++          "rmse": 96.31,
++          "mape": 35.07,
++          "weight": 0.33799999999999997
++        }
++      }
++    },
++    {
++      "ts": "2026-04-07T13:25:12",
++      "ticker": "RWE.DE",
++      "horizon": 7,
++      "vix": 20.0,
++      "regime": "BEARISH / CAUTION",
++      "anchor": "Transformer",
++      "models": {
++        "LSTM": {
++          "rmse": 15.13,
++          "mape": 26.26,
++          "weight": 0.32299999999999995
++        },
++        "Transformer": {
++          "rmse": 13.68,
++          "mape": 20.89,
++          "weight": 0.358
++        },
++        "PatchTST": {
++          "rmse": 15.32,
++          "mape": 25.98,
++          "weight": 0.319
++        }
++      }
++    },
++    {
++      "ts": "2026-04-07T13:25:46",
++      "ticker": "RWE.DE",
++      "horizon": 7,
++      "vix": 20.0,
++      "regime": "BEARISH / CAUTION",
++      "anchor": "Transformer",
++      "models": {
++        "LSTM": {
++          "rmse": 15.13,
++          "mape": 26.26,
++          "weight": 0.32299999999999995
++        },
++        "Transformer": {
++          "rmse": 13.68,
++          "mape": 20.89,
++          "weight": 0.358
++        },
++        "PatchTST": {
++          "rmse": 15.32,
++          "mape": 25.98,
++          "weight": 0.319
++        }
++      }
++    },
++    {
++      "ts": "2026-04-07T15:45:35",
++      "ticker": "ZAL.DE",
++      "horizon": 7,
++      "vix": 20.0,
++      "regime": "BEARISH / CAUTION",
++      "anchor": "LSTM",
++      "models": {
++        "LSTM": {
++          "rmse": 5.96,
++          "mape": 28.93,
++          "weight": 0.365
++        },
++        "Transformer": {
++          "rmse": 6.8,
++          "mape": 32.91,
++          "weight": 0.32
++        },
++        "PatchTST": {
++          "rmse": 6.89,
++          "mape": 31.04,
++          "weight": 0.316
++        }
++      }
++    },
++    {
++      "ts": "2026-04-07T15:47:25",
++      "ticker": "UNH",
++      "horizon": 7,
++      "vix": 20.0,
++      "regime": "BEARISH / CAUTION",
++      "anchor": "LSTM",
++      "models": {
++        "LSTM": {
++          "rmse": 121.45,
++          "mape": 50.96,
++          "weight": 0.397
++        },
++        "Transformer": {
++          "rmse": 130.01,
++          "mape": 54.71,
++          "weight": 0.371
++        },
++        "PatchTST": {
++          "rmse": 207.8,
++          "mape": 83.91,
++          "weight": 0.23199999999999998
++        }
++      }
++    },
++    {
++      "ts": "2026-04-07T15:53:35",
++      "ticker": "ELV",
++      "horizon": 7,
++      "vix": 20.0,
++      "regime": "BEARISH / CAUTION",
++      "anchor": "Transformer",
++      "models": {
++        "LSTM": {
++          "rmse": 97.98,
++          "mape": 38.1,
++          "weight": 0.371
++        },
++        "Transformer": {
++          "rmse": 94.7,
++          "mape": 36.84,
++          "weight": 0.384
++        },
++        "PatchTST": {
++          "rmse": 147.8,
++          "mape": 56.19,
++          "weight": 0.24600000000000002
++        }
++      }
++    },
++    {
++      "ts": "2026-04-07T17:59:00",
++      "ticker": "PANW",
++      "horizon": 7,
++      "vix": 20.0,
++      "regime": "BEARISH / CAUTION",
++      "anchor": "LSTM",
++      "models": {
++        "LSTM": {
++          "rmse": 17.4,
++          "mape": 12.26,
++          "weight": 0.408
++        },
++        "Transformer": {
++          "rmse": 20.52,
++          "mape": 14.89,
++          "weight": 0.34600000000000003
++        },
++        "PatchTST": {
++          "rmse": 28.77,
++          "mape": 17.32,
++          "weight": 0.247
++        }
++      }
++    },
++    {
++      "ts": "2026-04-07T18:07:10",
++      "ticker": "PATH",
++      "horizon": 7,
++      "vix": 20.0,
++      "regime": "BEARISH / CAUTION",
++      "anchor": "LSTM",
++      "models": {
++        "LSTM": {
++          "rmse": 3.99,
++          "mape": 41.86,
++          "weight": 0.35
++        },
++        "Transformer": {
++          "rmse": 4.22,
++          "mape": 44.2,
++          "weight": 0.331
++        },
++        "PatchTST": {
++          "rmse": 4.39,
++          "mape": 38.81,
++          "weight": 0.319
++        }
++      }
++    },
++    {
++      "ts": "2026-04-07T18:18:39",
++      "ticker": "NKE",
++      "horizon": 7,
++      "vix": 20.0,
++      "regime": "BEARISH / CAUTION",
++      "anchor": "LSTM",
++      "models": {
++        "LSTM": {
++          "rmse": 18.47,
++          "mape": 45.37,
++          "weight": 0.358
++        },
++        "Transformer": {
++          "rmse": 18.63,
++          "mape": 45.73,
++          "weight": 0.355
++        },
++        "PatchTST": {
++          "rmse": 23.1,
++          "mape": 49.2,
++          "weight": 0.28600000000000003
++        }
++      }
++    },
++    {
++      "ts": "2026-04-07T18:19:59",
++      "ticker": "NKE",
++      "horizon": 7,
++      "vix": 20.0,
++      "regime": "BEARISH / CAUTION",
++      "anchor": "LSTM",
++      "models": {
++        "LSTM": {
++          "rmse": 18.47,
++          "mape": 45.37,
++          "weight": 0.358
++        },
++        "Transformer": {
++          "rmse": 18.63,
++          "mape": 45.73,
++          "weight": 0.355
++        },
++        "PatchTST": {
++          "rmse": 23.1,
++          "mape": 49.2,
++          "weight": 0.28600000000000003
++        }
++      }
++    },
++    {
++      "ts": "2026-04-08T11:43:56",
++      "ticker": "AAPL",
++      "horizon": 7,
++      "vix": 20.0,
++      "regime": "BEARISH / CAUTION",
++      "anchor": "PatchTST",
++      "models": {
++        "LSTM": {
++          "rmse": 25.9,
++          "mape": 11.77,
++          "weight": 0.263
++        },
++        "Transformer": {
++          "rmse": 21.47,
++          "mape": 9.49,
++          "weight": 0.317
++        },
++        "PatchTST": {
++          "rmse": 16.24,
++          "mape": 7.03,
++          "weight": 0.42
++        }
++      }
++    },
++    {
++      "ts": "2026-04-08T11:55:39",
++      "ticker": "AAPL",
++      "horizon": 7,
++      "vix": 20.0,
++      "regime": "BEARISH / CAUTION",
++      "anchor": "PatchTST",
++      "models": {
++        "LSTM": {
++          "rmse": 25.9,
++          "mape": 11.77,
++          "weight": 0.263
++        },
++        "Transformer": {
++          "rmse": 21.47,
++          "mape": 9.49,
++          "weight": 0.317
++        },
++        "PatchTST": {
++          "rmse": 16.24,
++          "mape": 7.03,
++          "weight": 0.42
++        }
++      }
++    },
++    {
++      "ts": "2026-04-08T11:57:38",
++      "ticker": "AAPL",
++      "horizon": 7,
++      "vix": 20.0,
++      "regime": "BEARISH / CAUTION",
++      "anchor": "PatchTST",
++      "models": {
++        "LSTM": {
++          "rmse": 25.9,
++          "mape": 11.77,
++          "weight": 0.263
++        },
++        "Transformer": {
++          "rmse": 21.47,
++          "mape": 9.49,
++          "weight": 0.317
++        },
++        "PatchTST": {
++          "rmse": 16.24,
++          "mape": 7.03,
++          "weight": 0.42
++        }
++      }
+     }
+   ]
+ }
+\ No newline at end of file
+diff --git a/requirements.txt b/requirements.txt
+index 4787e71..035d338 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -21,3 +21,5 @@ transformers
+ sentencepiece
+ protobuf
+ shap
++pytest
++pytest-mock
+diff --git a/test_mps.py b/test_mps.py
+deleted file mode 100644
+index 3cef152..0000000
+--- a/test_mps.py
++++ /dev/null
+@@ -1,26 +0,0 @@
+-import torch
+-import time
+-
+-device = torch.device('mps')
+-X = torch.randn(400, 90, 12).to(device)
+-y = torch.randn(400, 7).to(device)
+-
+-# Without device sync
+-start = time.time()
+-for _ in range(80):
+-    indices = torch.randperm(X.size(0), device=device)
+-    for start_idx in range(0, X.size(0), 128):
+-        idx = indices[start_idx:start_idx+128]
+-        X_b = X[idx]
+-torch.mps.synchronize()
+-print("With device:", time.time() - start)
+-
+-# With CPU sync
+-start = time.time()
+-for _ in range(80):
+-    indices = torch.randperm(X.size(0))
+-    for start_idx in range(0, X.size(0), 128):
+-        idx = indices[start_idx:start_idx+128]
+-        X_b = X[idx]
+-torch.mps.synchronize()
+-print("Without device (CPU sync):", time.time() - start)
+diff --git a/tests/test_extract.py b/tests/test_extract.py
+index 6a582f5..ae71e35 100644
+--- a/tests/test_extract.py
++++ b/tests/test_extract.py
+@@ -36,4 +36,4 @@ class TestGuessCurrency:
+         assert _guess_currency("NOVO.CO") == "DKK"
+     
+     def test_uk_ticker(self):
+-        assert _guess_currency("RR.L") == "USD"  # Default
++        assert _guess_currency("RR.L") == "GBP"
+diff --git a/tests/test_load.py b/tests/test_load.py
+index d8bf2fd..454dab2 100644
+--- a/tests/test_load.py
++++ b/tests/test_load.py
+@@ -16,14 +16,15 @@ class TestDuckDBConnection:
+         conn = duckdb.connect(':memory:')
+         create_raw_schema(conn)
+         
+-        # Verify tables exist
+-        tables = conn.execute("SHOW TABLES").fetchall()
+-        table_names = [t[0] for t in tables]
+-        
+-        assert 'stock_prices' in table_names
+-        assert 'company_info' in table_names
+-        assert 'historical_financials' in table_names
+-        assert 'quarterly_financials' in table_names
++        # Verify tables exist in the 'raw' schema
++        tables = conn.execute("SHOW ALL TABLES").fetchall()
++        # 'SHOW ALL TABLES' returns (database, schema, name, column_count, ...)
++        table_names = [f"{t[1]}.{t[2]}" for t in tables]
++        
++        assert 'raw.stock_prices' in table_names
++        assert 'raw.company_info' in table_names
++        assert 'raw.historical_financials' in table_names
++        assert 'raw.quarterly_financials' in table_names
+         
+         conn.close()
+     
+diff --git a/tmp_populate_earnings.py b/tmp_populate_earnings.py
+deleted file mode 100644
+index 68f3eb0..0000000
+--- a/tmp_populate_earnings.py
++++ /dev/null
+@@ -1,18 +0,0 @@
+-from etl.pipeline import run_pipeline
+-from etl.extract import extract_earnings_calendar
+-from etl.load import get_connection, load_earnings_calendar
+-import logging
+-
+-logging.basicConfig(level=logging.INFO)
+-
+-def populate_earnings():
+-    print("🚀 Populating Earnings Calendar for current tickers...")
+-    df = extract_earnings_calendar()
+-    print(f"✅ Extracted {len(df)} records.")
+-    
+-    with get_connection(use_shadow=False) as conn:
+-        load_earnings_calendar(conn, df)
+-    print("🎯 Done!")
+-
+-if __name__ == "__main__":
+-    populate_earnings()
+diff --git a/tmp_populate_earnings_safe.py b/tmp_populate_earnings_safe.py
+deleted file mode 100644
+index 3207c82..0000000
+--- a/tmp_populate_earnings_safe.py
++++ /dev/null
+@@ -1,29 +0,0 @@
+-from etl.extract import extract_earnings_calendar
+-from etl.load import get_connection, load_earnings_calendar, DB_PATH, SHADOW_DB_PATH, create_raw_schema
+-import logging
+-import os
+-import shutil
+-
+-logging.basicConfig(level=logging.INFO)
+-
+-def populate_earnings_safe():
+-    print("🚀 SAFE Populating Earnings Calendar...")
+-    # 1. Copy prod to shadow
+-    if os.path.exists(DB_PATH):
+-        shutil.copy2(DB_PATH, SHADOW_DB_PATH)
+-    
+-    # 2. Extract
+-    df = extract_earnings_calendar()
+-    
+-    # 3. Load to shadow
+-    with get_connection(use_shadow=True) as conn:
+-        create_raw_schema(conn)
+-        load_earnings_calendar(conn, df)
+-    
+-    # 4. Atomic Swap (will retry if locked)
+-    from etl.load import perform_atomic_swap
+-    perform_atomic_swap()
+-    print("🎯 Safe Population Done!")
+-
+-if __name__ == "__main__":
+-    populate_earnings_safe()
+diff --git a/warehouse/stock_data.duckdb b/warehouse/stock_data.duckdb
+deleted file mode 100644
+index 6d671b2..0000000
+Binary files a/warehouse/stock_data.duckdb and /dev/null differ
+diff --git a/warehouse/stock_dw.duckdb b/warehouse/stock_dw.duckdb
+index ceb81ff..af34611 100644
+Binary files a/warehouse/stock_dw.duckdb and b/warehouse/stock_dw.duckdb differ
+diff --git a/warehouse/stock_warehouse.db b/warehouse/stock_warehouse.db
+deleted file mode 100644
+index e69de29..0000000

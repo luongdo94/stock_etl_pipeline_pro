@@ -36,4 +36,4 @@ class TestGuessCurrency:
         assert _guess_currency("NOVO.CO") == "DKK"
     
     def test_uk_ticker(self):
-        assert _guess_currency("RR.L") == "USD"  # Default
+        assert _guess_currency("RR.L") == "GBP"
