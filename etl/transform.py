@@ -347,6 +347,7 @@ def _create_marts(conn):
             short_percent_of_float,
             inst_ownership,
             insider_ownership,
+            free_cashflow,
             -- 🏆 v3.0 Profitability: Self-calculated FCF Margin
             ROUND((free_cashflow / NULLIF(revenue_ttm, 0)) * 100, 2) AS fcf_margin,
             -- 🏆 EXPERT: Historical Baselines (Joined from aggregates)

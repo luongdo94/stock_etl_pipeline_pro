@@ -429,8 +429,12 @@ def load_data():
             ORDER BY f.date
         """).df()
 
-        companies_f = pd.read_sql("SELECT * FROM marts.dim_companies", conn)
-        monthly_f = pd.read_sql("SELECT * FROM marts.agg_monthly_performance ORDER BY month, ticker", conn)
+        companies_f = conn.execute("""
+            SELECT d.*, r.free_cashflow 
+            FROM marts.dim_companies d
+            LEFT JOIN raw.company_info r USING (ticker)
+        """).df()
+        monthly_f = conn.execute("SELECT * FROM marts.agg_monthly_performance ORDER BY month, ticker").df()
         annual_f = conn.execute("SELECT * FROM marts.dim_annual_financials").df()
         
         try:
@@ -1528,7 +1532,11 @@ if active_tab == "3. Decision Engine":
             _w52_zone = "🔴 Near Low" if _w52_pos < 20 else ("🟢 Near High" if _w52_pos > 80 else "🔵 Mid-Range")
 
             _stop_loss = _s1 * 0.96
-            _tp1       = _r1
+            
+            # Incorporate AI Ensemble Target if available
+            _global_ai_target = st.session_state.get(f"ai_target_for_de_{deep_ticker}")
+            _tp1       = float(_global_ai_target) if _global_ai_target is not None else float(_r1)
+            
             _tp2       = max(target_p, _r1 * 1.10) if target_p > 0 else _r1 * 1.10
 
             # 52-Week Position Meter
@@ -3937,7 +3945,7 @@ if active_tab == "4. Predictive Suite":
                     for i, f in enumerate(features): feat_imp_e[f] += weights[k] * float(imp_g[i]) * 100
                 feat_imp_e = {f: round(v, 1) for f, v in feat_imp_e.items()}
             except Exception: feat_imp_e = {f: round(100/n_feat, 1) for f in features}
-            metrics_dict = {k: {'RMSE': round(v['rmse'], 2), 'MAPE (%)': round(v['mape'], 2), 'Dir. Acc': f"{v['dir']*100:.0f}%", 'Weight': f"{weights[k]*100:.1f}%"} for k, v in results.items()}
+            metrics_dict = {k: {'RMSE': round(v['rmse'], 2), 'MAPE (%)': round(v['mape'], 2), 'Dir. Acc': f"{v['dir']*100:.0f}%", 'Weight': f"{weights[k]*100:.1f}%", 'Target': round(v['path'][-1], 2)} for k, v in results.items()}
             return blended, total_return_e, feat_imp_e, metrics_dict
         except Exception: return None, 0.0, {}, {}
 
@@ -4189,6 +4197,9 @@ if active_tab == "4. Predictive Suite":
         mcol1, mcol2, mcol3, mcol4 = st.columns(4)
         with mcol1:
             st.metric("AI Ensemble Target", f"€{lstm_path[-1]:.2f}" if lstm_path is not None else "N/A", delta=f"{lstm_return*100:.2f}%" if lstm_return else "N/A")
+            if lstm_path is not None:
+                st.session_state[f"ai_target_for_de_{fc_ticker}"] = float(lstm_path[-1])
+                st.caption(f"→ Synced to Decision Engine TP1")
         
         with mcol2:
             sent_label = "Bullish" if avg_sent > 0.1 else "Bearish" if avg_sent < -0.1 else "Neutral"
@@ -4205,11 +4216,17 @@ if active_tab == "4. Predictive Suite":
         with mcol4:
             if precision_score is not None:
                 p_val = f"{precision_score:.1f}%"
-                p_label = f"AI Precision ({forecast_days}d)"
+                p_label = f"AI Precision ({forecast_days}d Holdout)"
                 p_delta = f"±{mape_raw*100:.1f}% uncertainty" if mape_raw else None
             else:
-                p_val, p_label, p_delta = "N/A", "AI Precision", None
+                p_val, p_label, p_delta = "N/A", f"AI Precision ({forecast_days}d Holdout)", None
             st.metric(p_label, p_val, delta=p_delta)
+            
+        # Highlight divergence
+        if (sent_label == "Bearish" and sm_spirit == "Accumulation") or (sent_label == "Bullish" and sm_spirit == "Distribution"):
+            div_type = "BULLISH DIVERGENCE (Smart Money Accumulation vs Retail Fear)" if sent_label == "Bearish" else "BEARISH DIVERGENCE (Smart Money Distribution vs Retail Greed)"
+            div_color = "#2ecc71" if sent_label == "Bearish" else "#e74c3c"
+            st.markdown(f"<div style='margin-top:10px; padding:10px 15px; background:{div_color}11; border-left:4px solid {div_color}; border-radius:4px;'><b style='color:{div_color}; font-size:0.95rem;'>🚨 INSIGHT: {div_type}</b><br><span style='font-size:0.85rem; color:#ccc;'>Institutions are positioning contrary to retail news sentiment. This often precedes violent trend reversals.</span></div>", unsafe_allow_html=True)
 
         # ── ROW 3.5: Analysis & Logic (Moved Up) ──────────────────────────────
         render_header("activity", "AI Synergy & Reasoning Logic")
@@ -4324,7 +4341,8 @@ if active_tab == "4. Predictive Suite":
                         <td style='padding:8px 12px; font-weight:600;'>{icon_svg} {model_name}</td>
                         <td style='padding:8px 12px; text-align:center; color:#e74c3c;'>${m["RMSE"]}</td>
                         <td style='padding:8px 12px; text-align:center; color:#e67e22;'>{m["MAPE (%)"]:.1f}%</td>
-                        <td style='padding:8px 12px; text-align:center;'>{m["Dir. Acc"]}</td>
+                        <td style='padding:8px 12px; text-align:center;' title='0% happens when mean-reverting models predict flatlines during a trending test set.'>{m["Dir. Acc"]}</td>
+                        <td style='padding:8px 12px; text-align:center; font-weight:700; color:#f1c40f;'>€{m.get('Target', 0):.2f}</td>
                         <td style='padding:8px 12px; min-width:120px;'>
                             <div style='display:flex; align-items:center; gap:6px;'>
                                 <div style='background:{bar_color}; height:8px; border-radius:4px; width:{w_pct:.0f}%; max-width:80px;'></div>
@@ -4339,7 +4357,8 @@ if active_tab == "4. Predictive Suite":
                             <th style='padding:6px 12px; text-align:left;'>Model</th>
                             <th style='padding:6px 12px; text-align:center;'>RMSE ($)</th>
                             <th style='padding:6px 12px; text-align:center;'>MAPE</th>
-                            <th style='padding:6px 12px; text-align:center;'>Dir. Acc</th>
+                            <th style='padding:6px 12px; text-align:center;' title='Directional Accuracy evaluated on the holdout window'>Dir. Acc ({forecast_days}d Holdout) <span style='cursor:help;'>ⓘ</span></th>
+                            <th style='padding:6px 12px; text-align:center;'>Target Vote</th>
                             <th style='padding:6px 12px; text-align:left;'>Weight</th>
                         </tr>
                     </thead>
@@ -4347,6 +4366,7 @@ if active_tab == "4. Predictive Suite":
                 </table>
                 """, unsafe_allow_html=True)
                 st.caption("💡 Weight ∝ 1/RMSE — the model with the lowest error has the highest influence on the final forecast.")
+                st.markdown("<div style='font-size:0.85rem; color:#8899aa; margin-top:4px;'><b>Note on Dir. ACC 0%:</b> LSTM & Transformer are mathematically prone to 0% Directional Accuracy because they tend to output mean-reverting flatlines. If the real price trends slightly, the strict binary direction check fails. <b>PatchTST</b>, functioning as a structural forecaster, is more likely to yield 100% on trajectory direction.</div>", unsafe_allow_html=True)
 
             # ── Meta Intelligence Panel ──────────────────────────────────────
             with st.expander("🧪 Meta Intelligence — Anchor History & VIX Regime Analysis", expanded=False):
@@ -4389,6 +4409,67 @@ if active_tab == "4. Predictive Suite":
                                                    legend=dict(orientation="h", y=1.12))
                             st.plotly_chart(fig_meta, use_container_width=True)
                             st.caption("💡 Lower bar = more effective model in that market regime. Key question: Does LSTM or Transformer perform better during VIX spikes?")
+
+            # ── Actionable Matrix ──────────────────────────────────────────────
+            st.markdown("---")
+            render_header("target", "🚀 Actionable Master Plan")
+            
+            _upside_val = (lstm_return * 100) if lstm_return is not None else 0
+            
+            # Action logic
+            if _upside_val >= 5 and sm_spirit == "Accumulation":
+                _action_color = "#2ecc71" # Green
+                _action_title = "STRONG LONG / ACCUMULATE"
+                _action_text = "Confluence of AI upside and institutional buying. Buy on pullbacks to EMA20."
+            elif _upside_val > 0:
+                _action_color = "#f1c40f" # Yellow
+                _action_title = "HOLD / ADD ON DIPS"
+                _action_text = "Positive bias but lacking strong upside momentum. Hold existing, risk-managed."
+            elif _upside_val <= -2:
+                _action_color = "#e74c3c" # Red
+                _action_title = "REDUCE EXPOSURE / HEDGE"
+                _action_text = "AI predicts downside or sideways chop. Take profits, tighten stop losses, or hedge."
+            else:
+                _action_color = "#95a5a6" # Gray
+                _action_title = "NEUTRAL / WAIT"
+                _action_text = "Low directional conviction. Best to wait for a clearer trend breakout."
+
+            _vix_now = float(prices_full[prices_full['ticker']=='^VIX']['price_close'].iloc[-1]) if not prices_full[prices_full['ticker']=='^VIX'].empty else 20.0
+
+            if _vix_now > 25:
+                _strat_text = "Mean Reversion / Range Trading (High VIX)"
+            elif _vix_now < 15:
+                _strat_text = "Trend Following / Breakout (Low VIX)"
+            else:
+                _strat_text = "Selective / Stock Picker's Market"
+
+            _target_str = f"€{lstm_path[-1]:.2f}" if lstm_path is not None else "N/A"
+            try:
+                _stop_str = f"€{p10[-1]:.2f}"
+            except Exception:
+                _stop_str = "N/A"
+
+            st.markdown(f"""
+            <div style="display:flex; gap:15px; margin-top:10px;">
+                <div style="flex:1; background:rgba(46, 204, 113, 0.05); border:1px solid {{_action_color}}; border-radius:8px; padding:15px;">
+                    <span style="font-size:0.8rem; text-transform:uppercase; color:#8899aa; font-weight:700;">Suggested Action</span>
+                    <h3 style="color:{{_action_color}}; margin:5px 0px; font-size:1.3rem;">{{_action_title}}</h3>
+                    <p style="font-size:0.9rem; color:#ccc; margin:0;">{{_action_text}}</p>
+                </div>
+                <div style="flex:1; background:rgba(255, 255, 255, 0.03); border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:15px;">
+                    <span style="font-size:0.8rem; text-transform:uppercase; color:#8899aa; font-weight:700;">Key Levels</span>
+                    <h3 style="color:#00e5ff; margin:5px 0px; font-size:1.3rem;">🎯 Target: {{_target_str}}</h3>
+                    <p style="font-size:0.9rem; color:#e74c3c; margin:0; font-weight:600;">🛑 Risk Floor (Max Pain): {{_stop_str}}</p>
+                </div>
+                <div style="flex:1; background:rgba(255, 255, 255, 0.03); border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:15px;">
+                    <span style="font-size:0.8rem; text-transform:uppercase; color:#8899aa; font-weight:700;">Optimal Strategy Playbook</span>
+                    <h3 style="color:#f39c12; margin:5px 0px; font-size:1.1rem;">{{_strat_text}}</h3>
+                    <p style="font-size:0.85rem; color:#aaa; margin:0;">Retail Mode: {{sent_label}}</p>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            
+            st.markdown("<br>", unsafe_allow_html=True)
 
 
 # ── STRATEGY ENGINE ──────────────────────────────────────────────────────────
@@ -4524,19 +4605,46 @@ if active_tab == "5. Backtest Lab":
         # Move Mode Toggle OUTSIDE the form to trigger immediate UI rerun for 'disabled' logic
         bt_mode = st.radio("Simulation Mode", ["Single Strategy", "🏆 Find Best Strategy (Auto-Run All)"], index=0, horizontal=True)
         
+        # --- Market Regime Integration ---
+        st.markdown(f"""
+        <div style='background:rgba(255,255,255,0.03); border:1px solid {regime_ui_color}; 
+                    border-radius:6px; padding:8px 12px; margin-bottom:12px;'>
+            <span style='font-size:0.75rem; color:#aaa; font-weight:700; text-transform:uppercase;'>Global Market Regime</span><br>
+            <span style='color:{regime_ui_color}; font-weight:900;'>{regime}</span>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        _strat_options = [
+            "Institutional Quality Pulse (AI Score > 75)",
+            "Trend Following (MA20/50 Cross)", 
+            "RSI Mean Reversion (30/70)",
+            "Z-Score Mean Reversion (Deep Value)",
+            "Buy on Dip (Uptrend + Oversold)",
+            "Multi-Indicator Breakout (Price>MA50 + RSI>50)"
+        ]
+        
+        _rec_idx = 0
+        _rec_msg = ""
+        if "BEAR" in regime.upper() or "CAUTION" in regime.upper():
+            _rec_idx = 3 # Z-Score Mean Reversion
+            _rec_msg = "💡 **Regime Filter:** Z-Score or RSI Mean Reversion typically outperforms in sideways/volatile markets."
+        elif "NEUTRAL" in regime.upper() or "SIDEWAYS" in regime.upper():
+            _rec_idx = 2 # RSI Mean Reversion
+            _rec_msg = "💡 **Regime Filter:** Mean Reversion strategies are preferred during range-bound regimes."
+        elif "BULL" in regime.upper():
+            _rec_idx = 1 # Trend Following
+            _rec_msg = "💡 **Regime Filter:** Trend Following and Breakout strategies capture maximum upside in risk-on markets."
+            
+        if _rec_msg:
+            st.caption(_rec_msg)
+        
         with st.form("backtest_form"):
             bt_ticker = st.selectbox("Select Ticker to Backtest", options=_bt_options, format_func=format_ticker, key="bt_ticker_form")
             
             strategy_type = st.selectbox(
-                "Select Strategy (if Single)",
-                options=[
-                    "Institutional Quality Pulse (AI Score > 75)",
-                    "Trend Following (MA20/50 Cross)", 
-                    "RSI Mean Reversion (30/70)",
-                    "Z-Score Mean Reversion (Deep Value)",
-                    "Buy on Dip (Uptrend + Oversold)",
-                    "Multi-Indicator Breakout (Price>MA50 + RSI>50)"
-                ],
+                "Select Strategy (if Single) 🎯 Regime Aligned",
+                options=_strat_options,
+                index=_rec_idx,
                 disabled=(bt_mode != "Single Strategy")
             )
             
