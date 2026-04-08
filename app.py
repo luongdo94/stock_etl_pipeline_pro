@@ -1556,109 +1556,165 @@ if active_tab == "3. Decision Engine":
             
             # PILLAR 1: TREND
             if _ma_sig == "BULLISH" and _rsi_val < 65:
-                p_trend, p_trend_c = "🟢 BULLISH", "#2ecc71"
+                p_trend, p_trend_c = "BULLISH", "#2ecc71"
             elif _ma_sig == "BULLISH" and _rsi_val >= 65:
-                p_trend, p_trend_c = "🟡 EXTENDED", "#f1c40f"
+                p_trend, p_trend_c = "EXTENDED", "#f1c40f"
             elif _ma_sig == "BEARISH" and _rsi_val <= 35:
-                p_trend, p_trend_c = "🟡 OVERSOLD", "#f1c40f"
+                p_trend, p_trend_c = "OVERSOLD", "#f1c40f"
             else:
-                p_trend, p_trend_c = "🔴 BEARISH", "#e74c3c"
+                p_trend, p_trend_c = "BEARISH", "#e74c3c"
                 
             # PILLAR 2: QUALITY
-            if ai_score >= 70: p_qual, p_qual_c = "💎 ELITE", "#00ffcc"
-            elif ai_score >= 55: p_qual, p_qual_c = "🟢 SOLID", "#2ecc71"
-            elif ai_score >= 40: p_qual, p_qual_c = "🟡 FAIR", "#f1c40f"
-            else: p_qual, p_qual_c = "🔴 POOR", "#e74c3c"
+            if ai_score >= 70: p_qual, p_qual_c = "ELITE", "#00ffcc"
+            elif ai_score >= 55: p_qual, p_qual_c = "SOLID", "#2ecc71"
+            elif ai_score >= 40: p_qual, p_qual_c = "FAIR", "#f1c40f"
+            else: p_qual, p_qual_c = "POOR", "#e74c3c"
             
-            # PILLAR 3: VALUATION
-            if upside > 15: p_val, p_val_c = "🟢 CHEAP", "#2ecc71"
-            elif upside > 0: p_val, p_val_c = "🟡 FAIR", "#f1c40f"
-            else: p_val, p_val_c = "🔴 EXPENSIVE", "#e74c3c"
+            # PILLAR 3: VALUATION — Multi-factor: PEG + P/E + upside + quality
+            # Pure upside-from-target is misleading (analyst bias, stale targets).
+            # We now cross-check with fundamental multiples for honest labelling.
+            _peg_v = float(meta_enriched.get("peg_ratio") or 0)
+            _pe_v  = float(meta_enriched.get("pe_ratio")  or 0)
+
+            _val_expensive  = (_pe_v > 40 and _pe_v > 0) or (_peg_v > 3.0 and _peg_v > 0)
+            _val_cheap      = (upside > 20) and (_peg_v < 1.2 or _pe_v < 18) and _pe_v > 0
+            _val_premium_ok = (upside > 10) and (ai_score >= 65) and (_peg_v < 2.5 or _pe_v < 35)
+            _val_compounder = (upside > 5)  and (ai_score >= 55) and (not _val_expensive)
+            _val_fair       = (upside > 0)  and (not _val_expensive)
+
+            if _val_cheap:
+                p_val, p_val_c = "UNDERVALUED", "#2ecc71"
+            elif _val_premium_ok:
+                p_val, p_val_c = "PREMIUM / JUSTIFIED", "#3498db"
+            elif _val_compounder:
+                p_val, p_val_c = "FAIR FOR QUALITY", "#3498db"
+            elif _val_fair:
+                p_val, p_val_c = "FAIR VS SECTOR", "#f1c40f"
+            elif upside <= 0 and not _val_expensive:
+                p_val, p_val_c = "EXTENDED", "#e67e22"
+            else:
+                p_val, p_val_c = "EXPENSIVE", "#e74c3c"
             
             # PILLAR 4: RISK
-            if _w52_pos > 80: p_risk, p_risk_c = "🔴 ELEVATED", "#e74c3c"
-            elif _w52_pos < 20: p_risk, p_risk_c = "🟢 LOW RISK", "#2ecc71"
-            else: p_risk, p_risk_c = "🟡 MODERATE", "#f1c40f"
+            if _w52_pos > 80: p_risk, p_risk_c = "ELEVATED", "#e74c3c"
+            elif _w52_pos < 20: p_risk, p_risk_c = "LOW RISK", "#2ecc71"
+            else: p_risk, p_risk_c = "MODERATE", "#f1c40f"
             
             # PILLAR 5: CONVICTION
             _risk   = cur_p - _stop_loss
             _reward = _tp1 - cur_p
             _rr     = _reward / _risk if _risk > 0 else 0
-            if _rr > 2.5: p_conv, p_conv_c = "🚀 HIGH", "#00ffcc"
-            elif _rr > 1.2: p_conv, p_conv_c = "👍 MEDIUM", "#2ecc71"
-            else: p_conv, p_conv_c = "👎 LOW", "#e74c3c"
+            if _rr > 2.5: p_conv, p_conv_c = "HIGH", "#00ffcc"
+            elif _rr > 1.2: p_conv, p_conv_c = "MEDIUM", "#2ecc71"
+            else: p_conv, p_conv_c = "LOW", "#e74c3c"
             
             # MASTER POSITIONING LOGIC
             pts = (1 if p_trend_c in ["#2ecc71", "#00ffcc"] else 0) + \
                   (1 if p_qual_c in ["#2ecc71", "#00ffcc"] else 0) + \
-                  (1 if p_val_c in ["#2ecc71", "#00ffcc"] else 0) + \
+                  (1 if p_val_c in ["#2ecc71", "#00ffcc", "#3498db"] else 0) + \
                   (1 if p_risk_c == "#2ecc71" else 0) + \
                   (1 if p_conv_c in ["#2ecc71", "#00ffcc"] else 0)
                   
             if pts >= 4 and p_qual_c != "#e74c3c":
-                act_str, act_color = "💎 STRONG BUY", "#00ffcc"
+                act_str, act_color = "STRONG BUY", "#00ffcc"
                 act_desc = f"Optimal alignment of quantitative pillars. High structural conviction. Ideal entry zone between €{_s1:.2f} and €{cur_p:.2f}."
             elif pts >= 3 and p_trend_c == "#f1c40f" and _rsi_val < 45:
-                act_str, act_color = "🟢 BUY / ACCUMULATE", "#2ecc71"
+                act_str, act_color = "BUY / ACCUMULATE", "#2ecc71"
                 act_desc = f"Institutional-grade asset consolidating. Momentum is neutralizing. Support holds near €{_s1:.2f}."
             elif p_trend_c == "#e74c3c" and p_val_c == "#e74c3c":
-                act_str, act_color = "🔴 SELL / AVOID", "#e74c3c"
+                act_str, act_color = "SELL / AVOID", "#e74c3c"
                 act_desc = f"Negative trend synergy with poor valuation metrics. Risk/Reward is heavily skewed to the downside."
             elif pts <= 1 and p_qual_c == "#e74c3c":
-                act_str, act_color = "🔴 SELL / AVOID", "#e74c3c"
+                act_str, act_color = "SELL / AVOID", "#e74c3c"
                 act_desc = "Significant fundamental and technical breakdown detected. Focus on capital preservation."
             elif pts <= 1 and p_qual_c in ["#2ecc71", "#00ffcc"]:
-                act_str, act_color = "🟡 HOLD / NEUTRAL", "#f1c40f"
+                act_str, act_color = "HOLD / NEUTRAL", "#f1c40f"
                 act_desc = "Elite asset currently overextended or expensive. Wait for a healthy structural pullback before deployment."
             elif _rsi_val > 70 and pts <= 3:
-                act_str, act_color = "🟠 REDUCE / UNDERPERFORM", "#e67e22"
+                act_str, act_color = "REDUCE / UNDERPERFORM", "#e67e22"
                 act_desc = f"Locally overbought (RSI: {_rsi_val:.1f}). Fundamentals remain solid but tactical risk is elevated. Consider locking profits."
             else:
-                act_str, act_color = "🟡 HOLD / NEUTRAL", "#f1c40f"
+                act_str, act_color = "HOLD / NEUTRAL", "#f1c40f"
                 act_desc = "Mixed signals across pillars. System lacks execution conviction. Monitor for structural breakout or mean reversion."
 
-            # Compute dynamic RGB for background
-            def hex_to_rgb(h): return ",".join(str(int(h.lstrip('#')[i:i+2], 16)) for i in (0, 2, 4))
             bg_rgb = hex_to_rgb(act_color)
+
+            # --- R/R DIAGNOSTIC EXPLAINER — 3 dynamic bullets for all states ---
+            _rr_section_html = ""
+            _risk_gap  = cur_p - _stop_loss
+            _risk_pct  = (_risk_gap / cur_p * 100) if cur_p > 0 else 0
+            _rwrd_gap  = _tp1 - cur_p
+            _rwrd_pct  = (_rwrd_gap / cur_p * 100) if cur_p > 0 else 0
+
+            if p_conv_c == "#e74c3c":  # R/R is LOW  (<1.2x)
+                _b1 = (f"Risk/Reward is {_rr:.2f}x — the stop loss at \u20ac{_stop_loss:.2f} risks \u20ac{_risk_gap:.2f} ({_risk_pct:.1f}%) while TP1 at \u20ac{_tp1:.2f} only offers \u20ac{_rwrd_gap:.2f} ({_rwrd_pct:.1f}%) upside. A ratio below 1.2x is considered unfavorable for new entries.")
+                if _rsi_val > 65: _b2 = (f"RSI is elevated at {_rsi_val:.1f} — overbought momentum increases the probability of a pullback before reaching TP1, reducing effective reward potential.")
+                elif _w52_pos > 75: _b2 = (f"Price is at {_w52_pos:.0f}% of its 52-week range — proximity to annual highs compresses remaining upside and increases downside risk if resistance holds.")
+                elif _pe_v > 35 and _pe_v > 0: _b2 = (f"P/E of {_pe_v:.1f}x signals premium valuation — limited margin of safety amplifies the downside if earnings disappoint, worsening the R/R profile.")
+                else: _b2 = (f"Technical structure shows limited near-term catalysts: current price \u20ac{cur_p:.2f} is close to TP1, suggesting most of the move may already be priced in.")
+                _b3 = (f"To improve the setup, consider waiting for a pullback toward \u20ac{(_s1 * 0.97):.2f}\u2013\u20ac{_s1:.2f} (support zone), which would widen the reward-to-risk ratio above 2x.")
+                _bullet_items = "".join([f"<li style='margin-bottom:7px; line-height:1.55;'>{b}</li>" for b in [_b1, _b2, _b3]])
+                _rr_section_html = f"<div style='margin-top:14px; padding:14px 16px; background:rgba(231,76,60,0.07); border:1px solid rgba(231,76,60,0.25); border-radius:8px;'><div style='font-size:0.7em; color:#e74c3c; font-weight:700; text-transform:uppercase; letter-spacing:1.5px; margin-bottom:10px;'>&#9888; Why Risk/Reward is LOW</div><ul style='margin:0; padding-left:18px; color:#ccc; font-size:0.82em;'>{_bullet_items}</ul></div>"
+
+            elif p_conv_c == "#2ecc71":  # R/R is MEDIUM (1.2x – 2.5x)
+                _b1 = (f"Risk/Reward is {_rr:.2f}x — acceptable but not yet asymmetric. The setup risks \u20ac{_risk_gap:.2f} ({_risk_pct:.1f}%) for a potential gain of \u20ac{_rwrd_gap:.2f} ({_rwrd_pct:.1f}%). A ratio between 1.2x and 2.5x supports a partial position, not full deployment.")
+                if _rsi_val < 45 and _w52_pos < 50: _b2 = (f"Supportive setup: RSI at {_rsi_val:.1f} (non-overbought) and price at {_w52_pos:.0f}% of its 52-week range reduces near-term downside pressure and leaves room for momentum to develop toward TP1.")
+                elif ai_score >= 60: _b2 = (f"Quality score of {ai_score:.0f}/100 underpins the thesis — a fundamentally strong asset with acceptable technicals. The R/R is constrained by entry timing rather than structural weakness.")
+                else: _b2 = (f"The setup is balanced: price at {_w52_pos:.0f}% of its 52-week range with RSI at {_rsi_val:.1f}. No extreme conditions exist to strongly favour bulls or bears — the market is in a discovery phase.")
+                _b3 = (f"Execution tip: initiate a 50% position near current levels and reserve the remaining allocation for a pullback toward \u20ac{(_s1 * 0.98):.2f}\u2013\u20ac{_s1:.2f}, which would push the blended R/R above 2x.")
+                _bullet_items = "".join([f"<li style='margin-bottom:7px; line-height:1.55;'>{b}</li>" for b in [_b1, _b2, _b3]])
+                _rr_section_html = f"<div style='margin-top:14px; padding:14px 16px; background:rgba(46,204,113,0.07); border:1px solid rgba(46,204,113,0.25); border-radius:8px;'><div style='font-size:0.7em; color:#2ecc71; font-weight:700; text-transform:uppercase; letter-spacing:1.5px; margin-bottom:10px;'>&#10003; Why Risk/Reward is MEDIUM</div><ul style='margin:0; padding-left:18px; color:#ccc; font-size:0.82em;'>{_bullet_items}</ul></div>"
+
+            else:  # R/R is HIGH (>2.5x)
+                _b1 = (f"Risk/Reward is {_rr:.2f}x — strongly asymmetric. TP1 at \u20ac{_tp1:.2f} offers \u20ac{_rwrd_gap:.2f} ({_rwrd_pct:.1f}%) upside while the stop at \u20ac{_stop_loss:.2f} limits downside to \u20ac{_risk_gap:.2f} ({_risk_pct:.1f}%). A ratio above 2.5x represents a high-conviction, institutionally sound entry.")
+                if _w52_pos < 25: _b2 = (f"Price is at {_w52_pos:.0f}% of its 52-week range — near structural lows with significant runway to the upside.")
+                elif _rsi_val < 40: _b2 = (f"RSI at {_rsi_val:.1f} signals oversold conditions — historically, mean-reversion from these levels boosts the probability of reaching TP1.")
+                else: _b2 = (f"The stop loss at \u20ac{_stop_loss:.2f} is anchored near key technical support, structurally minimizing the risk side while the reward window to TP1 at \u20ac{_tp1:.2f} remains wide open.")
+                _b3 = (f"Execution: this setup supports full position sizing. Consider entering between \u20ac{_s1:.2f}\u2013\u20ac{cur_p:.2f} with a hard stop at \u20ac{_stop_loss:.2f}. If price breaks above \u20ac{_tp1:.2f}, reassess TP2 at \u20ac{_tp2:.2f}.")
+                _bullet_items = "".join([f"<li style='margin-bottom:7px; line-height:1.55;'>{b}</li>" for b in [_b1, _b2, _b3]])
+                _rr_section_html = f"<div style='margin-top:14px; padding:14px 16px; background:rgba(0,255,204,0.06); border:1px solid rgba(0,255,204,0.25); border-radius:8px;'><div style='font-size:0.7em; color:#00ffcc; font-weight:700; text-transform:uppercase; letter-spacing:1.5px; margin-bottom:10px;'>&#9650; Why Risk/Reward is HIGH</div><ul style='margin:0; padding-left:18px; color:#ccc; font-size:0.82em;'>{_bullet_items}</ul></div>"
 
             # RENDER UNIFIED UI MATRIX
             st.markdown(f"""
             <div style='background:rgba(10,15,25,0.6); border:1px solid rgba(255,255,255,0.1); border-radius:12px; padding:20px; margin-bottom:25px;'>
                 <div style='display:flex; justify-content:space-between; text-align:center; margin-bottom:20px; flex-wrap:wrap; gap:10px;'>
                     <div style='flex:1; background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; border-top:3px solid {p_trend_c};'>
-                        <div style='font-size:0.65em; color:#aab; text-transform:uppercase; letter-spacing:1px;'>📈 Trend</div>
+                        <div style='font-size:0.65em; color:#aab; text-transform:uppercase; letter-spacing:1px;'>Trend</div>
                         <div style='font-weight:900; font-size:0.9em; color:{p_trend_c}; margin-top:8px;'>{p_trend}</div>
                     </div>
                     <div style='flex:1; background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; border-top:3px solid {p_qual_c};'>
-                        <div style='font-size:0.65em; color:#aab; text-transform:uppercase; letter-spacing:1px;'>💎 Quality</div>
+                        <div style='font-size:0.65em; color:#aab; text-transform:uppercase; letter-spacing:1px;'>Quality</div>
                         <div style='font-weight:900; font-size:0.9em; color:{p_qual_c}; margin-top:8px;'>{p_qual}</div>
                     </div>
                     <div style='flex:1; background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; border-top:3px solid {p_val_c};'>
-                        <div style='font-size:0.65em; color:#aab; text-transform:uppercase; letter-spacing:1px;'>⚖️ Valuation</div>
+                        <div style='font-size:0.65em; color:#aab; text-transform:uppercase; letter-spacing:1px;'>Valuation</div>
                         <div style='font-weight:900; font-size:0.9em; color:{p_val_c}; margin-top:8px;'>{p_val}</div>
                     </div>
                     <div style='flex:1; background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; border-top:3px solid {p_risk_c};'>
-                        <div style='font-size:0.65em; color:#aab; text-transform:uppercase; letter-spacing:1px;'>⚠️ Risk (52w)</div>
+                        <div style='font-size:0.65em; color:#aab; text-transform:uppercase; letter-spacing:1px;'>Risk (52w)</div>
                         <div style='font-weight:900; font-size:0.9em; color:{p_risk_c}; margin-top:8px;'>{p_risk}</div>
                     </div>
                     <div style='flex:1; background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; border-top:3px solid {p_conv_c};'>
-                        <div style='font-size:0.65em; color:#aab; text-transform:uppercase; letter-spacing:1px;'>🧠 Conviction</div>
+                        <div style='font-size:0.65em; color:#aab; text-transform:uppercase; letter-spacing:1px;'>Risk/Reward</div>
                         <div style='font-weight:900; font-size:0.9em; color:{p_conv_c}; margin-top:8px;'>{p_conv}</div>
                     </div>
                 </div>
                 <div style='background:rgba({bg_rgb},0.12); border-left:6px solid {act_color}; padding:20px; border-radius:8px; box-shadow:0 4px 15px rgba(0,0,0,0.3);'>
-                    <div style='font-size:0.75em; color:#bbb; text-transform:uppercase; letter-spacing:2px; margin-bottom:6px;'>💡 Positioning Hint / Action Layer</div>
+                    <div style='font-size:0.75em; color:#bbb; text-transform:uppercase; letter-spacing:2px; margin-bottom:6px;'>Positioning Hint / Action Layer</div>
                     <div style='font-size:1.6em; font-weight:900; color:{act_color}; margin-bottom:8px; text-shadow: 0px 2px 10px rgba({bg_rgb}, 0.5);'>{act_str}</div>
                     <div style='color:#e0e0e0; font-size:1.0em; line-height:1.5; margin-bottom:15px;'>{act_desc}</div>
                     <hr style='border:0; height:1px; background:linear-gradient(90deg, rgba(255,255,255,0.15), transparent); margin-bottom:15px;'>
                     <div style='display:flex; justify-content:space-between; font-family:"Courier New", monospace; font-size:0.95em; background:rgba(0,0,0,0.4); padding:12px; border-radius:6px;'>
-                        <span style='color:#2ecc71;'><b>🟢 ENTRY:</b> €{_s1:.2f} ➔ €{cur_p:.2f}</span>
-                        <span style='color:#e74c3c;'><b>🔴 STOP LOSS:</b> €{_stop_loss:.2f}</span>
-                        <span style='color:#3498db;'><b>🔵 TARGET:</b> €{_tp1:.2f} (R/R: {_rr:.1f}x)</span>
+                        <span style='color:#2ecc71;'><b>ENTRY:</b> €{_s1:.2f} ➔ €{cur_p:.2f}</span>
+                        <span style='color:#e74c3c;'><b>STOP LOSS:</b> €{_stop_loss:.2f}</span>
+                        <span style='color:#3498db;'><b>TARGET:</b> €{_tp1:.2f} (R/R: {_rr:.1f}x)</span>
                     </div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
+            # Render R/R explainer separately to avoid f-string curly brace conflicts
+            if _rr_section_html:
+                st.markdown(_rr_section_html, unsafe_allow_html=True)
             # --- WATCHLIST QUICK SAVE WORKFLOW ---
             with st.expander("📥 📝 Save Idea to Watchlist Pipeline", expanded=False):
                 with st.form(f"quick_save_form_{deep_ticker}"):
@@ -3155,46 +3211,56 @@ if active_tab == "2. Opportunity Radar":
         }
     )
 
-    # ── Quality Score Methodology Note ────────────────────────────────────────
+    # ── Quality Score Methodology Note (v3.0 — synced with etl/utils.py) ────────
     st.markdown("""
     <div style='margin-top:16px; padding:14px 18px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:10px;'>
         <div style='font-size:0.78rem; font-weight:700; color:#8899aa; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:10px;'>
-            🧠 Quality Score Methodology — 6 Pillars, Max 100 Points
+            🧠 Quality Score Methodology v3.0 — 6 Pillars, Max 100 Points
         </div>
         <div style='display:grid; grid-template-columns: repeat(6, 1fr); gap:10px;'>
             <div style='background:rgba(52,152,219,0.08); border-left:3px solid #3498db; padding:8px 10px; border-radius:5px;'>
-<div style='font-size:0.7rem; color:#3498db; font-weight:700;'>VALUATION</div>
-                <div style='font-size:0.65rem; color:#aaa; margin-top:3px;'>PEG, P/E, P/B</div>
+                <div style='font-size:0.7rem; color:#3498db; font-weight:700;'>VALUATION</div>
+                <div style='font-size:0.65rem; color:#aaa; margin-top:3px;'>PEG · P/E · P/B · ROE bonus</div>
                 <div style='font-size:1rem; font-weight:800; color:#fff;'>≤ 20 pts</div>
             </div>
             <div style='background:rgba(46,204,113,0.08); border-left:3px solid #2ecc71; padding:8px 10px; border-radius:5px;'>
                 <div style='font-size:0.7rem; color:#2ecc71; font-weight:700;'>PROFITABILITY</div>
-                <div style='font-size:0.65rem; color:#aaa; margin-top:3px;'>FCF Margin, ROE</div>
+                <div style='font-size:0.65rem; color:#aaa; margin-top:3px;'>FCF Margin · ROE<br><span style='color:#f1c40f;'>Tech: ≤ 30 pts</span></div>
                 <div style='font-size:1rem; font-weight:800; color:#fff;'>≤ 25 pts</div>
             </div>
             <div style='background:rgba(241,196,15,0.08); border-left:3px solid #f1c40f; padding:8px 10px; border-radius:5px;'>
                 <div style='font-size:0.7rem; color:#f1c40f; font-weight:700;'>FINANCIAL HEALTH</div>
-                <div style='font-size:0.65rem; color:#aaa; margin-top:3px;'>Debt / EBITDA</div>
+                <div style='font-size:0.65rem; color:#aaa; margin-top:3px;'>Debt / EBITDA ratio<br>Sector-aware bands</div>
                 <div style='font-size:1rem; font-weight:800; color:#fff;'>≤ 15 pts</div>
             </div>
             <div style='background:rgba(155,89,182,0.08); border-left:3px solid #9b59b6; padding:8px 10px; border-radius:5px;'>
-                <div style='font-size:0.7rem; color:#9b59b6; font-weight:700;'>SHAREHOLDER YIELD</div>
-                <div style='font-size:0.65rem; color:#aaa; margin-top:3px;'>Dividend Yield</div>
+                <div style='font-size:0.7rem; color:#9b59b6; font-weight:700;'>NET PAYOUT YIELD</div>
+                <div style='font-size:0.65rem; color:#aaa; margin-top:3px;'>Dividend + Buyback<br><span style='color:#f1c40f;'>Tech capped: ≤ 5 pts</span></div>
                 <div style='font-size:1rem; font-weight:800; color:#fff;'>≤ 10 pts</div>
             </div>
             <div style='background:rgba(0,210,255,0.08); border-left:3px solid #00d2ff; padding:8px 10px; border-radius:5px;'>
-                <div style='font-size:0.7rem; color:#00d2ff; font-weight:700;'>MOMENTUM</div>
-                <div style='font-size:0.65rem; color:#aaa; margin-top:3px;'>Z-Score, RSI, Trend</div>
-                <div style='font-size:1rem; font-weight:800; color:#fff;'>≤ 20 pts</div>
+                <div style='font-size:0.7rem; color:#00d2ff; font-weight:700;'>CONTEXT & MOMENTUM</div>
+                <div style='font-size:0.65rem; color:#aaa; margin-top:3px;'>MA Signal · RSI · Z-Score</div>
+                <div style='font-size:1rem; font-weight:800; color:#fff;'>≤ 25 pts</div>
             </div>
             <div style='background:rgba(231,76,60,0.08); border-left:3px solid #e74c3c; padding:8px 10px; border-radius:5px;'>
-                <div style='font-size:0.7rem; color:#e74c3c; font-weight:700;'>ANALYST CONSENSUS</div>
-                <div style='font-size:0.65rem; color:#aaa; margin-top:3px;'>Upside + Rating</div>
-                <div style='font-size:1rem; font-weight:800; color:#fff;'>≤ 10 pts</div>
+                <div style='font-size:0.7rem; color:#e74c3c; font-weight:700;'>ANALYST ESTIMATES</div>
+                <div style='font-size:0.65rem; color:#aaa; margin-top:3px;'>Upside % + Consensus</div>
+                <div style='font-size:1rem; font-weight:800; color:#fff;'>≤ 5 pts</div>
             </div>
         </div>
-        <div style='margin-top:8px; font-size:0.68rem; color:#666;'>
-            ⚠️ Red Flag penalties apply: Negative P/E (−20), Debt Crisis Debt/EBITDA&gt;8 (−15), Value Trap (−10). Score is sector-aware — Tech stocks are judged differently from Utilities.
+        <div style='margin-top:10px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:0.68rem;'>
+            <div style='background:rgba(231,76,60,0.07); border-left:2px solid #e74c3c; padding:6px 10px; border-radius:4px; color:#ccc;'>
+                🚨 <b style='color:#e74c3c;'>Red Flag Penalties:</b>
+                Negative P/E &amp; no-growth (−10) · Debt/EBITDA &gt; 10 (−10) · Value Trap: Z &lt; −1.5 + Sell consensus (−5)
+            </div>
+            <div style='background:rgba(241,196,15,0.07); border-left:2px solid #f1c40f; padding:6px 10px; border-radius:4px; color:#ccc;'>
+                ⚡ <b style='color:#f1c40f;'>Beta Risk Adjustment (v3.0 NEW):</b>
+                High Beta &gt; 1.8 → penalty up to −5 · Low Beta &lt; 0.8 (non-tech) → bonus up to +5
+            </div>
+        </div>
+        <div style='margin-top:6px; font-size:0.65rem; color:#556677;'>
+            Score is fully sector-aware — Tech growth stocks use different P/E bands &amp; profitability weights vs. Utilities/Financials. All thresholds use linear interpolation (np.interp) to eliminate cliff effects.
         </div>
     </div>
     """, unsafe_allow_html=True)
