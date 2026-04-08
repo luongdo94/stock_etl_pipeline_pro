@@ -1302,10 +1302,20 @@ if active_tab == "1. Market Regime":
         
         # Calculate performance
         p_perf = prices.sort_values('date').groupby('ticker')['price_close'].agg(['first', 'last']).reset_index()
+        # Avoid division by zero
+        p_perf['first'] = pd.to_numeric(p_perf['first'], errors='coerce').replace(0, 0.001).fillna(0.001)
+        p_perf['last'] = pd.to_numeric(p_perf['last'], errors='coerce').fillna(0.001)
         p_perf['period_return'] = (p_perf['last'] / p_perf['first'] - 1) * 100
+        
         tree_df = reco_df.merge(p_perf[['ticker', 'period_return']], on='ticker', how='left')
-        tree_df['cap_bn'] = tree_df['market_cap'] / 1e9
-        tree_df['period_return'] = tree_df['period_return'].fillna(0)
+        tree_df['period_return'] = pd.to_numeric(tree_df['period_return'], errors='coerce')
+        tree_df['period_return'] = tree_df['period_return'].replace([float('inf'), float('-inf')], 0).fillna(0)
+        
+        tree_df = tree_df.dropna(subset=['sector', 'ticker'])
+        # Force numeric on market cap, fillna, replace zero with 0.001
+        tree_df['cap_bn'] = pd.to_numeric(tree_df['market_cap'], errors='coerce') / 1e9
+        tree_df['cap_bn'] = tree_df['cap_bn'].fillna(0.001).replace(0, 0.001)
+        
         p_max = max(abs(tree_df['period_return'].min()), abs(tree_df['period_return'].max()), 5)
 
         # Mini-summary
@@ -1323,12 +1333,26 @@ if active_tab == "1. Market Regime":
         sec_tabs = st.tabs(["🗺️ Heatmap", "🏆 Top Sectors", "🚀 Top Movers"])
         
         with sec_tabs[0]:
+            # Pre-format return string per ticker to avoid nan% on parent nodes.
+            # %{color} in texttemplate fails on sector/global parent nodes because
+            # Plotly can't aggregate their color values, producing NaN%.
+            # Solution: pass pre-formatted strings via customdata and only show
+            # on leaf nodes — parent nodes just show their label.
+            tree_df['return_str'] = tree_df['period_return'].apply(
+                lambda x: f"{x:+.2f}%" if pd.notnull(x) else ""
+            )
             fig_tree = px.treemap(
                 tree_df, path=[px.Constant("Global"), 'sector', 'ticker'], values='cap_bn',
                 color='period_return', color_continuous_scale='RdYlGn', color_continuous_midpoint=0,
-                range_color=[-p_max, p_max], template="plotly_dark", height=600
+                range_color=[-p_max, p_max], template="plotly_dark", height=600,
+                custom_data=['return_str']
             )
-            fig_tree.update_traces(texttemplate="%{label}<br>%{color:.2f}%")
+            # Use %{label} for all nodes, %{customdata[0]} only populated for leaves
+            fig_tree.update_traces(
+                texttemplate="%{label}<br>%{customdata[0]}",
+                textfont=dict(size=12),
+                hovertemplate="<b>%{label}</b><br>Mkt Cap: $%{value:.1f}B<br>Return: %{customdata[0]}<extra></extra>"
+            )
             fig_tree.update_layout(margin=dict(l=0, r=0, b=0, t=30))
             st.plotly_chart(fig_tree, use_container_width=True)
             
