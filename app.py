@@ -1644,7 +1644,7 @@ if active_tab == "3. Decision Engine":
             bg_rgb = hex_to_rgb(act_color)
 
 
-            # --- R/R DIAGNOSTIC EXPLAINER (Only for LOW Risk/Reward) ---
+            # --- R/R DIAGNOSTIC EXPLAINER (Dynamic for all Risk/Reward states) ---
             _rr_section_html = ""
             _risk_gap  = cur_p - _stop_loss
             _risk_pct  = (_risk_gap / cur_p * 100) if cur_p > 0 else 0
@@ -1659,7 +1659,23 @@ if active_tab == "3. Decision Engine":
                 else: _b2 = (f"Technical structure shows limited near-term catalysts: current price \u20ac{cur_p:.2f} is close to TP1, suggesting most of the move may already be priced in.")
                 _b3 = (f"To improve the setup, consider waiting for a pullback toward \u20ac{(_s1 * 0.97):.2f}\u2013\u20ac{_s1:.2f} (support zone), which would widen the reward-to-risk ratio above 2x.")
                 _bullet_items = "".join([f"<li style='margin-bottom:7px; line-height:1.55;'>{b}</li>" for b in [_b1, _b2, _b3]])
-                _rr_section_html = f"<div style='margin-top:14px; padding:14px 16px; background:rgba(231,76,60,0.07); border:1px solid rgba(231,76,60,0.25); border-radius:8px;'><div style='font-size:0.7em; color:#e74c3c; font-weight:700; text-transform:uppercase; letter-spacing:1.5px; margin-bottom:10px;'>&#9888; Why Risk/Reward is LOW</div><ul style='margin:0; padding-left:18px; color:#ccc; font-size:0.82em;'>{_bullet_items}</ul></div>"
+                _rr_section_html = f"<div style='margin-top:14px; padding:14px 16px; background:rgba(231,76,60,0.07); border:1px solid rgba(231,76,60,0.25); border-radius:8px;'><div style='font-size:0.7em; color:#e74c3c; font-weight:700; text-transform:uppercase; letter-spacing:1.5px; margin-bottom:10px;'>Why Risk/Reward is LOW</div><ul style='margin:0; padding-left:18px; color:#ccc; font-size:0.82em;'>{_bullet_items}</ul></div>"
+            elif p_conv_c == "#2ecc71":  # R/R is MEDIUM (1.2x – 2.5x)
+                _b1 = (f"Risk/Reward is {_rr:.2f}x — acceptable but not yet asymmetric. The setup risks \u20ac{_risk_gap:.2f} ({_risk_pct:.1f}%) for a potential gain of \u20ac{_rwrd_gap:.2f} ({_rwrd_pct:.1f}%). A ratio between 1.2x and 2.5x supports a partial position, not full deployment.")
+                if _rsi_val < 45 and _w52_pos < 50: _b2 = (f"Supportive setup: RSI at {_rsi_val:.1f} (non-overbought) and price at {_w52_pos:.0f}% of its 52-week range reduces near-term downside pressure and leaves room for momentum to develop toward TP1.")
+                elif ai_score >= 60: _b2 = (f"Quality score of {ai_score:.0f}/100 underpins the thesis — a fundamentally strong asset with acceptable technicals. The R/R is constrained by entry timing rather than structural weakness.")
+                else: _b2 = (f"The setup is balanced: price at {_w52_pos:.0f}% of its 52-week range with RSI at {_rsi_val:.1f}. No extreme conditions exist to strongly favour bulls or bears — the market is in a discovery phase.")
+                _b3 = (f"Execution tip: initiate a 50% position near current levels and reserve the remaining allocation for a pullback toward \u20ac{(_s1 * 0.98):.2f}\u2013\u20ac{_s1:.2f}, which would push the blended R/R above 2x.")
+                _bullet_items = "".join([f"<li style='margin-bottom:7px; line-height:1.55;'>{b}</li>" for b in [_b1, _b2, _b3]])
+                _rr_section_html = f"<div style='margin-top:14px; padding:14px 16px; background:rgba(46,204,113,0.07); border:1px solid rgba(46,204,113,0.25); border-radius:8px;'><div style='font-size:0.7em; color:#2ecc71; font-weight:700; text-transform:uppercase; letter-spacing:1.5px; margin-bottom:10px;'>Why Risk/Reward is MEDIUM</div><ul style='margin:0; padding-left:18px; color:#ccc; font-size:0.82em;'>{_bullet_items}</ul></div>"
+            else:  # R/R is HIGH (>2.5x)
+                _b1 = (f"Risk/Reward is {_rr:.2f}x — strongly asymmetric. TP1 at \u20ac{_tp1:.2f} offers \u20ac{_rwrd_gap:.2f} ({_rwrd_pct:.1f}%) upside while the stop at \u20ac{_stop_loss:.2f} limits downside to \u20ac{_risk_gap:.2f} ({_risk_pct:.1f}%). A ratio above 2.5x represents a high-conviction, institutionally sound entry.")
+                if _w52_pos < 25: _b2 = (f"Price is at {_w52_pos:.0f}% of its 52-week range — near structural lows with significant runway to the upside.")
+                elif _rsi_val < 40: _b2 = (f"RSI at {_rsi_val:.1f} signals oversold conditions — historically, mean-reversion from these levels boosts the probability of reaching TP1.")
+                else: _b2 = (f"The stop loss at \u20ac{_stop_loss:.2f} is anchored near key technical support, structurally minimizing the risk side while the reward window to TP1 at \u20ac{_tp1:.2f} remains wide open.")
+                _b3 = (f"Execution: this setup supports full position sizing. Consider entering between \u20ac{_s1:.2f}\u2013\u20ac{cur_p:.2f} with a hard stop at \u20ac{_stop_loss:.2f}. If price breaks above \u20ac{_tp1:.2f}, reassess TP2 at \u20ac{_tp2:.2f}.")
+                _bullet_items = "".join([f"<li style='margin-bottom:7px; line-height:1.55;'>{b}</li>" for b in [_b1, _b2, _b3]])
+                _rr_section_html = f"<div style='margin-top:14px; padding:14px 16px; background:rgba(0,255,204,0.06); border:1px solid rgba(0,255,204,0.25); border-radius:8px;'><div style='font-size:0.7em; color:#00ffcc; font-weight:700; text-transform:uppercase; letter-spacing:1.5px; margin-bottom:10px;'>Why Risk/Reward is HIGH</div><ul style='margin:0; padding-left:18px; color:#ccc; font-size:0.82em;'>{_bullet_items}</ul></div>"
 
             # RENDER UNIFIED UI MATRIX
             st.markdown(f"""
@@ -2051,10 +2067,7 @@ if active_tab == "3. Decision Engine":
                     _q_pct   = f"{_q_score}/100"
                     _q_color = ai_color
                     st.markdown(f"""
-                    <div style='text-align:center; font-size:0.8rem; color:#aaa; margin-top:-5px;'>
-                             Quality Score: <span style='color:{_q_color}; font-weight:900; font-size:1rem;'>{_q_pct}</span>
-                        &nbsp;·&nbsp; <span style='color:{_q_color};'>{ai_icon} {ai_action}</span>
-                    </div>
+                    
                     """, unsafe_allow_html=True)
 
                 # ── FMI Panel (below radar) ────────────────────────────────────
