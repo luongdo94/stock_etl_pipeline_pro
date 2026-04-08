@@ -952,12 +952,33 @@ latest_spy_global = df_spy_global.iloc[-1] if not df_spy_global.empty else None
 latest_breadth_global = breadth_ts_global.iloc[-1]["breadth_pct"] if not breadth_ts_global.empty else 0
 
 conf_score_global = 0
+conf_reasons = []
+
 if latest_spy_global is not None:
-    if latest_spy_global["price_close"] > latest_spy_global["ma_50"]: conf_score_global += 25
-    if latest_spy_global["price_close"] > latest_spy_global["ma_200"]: conf_score_global += 25
-if latest_breadth_global > 50: conf_score_global += 30
-if _macro_regime == "RISK_ON": conf_score_global += 20
-elif _macro_regime == "NEUTRAL": conf_score_global += 10
+    if latest_spy_global["price_close"] > latest_spy_global["ma_50"]: 
+        conf_score_global += 25
+    else:
+        conf_reasons.append("SPY < MA50")
+        
+    if latest_spy_global["price_close"] > latest_spy_global["ma_200"]: 
+        conf_score_global += 25
+    else:
+        conf_reasons.append("SPY < MA200")
+
+if latest_breadth_global > 50: 
+    conf_score_global += 30
+else:
+    conf_reasons.append(f"Breadth currently {latest_breadth_global:.0f}%")
+
+if _macro_regime == "RISK_ON": 
+    conf_score_global += 20
+elif _macro_regime == "NEUTRAL": 
+    conf_score_global += 10
+    conf_reasons.append("Macro Neutral")
+else:
+    conf_reasons.append("Macro Defensive")
+
+conf_reason_str = "All indicators bullish." if conf_score_global >= 90 else ", ".join(conf_reasons)
 
 # Master Labels
 if conf_score_global >= 75: 
@@ -1019,30 +1040,47 @@ if macro:
             sign  = "+" if pct >= 0 else ""
             return f"<span class='sb-macro-delta' style='color:{color}'>{sign}{pct:.2f}%</span>"
 
+        spy_sema = "🔥 Strong Risk-On" if _spy_p >= 1 else ("🟢 Risk-On" if _spy_p > 0 else ("🔴 Strong Risk-Off" if _spy_p <= -1 else "🟡 Risk-Off"))
+        vix_sema = "🚨 High Panic" if _vix_v >= 25 else ("⚠️ Volatility Elevated" if _vix_v >= 18 else ("🔵 Normal Volatility" if _vix_v > 13 else "😴 Complacent"))
+        tnx_sema = "📈 Yields Spiking" if _tnx_p >= 2 else ("↗️ Yields Rising" if _tnx_p > 0 else ("📉 Yields Dropping" if _tnx_p <= -2 else "↘️ Yields Falling"))
+        dxy_sema = "🦅 Strong Dollar" if _dxy_p >= 0.5 else ("↗️ Dollar Strengthening" if _dxy_p > 0 else ("🕊️ Weak Dollar" if _dxy_p <= -0.5 else "↘️ Dollar Weakening"))
+
         _regime_colors = {"🚨 DEFENSIVE (High Risk)": "#e74c3c", "🔥 INFLATIONARY": "#e67e22", "🚀 GROWTH MODE": "#2ecc71", "⚖️ BALANCED": "#f39c12"}
         _rc = _regime_colors.get(regime, "#f39c12")
 
         _macro_sidebar_placeholder.markdown(f"""
         <div class='sb-section-label'>Live Macro Pulse</div>
-        <div class='sb-macro-row'>
-            <span class='sb-macro-label'>SPY</span>
-            <span class='sb-macro-val'>€{_spy_v:.2f}</span>
-            {_sb_delta(_spy_p)}
+        <div class='sb-macro-row' style='display:block;'>
+            <div style='display:flex; justify-content:space-between; align-items:center;'>
+                <span class='sb-macro-label'>SPY</span>
+                <span class='sb-macro-val'>€{_spy_v:.2f}</span>
+                {_sb_delta(_spy_p)}
+            </div>
+            <div style='font-size:0.55rem; color:#8899aa; text-align:right; margin-top:2px; text-transform:uppercase;'>{spy_sema}</div>
         </div>
-        <div class='sb-macro-row'>
-            <span class='sb-macro-label'>VIX</span>
-            <span class='sb-macro-val'>{_vix_v:.2f}</span>
-            {_sb_delta(_vix_p, invert=True)}
+        <div class='sb-macro-row' style='display:block;'>
+            <div style='display:flex; justify-content:space-between; align-items:center;'>
+                <span class='sb-macro-label'>VIX</span>
+                <span class='sb-macro-val'>{_vix_v:.2f}</span>
+                {_sb_delta(_vix_p, invert=True)}
+            </div>
+            <div style='font-size:0.55rem; color:#8899aa; text-align:right; margin-top:2px; text-transform:uppercase;'>{vix_sema}</div>
         </div>
-        <div class='sb-macro-row'>
-            <span class='sb-macro-label'>US10Y</span>
-            <span class='sb-macro-val'>{_tnx_v:.2f}%</span>
-            {_sb_delta(_tnx_p, invert=True)}
+        <div class='sb-macro-row' style='display:block;'>
+            <div style='display:flex; justify-content:space-between; align-items:center;'>
+                <span class='sb-macro-label'>US10Y</span>
+                <span class='sb-macro-val'>{_tnx_v:.2f}%</span>
+                {_sb_delta(_tnx_p, invert=True)}
+            </div>
+            <div style='font-size:0.55rem; color:#8899aa; text-align:right; margin-top:2px; text-transform:uppercase;'>{tnx_sema}</div>
         </div>
-        <div class='sb-macro-row'>
-            <span class='sb-macro-label'>DXY</span>
-            <span class='sb-macro-val'>{_dxy_v:.2f}</span>
-            {_sb_delta(_dxy_p)}
+        <div class='sb-macro-row' style='display:block;'>
+            <div style='display:flex; justify-content:space-between; align-items:center;'>
+                <span class='sb-macro-label'>DXY</span>
+                <span class='sb-macro-val'>{_dxy_v:.2f}</span>
+                {_sb_delta(_dxy_p)}
+            </div>
+            <div style='font-size:0.55rem; color:#8899aa; text-align:right; margin-top:2px; text-transform:uppercase;'>{dxy_sema}</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -1220,7 +1258,10 @@ if active_tab == "1. Market Regime":
         st.markdown(f"""
         <div style='background:rgba(255,255,255,0.03); padding:20px; border-radius:10px; border-right:5px solid #3498db;'>
             <span style='color:#8899aa; font-size:0.8rem; font-weight:700; text-transform:uppercase;'>Trend Confidence Score</span>
-            <div style='color:#fff; font-size:2.2rem; font-weight:900;'>{conf_score_global}%</div>
+            <div style='display:flex; align-items:baseline; gap:15px; flex-wrap:wrap;'>
+                <div style='color:#fff; font-size:2.2rem; font-weight:900;'>{conf_score_global}%</div>
+                <div style='color:#e74c3c; font-size:0.75rem; font-style:italic;'>{ '🚨 ' + conf_reason_str if conf_score_global < 50 else '⚠️ ' + conf_reason_str if conf_score_global < 100 else '✅ ' + conf_reason_str }</div>
+            </div>
         </div>
         """, unsafe_allow_html=True)
         
@@ -1257,22 +1298,58 @@ if active_tab == "1. Market Regime":
     # ROW 3: HEATMAP & STANCE
     b1, b2 = st.columns(2)
     with b1:
-        render_header("globe", "Sector Heatmap (Relative Performance)")
-        # Use existing tree_df logic
+        render_header("globe", "Sector Intelligence")
+        
+        # Calculate performance
         p_perf = prices.sort_values('date').groupby('ticker')['price_close'].agg(['first', 'last']).reset_index()
         p_perf['period_return'] = (p_perf['last'] / p_perf['first'] - 1) * 100
         tree_df = reco_df.merge(p_perf[['ticker', 'period_return']], on='ticker', how='left')
         tree_df['cap_bn'] = tree_df['market_cap'] / 1e9
         tree_df['period_return'] = tree_df['period_return'].fillna(0)
         p_max = max(abs(tree_df['period_return'].min()), abs(tree_df['period_return'].max()), 5)
+
+        # Mini-summary
+        if not tree_df.empty and 'sector' in tree_df.columns:
+            sector_agg = tree_df.groupby('sector')['period_return'].mean().sort_values(ascending=False)
+            if len(sector_agg) >= 2:
+                leaders = ", ".join(sector_agg.head(2).index.tolist())
+                laggards = ", ".join(sector_agg.tail(2).index.tolist())
+                st.markdown(f"""
+                <div style='background:rgba(255,255,255,0.03); padding:10px 15px; border-radius:8px; border-left:3px solid #f1c40f; margin-bottom:12px; font-size:0.85rem;'>
+                    <b>Leaders:</b> <span style='color:#2ecc71;'>{leaders}</span> | <b>Laggards:</b> <span style='color:#e74c3c;'>{laggards}</span>
+                </div>
+                """, unsafe_allow_html=True)
+
+        sec_tabs = st.tabs(["🗺️ Heatmap", "🏆 Top Sectors", "🚀 Top Movers"])
         
-        fig_tree = px.treemap(
-            tree_df, path=[px.Constant("Global"), 'sector', 'ticker'], values='cap_bn',
-            color='period_return', color_continuous_scale='RdYlGn', color_continuous_midpoint=0,
-            range_color=[-p_max, p_max], template="plotly_dark", height=400
-        )
-        fig_tree.update_layout(margin=dict(t=10, l=0, r=0, b=0))
-        st.plotly_chart(fig_tree, use_container_width=True)
+        with sec_tabs[0]:
+            fig_tree = px.treemap(
+                tree_df, path=[px.Constant("Global"), 'sector', 'ticker'], values='cap_bn',
+                color='period_return', color_continuous_scale='RdYlGn', color_continuous_midpoint=0,
+                range_color=[-p_max, p_max], template="plotly_dark", height=600
+            )
+            fig_tree.update_traces(texttemplate="%{label}<br>%{color:.2f}%")
+            fig_tree.update_layout(margin=dict(l=0, r=0, b=0, t=30))
+            st.plotly_chart(fig_tree, use_container_width=True)
+            
+        with sec_tabs[1]:
+            if not tree_df.empty and 'sector' in tree_df.columns:
+                fig_sec = px.bar(sector_agg.reset_index(), x='period_return', y='sector', orientation='h', 
+                                 color='period_return', color_continuous_scale='RdYlGn', template="plotly_dark", height=600)
+                fig_sec.update_traces(texttemplate='%{x:.2f}%', textposition='outside')
+                fig_sec.update_layout(margin=dict(r=20, b=0), yaxis={'categoryorder':'total ascending', 'title': None, 'tickmode': 'linear'})
+                st.plotly_chart(fig_sec, use_container_width=True)
+            
+        with sec_tabs[2]:
+            if not tree_df.empty:
+                top_stocks = tree_df.nlargest(10, 'period_return')
+                bot_stocks = tree_df.nsmallest(10, 'period_return')
+                movers = pd.concat([top_stocks, bot_stocks]).sort_values('period_return', ascending=True)
+                fig_movers = px.bar(movers, x='period_return', y='ticker', orientation='h', 
+                                    color='period_return', color_continuous_scale='RdYlGn', template="plotly_dark", height=600)
+                fig_movers.update_traces(texttemplate='%{x:.2f}%', textposition='outside')
+                fig_movers.update_layout(margin=dict(r=40, b=0), yaxis={'categoryorder':'total ascending', 'title': None, 'tickmode': 'linear', 'dtick': 1})
+                st.plotly_chart(fig_movers, use_container_width=True)
 
     with b2:
         render_header("package", "Portfolio Stance & Tactical Guide")
