@@ -4572,50 +4572,6 @@ if active_tab == "4. Predictive Suite":
                             st.plotly_chart(fig_meta, use_container_width=True)
                             st.caption("💡 Lower bar = more effective model in that market regime. Key question: Does LSTM or Transformer perform better during VIX spikes?")
 
-            # ── Actionable Master Plan (Upgraded — mirrors AI Trading Signature) ──
-            st.markdown("---")
-            render_header("target", "Actionable Master Plan")
-            st.markdown(f"""
-            <div style='display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-top:10px;'>
-                <div style='background:rgba({_hex_rgb(_sig_color)},0.08); border:1px solid {_sig_color}55;
-                            border-radius:10px; padding:16px;'>
-                    <div style='font-size:0.68rem; color:#8899aa; text-transform:uppercase;
-                                letter-spacing:1px; margin-bottom:6px;'>Executive Action</div>
-                    <div style='font-size:1.25rem; font-weight:900; color:{_sig_color};'>{_sig_verdict}</div>
-                    <p style='font-size:0.82rem; color:#ccc; margin:8px 0 0;'>{_sig_desc[:180]}...</p>
-                </div>
-                <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.1);
-                            border-radius:10px; padding:16px;'>
-                    <div style='font-size:0.68rem; color:#8899aa; text-transform:uppercase;
-                                letter-spacing:1px; margin-bottom:8px;'>Key Levels</div>
-                    <div style='font-size:0.85rem; color:#2ecc71; margin-bottom:4px;'>
-                        <b>ENTRY:</b> €{last_price:.2f}
-                    </div>
-                    <div style='font-size:0.85rem; color:#e74c3c; margin-bottom:4px;'>
-                        <b>STOP:</b> €{_ai_stop:.2f}
-                        <span style='color:#8899aa; font-size:0.75rem;'>(MC P10)</span>
-                    </div>
-                    <div style='font-size:0.85rem; color:#00ffcc; margin-bottom:4px;'>
-                        <b>TP1:</b> €{_ai_target:.2f}
-                        <span style='color:#8899aa; font-size:0.75rem;'>(AI target, {_ai_upside:+.1f}%)</span>
-                    </div>
-                    <div style='font-size:0.85rem; color:#3498db;'>
-                        <b>TP2:</b> €{_ai_tp2:.2f}
-                        <span style='color:#8899aa; font-size:0.75rem;'>(MC P90)</span>
-                    </div>
-                </div>
-                <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.1);
-                            border-radius:10px; padding:16px;'>
-                    <div style='font-size:0.68rem; color:#8899aa; text-transform:uppercase;
-                                letter-spacing:1px; margin-bottom:8px;'>Market Context</div>
-                    <div style='font-size:0.9rem; font-weight:700; color:#f1c40f;'>{_playbook}</div>
-                    <div style='font-size:0.8rem; color:#aaa; margin-top:6px;'>VIX: {_vix_now_sig:.1f}</div>
-                    <div style='font-size:0.8rem; color:#aaa;'>Smart Money: {sm_spirit}</div>
-                    <div style='font-size:0.8rem; color:#aaa;'>Sentiment: {sent_label}</div>
-                    <div style='font-size:0.8rem; color:#aaa;'>R/R: {_sig_rr:.2f}x ({_sig_badge})</div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
             st.markdown("<br>", unsafe_allow_html=True)
 
 
