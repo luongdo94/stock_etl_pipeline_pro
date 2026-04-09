@@ -4235,9 +4235,10 @@ if active_tab == "4. Predictive Suite":
             
         # Highlight divergence
         if (sent_label == "Bearish" and sm_spirit == "Accumulation") or (sent_label == "Bullish" and sm_spirit == "Distribution"):
-            div_type = "BULLISH DIVERGENCE (Smart Money Accumulation vs Retail Fear)" if sent_label == "Bearish" else "BEARISH DIVERGENCE (Smart Money Distribution vs Retail Greed)"
+            div_type = "BULLISH DIVERGENCE (Smart Money Accumulating despite Retail Fear)" if sent_label == "Bearish" else "BEARISH DIVERGENCE (Smart Money Distributing despite Retail Greed)"
             div_color = "#2ecc71" if sent_label == "Bearish" else "#e74c3c"
-            st.markdown(f"<div style='margin-top:10px; padding:10px 15px; background:{div_color}11; border-left:4px solid {div_color}; border-radius:4px;'><b style='color:{div_color}; font-size:0.95rem;'>🚨 INSIGHT: {div_type}</b><br><span style='font-size:0.85rem; color:#ccc;'>Institutions are positioning contrary to retail news sentiment. This often precedes violent trend reversals.</span></div>", unsafe_allow_html=True)
+            div_icon = "📈" if sent_label == "Bearish" else "📉"
+            st.markdown(f"<div style='margin-top:10px; padding:12px 18px; background:linear-gradient(90deg, {div_color}22, rgba(0,0,0,0)); border-left:4px solid {div_color}; border-radius:6px;'><b style='color:{div_color}; font-size:1.0rem;'>{div_icon} HIGH PROBABILITY SET-UP: {div_type}</b><br><span style='font-size:0.85rem; color:#ccc;'>Institutions and Smart Money are actively positioning in direct opposition to retail sentiment. This severe dislocation heavily tilts risk/reward for a contrarian entry. <b>Actionable edge: Wait for break of structure in direction of Smart Money.</b></span></div>", unsafe_allow_html=True)
 
         # ── AI TRADING SIGNATURE ─────────────────────────────────────────────
         # Pre-compute all levels for the card
@@ -4498,11 +4499,14 @@ if active_tab == "4. Predictive Suite":
                     icon_svg = SVG_ICONS[icon_key].replace('width="18"','width="14"').replace('height="18"','height="14"')
                     w_pct = float(m["Weight"].replace("%", ""))
                     bar_color = "#00ffcc" if w_pct == max(float(v["Weight"].replace("%", "")) for v in _em_display.values()) else "#3498db"
+                    conf_score = max(0.0, 100.0 - m["MAPE (%)"])
+                    conf_color = "#2ecc71" if conf_score >= 90 else "#f1c40f" if conf_score >= 80 else "#e74c3c"
                     rows_html += f"""
                     <tr>
                         <td style='padding:8px 12px; font-weight:600;'>{icon_svg} {model_name}</td>
                         <td style='padding:8px 12px; text-align:center; color:#e74c3c;'>${m["RMSE"]}</td>
                         <td style='padding:8px 12px; text-align:center; color:#e67e22;'>{m["MAPE (%)"]:.1f}%</td>
+                        <td style='padding:8px 12px; text-align:center; font-weight:700; color:{conf_color};'>{conf_score:.1f}%</td>
                         <td style='padding:8px 12px; text-align:center;' title='0% happens when mean-reverting models predict flatlines during a trending test set.'>{m["Dir. Acc"]}</td>
                         <td style='padding:8px 12px; text-align:center; font-weight:700; color:#f1c40f;'>€{m.get('Target', 0):.2f}</td>
                         <td style='padding:8px 12px; min-width:120px;'>
@@ -4519,7 +4523,8 @@ if active_tab == "4. Predictive Suite":
                             <th style='padding:6px 12px; text-align:left;'>Model</th>
                             <th style='padding:6px 12px; text-align:center;'>RMSE ($)</th>
                             <th style='padding:6px 12px; text-align:center;'>MAPE</th>
-                            <th style='padding:6px 12px; text-align:center;' title='Directional Accuracy evaluated on the holdout window'>Dir. Acc ({forecast_days}d Holdout) <span style='cursor:help;'>ⓘ</span></th>
+                            <th style='padding:6px 12px; text-align:center;' title='Confidence Score (100 - MAPE)'>Confidence <span style='cursor:help;'>ⓘ</span></th>
+                            <th style='padding:6px 12px; text-align:center;' title='Directional Accuracy evaluated on the holdout window'>Dir. Acc <span style='cursor:help;'>ⓘ</span></th>
                             <th style='padding:6px 12px; text-align:center;'>Target Vote</th>
                             <th style='padding:6px 12px; text-align:left;'>Weight</th>
                         </tr>
