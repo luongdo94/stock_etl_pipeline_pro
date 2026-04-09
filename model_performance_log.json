@@ -974,6 +974,31 @@
           "weight": 0.358
         }
       }
+    },
+    {
+      "ts": "2026-04-09T13:15:43",
+      "ticker": "AAPL",
+      "horizon": 7,
+      "vix": 20.0,
+      "regime": "BEARISH / CAUTION",
+      "anchor": "PatchTST",
+      "models": {
+        "LSTM": {
+          "rmse": 23.41,
+          "mape": 10.71,
+          "weight": 0.34
+        },
+        "Transformer": {
+          "rmse": 24.88,
+          "mape": 11.33,
+          "weight": 0.319
+        },
+        "PatchTST": {
+          "rmse": 23.3,
+          "mape": 10.6,
+          "weight": 0.341
+        }
+      }
     }
   ]
 }

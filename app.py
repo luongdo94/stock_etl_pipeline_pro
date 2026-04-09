@@ -4316,94 +4316,71 @@ if active_tab == "4. Predictive Suite":
         def _hex_rgb(h): h=h.lstrip('#'); return f"{int(h[0:2],16)},{int(h[2:4],16)},{int(h[4:6],16)}"
         _bg_rgb = _hex_rgb(_sig_color)
 
-        st.markdown(f"""
-        <div style='background:rgba(10,15,25,0.7); border:1px solid rgba(255,255,255,0.1);
-                    border-radius:14px; padding:22px 26px; margin:18px 0;'>
-            <!-- Header Row -->
-            <div style='display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px; margin-bottom:18px;'>
-                <div>
-                    <div style='font-size:0.65rem; color:#8899aa; font-weight:700; text-transform:uppercase;
-                                letter-spacing:2px; margin-bottom:6px;'>AI Trading Signature</div>
-                    <div style='font-size:1.8rem; font-weight:900; color:{_sig_color};
-                                text-shadow:0 0 20px rgba({_bg_rgb},0.5); line-height:1;'>{_sig_verdict}</div>
-                    <div style='font-size:0.75rem; color:{_sig_color}; background:rgba({_bg_rgb},0.12);
-                                border:1px solid rgba({_bg_rgb},0.35); border-radius:20px;
-                                display:inline-block; padding:2px 10px; margin-top:6px;'>{_sig_badge}</div>
-                </div>
-                <div style='text-align:right;'>
-                    <div style='font-size:0.65rem; color:#8899aa; text-transform:uppercase; margin-bottom:4px;'>VIX Context</div>
-                    <div style='font-size:1.1rem; font-weight:700; color:#f1c40f;'>VIX {_vix_now_sig:.1f}</div>
-                    <div style='font-size:0.78rem; color:#aaa;'>{_playbook}</div>
-                </div>
-            </div>
-
-            <!-- Signal Pills -->
-            <div style='margin-bottom:16px;'>
-                {_pill_ai}{_pill_sm}{_pill_sent}{_pill_rr}{_pill_prec}
-            </div>
-
-            <!-- Rationale -->
-            <div style='font-size:0.88rem; color:#dde; line-height:1.6; margin-bottom:18px;
-                        border-left:3px solid rgba({_bg_rgb},0.6); padding-left:14px;'>
-                {_sig_desc}
-            </div>
-
-            <!-- Trade Setup Snapshot -->
-            <div style='border-top:1px solid rgba(255,255,255,0.08); padding-top:16px;'>
-                <div style='font-size:0.65rem; color:#8899aa; text-transform:uppercase;
-                            letter-spacing:1.5px; margin-bottom:10px;'>Trade Setup Snapshot</div>
-                <div style='display:grid; grid-template-columns:repeat(5,1fr); gap:8px; font-size:0.82rem;'>
-                    <div style='background:rgba(255,255,255,0.04); border-radius:8px; padding:10px 12px;
-                                border-top:2px solid #3498db;'>
-                        <div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px;'>CURRENT PRICE</div>
-                        <div style='color:#fff; font-weight:800; font-size:1.05rem;'>€{last_price:.2f}</div>
-                    </div>
-                    <div style='background:rgba(46,204,113,0.08); border-radius:8px; padding:10px 12px;
-                                border-top:2px solid #2ecc71;'>
-                        <div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px;'>ENTRY (NOW)</div>
-                        <div style='color:#2ecc71; font-weight:800; font-size:1.05rem;'>€{last_price:.2f}</div>
-                        <div style='color:#8899aa; font-size:0.65rem;'>{forecast_days}d forecast</div>
-                    </div>
-                    <div style='background:rgba(231,76,60,0.08); border-radius:8px; padding:10px 12px;
-                                border-top:2px solid #e74c3c;'>
-                        <div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px;'>STOP (MC P10)</div>
-                        <div style='color:#e74c3c; font-weight:800; font-size:1.05rem;'>€{_ai_stop:.2f}</div>
-                        <div style='color:#8899aa; font-size:0.65rem;'>Risk: {((last_price-_ai_stop)/last_price*100):.1f}%</div>
-                    </div>
-                    <div style='background:rgba(0,255,204,0.06); border-radius:8px; padding:10px 12px;
-                                border-top:2px solid #00ffcc;'>
-                        <div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px;'>TARGET 1 (AI)</div>
-                        <div style='color:#00ffcc; font-weight:800; font-size:1.05rem;'>€{_ai_target:.2f}</div>
-                        <div style='color:#8899aa; font-size:0.65rem;'>{_unc_str} · {_ai_upside:+.1f}%</div>
-                    </div>
-                    <div style='background:rgba(52,152,219,0.06); border-radius:8px; padding:10px 12px;
-                                border-top:2px solid #3498db;'>
-                        <div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px;'>TARGET 2 (MC P90)</div>
-                        <div style='color:#3498db; font-weight:800; font-size:1.05rem;'>€{_ai_tp2:.2f}</div>
-                        <div style='color:#8899aa; font-size:0.65rem;'>Extended scenario</div>
-                    </div>
-                </div>
-
-                <!-- R/R Progress Bar -->
-                <div style='margin-top:14px; display:flex; align-items:center; gap:12px;'>
-                    <div style='color:#8899aa; font-size:0.75rem; white-space:nowrap;'>R/R Ratio</div>
-                    <div style='flex:1; background:rgba(255,255,255,0.08); border-radius:4px; height:8px; position:relative; overflow:hidden;'>
-                        <div style='width:{min(100, _sig_rr/3.0*100):.0f}%; height:100%;
-                                    background:linear-gradient(90deg,#e74c3c,#f1c40f,#2ecc71,#00ffcc);
-                                    border-radius:4px;'></div>
-                    </div>
-                    <div style='color:{_sig_color}; font-weight:800; font-size:0.9rem; white-space:nowrap;'>{_sig_rr:.2f}x</div>
-                    <div style='color:#8899aa; font-size:0.75rem; white-space:nowrap;'>{'FAVORABLE' if _sig_rr>=1.5 else 'MARGINAL' if _sig_rr>=1.0 else 'POOR'}</div>
-                </div>
-
-                <!-- 90% Confidence Interval note -->
-                <div style='margin-top:10px; font-size:0.78rem; color:#8899aa; text-align:center;'>
-                    Monte Carlo 90% CI: <b style='color:#fff;'>€{p5_final:.2f}</b> ↔ <b style='color:#fff;'>€{p95_final:.2f}</b>
-                    &nbsp;·&nbsp; {forecast_days}-Day Horizon &nbsp;·&nbsp; {n_sims:,} simulations
-                </div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+        html_content = f"""
+<div style='background:rgba(10,15,25,0.7); border:1px solid rgba(255,255,255,0.1); border-radius:14px; padding:22px 26px; margin:18px 0;'>
+<!-- Header Row -->
+<div style='display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px; margin-bottom:18px;'>
+<div>
+<div style='font-size:0.65rem; color:#8899aa; font-weight:700; text-transform:uppercase; letter-spacing:2px; margin-bottom:6px;'>AI Trading Signature</div>
+<div style='font-size:1.8rem; font-weight:900; color:{_sig_color}; text-shadow:0 0 20px rgba({_bg_rgb},0.5); line-height:1;'>{_sig_verdict}</div>
+<div style='font-size:0.75rem; color:{_sig_color}; background:rgba({_bg_rgb},0.12); border:1px solid rgba({_bg_rgb},0.35); border-radius:20px; display:inline-block; padding:2px 10px; margin-top:6px;'>{_sig_badge}</div>
+</div>
+<div style='text-align:right;'>
+<div style='font-size:0.65rem; color:#8899aa; text-transform:uppercase; margin-bottom:4px;'>VIX Context</div>
+<div style='font-size:1.1rem; font-weight:700; color:#f1c40f;'>VIX {_vix_now_sig:.1f}</div>
+<div style='font-size:0.78rem; color:#aaa;'>{_playbook}</div>
+</div>
+</div>
+<!-- Signal Pills -->
+<div style='margin-bottom:16px;'>{_pill_ai}{_pill_sm}{_pill_sent}{_pill_rr}{_pill_prec}</div>
+<!-- Rationale -->
+<div style='font-size:0.88rem; color:#dde; line-height:1.6; margin-bottom:18px; border-left:3px solid rgba({_bg_rgb},0.6); padding-left:14px;'>{_sig_desc}</div>
+<!-- Trade Setup Snapshot -->
+<div style='border-top:1px solid rgba(255,255,255,0.08); padding-top:16px;'>
+<div style='font-size:0.65rem; color:#8899aa; text-transform:uppercase; letter-spacing:1.5px; margin-bottom:10px;'>Trade Setup Snapshot</div>
+<div style='display:grid; grid-template-columns:repeat(5,1fr); gap:8px; font-size:0.82rem;'>
+<div style='background:rgba(255,255,255,0.04); border-radius:8px; padding:10px 12px; border-top:2px solid #3498db;'>
+<div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px;'>CURRENT PRICE</div>
+<div style='color:#fff; font-weight:800; font-size:1.05rem;'>€{last_price:.2f}</div>
+</div>
+<div style='background:rgba(46,204,113,0.08); border-radius:8px; padding:10px 12px; border-top:2px solid #2ecc71;'>
+<div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px;'>ENTRY (NOW)</div>
+<div style='color:#2ecc71; font-weight:800; font-size:1.05rem;'>€{last_price:.2f}</div>
+<div style='color:#8899aa; font-size:0.65rem;'>{forecast_days}d forecast</div>
+</div>
+<div style='background:rgba(231,76,60,0.08); border-radius:8px; padding:10px 12px; border-top:2px solid #e74c3c;'>
+<div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px;'>STOP (MC P10)</div>
+<div style='color:#e74c3c; font-weight:800; font-size:1.05rem;'>€{_ai_stop:.2f}</div>
+<div style='color:#8899aa; font-size:0.65rem;'>Risk: {((last_price-_ai_stop)/last_price*100):.1f}%</div>
+</div>
+<div style='background:rgba(0,255,204,0.06); border-radius:8px; padding:10px 12px; border-top:2px solid #00ffcc;'>
+<div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px;'>TARGET 1 (AI)</div>
+<div style='color:#00ffcc; font-weight:800; font-size:1.05rem;'>€{_ai_target:.2f}</div>
+<div style='color:#8899aa; font-size:0.65rem;'>{_unc_str} · {_ai_upside:+.1f}%</div>
+</div>
+<div style='background:rgba(52,152,219,0.06); border-radius:8px; padding:10px 12px; border-top:2px solid #3498db;'>
+<div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px;'>TARGET 2 (MC P90)</div>
+<div style='color:#3498db; font-weight:800; font-size:1.05rem;'>€{_ai_tp2:.2f}</div>
+<div style='color:#8899aa; font-size:0.65rem;'>Extended scenario</div>
+</div>
+</div>
+<!-- R/R Progress Bar -->
+<div style='margin-top:14px; display:flex; align-items:center; gap:12px;'>
+<div style='color:#8899aa; font-size:0.75rem; white-space:nowrap;'>R/R Ratio</div>
+<div style='flex:1; background:rgba(255,255,255,0.08); border-radius:4px; height:8px; position:relative; overflow:hidden;'>
+<div style='width:{min(100, _sig_rr/3.0*100):.0f}%; height:100%; background:linear-gradient(90deg,#e74c3c,#f1c40f,#2ecc71,#00ffcc); border-radius:4px;'></div>
+</div>
+<div style='color:{_sig_color}; font-weight:800; font-size:0.9rem; white-space:nowrap;'>{_sig_rr:.2f}x</div>
+<div style='color:#8899aa; font-size:0.75rem; white-space:nowrap;'>{'FAVORABLE' if _sig_rr>=1.5 else 'MARGINAL' if _sig_rr>=1.0 else 'POOR'}</div>
+</div>
+<!-- 90% Confidence Interval note -->
+<div style='margin-top:10px; font-size:0.78rem; color:#8899aa; text-align:center;'>
+Monte Carlo 90% CI: <b style='color:#fff;'>€{p5_final:.2f}</b> ↔ <b style='color:#fff;'>€{p95_final:.2f}</b> &nbsp;·&nbsp; {forecast_days}-Day Horizon &nbsp;·&nbsp; {n_sims:,} simulations
+</div>
+</div>
+</div>
+"""
+        st.markdown(html_content, unsafe_allow_html=True)
 
         # ── ROW 3: Main Chart (Full Width) ── (Moved to Top) ───────────────────
         render_header("ai", f"AI Ensemble vs Stochastic Monte Carlo: {fc_ticker}")
