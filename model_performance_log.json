@@ -849,6 +849,106 @@
           "weight": 0.42
         }
       }
+    },
+    {
+      "ts": "2026-04-09T00:15:48",
+      "ticker": "AAPL",
+      "horizon": 7,
+      "vix": 20.0,
+      "regime": "BEARISH / CAUTION",
+      "anchor": "LSTM",
+      "models": {
+        "LSTM": {
+          "rmse": 23.57,
+          "mape": 10.78,
+          "weight": 0.344
+        },
+        "Transformer": {
+          "rmse": 25.78,
+          "mape": 11.67,
+          "weight": 0.315
+        },
+        "PatchTST": {
+          "rmse": 23.81,
+          "mape": 10.79,
+          "weight": 0.341
+        }
+      }
+    },
+    {
+      "ts": "2026-04-09T00:28:04",
+      "ticker": "AAPL",
+      "horizon": 7,
+      "vix": 20.0,
+      "regime": "BEARISH / CAUTION",
+      "anchor": "PatchTST",
+      "models": {
+        "LSTM": {
+          "rmse": 25.05,
+          "mape": 11.34,
+          "weight": 0.337
+        },
+        "Transformer": {
+          "rmse": 26.99,
+          "mape": 12.2,
+          "weight": 0.313
+        },
+        "PatchTST": {
+          "rmse": 24.14,
+          "mape": 11.05,
+          "weight": 0.35
+        }
+      }
+    },
+    {
+      "ts": "2026-04-09T00:36:20",
+      "ticker": "AAPL",
+      "horizon": 7,
+      "vix": 20.0,
+      "regime": "BEARISH / CAUTION",
+      "anchor": "PatchTST",
+      "models": {
+        "LSTM": {
+          "rmse": 25.51,
+          "mape": 11.68,
+          "weight": 0.32799999999999996
+        },
+        "Transformer": {
+          "rmse": 26.48,
+          "mape": 12.04,
+          "weight": 0.316
+        },
+        "PatchTST": {
+          "rmse": 23.49,
+          "mape": 10.72,
+          "weight": 0.35600000000000004
+        }
+      }
+    },
+    {
+      "ts": "2026-04-09T00:52:36",
+      "ticker": "AAPL",
+      "horizon": 7,
+      "vix": 20.0,
+      "regime": "BEARISH / CAUTION",
+      "anchor": "PatchTST",
+      "models": {
+        "LSTM": {
+          "rmse": 25.51,
+          "mape": 11.68,
+          "weight": 0.32799999999999996
+        },
+        "Transformer": {
+          "rmse": 26.48,
+          "mape": 12.04,
+          "weight": 0.316
+        },
+        "PatchTST": {
+          "rmse": 23.49,
+          "mape": 10.72,
+          "weight": 0.35600000000000004
+        }
+      }
     }
   ]
 }

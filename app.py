@@ -5,6 +5,7 @@ Reads directly from the DuckDB warehouse and opens charts in the browser.
 Usage:
     python c:\\etl_pipeline\\app.py
 """
+# ── SESSION ACTIVE: 2026-04-09 ───────────────────────────────────────────────
 import sys
 import os
 from datetime import timedelta, date
@@ -1578,17 +1579,25 @@ if active_tab == "3. Decision Engine":
             elif ai_score >= 40: p_qual, p_qual_c = "FAIR", "#f1c40f"
             else: p_qual, p_qual_c = "POOR", "#e74c3c"
             
-            # PILLAR 3: VALUATION — Multi-factor: PEG + P/E + upside + quality
-            # Pure upside-from-target is misleading (analyst bias, stale targets).
-            # We now cross-check with fundamental multiples for honest labelling.
+            # PILLAR 3: VALUATION — Sector-Aware Multi-factor (PEG + P/E + upside)
             _peg_v = float(meta_enriched.get("peg_ratio") or 0)
             _pe_v  = float(meta_enriched.get("pe_ratio")  or 0)
+            
+            # 🏆 EXPERT: Sector-Specific Dynamic Thresholds
+            _sector_str = str(meta.get("sector", "")).lower()
+            _is_growth  = any(s in _sector_str for s in ["tech", "semi", "software", "cloud", "ai", "comm"])
+            
+            # Dynamic cutoff levels (Growth stocks carry premium multiples)
+            _pe_cheap_limit = 28.0 if _is_growth else 18.0
+            _pe_expensive_limit = 65.0 if _is_growth else 42.0
+            _peg_expensive_limit = 3.5 if _is_growth else 2.5
+            _peg_cheap_limit = 1.2 if _is_growth else 0.8
 
-            _val_expensive  = (_pe_v > 40 and _pe_v > 0) or (_peg_v > 3.0 and _peg_v > 0)
-            _val_cheap      = (upside > 20) and (_peg_v < 1.2 or _pe_v < 18) and _pe_v > 0
-            _val_premium_ok = (upside > 10) and (ai_score >= 65) and (_peg_v < 2.5 or _pe_v < 35)
-            _val_compounder = (upside > 5)  and (ai_score >= 55) and (not _val_expensive)
-            _val_fair       = (upside > 0)  and (not _val_expensive)
+            _val_expensive  = (_pe_v > _pe_expensive_limit and _pe_v > 0) or (_peg_v > _peg_expensive_limit and _peg_v > 0)
+            _val_cheap      = (upside > 15) and (_peg_v < _peg_cheap_limit or _pe_v < _pe_cheap_limit) and _pe_v > 0
+            _val_premium_ok = (upside > 8) and (ai_score >= 65) and (_peg_v < 2.8 or _pe_v < (55 if _is_growth else 35))
+            _val_compounder = (upside > 5) and (ai_score >= 55) and (not _val_expensive)
+            _val_fair       = (upside > 0) and (not _val_expensive)
 
             if _val_cheap:
                 p_val, p_val_c = "UNDERVALUED", "#2ecc71"
@@ -1598,10 +1607,12 @@ if active_tab == "3. Decision Engine":
                 p_val, p_val_c = "FAIR FOR QUALITY", "#3498db"
             elif _val_fair:
                 p_val, p_val_c = "FAIR VS SECTOR", "#f1c40f"
-            elif upside <= 0 and not _val_expensive:
-                p_val, p_val_c = "EXTENDED", "#e67e22"
+            elif _val_expensive:
+                p_val, p_val_c = "EXPENSIVE / PREMIUM", "#e67e22"
+            elif _pe_v < 0:
+                p_val, p_val_c = "SPECULATIVE / RISK", "#e74c3c"
             else:
-                p_val, p_val_c = "EXPENSIVE", "#e74c3c"
+                p_val, p_val_c = "AVERAGE", "#95a5a6"
             
             # PILLAR 4: RISK
             if _w52_pos > 80: p_risk, p_risk_c = "ELEVATED", "#e74c3c"
@@ -4228,19 +4239,170 @@ if active_tab == "4. Predictive Suite":
             div_color = "#2ecc71" if sent_label == "Bearish" else "#e74c3c"
             st.markdown(f"<div style='margin-top:10px; padding:10px 15px; background:{div_color}11; border-left:4px solid {div_color}; border-radius:4px;'><b style='color:{div_color}; font-size:0.95rem;'>🚨 INSIGHT: {div_type}</b><br><span style='font-size:0.85rem; color:#ccc;'>Institutions are positioning contrary to retail news sentiment. This often precedes violent trend reversals.</span></div>", unsafe_allow_html=True)
 
-        # ── ROW 3.5: Analysis & Logic (Moved Up) ──────────────────────────────
-        render_header("activity", "AI Synergy & Reasoning Logic")
-        bias_text = "Bullish" if (lstm_return and lstm_return > 0.02) else "Bearish" if (lstm_return and lstm_return < -0.02) else "Neutral"
-        st.write(f"The hybrid Ensemble AI model is currently **{bias_text}**.")
-        st.write("This institutional-grade dashboard merges two distinct mathematical philosophies:")
-        uncertainty_txt = f" The Ensemble uncertainty band is calibrated at **±{mape_raw*100:.1f}%** based on 21-day walk-forward backtest." if mape_raw else ""
-        st.info("1. **Deterministic Path (Blue Line)**: A hybrid Deep Learning + ARIMA model learns the historical non-linear patterns, market beta (SPY), and volatility context (^VIX) to predict the single most likely path.\n\n"
-                  "2. **Dynamic Volatility (Grey Shadows)**: Monte Carlo risk bands expand or contract dynamically based on real-time market 'heat' (Volatility)." + uncertainty_txt)
-        
-        p5_final = np.percentile(simulated_paths[-1, :], 5)
-        p95_final = np.percentile(simulated_paths[-1, :], 95)
-        st.success(f"Risk/Reward Check: With 90% confidence, at the end of {forecast_days} days, the price bounded by Monte Carlo is between **€{p5_final:.2f}** and **€{p95_final:.2f}**. " +
-                   (f"The AI Ensemble targets **€{lstm_path[-1]:.2f}**" + (f" (±{mape_raw*100:.1f}% CI)." if mape_raw else ".") if lstm_path is not None else "Ensemble target unavailable."))
+        # ── AI TRADING SIGNATURE ─────────────────────────────────────────────
+        # Pre-compute all levels for the card
+        p5_final   = np.percentile(simulated_paths[-1, :], 5)
+        p10_final  = np.percentile(simulated_paths[-1, :], 10)
+        p90_final  = np.percentile(simulated_paths[-1, :], 90)
+        p95_final  = np.percentile(simulated_paths[-1, :], 95)
+        _ai_target = float(lstm_path[-1]) if lstm_path is not None else last_price
+        _ai_stop   = float(p10_final)
+        _ai_tp2    = float(p90_final)
+        _ai_upside = (lstm_return * 100) if lstm_return is not None else 0
+
+        # ── Conviction Score (3-Pillar: 0-3) ────────────────────────────────
+        _conv_pts  = 0
+        _conv_pts += 1 if _ai_upside >= 3 else 0
+        _conv_pts += 1 if sm_spirit == "Accumulation" else 0
+        _conv_pts += 1 if avg_sent > 0.05 else 0
+
+        # R/R based on Monte Carlo bands
+        _sig_risk   = last_price - _ai_stop
+        _sig_reward = _ai_target - last_price
+        _sig_rr     = (_sig_reward / _sig_risk) if _sig_risk > 0 else 0
+
+        # ── Executive Verdict ────────────────────────────────────────────────
+        if _conv_pts == 3 and _sig_rr >= 1.5:
+            _sig_verdict, _sig_color, _sig_badge = "STRONG LONG", "#00ffcc", "HIGH CONVICTION"
+            _sig_desc = (f"All 3 pillars are aligned: AI projects +{_ai_upside:.1f}% upside, "
+                         f"institutions are in Accumulation mode, and news sentiment is "
+                         f"{'Bullish' if avg_sent > 0.1 else 'leaning constructive'}. "
+                         f"A {_sig_rr:.1f}x R/R setup with Monte Carlo support — ideal for a full position.")
+        elif _conv_pts >= 2 and _sig_rr >= 1.0:
+            _sig_verdict, _sig_color, _sig_badge = "BUY / ACCUMULATE", "#2ecc71", "MODERATE CONVICTION"
+            _sig_desc = (f"2 of 3 pillars are constructive. AI targets €{_ai_target:.2f} "
+                         f"({_ai_upside:+.1f}%), Smart Money shows {sm_spirit}. "
+                         f"R/R of {_sig_rr:.1f}x supports a partial position entry. "
+                         f"Reserve allocation for a dip toward €{_ai_stop:.2f}.")
+        elif _ai_upside <= -3:
+            _sig_verdict, _sig_color, _sig_badge = "REDUCE / HEDGE", "#e74c3c", "BEARISH SIGNAL"
+            _sig_desc = (f"AI model projects {_ai_upside:.1f}% downside to €{_ai_target:.2f}. "
+                         f"Smart Money shows {sm_spirit} and sentiment is {sent_label}. "
+                         f"Consider reducing exposure or hedging until price stabilizes above €{_ai_stop:.2f}.")
+        elif _conv_pts == 0:
+            _sig_verdict, _sig_color, _sig_badge = "AVOID / WAIT", "#e74c3c", "NO CONVICTION"
+            _sig_desc = (f"All 3 pillars are negative: AI upside is weak ({_ai_upside:+.1f}%), "
+                         f"Smart Money shows {sm_spirit}, and sentiment is {sent_label}. "
+                         f"Best to stay flat or look for a better setup.")
+        else:
+            _sig_verdict, _sig_color, _sig_badge = "NEUTRAL / MONITOR", "#f1c40f", "MIXED SIGNALS"
+            _sig_desc = (f"Conflicting signals: AI projects {_ai_upside:+.1f}% to €{_ai_target:.2f}, "
+                         f"but Smart Money ({sm_spirit}) and sentiment ({sent_label}) "
+                         f"are not fully aligned. Monitor for a confluence trigger before entry.")
+
+        # ── Reasoning pills ─────────────────────────────────────────────────
+        def _pill(label, value, ok):
+            c = "#2ecc71" if ok else "#e74c3c"
+            return (f"<span style='display:inline-flex; align-items:center; gap:5px; background:rgba(255,255,255,0.05); "
+                    f"border:1px solid {c}55; border-radius:20px; padding:4px 10px; font-size:0.78rem; margin:3px;'>"
+                    f"<span style='color:{c}; font-weight:700;'>{'✓' if ok else '✗'}</span> "
+                    f"<span style='color:#ccc;'>{label}:</span> "
+                    f"<span style='color:#fff; font-weight:700;'>{value}</span></span>")
+
+        _pill_ai   = _pill("AI Upside",    f"{_ai_upside:+.1f}%",  _ai_upside >= 3)
+        _pill_sm   = _pill("Smart Money",  sm_spirit,              sm_spirit == "Accumulation")
+        _pill_sent = _pill("Sentiment",    sent_label,             avg_sent > 0.05)
+        _pill_rr   = _pill("R/R",          f"{_sig_rr:.1f}x",      _sig_rr >= 1.5)
+        _pill_prec = _pill("AI Precision", f"{precision_score:.1f}%" if precision_score else "N/A", (precision_score or 0) >= 75)
+
+        _unc_str = f"±{mape_raw*100:.1f}% CI" if mape_raw else ""
+        _vix_now_sig = float(prices_full[prices_full['ticker']=='^VIX']['price_close'].iloc[-1]) \
+            if not prices_full[prices_full['ticker']=='^VIX'].empty else 20.0
+        _playbook = ("Mean Reversion / Range Trading" if _vix_now_sig > 25
+                     else "Trend Following / Breakout" if _vix_now_sig < 15
+                     else "Selective / Stock Picker's Market")
+
+        def _hex_rgb(h): h=h.lstrip('#'); return f"{int(h[0:2],16)},{int(h[2:4],16)},{int(h[4:6],16)}"
+        _bg_rgb = _hex_rgb(_sig_color)
+
+        st.markdown(f"""
+        <div style='background:rgba(10,15,25,0.7); border:1px solid rgba(255,255,255,0.1);
+                    border-radius:14px; padding:22px 26px; margin:18px 0;'>
+            <!-- Header Row -->
+            <div style='display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px; margin-bottom:18px;'>
+                <div>
+                    <div style='font-size:0.65rem; color:#8899aa; font-weight:700; text-transform:uppercase;
+                                letter-spacing:2px; margin-bottom:6px;'>AI Trading Signature</div>
+                    <div style='font-size:1.8rem; font-weight:900; color:{_sig_color};
+                                text-shadow:0 0 20px rgba({_bg_rgb},0.5); line-height:1;'>{_sig_verdict}</div>
+                    <div style='font-size:0.75rem; color:{_sig_color}; background:rgba({_bg_rgb},0.12);
+                                border:1px solid rgba({_bg_rgb},0.35); border-radius:20px;
+                                display:inline-block; padding:2px 10px; margin-top:6px;'>{_sig_badge}</div>
+                </div>
+                <div style='text-align:right;'>
+                    <div style='font-size:0.65rem; color:#8899aa; text-transform:uppercase; margin-bottom:4px;'>VIX Context</div>
+                    <div style='font-size:1.1rem; font-weight:700; color:#f1c40f;'>VIX {_vix_now_sig:.1f}</div>
+                    <div style='font-size:0.78rem; color:#aaa;'>{_playbook}</div>
+                </div>
+            </div>
+
+            <!-- Signal Pills -->
+            <div style='margin-bottom:16px;'>
+                {_pill_ai}{_pill_sm}{_pill_sent}{_pill_rr}{_pill_prec}
+            </div>
+
+            <!-- Rationale -->
+            <div style='font-size:0.88rem; color:#dde; line-height:1.6; margin-bottom:18px;
+                        border-left:3px solid rgba({_bg_rgb},0.6); padding-left:14px;'>
+                {_sig_desc}
+            </div>
+
+            <!-- Trade Setup Snapshot -->
+            <div style='border-top:1px solid rgba(255,255,255,0.08); padding-top:16px;'>
+                <div style='font-size:0.65rem; color:#8899aa; text-transform:uppercase;
+                            letter-spacing:1.5px; margin-bottom:10px;'>Trade Setup Snapshot</div>
+                <div style='display:grid; grid-template-columns:repeat(5,1fr); gap:8px; font-size:0.82rem;'>
+                    <div style='background:rgba(255,255,255,0.04); border-radius:8px; padding:10px 12px;
+                                border-top:2px solid #3498db;'>
+                        <div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px;'>CURRENT PRICE</div>
+                        <div style='color:#fff; font-weight:800; font-size:1.05rem;'>€{last_price:.2f}</div>
+                    </div>
+                    <div style='background:rgba(46,204,113,0.08); border-radius:8px; padding:10px 12px;
+                                border-top:2px solid #2ecc71;'>
+                        <div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px;'>ENTRY (NOW)</div>
+                        <div style='color:#2ecc71; font-weight:800; font-size:1.05rem;'>€{last_price:.2f}</div>
+                        <div style='color:#8899aa; font-size:0.65rem;'>{forecast_days}d forecast</div>
+                    </div>
+                    <div style='background:rgba(231,76,60,0.08); border-radius:8px; padding:10px 12px;
+                                border-top:2px solid #e74c3c;'>
+                        <div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px;'>STOP (MC P10)</div>
+                        <div style='color:#e74c3c; font-weight:800; font-size:1.05rem;'>€{_ai_stop:.2f}</div>
+                        <div style='color:#8899aa; font-size:0.65rem;'>Risk: {((last_price-_ai_stop)/last_price*100):.1f}%</div>
+                    </div>
+                    <div style='background:rgba(0,255,204,0.06); border-radius:8px; padding:10px 12px;
+                                border-top:2px solid #00ffcc;'>
+                        <div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px;'>TARGET 1 (AI)</div>
+                        <div style='color:#00ffcc; font-weight:800; font-size:1.05rem;'>€{_ai_target:.2f}</div>
+                        <div style='color:#8899aa; font-size:0.65rem;'>{_unc_str} · {_ai_upside:+.1f}%</div>
+                    </div>
+                    <div style='background:rgba(52,152,219,0.06); border-radius:8px; padding:10px 12px;
+                                border-top:2px solid #3498db;'>
+                        <div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px;'>TARGET 2 (MC P90)</div>
+                        <div style='color:#3498db; font-weight:800; font-size:1.05rem;'>€{_ai_tp2:.2f}</div>
+                        <div style='color:#8899aa; font-size:0.65rem;'>Extended scenario</div>
+                    </div>
+                </div>
+
+                <!-- R/R Progress Bar -->
+                <div style='margin-top:14px; display:flex; align-items:center; gap:12px;'>
+                    <div style='color:#8899aa; font-size:0.75rem; white-space:nowrap;'>R/R Ratio</div>
+                    <div style='flex:1; background:rgba(255,255,255,0.08); border-radius:4px; height:8px; position:relative; overflow:hidden;'>
+                        <div style='width:{min(100, _sig_rr/3.0*100):.0f}%; height:100%;
+                                    background:linear-gradient(90deg,#e74c3c,#f1c40f,#2ecc71,#00ffcc);
+                                    border-radius:4px;'></div>
+                    </div>
+                    <div style='color:{_sig_color}; font-weight:800; font-size:0.9rem; white-space:nowrap;'>{_sig_rr:.2f}x</div>
+                    <div style='color:#8899aa; font-size:0.75rem; white-space:nowrap;'>{'FAVORABLE' if _sig_rr>=1.5 else 'MARGINAL' if _sig_rr>=1.0 else 'POOR'}</div>
+                </div>
+
+                <!-- 90% Confidence Interval note -->
+                <div style='margin-top:10px; font-size:0.78rem; color:#8899aa; text-align:center;'>
+                    Monte Carlo 90% CI: <b style='color:#fff;'>€{p5_final:.2f}</b> ↔ <b style='color:#fff;'>€{p95_final:.2f}</b>
+                    &nbsp;·&nbsp; {forecast_days}-Day Horizon &nbsp;·&nbsp; {n_sims:,} simulations
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
 
         # ── ROW 3: Main Chart (Full Width) ── (Moved to Top) ───────────────────
         render_header("ai", f"AI Ensemble vs Stochastic Monte Carlo: {fc_ticker}")
@@ -4410,65 +4572,50 @@ if active_tab == "4. Predictive Suite":
                             st.plotly_chart(fig_meta, use_container_width=True)
                             st.caption("💡 Lower bar = more effective model in that market regime. Key question: Does LSTM or Transformer perform better during VIX spikes?")
 
-            # ── Actionable Matrix ──────────────────────────────────────────────
+            # ── Actionable Master Plan (Upgraded — mirrors AI Trading Signature) ──
             st.markdown("---")
-            render_header("target", "🚀 Actionable Master Plan")
-            
-            _upside_val = (lstm_return * 100) if lstm_return is not None else 0
-            
-            # Action logic
-            if _upside_val >= 5 and sm_spirit == "Accumulation":
-                _action_color = "#2ecc71" # Green
-                _action_title = "STRONG LONG / ACCUMULATE"
-                _action_text = "Confluence of AI upside and institutional buying. Buy on pullbacks to EMA20."
-            elif _upside_val > 0:
-                _action_color = "#f1c40f" # Yellow
-                _action_title = "HOLD / ADD ON DIPS"
-                _action_text = "Positive bias but lacking strong upside momentum. Hold existing, risk-managed."
-            elif _upside_val <= -2:
-                _action_color = "#e74c3c" # Red
-                _action_title = "REDUCE EXPOSURE / HEDGE"
-                _action_text = "AI predicts downside or sideways chop. Take profits, tighten stop losses, or hedge."
-            else:
-                _action_color = "#95a5a6" # Gray
-                _action_title = "NEUTRAL / WAIT"
-                _action_text = "Low directional conviction. Best to wait for a clearer trend breakout."
-
-            _vix_now = float(prices_full[prices_full['ticker']=='^VIX']['price_close'].iloc[-1]) if not prices_full[prices_full['ticker']=='^VIX'].empty else 20.0
-
-            if _vix_now > 25:
-                _strat_text = "Mean Reversion / Range Trading (High VIX)"
-            elif _vix_now < 15:
-                _strat_text = "Trend Following / Breakout (Low VIX)"
-            else:
-                _strat_text = "Selective / Stock Picker's Market"
-
-            _target_str = f"€{lstm_path[-1]:.2f}" if lstm_path is not None else "N/A"
-            try:
-                _stop_str = f"€{p10[-1]:.2f}"
-            except Exception:
-                _stop_str = "N/A"
-
+            render_header("target", "Actionable Master Plan")
             st.markdown(f"""
-            <div style="display:flex; gap:15px; margin-top:10px;">
-                <div style="flex:1; background:rgba(46, 204, 113, 0.05); border:1px solid {{_action_color}}; border-radius:8px; padding:15px;">
-                    <span style="font-size:0.8rem; text-transform:uppercase; color:#8899aa; font-weight:700;">Suggested Action</span>
-                    <h3 style="color:{{_action_color}}; margin:5px 0px; font-size:1.3rem;">{{_action_title}}</h3>
-                    <p style="font-size:0.9rem; color:#ccc; margin:0;">{{_action_text}}</p>
+            <div style='display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-top:10px;'>
+                <div style='background:rgba({_hex_rgb(_sig_color)},0.08); border:1px solid {_sig_color}55;
+                            border-radius:10px; padding:16px;'>
+                    <div style='font-size:0.68rem; color:#8899aa; text-transform:uppercase;
+                                letter-spacing:1px; margin-bottom:6px;'>Executive Action</div>
+                    <div style='font-size:1.25rem; font-weight:900; color:{_sig_color};'>{_sig_verdict}</div>
+                    <p style='font-size:0.82rem; color:#ccc; margin:8px 0 0;'>{_sig_desc[:180]}...</p>
                 </div>
-                <div style="flex:1; background:rgba(255, 255, 255, 0.03); border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:15px;">
-                    <span style="font-size:0.8rem; text-transform:uppercase; color:#8899aa; font-weight:700;">Key Levels</span>
-                    <h3 style="color:#00e5ff; margin:5px 0px; font-size:1.3rem;">🎯 Target: {{_target_str}}</h3>
-                    <p style="font-size:0.9rem; color:#e74c3c; margin:0; font-weight:600;">🛑 Risk Floor (Max Pain): {{_stop_str}}</p>
+                <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.1);
+                            border-radius:10px; padding:16px;'>
+                    <div style='font-size:0.68rem; color:#8899aa; text-transform:uppercase;
+                                letter-spacing:1px; margin-bottom:8px;'>Key Levels</div>
+                    <div style='font-size:0.85rem; color:#2ecc71; margin-bottom:4px;'>
+                        <b>ENTRY:</b> €{last_price:.2f}
+                    </div>
+                    <div style='font-size:0.85rem; color:#e74c3c; margin-bottom:4px;'>
+                        <b>STOP:</b> €{_ai_stop:.2f}
+                        <span style='color:#8899aa; font-size:0.75rem;'>(MC P10)</span>
+                    </div>
+                    <div style='font-size:0.85rem; color:#00ffcc; margin-bottom:4px;'>
+                        <b>TP1:</b> €{_ai_target:.2f}
+                        <span style='color:#8899aa; font-size:0.75rem;'>(AI target, {_ai_upside:+.1f}%)</span>
+                    </div>
+                    <div style='font-size:0.85rem; color:#3498db;'>
+                        <b>TP2:</b> €{_ai_tp2:.2f}
+                        <span style='color:#8899aa; font-size:0.75rem;'>(MC P90)</span>
+                    </div>
                 </div>
-                <div style="flex:1; background:rgba(255, 255, 255, 0.03); border:1px solid rgba(255,255,255,0.1); border-radius:8px; padding:15px;">
-                    <span style="font-size:0.8rem; text-transform:uppercase; color:#8899aa; font-weight:700;">Optimal Strategy Playbook</span>
-                    <h3 style="color:#f39c12; margin:5px 0px; font-size:1.1rem;">{{_strat_text}}</h3>
-                    <p style="font-size:0.85rem; color:#aaa; margin:0;">Retail Mode: {{sent_label}}</p>
+                <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.1);
+                            border-radius:10px; padding:16px;'>
+                    <div style='font-size:0.68rem; color:#8899aa; text-transform:uppercase;
+                                letter-spacing:1px; margin-bottom:8px;'>Market Context</div>
+                    <div style='font-size:0.9rem; font-weight:700; color:#f1c40f;'>{_playbook}</div>
+                    <div style='font-size:0.8rem; color:#aaa; margin-top:6px;'>VIX: {_vix_now_sig:.1f}</div>
+                    <div style='font-size:0.8rem; color:#aaa;'>Smart Money: {sm_spirit}</div>
+                    <div style='font-size:0.8rem; color:#aaa;'>Sentiment: {sent_label}</div>
+                    <div style='font-size:0.8rem; color:#aaa;'>R/R: {_sig_rr:.2f}x ({_sig_badge})</div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
-            
             st.markdown("<br>", unsafe_allow_html=True)
 
 
