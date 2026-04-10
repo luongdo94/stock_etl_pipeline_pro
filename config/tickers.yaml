@@ -256,6 +256,31 @@ tickers:
     name: "Biogen Inc."
     sector: "Healthcare"
     region: "US"
+  BEAM:
+    name: "Beam Therapeutics Inc."
+    sector: "Healthcare"
+    region: "US"
+  TXG:
+    name: "10x Genomics, Inc."
+    sector: "Healthcare"
+    region: "US"
+  NTLA:
+    name: "Intellia Therapeutics, Inc."
+    sector: "Healthcare"
+    region: "US"
+  AZN:
+    name: "AstraZeneca PLC"
+    sector: "Healthcare"
+    region: "US"
+  BMY:
+    name: "Bristol-Myers Squibb Company"
+    sector: "Healthcare"
+    region: "US"
+  GEHC:
+    name: "GE HealthCare Technologies Inc."
+    sector: "Healthcare"
+    region: "US"
+
 
   # US Fintech & Crypto
   COIN:
@@ -472,6 +497,18 @@ tickers:
     name: "Occidental Petroleum Corporation"
     sector: "Energy"
     region: "US"
+  CAT:
+    name: "Caterpillar Inc."
+    sector: "Industrials"
+    region: "US"
+  ACHR:
+    name: "Archer Aviation Inc."
+    sector: "Industrials"
+    region: "US"
+  ABNB:
+    name: "Airbnb, Inc."
+    sector: "Technology"
+    region: "US"
 
   # US Industrials
   DE:
@@ -632,6 +669,30 @@ tickers:
     name: "Hapag-Lloyd AG"
     sector: "Industrials"
     region: "EU"
+  SY1.DE:
+    name: "Symrise AG"
+    sector: "Industrials"
+    region: "EU"
+  BEI.DE:
+    name: "Beiersdorf Aktiengesellschaft"
+    sector: "Consumer Retail"
+    region: "EU"
+  HEI.DE:
+    name: "Heidelberg Materials AG"
+    sector: "Industrials"
+    region: "EU"
+  G1A.DE:
+    name: "GEA Group Aktiengesellschaft"
+    sector: "Industrials"
+    region: "EU"
+  EOAN.DE:
+    name: "E.ON SE"
+    sector: "Utilities"
+    region: "EU"
+  DHL.DE:
+    name: "Deutsche Post AG"
+    sector: "Industrials"
+    region: "EU"
 
   # EU Healthcare & Finance
   NVO:
@@ -657,6 +718,18 @@ tickers:
   DBK.DE:
     name: "Deutsche Bank AG"
     sector: "Financials"
+    region: "EU"
+  HNR1.DE:
+    name: "Hannover Rück SE"
+    sector: "Financials"
+    region: "EU"
+  SHL.DE:
+    name: "Siemens Healthineers AG"
+    sector: "Healthcare"
+    region: "EU"
+  QIA.DE:
+    name: "QIAGEN N.V."
+    sector: "Healthcare"
     region: "EU"
 
   # China
@@ -738,6 +811,18 @@ tickers:
     name: "SPDR S&P 500 ETF Trust"
     sector: "Benchmark"
     region: "US"
+  QQQ:
+    name: "Invesco QQQ Trust"
+    sector: "Benchmark"
+    region: "US"
+  "^GDAXI":
+    name: "DAX Performance Index"
+    sector: "Benchmark"
+    region: "EU"
+  "IWDA.AS":
+    name: "iShares Core MSCI World"
+    sector: "Benchmark"
+    region: "EU"
   "^VIX":
     name: "CBOE Volatility Index"
     sector: "Volatility"

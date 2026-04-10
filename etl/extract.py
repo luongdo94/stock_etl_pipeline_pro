@@ -134,12 +134,13 @@ def extract_stock_prices(
             t, cur = future.result()
             currencies[t] = cur
 
-    unique_currencies = {c for c in currencies.values() if c != "USD"}
+    unique_currencies = {c for c in currencies.values() if c != "EUR"}
     fx_data = pd.DataFrame()
 
     if unique_currencies:
-        fx_tickers = [f"{c}USD=X" for c in unique_currencies]
-        logger.info(f"    💱 Downloading FX rates for: {unique_currencies}")
+        # Standardize on {CUR}EUR=X format for direct conversion to Euro
+        fx_tickers = [f"{c}EUR=X" for c in unique_currencies]
+        logger.info(f"    💱 Downloading FX rates to EUR for: {unique_currencies}")
         _fx_raw = yf.download(fx_tickers, start=start_date, end=end_date, progress=False)["Close"]
         if isinstance(_fx_raw, pd.Series):
             c_name = list(unique_currencies)[0]
@@ -154,11 +155,15 @@ def extract_stock_prices(
     for _label, _ticker_list, _raw_prices in all_frames:
         for ticker in _ticker_list:
             try:
-                # Handle single-ticker flat DataFrame vs multi-ticker MultiIndex
-                if len(_ticker_list) == 1:
-                    df = _raw_prices.copy()
+                # Handle MultiIndex correctly (yfinance returns MultiIndex if tickers provided as list)
+                if isinstance(_raw_prices.columns, pd.MultiIndex):
+                    if ticker in _raw_prices.columns.get_level_values(1):
+                        df = _raw_prices.xs(ticker, axis=1, level=1).copy()
+                    else:
+                        logger.warning(f"  ⚠️ Ticker {ticker} not found in download results")
+                        continue
                 else:
-                    df = _raw_prices.xs(ticker, axis=1, level=1).copy()
+                    df = _raw_prices.copy()
 
                 df = df.dropna(subset=['Close'])
                 if df.empty: continue
@@ -166,10 +171,10 @@ def extract_stock_prices(
                 df = df.reset_index()
                 df.columns = [c.lower() for c in df.columns]
 
-                # Apply FX normalization (USD is the baseline for ETL)
-                currency = currencies.get(ticker, "USD")
-                if currency != "USD" and not fx_data.empty:
-                    fx_col = f"{currency}USD=X" if f"{currency}USD=X" in fx_data.columns else None
+                # Apply FX normalization (EUR is the baseline for ETL)
+                currency = currencies.get(ticker, "EUR")
+                if currency != "EUR" and not fx_data.empty:
+                    fx_col = f"{currency}EUR=X" if f"{currency}EUR=X" in fx_data.columns else None
                     if fx_col:
                         rates = fx_data[[fx_col]].reset_index()
                         rates.columns = ["date", "fx_rate"]
@@ -227,15 +232,15 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
         _cur_results = list(executor.map(get_ticker_cur, tickers.keys()))
         ticker_currencies = dict(_cur_results)
     
-    unique_currencies = {c for c in ticker_currencies.values() if c != "USD"}
+    unique_currencies = {c for c in ticker_currencies.values() if c != "EUR"}
     
-    fx_rates = {"USD": 1.0}
+    fx_rates = {"EUR": 1.0}
     if unique_currencies:
-        fx_tkrs = [f"{c}USD=X" for c in unique_currencies]
+        fx_tkrs = [f"{c}EUR=X" for c in unique_currencies]
         fx_data = yf.download(fx_tkrs, period="2d", progress=False)["Close"]
         
         for c in unique_currencies:
-            col = f"{c}USD=X"
+            col = f"{c}EUR=X"
             try:
                 if isinstance(fx_data, pd.DataFrame) and col in fx_data.columns:
                     rate = fx_data[col].ffill().iloc[-1]
@@ -332,18 +337,18 @@ def extract_historical_financials(tickers: dict = TICKERS) -> pd.DataFrame:
     all_data = []
     
     # 1. Pre-fetch FX rates globally
-    unique_currencies = {"USD"}
+    unique_currencies = {"EUR"}
     for ticker in tickers.keys():
         unique_currencies.add(_guess_currency(ticker))
     
-    fx_rates = {"USD": 1.0}
+    fx_rates = {"EUR": 1.0}
     if len(unique_currencies) > 1:
-        fx_tkrs = [f"{c}USD=X" for c in unique_currencies if c != "USD"]
+        fx_tkrs = [f"{c}EUR=X" for c in unique_currencies if c != "EUR"]
         fx_data = yf.download(fx_tkrs, period="1d", progress=False)["Close"]
         for c in unique_currencies:
-            if c == "USD": continue
-            col = f"{c}USD=X"
-            if col in fx_data.columns:
+            if c == "EUR": continue
+            col = f"{c}EUR=X"
+            if isinstance(fx_data, pd.DataFrame) and col in fx_data.columns:
                 fx_rates[c] = float(fx_data[col].iloc[-1].item() if hasattr(fx_data[col].iloc[-1], 'item') else fx_data[col].iloc[-1])
             elif not fx_data.empty:
                 fx_rates[c] = float(fx_data.iloc[-1].item() if hasattr(fx_data.iloc[-1], 'item') else fx_data.iloc[-1])
@@ -401,18 +406,18 @@ def extract_quarterly_financials(tickers: dict = TICKERS) -> pd.DataFrame:
     all_data = []
     
     # 1. Pre-fetch FX rates globally
-    unique_currencies = {"USD"}
+    unique_currencies = {"EUR"}
     for ticker in tickers.keys():
         unique_currencies.add(_guess_currency(ticker))
     
-    fx_rates = {"USD": 1.0}
+    fx_rates = {"EUR": 1.0}
     if len(unique_currencies) > 1:
-        fx_tkrs = [f"{c}USD=X" for c in unique_currencies if c != "USD"]
+        fx_tkrs = [f"{c}EUR=X" for c in unique_currencies if c != "EUR"]
         fx_data = yf.download(fx_tkrs, period="1d", progress=False)["Close"]
         for c in unique_currencies:
-            if c == "USD": continue
-            col = f"{c}USD=X"
-            if col in fx_data.columns:
+            if c == "EUR": continue
+            col = f"{c}EUR=X"
+            if isinstance(fx_data, pd.DataFrame) and col in fx_data.columns:
                 fx_rates[c] = float(fx_data[col].iloc[-1].item() if hasattr(fx_data[col].iloc[-1], 'item') else fx_data[col].iloc[-1])
             elif not fx_data.empty:
                 fx_rates[c] = float(fx_data.iloc[-1].item() if hasattr(fx_data.iloc[-1], 'item') else fx_data.iloc[-1])
@@ -477,18 +482,18 @@ def extract_cashflows(tickers: dict = TICKERS) -> pd.DataFrame:
     records = []
 
     # ── Pre-fetch FX rates (same pattern as extract_company_info) ─────────────
-    unique_currencies = {"USD", "DKK"}   # DKK always included for ADR fallback (e.g. NVO)
+    unique_currencies = {"EUR", "DKK"}   # DKK always included for ADR fallback (e.g. NVO)
     for ticker in tickers.keys():
         unique_currencies.add(_guess_currency(ticker))
 
-    fx_rates = {"USD": 1.0}
+    fx_rates = {"EUR": 1.0}
     if len(unique_currencies) > 1:
-        fx_tkrs = [f"{c}USD=X" for c in unique_currencies if c != "USD"]
+        fx_tkrs = [f"{c}EUR=X" for c in unique_currencies if c != "EUR"]
         fx_data = yf.download(fx_tkrs, period="1d", progress=False)["Close"]
         for c in unique_currencies:
-            if c == "USD":
+            if c == "EUR":
                 continue
-            col = f"{c}USD=X"
+            col = f"{c}EUR=X"
             if isinstance(fx_data, pd.DataFrame) and col in fx_data.columns:
                 fx_rates[c] = float(fx_data[col].iloc[-1].item() if hasattr(fx_data[col].iloc[-1], 'item') else fx_data[col].iloc[-1])
             elif isinstance(fx_data, pd.Series) and not fx_data.empty:
