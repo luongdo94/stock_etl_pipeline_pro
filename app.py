@@ -679,7 +679,7 @@ def render_metric_row(label, value, delta=None, suffix="", is_pct=False, color_i
     """, unsafe_allow_html=True)
 
 def render_metric_tile(label, value, delta=None, suffix="", is_pct=False, color_invert=False, help_text=None):
-    """Render a standalone vertical KPI card container with optional tooltip."""
+    """Render a compact standalone KPI card with optional tooltip."""
     delta_html = ""
     if delta is not None:
         try:
@@ -687,16 +687,16 @@ def render_metric_tile(label, value, delta=None, suffix="", is_pct=False, color_
             color = ("#e74c3c" if d_val >= 0 else "#2ecc71") if color_invert else ("#2ecc71" if d_val >= 0 else "#e74c3c")
             sign  = "+" if d_val >= 0 else ""
             d_text = f"{sign}{d_val:.1f}%" if is_pct else f"{sign}{d_val:.2f}{suffix}"
-            delta_html = f"<div style='color:{color};font-size:0.75rem;font-weight:700;'>{d_text}</div>"
+            delta_html = f"<div style='color:{color};font-size:0.68rem;font-weight:700;margin-top:1px;'>{d_text}</div>"
         except:
-            delta_html = f"<div style='color:#888;font-size:0.75rem;'>{delta}</div>"
+            delta_html = f"<div style='color:#888;font-size:0.68rem;'>{delta}</div>"
 
     tooltip_attr = f"title='{help_text}'" if help_text else ""
     st.markdown(f"""
         <div {tooltip_attr} style='background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);
-                    border-radius:8px;padding:8px 10px;margin-bottom:8px;text-align:center;cursor:help;'>
-            <div style='color:#8899aa;font-size:0.65rem;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:4px;'>{label}</div>
-            <div style='color:#e8eaf6;font-size:1.15rem;font-weight:700;display:flex;align-items:center;justify-content:center;'>{value}{suffix}</div>
+                    border-radius:6px;padding:5px 8px;margin-bottom:5px;text-align:center;cursor:help;'>
+            <div style='color:#8899aa;font-size:0.58rem;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:2px;'>{label}</div>
+            <div style='color:#e8eaf6;font-size:0.95rem;font-weight:700;display:flex;align-items:center;justify-content:center;'>{value}{suffix}</div>
             {delta_html}
         </div>
     """, unsafe_allow_html=True)
