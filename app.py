@@ -472,6 +472,180 @@ def load_data():
 
 # ── ANALYTICS ENGINE: Global Screener Data ──────────────────────────────────
 @st.cache_data(ttl=3600)
+def compute_institutional_rating(
+    ai_score: float,
+    ma_sig: str,
+    latest_rsi: float,
+    upside: float,
+    pe_v: float,
+    peg_v: float,
+    sector: str,
+    w52_pos: float,
+    rr: float,
+) -> dict:
+    """
+    Unified 5-Pillar Institutional Rating Engine (v13.0).
+    Used by BOTH Opportunity Radar Screener and Deep Dive tab to ensure
+    consistent Action labels across the entire dashboard.
+
+    Returns:
+        dict with keys:
+            action_label  (str)  — plain text: STRONG BUY / BUY / HOLD / SELL / REDUCE
+            action_color  (str)  — hex color for UI rendering
+            p_trend_c, p_qual_c, p_val_c, p_risk_c, p_conv_c  (str)
+    """
+    # ── PILLAR 1: TECHNICAL TREND ──────────────────────────────────────────
+    if ma_sig == "BULLISH" and latest_rsi < 65:
+        p_trend_c = "#2ecc71"
+    elif ma_sig == "BULLISH" and latest_rsi >= 65:
+        p_trend_c = "#f1c40f"   # Extended / overbought in uptrend
+    elif ma_sig == "BEARISH" and latest_rsi <= 35:
+        p_trend_c = "#f1c40f"   # Oversold in downtrend — caution
+    else:
+        p_trend_c = "#e74c3c"
+
+    # ── PILLAR 2: QUALITY ────────────────────────────────────────────────
+    if ai_score >= 70:   p_qual_c = "#00ffcc"
+    elif ai_score >= 55: p_qual_c = "#2ecc71"
+    elif ai_score >= 40: p_qual_c = "#f1c40f"
+    else:                p_qual_c = "#e74c3c"
+
+    # ── PILLAR 3: VALUATION (Sector-Aware) ──────────────────────────────
+    _sector_lc = str(sector or "").lower()
+    _is_growth = any(s in _sector_lc for s in ["tech", "semi", "software", "cloud", "ai", "comm"])
+    _pe_cheap_limit      = 28.0 if _is_growth else 18.0
+    _pe_expensive_limit  = 65.0 if _is_growth else 42.0
+    _peg_expensive_limit = 3.5  if _is_growth else 2.5
+    _peg_cheap_limit     = 1.2  if _is_growth else 0.8
+
+    _val_expensive  = (pe_v > _pe_expensive_limit and pe_v > 0) or (peg_v > _peg_expensive_limit and peg_v > 0)
+    _val_cheap      = (upside > 15) and (peg_v < _peg_cheap_limit or pe_v < _pe_cheap_limit) and pe_v > 0
+    _val_premium_ok = (upside > 8) and (ai_score >= 65) and (peg_v < 2.8 or pe_v < (55 if _is_growth else 35))
+    _val_compounder = (upside > 5) and (ai_score >= 55) and (not _val_expensive)
+    _val_fair       = (upside > 0) and (not _val_expensive)
+
+    if _val_cheap:
+        p_val_c = "#2ecc71"
+    elif _val_premium_ok or _val_compounder:
+        p_val_c = "#3498db"
+    elif _val_fair:
+        p_val_c = "#f1c40f"
+    elif _val_expensive:
+        p_val_c = "#e67e22"
+    elif pe_v < 0:
+        p_val_c = "#e74c3c"
+    else:
+        p_val_c = "#95a5a6"
+
+    # ── PILLAR 4: RISK (52-Week Position) ───────────────────────────────
+    if w52_pos > 80:   p_risk_c = "#e74c3c"
+    elif w52_pos < 20: p_risk_c = "#2ecc71"
+    else:              p_risk_c = "#f1c40f"
+
+    # ── PILLAR 5: CONVICTION (Risk / Reward) ────────────────────────────
+    if rr > 2.5:   p_conv_c = "#00ffcc"
+    elif rr > 1.2: p_conv_c = "#2ecc71"
+    else:           p_conv_c = "#e74c3c"
+
+    # ── SYNTHESIS: Final Action Label ────────────────────────────────────
+    pts = (
+        (1 if p_trend_c in ["#2ecc71", "#00ffcc"] else 0) +
+        (1 if p_qual_c  in ["#2ecc71", "#00ffcc"] else 0) +
+        (1 if p_val_c   in ["#2ecc71", "#00ffcc", "#3498db"] else 0) +
+        (1 if p_risk_c  == "#2ecc71" else 0) +
+        (1 if p_conv_c  in ["#2ecc71", "#00ffcc"] else 0)
+    )
+
+    if pts >= 4 and p_qual_c != "#e74c3c":
+        action_label, action_color = "STRONG BUY",          "#00ffcc"
+    elif pts >= 3 and p_trend_c == "#f1c40f" and latest_rsi < 45:
+        action_label, action_color = "BUY / ACCUMULATE",    "#2ecc71"
+    elif p_trend_c == "#e74c3c" and p_val_c == "#e74c3c":
+        action_label, action_color = "SELL / AVOID",        "#e74c3c"
+    elif pts <= 1 and p_qual_c == "#e74c3c":
+        action_label, action_color = "SELL / AVOID",        "#e74c3c"
+    elif pts <= 1 and p_qual_c in ["#2ecc71", "#00ffcc"]:
+        action_label, action_color = "HOLD / NEUTRAL",      "#f1c40f"
+    elif latest_rsi > 70 and pts <= 3:
+        action_label, action_color = "REDUCE / UNDERPERFORM","#e67e22"
+    else:
+        action_label, action_color = "HOLD / NEUTRAL",      "#f1c40f"
+
+    return {
+        "action_label":  action_label,
+        "action_color":  action_color,
+        "p_trend_c":     p_trend_c,
+        "p_qual_c":      p_qual_c,
+        "p_val_c":       p_val_c,
+        "p_risk_c":      p_risk_c,
+        "p_conv_c":      p_conv_c,
+        "pts":           pts,
+    }
+
+
+def get_tactical_metrics(ticker_prices: "pd.DataFrame", cur_p: float) -> dict:
+    """
+    Single source of truth for all short/mid-term tactical indicators.
+    Called identically by the Screener, Deep Dive, and any future tab.
+
+    Returns a dict containing:
+        rsi        — RSI-14 (float, from warehouse-vectorised column if available)
+        s1         — 20-day support (lowest low)
+        r1         — 20-day resistance (highest high)
+        stop_loss  — s1 * 0.96
+        tp1        — r1 * 1.05  (5% extension above resistance)
+        rr         — reward-to-risk ratio
+        w52_pos    — position within 52-week range [0-100]
+    """
+    # RSI — prefer the warehouse-computed column; fall back to local calc
+    if "rsi" in ticker_prices.columns and ticker_prices["rsi"].notna().any():
+        rsi_val = float(ticker_prices["rsi"].iloc[-1])
+    else:
+        delta = ticker_prices["price_close"].diff()
+        gain  = delta.where(delta > 0, 0).rolling(14).mean()
+        loss  = (-delta.where(delta < 0, 0)).rolling(14).mean()
+        rsi_series = 100 - (100 / (1 + gain / loss.replace(0, 1e-9)))
+        rsi_val = float(rsi_series.iloc[-1]) if not rsi_series.empty else 50.0
+
+    # Support / Resistance (20-day window)
+    s1 = float(ticker_prices["price_low"].tail(20).min())
+    r1 = float(ticker_prices["price_high"].tail(20).max())
+
+    # Derived levels (identical formula everywhere)
+    stop_loss = s1 * 0.96
+    tp1       = r1 * 1.05          # 5% extension above 20-day high
+
+    # Risk/Reward — two variants:
+    #   rr_score: uses raw r1 as target (no extension) → feeds rating engine
+    #   rr:       uses tp1 = r1*1.05 → display only in Deep Dive trading plan
+    risk_dist     = cur_p - stop_loss
+    rr_score_dist = r1  - cur_p
+    rr_disp_dist  = tp1 - cur_p
+    rr_score = (rr_score_dist / risk_dist) if risk_dist > 0 else 0.0
+    rr       = (rr_disp_dist  / risk_dist) if risk_dist > 0 else 0.0
+
+    # 52-week position
+    df_252  = ticker_prices.tail(252)
+    w52_hi  = df_252["price_high"].max()
+    w52_lo  = df_252["price_low"].min()
+    w52_rng = w52_hi - w52_lo
+    w52_pos = ((cur_p - w52_lo) / w52_rng * 100) if w52_rng > 0 else 50.0
+
+    return {
+        "rsi":       rsi_val,
+        "s1":        s1,
+        "r1":        r1,
+        "stop_loss": stop_loss,
+        "tp1":       tp1,
+        "tp2":       r1 * 1.15,    # secondary target (15% above resistance)
+        "rr":        rr,           # display only
+        "rr_score":  rr_score,     # feeds compute_institutional_rating
+        "w52_pos":   w52_pos,
+        "w52_hi":    float(w52_hi),
+        "w52_lo":    float(w52_lo),
+    }
+
+
 def get_master_screener_data(_companies_df, _prices_df, _quarterly_fin, _annual_fin):
     # Exclude non-investable instruments: indices & volatility measures
     _non_equities = {"^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"}
@@ -525,58 +699,28 @@ def get_master_screener_data(_companies_df, _prices_df, _quarterly_fin, _annual_
         fmi_score = _fmi_res["total"]
         fmi_lbl   = _fmi_res["label"]
         
-        # ── Phase 3: Advanced High-Fidelity Rating (5-Pillar Matrix) ──
-        # Pillar 1: Trend (Momentum & Signals)
+        # ── Unified 5-Pillar Rating (delegates to compute_institutional_rating) ──
         ma_sig = str(latest_p.get('ma_signal', 'NEUTRAL'))
-        if ma_sig == "BULLISH" and latest_rsi < 65: p_trend_c = "#2ecc71"
-        elif ma_sig == "BULLISH" and latest_rsi >= 65: p_trend_c = "#f1c40f" # Extended
-        elif ma_sig == "BEARISH" and latest_rsi <= 35: p_trend_c = "#f1c40f" # Oversold
-        else: p_trend_c = "#e74c3c"
+        pe_v   = float(score_input.get('pe_ratio')  or 0)
+        peg_v  = float(score_input.get('peg_ratio') or 0)
 
-        # Pillar 2: Quality (AI Score Pillar)
-        if ai_score >= 70: p_qual_c = "#00ffcc"
-        elif ai_score >= 55: p_qual_c = "#2ecc71"
-        elif ai_score >= 40: p_qual_c = "#f1c40f"
-        else: p_qual_c = "#e74c3c"
+        # Use shared tactical metrics (same formula as Deep Dive)
+        _tm = get_tactical_metrics(ticker_prices, cur_p)
 
-        # Pillar 3: Valuation (Analyst Edge)
-        if upside > 15: p_val_c = "#2ecc71"
-        elif upside > 0: p_val_c = "#f1c40f"
-        else: p_val_c = "#e74c3c"
+        _rating = compute_institutional_rating(
+            ai_score   = ai_score,
+            ma_sig     = ma_sig,
+            latest_rsi = _tm["rsi"],
+            upside     = float(upside),
+            pe_v       = pe_v,
+            peg_v      = peg_v,
+            sector     = str(row.get('sector', '')),
+            w52_pos    = _tm["w52_pos"],
+            rr         = _tm["rr_score"],   # scoring uses raw r1 target
+        )
+        action_label = _rating["action_label"]   # plain text — no emoji
 
-        # Pillar 4: Risk (Tactical Overextension check via 52-week position)
-        df_252 = ticker_prices.tail(252)
-        w52_hi = df_252['price_high'].max()
-        w52_lo = df_252['price_low'].min()
-        w52_rng = w52_hi - w52_lo
-        _w52_pos = ((cur_p - w52_lo) / w52_rng * 100) if w52_rng > 0 else 50
-        if _w52_pos > 80: p_risk_c = "#e74c3c"
-        elif _w52_pos < 20: p_risk_c = "#2ecc71"
-        else: p_risk_c = "#f1c40f"
 
-        # Pillar 5: Conviction (RR Check - 20 Day Support levels)
-        s1 = ticker_prices["price_low"].tail(20).min()
-        r1 = ticker_prices["price_high"].tail(20).max()
-        risk_dist = cur_p - (s1 * 0.96)
-        reward_dist = r1 - cur_p
-        _rr = reward_dist / risk_dist if risk_dist > 0 else 0
-        if _rr > 1.2: p_conv_c = "#2ecc71"
-        else: p_conv_c = "#e74c3c"
-
-        # Synthesis
-        pts = (1 if p_trend_c in ["#2ecc71", "#00ffcc"] else 0) + \
-              (1 if p_qual_c in ["#2ecc71", "#00ffcc"] else 0) + \
-              (1 if p_val_c in ["#2ecc71", "#00ffcc"] else 0) + \
-              (1 if p_risk_c == "#2ecc71" else 0) + \
-              (1 if p_conv_c in ["#2ecc71", "#00ffcc"] else 0)
-
-        if pts >= 4 and p_qual_c != "#e74c3c": action_label = "💎 STRONG BUY"
-        elif pts >= 3 and p_trend_c == "#f1c40f" and latest_rsi < 45: action_label = "🟢 BUY / ACCUMULATE"
-        elif p_trend_c == "#e74c3c" and p_val_c == "#e74c3c": action_label = "🔴 SELL / AVOID"
-        elif pts <= 1 and p_qual_c == "#e74c3c": action_label = "🔴 SELL / AVOID"
-        elif pts <= 1 and p_qual_c in ["#2ecc71", "#00ffcc"]: action_label = "🟡 HOLD / NEUTRAL"
-        elif latest_rsi > 70 and pts <= 3: action_label = "🟠 REDUCE / UNDERPERFORM"
-        else: action_label = "🟡 HOLD / NEUTRAL"
         
         # Additional metrics
         div_yield = float(row.get('dividend_yield_pct', 0)) if pd.notnull(row.get('dividend_yield_pct')) else 0
@@ -632,6 +776,100 @@ def get_master_screener_data(_companies_df, _prices_df, _quarterly_fin, _annual_
         })
         
     return pd.DataFrame(screener_rows)
+
+
+def render_sector_health_matrix(m_df: pd.DataFrame):
+    """
+    Renders a 4-quadrant sector analysis matrix: Valuation (PEG) vs Momentum (Z-Score).
+    """
+    if m_df.empty:
+        st.warning("No data available for Sector Matrix.")
+        return
+
+    # 1. Aggregation — Group by Sector
+    df_clean = m_df.copy()
+    
+    # Ensure numeric types
+    df_clean['PEG_Num'] = pd.to_numeric(df_clean['PEG'], errors='coerce')
+    df_clean['Z_Num'] = pd.to_numeric(df_clean['Z-Score'], errors='coerce')
+    df_clean['Upside_Num'] = pd.to_numeric(df_clean['Upside (%)'], errors='coerce')
+    
+    # We clean PEG to exclude nonsensical negative values or massive outliers for the average
+    # Negative PEG usually means negative earnings or negative growth, which breaks the PEG logic
+    df_matrix = df_clean[df_clean['PEG_Num'] > 0].copy()
+    
+    if df_matrix.empty:
+        st.info("Insufficient sector data with positive PEG for matrix visualization.")
+        return
+
+    sector_stats = df_matrix.groupby('Sector').agg({
+        'PEG_Num': 'mean',
+        'Z_Num': 'mean',
+        'Upside_Num': 'mean',
+        'Ticker': 'count'
+    }).reset_index()
+    
+    sector_stats.columns = ['Sector', 'Avg_PEG', 'Avg_ZScore', 'Avg_Upside', 'Count']
+    
+    # 2. Quadrant Definitions
+    # X-axis: PEG (Valuation) — Lower is cheaper
+    # Y-axis: Z-Score (Momentum) — Higher is stronger
+    
+    fig = px.scatter(
+        sector_stats, 
+        x='Avg_PEG', 
+        y='Avg_ZScore',
+        size='Count',
+        color='Avg_Upside',
+        color_continuous_scale='RdYlGn',
+        text='Sector',
+        labels={'Avg_PEG': 'Valuation (Avg PEG Ratio)', 'Avg_ZScore': 'Momentum (Avg Z-Score)'},
+        title="Institutional Sector Matrix: Price vs Value Divergence",
+        template="plotly_dark",
+        height=600,
+        hover_data=['Avg_Upside', 'Count']
+    )
+
+    # Calculate pivots (Medians provide better balance than means for quadrants)
+    peg_pivot = sector_stats['Avg_PEG'].median()
+    z_pivot   = 0  # 0 is the logical neutral point for Z-Score
+
+    fig.add_hline(y=z_pivot, line_dash="dash", line_color="rgba(255,255,255,0.3)")
+    fig.add_vline(x=peg_pivot, line_dash="dash", line_color="rgba(255,255,255,0.3)")
+
+    # Quadrant Labels (Positioned in corners)
+    # Top-Left: High Momentum, Low PEG
+    fig.add_annotation(x=sector_stats['Avg_PEG'].min(), y=sector_stats['Avg_ZScore'].max(), 
+                       text="LEADERS (Strong + Fair Value)", showarrow=False, font=dict(color="#2ecc71", size=10), xanchor="left")
+    # Top-Right: High Momentum, High PEG
+    fig.add_annotation(x=sector_stats['Avg_PEG'].max(), y=sector_stats['Avg_ZScore'].max(), 
+                       text="HYPE ZONE (Strong + Expensive)", showarrow=False, font=dict(color="#f1c40f", size=10), xanchor="right")
+    # Bottom-Left: Low Momentum, Low PEG
+    fig.add_annotation(x=sector_stats['Avg_PEG'].min(), y=sector_stats['Avg_ZScore'].min(), 
+                       text="VALUE TRAP / DEEP VALUE", showarrow=False, font=dict(color="#3498db", size=10), xanchor="left")
+    # Bottom-Right: Low Momentum, High PEG
+    fig.add_annotation(x=sector_stats['Avg_PEG'].max(), y=sector_stats['Avg_ZScore'].min(), 
+                       text="LAGGARDS (Weak + Expensive)", showarrow=False, font=dict(color="#e74c3c", size=10), xanchor="right")
+
+    fig.update_traces(textposition='top center', marker=dict(line=dict(width=1, color='white')))
+    fig.update_layout(
+        margin=dict(l=20, r=20, b=50, t=50),
+        coloraxis_colorbar=dict(title="Avg Upside %"),
+        xaxis=dict(gridcolor='rgba(255,255,255,0.05)', zeroline=False),
+        yaxis=dict(gridcolor='rgba(255,255,255,0.05)', zeroline=False)
+    )
+    
+    st.plotly_chart(fig, use_container_width=True)
+    
+    # 3. Methodology Footer
+    st.markdown(f"""
+    <div style='background:rgba(255,255,255,0.03); padding:15px; border-radius:10px; font-size:0.8rem; border:1px solid rgba(255,255,255,0.1);'>
+        <b>Matrix Methodology:</b><br>
+        • <b>Vertical Axis (Z-Score):</b> Measures price momentum relative to historical standard deviations. > 0 is strong.<br>
+        • <b>Horizontal Axis (PEG):</b> Measures valuation relative to growth. Lower is cheaper. Pivot set at median PEG ({peg_pivot:.2f}).<br>
+        • <b>Software Stocks:</b> Currently identifyable in the bottom-left quadrant (Low PEG but Negative Z-Score) — capturing high-conviction "oversold" opportunities.
+    </div>
+    """, unsafe_allow_html=True)
 
 
 # Primary Data Load (Cached)
@@ -1207,15 +1445,10 @@ st.markdown("<div style='margin-bottom:16px;'></div>", unsafe_allow_html=True)
 
 st.markdown("---")
 
-reco_df["recommendation_key"] = reco_df["recommendation_key"].fillna("none").astype(str).str.replace("_", " ").str.title()
-
-def get_action(score):
-    if score >= 70: return "STRONG BUY"
-    if score >= 55: return "BUY"
-    if score >= 35: return "HOLD"
-    return "SELL"
-
-reco_df["action"] = reco_df["score"].apply(get_action)
+# Sync action + reco label from m_df (the Single Source of Truth)
+# m_df is keyed by 'Ticker' (display), reco_df by 'ticker' (lowercase)
+_action_map = m_df.set_index("Ticker")["Action"].to_dict() if "Ticker" in m_df.columns else {}
+reco_df["action"] = reco_df["ticker"].map(_action_map).fillna("HOLD / NEUTRAL")
 reco_df = reco_df.sort_values("score", ascending=False)
 reco_df["upside_str"] = reco_df["upside_pct"].apply(lambda x: f"+{x:.1f}%" if x > 0 else f"{x:.1f}%")
 
@@ -1388,18 +1621,13 @@ if active_tab == "1. Market Regime":
                 </div>
                 """, unsafe_allow_html=True)
 
-        sec_tabs = st.tabs(["🗺️ Heatmap", "🏆 Top Sectors", "🚀 Top Movers"])
+        sec_tabs = st.tabs(["🗺️ Heatmap", "🏆 Top Sectors", "🚀 Top Movers", "📊 Health Matrix"])
         
         with sec_tabs[0]:
-            # Pre-format return string per ticker to avoid nan% on parent nodes.
-            # %{color} in texttemplate fails on sector/global parent nodes because
-            # Plotly can't aggregate their color values, producing NaN%.
-            # Solution: pass pre-formatted strings via customdata and only show
-            # on leaf nodes — parent nodes just show their label.
+            # ... (Heatmap code)
             tree_df['return_str'] = tree_df['period_return'].apply(
                 lambda x: f"{x:+.2f}%" if pd.notnull(x) else ""
             )
-            # Normalize: reco_df uses lowercase 'region', treemap path needs 'Region'
             tree_df['Region'] = tree_df['region'].fillna('Unknown').str.upper()
             
             fig_tree = px.treemap(
@@ -1408,7 +1636,6 @@ if active_tab == "1. Market Regime":
                 range_color=[-p_max, p_max], template="plotly_dark", height=600,
                 custom_data=['return_str', 'Region']
             )
-            # Use %{label} for all nodes, %{customdata[0]} only populated for leaves
             fig_tree.update_traces(
                 texttemplate="%{label}<br>%{customdata[0]}",
                 textfont=dict(size=12),
@@ -1435,6 +1662,10 @@ if active_tab == "1. Market Regime":
                 fig_movers.update_traces(texttemplate='%{x:.2f}%', textposition='outside')
                 fig_movers.update_layout(margin=dict(r=40, b=0), yaxis={'categoryorder':'total ascending', 'title': None, 'tickmode': 'linear', 'dtick': 1})
                 st.plotly_chart(fig_movers, use_container_width=True)
+
+        with sec_tabs[3]:
+            # Call the new Sector Health Matrix
+            render_sector_health_matrix(m_df)
 
     with b2:
         render_header("package", "Portfolio Stance & Tactical Guide")
@@ -1556,7 +1787,7 @@ if active_tab == "3. Decision Engine":
             
             # ── AI SCORING ────────────────────────────────────────────────────────
             ai_score = compute_score(meta_enriched)
-            ai_action = get_action(ai_score)
+            ai_action = _action_map.get(deep_ticker, "HOLD / NEUTRAL")
             if ai_score >= 70:    ai_color, ai_icon = "#00ffcc", "🚀"
             elif ai_score >= 55:  ai_color, ai_icon = "#2ecc71", "✅"
             elif ai_score >= 35:  ai_color, ai_icon = "#f1c40f", "🟡"
@@ -1565,36 +1796,24 @@ if active_tab == "3. Decision Engine":
             st.markdown("---")
 
             # ── TRADING CONTEXT (TOP of page) — 52-Week Range & Strategic Plan ─
-            # Pre-compute all values needed for both the 52-week bar and the trading plan
-            _s1  = df_deep["price_low"].tail(20).min()
-            _r1  = df_deep["price_high"].tail(20).max()
-            _s2  = df_deep["price_low"].tail(50).min()
-            _r2  = df_deep["price_high"].tail(50).max()
+            # All tactical values computed by the shared helper (identical formula to Screener)
+            _tm        = get_tactical_metrics(df_deep, cur_p)
+            _s1        = _tm["s1"]
+            _r1        = _tm["r1"]
+            _s2        = float(df_deep["price_low"].tail(50).min())
+            _r2        = float(df_deep["price_high"].tail(50).max())
+            _rsi_val   = _tm["rsi"]
+            _ma_sig    = meta.get("ma_signal", "NEUTRAL")
+            _w52_pos   = _tm["w52_pos"]
+            _w52_hi    = _tm["w52_hi"]
+            _w52_lo    = _tm["w52_lo"]
+            _w52_zone  = "Near Low" if _w52_pos < 20 else ("Near High" if _w52_pos > 80 else "Mid-Range")
+            _stop_loss = _tm["stop_loss"]
 
-            def _get_rsi(series, period=14):
-                delta = series.diff()
-                gain  = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-                loss  = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-                rs    = gain / loss
-                return 100 - (100 / (1 + rs))
-            _df_rsi  = _get_rsi(df_deep['price_close'])
-            _rsi_val = _df_rsi.iloc[-1] if not _df_rsi.empty else 50
-            _ma_sig  = meta.get("ma_signal", "NEUTRAL")
-
-            _df_252  = df_deep.tail(252)
-            _w52_hi  = _df_252['price_high'].max()
-            _w52_lo  = _df_252['price_low'].min()
-            _w52_rng = _w52_hi - _w52_lo
-            _w52_pos = ((cur_p - _w52_lo) / _w52_rng * 100) if _w52_rng > 0 else 50
-            _w52_zone = "🔴 Near Low" if _w52_pos < 20 else ("🟢 Near High" if _w52_pos > 80 else "🔵 Mid-Range")
-
-            _stop_loss = _s1 * 0.96
-            
-            # Incorporate AI Ensemble Target if available
+            # TP1: honour AI Ensemble target if already computed, otherwise use standard formula
             _global_ai_target = st.session_state.get(f"ai_target_for_de_{deep_ticker}")
-            _tp1       = float(_global_ai_target) if _global_ai_target is not None else float(_r1)
-            
-            _tp2       = max(target_p, _r1 * 1.10) if target_p > 0 else _r1 * 1.10
+            _tp1 = float(_global_ai_target) if _global_ai_target is not None else _tm["tp1"]
+            _tp2 = max(target_p, _tm["tp2"]) if target_p > 0 else _tm["tp2"]
 
             # 52-Week Position Meter
             st.markdown(f"""
@@ -1619,7 +1838,7 @@ if active_tab == "3. Decision Engine":
             # ── UNIFIED DECISION SUPPORT MATRIX (ACTION LAYER) ────────────────
             render_header("activity", "360° Decision & Action Matrix")
             
-            # PILLAR 1: TREND
+            # PILLAR 1: TECHNICAL TREND
             if _ma_sig == "BULLISH" and _rsi_val < 65:
                 p_trend, p_trend_c = "BULLISH", "#2ecc71"
             elif _ma_sig == "BULLISH" and _rsi_val >= 65:
@@ -1675,41 +1894,57 @@ if active_tab == "3. Decision Engine":
             elif _w52_pos < 20: p_risk, p_risk_c = "LOW RISK", "#2ecc71"
             else: p_risk, p_risk_c = "MODERATE", "#f1c40f"
             
-            # PILLAR 5: CONVICTION
-            _risk   = cur_p - _stop_loss
-            _reward = _tp1 - cur_p
-            _rr     = _reward / _risk if _risk > 0 else 0
+            # PILLAR 5: CONVICTION (rr_score = raw r1 target, same as Screener)
+            _rr = _tm["rr_score"]
             if _rr > 2.5: p_conv, p_conv_c = "HIGH", "#00ffcc"
             elif _rr > 1.2: p_conv, p_conv_c = "MEDIUM", "#2ecc71"
             else: p_conv, p_conv_c = "LOW", "#e74c3c"
             
-            # MASTER POSITIONING LOGIC
-            pts = (1 if p_trend_c in ["#2ecc71", "#00ffcc"] else 0) + \
-                  (1 if p_qual_c in ["#2ecc71", "#00ffcc"] else 0) + \
-                  (1 if p_val_c in ["#2ecc71", "#00ffcc", "#3498db"] else 0) + \
-                  (1 if p_risk_c == "#2ecc71" else 0) + \
-                  (1 if p_conv_c in ["#2ecc71", "#00ffcc"] else 0)
-                  
-            if pts >= 4 and p_qual_c != "#e74c3c":
-                act_str, act_color = "STRONG BUY", "#00ffcc"
+            # ── MASTER POSITIONING LOGIC ──────────────────────────────────────
+            # We still call compute_institutional_rating to derive pillar colours
+            # (p_trend_c, p_val_c, etc.) for the UI matrix.
+            # BUT the final Action label is ALWAYS read from _action_map (m_df),
+            # which is the Single Source of Truth — identical to the Screener tab.
+            _rating = compute_institutional_rating(
+                ai_score   = ai_score,
+                ma_sig     = _ma_sig,
+                latest_rsi = _rsi_val,
+                upside     = float(upside),
+                pe_v       = float(meta_enriched.get("pe_ratio")  or 0),
+                peg_v      = float(meta_enriched.get("peg_ratio") or 0),
+                sector     = str(meta.get("sector", "")),
+                w52_pos    = _w52_pos,
+                rr         = _tm["rr_score"],   # scoring uses raw r1 target
+            )
+            # Action label: canonical value from Screener engine (m_df)
+            act_str = _action_map.get(deep_ticker, _rating["action_label"])
+            # Colour is derived from the canonical label — NOT from the local engine score
+            _colour_map = {
+                "STRONG BUY":          "#00ffcc",
+                "BUY / ACCUMULATE":    "#2ecc71",
+                "HOLD / NEUTRAL":      "#3498db",
+                "REDUCE / UNDERPERFORM": "#e67e22",
+                "SELL / AVOID":        "#e74c3c",
+            }
+            act_color = _colour_map.get(act_str, _rating["action_color"])
+            # Override p_trend_c / p_val_c with engine values so colours are consistent
+            p_trend_c = _rating["p_trend_c"]
+            p_val_c   = _rating["p_val_c"]
+
+            # ── Action description text (context-aware) ──────────────────────
+            if act_str == "STRONG BUY":
                 act_desc = f"Optimal alignment of quantitative pillars. High structural conviction. Ideal entry zone between €{_s1:.2f} and €{cur_p:.2f}."
-            elif pts >= 3 and p_trend_c == "#f1c40f" and _rsi_val < 45:
-                act_str, act_color = "BUY / ACCUMULATE", "#2ecc71"
+            elif act_str == "BUY / ACCUMULATE":
                 act_desc = f"Institutional-grade asset consolidating. Momentum is neutralizing. Support holds near €{_s1:.2f}."
-            elif p_trend_c == "#e74c3c" and p_val_c == "#e74c3c":
-                act_str, act_color = "SELL / AVOID", "#e74c3c"
-                act_desc = f"Negative trend synergy with poor valuation metrics. Risk/Reward is heavily skewed to the downside."
-            elif pts <= 1 and p_qual_c == "#e74c3c":
-                act_str, act_color = "SELL / AVOID", "#e74c3c"
+            elif act_str == "SELL / AVOID" and p_trend_c == "#e74c3c" and _rating["p_val_c"] == "#e74c3c":
+                act_desc = "Negative trend synergy with poor valuation metrics. Risk/Reward is heavily skewed to the downside."
+            elif act_str == "SELL / AVOID":
                 act_desc = "Significant fundamental and technical breakdown detected. Focus on capital preservation."
-            elif pts <= 1 and p_qual_c in ["#2ecc71", "#00ffcc"]:
-                act_str, act_color = "HOLD / NEUTRAL", "#f1c40f"
+            elif act_str == "HOLD / NEUTRAL" and _rating["p_qual_c"] in ["#2ecc71", "#00ffcc"]:
                 act_desc = "Elite asset currently overextended or expensive. Wait for a healthy structural pullback before deployment."
-            elif _rsi_val > 70 and pts <= 3:
-                act_str, act_color = "REDUCE / UNDERPERFORM", "#e67e22"
+            elif act_str == "REDUCE / UNDERPERFORM":
                 act_desc = f"Locally overbought (RSI: {_rsi_val:.1f}). Fundamentals remain solid but tactical risk is elevated. Consider locking profits."
             else:
-                act_str, act_color = "HOLD / NEUTRAL", "#f1c40f"
                 act_desc = "Mixed signals across pillars. System lacks execution conviction. Monitor for structural breakout or mean reversion."
 
             def hex_to_rgb(hex_str):
@@ -1757,7 +1992,7 @@ if active_tab == "3. Decision Engine":
             <div style='background:rgba(10,15,25,0.6); border:1px solid rgba(255,255,255,0.1); border-radius:12px; padding:20px; margin-bottom:25px;'>
                 <div style='display:flex; justify-content:space-between; text-align:center; margin-bottom:20px; flex-wrap:wrap; gap:10px;'>
                     <div style='flex:1; background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; border-top:3px solid {p_trend_c};'>
-                        <div style='font-size:0.65em; color:#aab; text-transform:uppercase; letter-spacing:1px;'>Trend</div>
+                        <div style='font-size:0.65em; color:#aab; text-transform:uppercase; letter-spacing:1px;'>Technical Trend</div>
                         <div style='font-weight:900; font-size:0.9em; color:{p_trend_c}; margin-top:8px;'>{p_trend}</div>
                     </div>
                     <div style='flex:1; background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; border-top:3px solid {p_qual_c};'>
@@ -2216,7 +2451,7 @@ if active_tab == "3. Decision Engine":
             _r3  = df_deep["price_high"].tail(252).max()
 
             dates_range = df_deep['date'].tolist()
-            df_deep['rsi'] = _df_rsi  # reuse already-computed RSI
+            df_deep['rsi'] = df_deep['rsi'] if 'rsi' in df_deep.columns else _rsi_val  # RSI from get_tactical_metrics
             fig_tech.add_trace(go.Scatter(
                 x=[dates_range[0], dates_range[-1]], y=[_s1, _s1],
                 name=f'S1 Support  €{_s1:.2f}', mode='lines',
@@ -3076,25 +3311,18 @@ if active_tab == "7. Portfolio Builder":
                 if ai_meta is not None:
                     ai_score = ai_meta["score"]
                     upside = ai_meta["upside_pct"]
-                    
-                    # ── SIMPLIFIED DECISION LOGIC (Standard Ratings) ──────────
-                    if ai_score > 80:
-                        status, color = "STRONG BUY", "#00ffcc"
-                        border = "2px solid #00ffcc"
-                    elif ai_score > 65:
-                        status, color = "BUY", "#2ecc71"
-                        border = "1px solid #2ecc71"
-                    elif ai_score < 35:
-                        status, color = "SELL", "#ff4b4b"
-                        border = "2px solid #ff4b4b"
-                    elif ai_score < 45:
-                        status, color = "REDUCE", "#e67e22"
-                        border = "1px solid #e67e22"
-                    else:
-                        status, color = "HOLD", "#3498db"
-                        border = "1px solid rgba(255,255,255,0.1)"
-                    
-                    reason = f"High conv. score {ai_score}" if ai_score > 60 else "Maintain market exposure"
+
+                    # ── Read action from the shared m_df source ──────────────
+                    status = _action_map.get(t, "HOLD / NEUTRAL")
+
+                    # Derive display color from canonical action label
+                    if status == "STRONG BUY":          color = "#00ffcc"; border = "2px solid #00ffcc"
+                    elif "BUY" in status:               color = "#2ecc71"; border = "1px solid #2ecc71"
+                    elif "SELL" in status:              color = "#ff4b4b"; border = "2px solid #ff4b4b"
+                    elif "REDUCE" in status:            color = "#e67e22"; border = "1px solid #e67e22"
+                    else:                               color = "#3498db"; border = "1px solid rgba(255,255,255,0.1)"
+
+                    reason = f"Quality score {ai_score}"
                     if upside > 10: reason = f"Upside potential (+{upside:.1f}%)"
                     if w > 20: reason = "Risk concentration limit exceeded"
 
@@ -3124,6 +3352,24 @@ if active_tab == "7. Portfolio Builder":
 
         # ── 4.7. REBALANCING OPTIMIZER ───────────────────────────────────────────
         st.markdown("### 📊 Portfolio Rebalancing Hub")
+        
+        with st.expander("Institutional Rebalancing Protocol & Rulebook", expanded=False):
+            st.markdown("""
+            **1. Security Assessment Construct (5-Pillar Matrix)**  
+            The analytical engine issues tactical recommendations based on a composite score derived from 5 independent pillars: Technical Trend, AI Quality, Sector-weighted Valuation, Volatility Risk, and Support/Resistance R/R.
+            * **STRONG BUY:** The security achieves optimal alignment across all quantitative pillars. It exhibits elite fundamental quality coupled with highly favorable Risk/Reward metrics. Represents an ideal entry zone.
+            * **BUY / ACCUMULATE:** Strong underlying fundamentals and robust long-term signals, though potentially undergoing short-term consolidation. Suitable for progressive accumulation.
+            * **HOLD / NEUTRAL:** Mixed signals or lack of clear directional advantage. This also applies to elite assets currently trading at premium multiples (overbought). Capital allocation should be deferred pending a structural pullback.
+            * **REDUCE / UNDERPERFORM:** Asset is technically overextended (RSI > 70) yielding elevated tactical risk. Recommends partial profit-taking to mitigate impending mean reversion.
+            * **SELL / AVOID:** Significant deterioration in technical trends and poor profitability metrics. High probability of capital depreciation. Focus shifts to capital preservation.
+
+            **2. Portfolio Strategy Optimization (Modern Portfolio Theory)**  
+            * **Minimum Volatility:** Prioritizes capital preservation by overwriting cap-weights with a mathematical minimization of portfolio variance. It actively strips out high-beta components. **Application:** Systemic risk spikes, macroeconomic distress, or defensive posturing.
+            * **Risk Parity:** Discards market capitalization entirely. Allocates capital such that the *marginal risk contribution* of each asset forms an equal slice of the total portfolio risk. **Application:** Core long-term portfolio structuring (e.g., All-Weather framework), ensuring no single asset dictates volatility.
+            * **Equal Weight:** A disciplined 1/N allocation scaling. Functionally enforces buying low and selling high during rebalancing cycles. **Application:** Mitigating concentration risk in cap-weighted indices (e.g., extreme mega-cap tech dominance) and maximizing broad diversification.
+            * **Max Sharpe (Optimal MPT):** Implements Markowitz Mean-Variance Optimization. Locates the exact tangency portfolio on the Efficient Frontier, mathematically yielding the maximum return per unit of volatility. **Application:** Standard bullish to neutral market environments demanding optimal risk-adjusted growth.
+            * **Maximum Return:** Agnostic to portfolio variance. Hyper-concentrates capital into the assets demonstrating the highest historical momentum and largest expected returns. **Application:** Aggressive short-term tactical plays during high-conviction momentum rallies.
+            """)
 
         if 'pending_optimization' not in st.session_state:
             st.session_state.pending_optimization = None
@@ -3741,7 +3987,7 @@ if active_tab == "2. Opportunity Radar":
     ]
 
     # ── Display Results ───────────────────────────────────────────────────────
-    display_cols = ["Ticker", "Action", "Company", "Sector", "Quality", "FMI",
+    display_cols = ["Ticker", "Company", "Sector", "Action", "Quality", "FMI",
                     "Upside (%)", "MCap (B)", "RSI (14)", "Z-Score",
                     "vs MA200 (%)", "P/E (Fwd)", "EV/EBITDA", "PEG", "FCF Margin (%)",
                     "ROE (%)", "Yield (%)", "Net Payout (%)", "Debt/EBITDA"]
@@ -3789,7 +4035,7 @@ if active_tab == "2. Opportunity Radar":
                 <div style='font-size:1rem; font-weight:800; color:#fff;'>≤ 10 pts</div>
             </div>
             <div style='background:rgba(0,210,255,0.08); border-left:3px solid #00d2ff; padding:8px 10px; border-radius:5px;'>
-                <div style='font-size:0.7rem; color:#00d2ff; font-weight:700;'>CONTEXT & MOMENTUM</div>
+                <div style='font-size:0.7rem; color:#00d2ff; font-weight:700;'>TECHNICAL TREND</div>
                 <div style='font-size:0.65rem; color:#aaa; margin-top:3px;'>MA Signal · RSI · Z-Score</div>
                 <div style='font-size:1rem; font-weight:800; color:#fff;'>≤ 25 pts</div>
             </div>

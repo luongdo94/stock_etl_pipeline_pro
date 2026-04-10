@@ -519,35 +519,212 @@ tickers:
     name: "The Boeing Company"
     sector: "Industrials"
     region: "US"
-
-  # EU Tech
-  SAP:
-    name: "SAP SE"
-    sector: "Enterprise SW"
-    region: "EU"
-  "ANX.PA":
-    name: "Amundi Nasdaq 100"
-    sector: "Technology"
-    region: "EU"
-  ASML:
-    name: "ASML Holding N.V."
-    sector: "Semiconductors"
+  # EURO STOXX 50 (Blue-chips)
+  ADS.DE:
+    name: "Adidas"
+    sector: "Consumer Retail"
     region: "EU"
   ADYEN.AS:
-    name: "Adyen N.V."
+    name: "Adyen"
     sector: "Fintech"
     region: "EU"
-  SIE.DE:
-    name: "Siemens Aktiengesellschaft"
+  AD.AS:
+    name: "Ahold Delhaize"
+    sector: "Consumer Retail"
+    region: "EU"
+  AI.PA:
+    name: "Air Liquide"
     sector: "Industrials"
     region: "EU"
+  AIR.PA:
+    name: "Airbus"
+    sector: "Industrials"
+    region: "EU"
+  ALV.DE:
+    name: "Allianz"
+    sector: "Financials"
+    region: "EU"
+  ABI.BR:
+    name: "Anheuser-Busch InBev"
+    sector: "Consumer Retail"
+    region: "EU"
+  ARGX.BR:
+    name: "Argenx"
+    sector: "Healthcare"
+    region: "EU"
+  ASML.AS:
+    name: "ASML Holding"
+    sector: "Semiconductors"
+    region: "EU"
+  CS.PA:
+    name: "Axa"
+    sector: "Financials"
+    region: "EU"
+  BAS.DE:
+    name: "BASF"
+    sector: "Industrials"
+    region: "EU"
+  BAYN.DE:
+    name: "Bayer"
+    sector: "Healthcare"
+    region: "EU"
+  BBVA.MC:
+    name: "BBVA"
+    sector: "Financials"
+    region: "EU"
+  SAN.MC:
+    name: "Banco Santander"
+    sector: "Financials"
+    region: "EU"
+  BMW.DE:
+    name: "BMW"
+    sector: "Industrials"
+    region: "EU"
+  BNP.PA:
+    name: "BNP Paribas"
+    sector: "Financials"
+    region: "EU"
+  BN.PA:
+    name: "Danone"
+    sector: "Consumer Retail"
+    region: "EU"
+  DBK.DE:
+    name: "Deutsche Bank"
+    sector: "Financials"
+    region: "EU"
+  DB1.DE:
+    name: "Deutsche Börse"
+    sector: "Financials"
+    region: "EU"
+  DHL.DE:
+    name: "Deutsche Post"
+    sector: "Industrials"
+    region: "EU"
+  DTE.DE:
+    name: "Deutsche Telekom"
+    sector: "Comm Services"
+    region: "EU"
+  ENEL.MI:
+    name: "Enel"
+    sector: "Utilities"
+    region: "EU"
+  ENI.MI:
+    name: "Eni"
+    sector: "Energy"
+    region: "EU"
+  EL.PA:
+    name: "EssilorLuxottica"
+    sector: "Healthcare"
+    region: "EU"
+  RACE.MI:
+    name: "Ferrari"
+    sector: "Consumer Luxury"
+    region: "EU"
+  RMS.PA:
+    name: "Hermès"
+    sector: "Consumer Luxury"
+    region: "EU"
+  IBE.MC:
+    name: "Iberdrola"
+    sector: "Utilities"
+    region: "EU"
+  ITX.MC:
+    name: "Inditex"
+    sector: "Consumer Retail"
+    region: "EU"
+  IFX.DE:
+    name: "Infineon Technologies"
+    sector: "Semiconductors"
+    region: "EU"
+  INGA.AS:
+    name: "ING Group"
+    sector: "Financials"
+    region: "EU"
+  ISP.MI:
+    name: "Intesa Sanpaolo"
+    sector: "Financials"
+    region: "EU"
+  OR.PA:
+    name: "L'Oréal"
+    sector: "Consumer Retail"
+    region: "EU"
+  MC.PA:
+    name: "LVMH Moët Hennessy Louis Vuitton"
+    sector: "Consumer Luxury"
+    region: "EU"
+  MBG.DE:
+    name: "Mercedes-Benz Group"
+    sector: "Industrials"
+    region: "EU"
+  MUV2.DE:
+    name: "Munich Re"
+    sector: "Financials"
+    region: "EU"
+  NDA-FI.HE:
+    name: "Nordea"
+    sector: "Financials"
+    region: "EU"
+  PRX.AS:
+    name: "Prosus"
+    sector: "Consumer Retail"
+    region: "EU"
+  RHM.DE:
+    name: "Rheinmetall"
+    sector: "Industrials"
+    region: "EU"
+  SAF.PA:
+    name: "Safran"
+    sector: "Industrials"
+    region: "EU"
+  SGO.PA:
+    name: "Saint-Gobain"
+    sector: "Industrials"
+    region: "EU"
+  SAN.PA:
+    name: "Sanofi"
+    sector: "Healthcare"
+    region: "EU"
+  SAP.DE:
+    name: "SAP"
+    sector: "Enterprise SW"
+    region: "EU"
+  SU.PA:
+    name: "Schneider Electric"
+    sector: "Industrials"
+    region: "EU"
+  SIE.DE:
+    name: "Siemens"
+    sector: "Industrials"
+    region: "EU"
+  ENR.DE:
+    name: "Siemens Energy"
+    sector: "Energy"
+    region: "EU"
+  TTE.PA:
+    name: "TotalEnergies"
+    sector: "Energy"
+    region: "EU"
+  DG.PA:
+    name: "Vinci SA"
+    sector: "Industrials"
+    region: "EU"
+  UCG.MI:
+    name: "UniCredit"
+    sector: "Financials"
+    region: "EU"
+  VOW.DE:
+    name: "Volkswagen Group"
+    sector: "Industrials"
+    region: "EU"
+  WKL.AS:
+    name: "Wolters Kluwer"
+    sector: "Technology"
+    region: "EU"
+
+  # Additional EU Growth & Tech
   SMHN.DE:
     name: "SUSS MicroTec SE"
     sector: "Technology"
-    region: "EU"
-  ALV.DE:
-    name: "Allianz SE"
-    sector: "Financials"
     region: "EU"
   RWE.DE:
     name: "RWE"
@@ -565,10 +742,6 @@ tickers:
     name: "Hensoldt AG"
     sector: "Technology"
     region: "EU"
-  ENR.DE:
-    name: "Siemens Energy AG"
-    sector: "Energy"
-    region: "EU"
   VWS.CO:
     name: "Vestas Wind Systems A/S"
     sector: "Energy/Renewables"
@@ -581,21 +754,9 @@ tickers:
     name: "Ørsted A/S"
     sector: "Energy/Renewables"
     region: "EU"
-  SU.PA:
-    name: "Schneider Electric SE"
-    sector: "Industrials"
-    region: "EU"
-  MC.PA:
-    name: "LVMH Moët Hennessy Louis Vuitton SE"
-    sector: "Consumer Luxury"
-    region: "EU"
   KER.PA:
     name: "Kering"
     sector: "Consumer Luxury"
-    region: "EU"
-  RI.PA:
-    name: "Pernod Ricard"
-    sector: "Consumer Retail"
     region: "EU"
   PUM.DE:
     name: "Puma SE"
@@ -609,10 +770,6 @@ tickers:
     name: "Dassault Systèmes SE"
     sector: "Technology"
     region: "EU"
-  IFX.DE:
-    name: "Infineon Technologies AG"
-    sector: "Semiconductors"
-    region: "EU"
   STMPA.PA:
     name: "STMicroelectronics N.V."
     sector: "Semiconductors"
@@ -624,22 +781,6 @@ tickers:
   NOA3.DE:
     name: "Nokia Corporation"
     sector: "Technology"
-    region: "EU"
-  AIR.PA:
-    name: "Airbus SE"
-    sector: "Industrials"
-    region: "EU"
-  BMW.DE:
-    name: "Bayerische Motoren Werke Aktiengesellschaft"
-    sector: "Industrials"
-    region: "EU"
-  MBG.DE:
-    name: "Mercedes-Benz Group AG"
-    sector: "Industrials"
-    region: "EU"
-  RHM.DE:
-    name: "Rheinmetall AG"
-    sector: "Industrials"
     region: "EU"
   R3NK.DE:
     name: "Renk Group AG"
@@ -655,10 +796,6 @@ tickers:
     region: "EU"
   RR.L:
     name: "Rolls-Royce Holdings plc"
-    sector: "Industrials"
-    region: "EU"
-  BAS.DE:
-    name: "BASF SE"
     sector: "Industrials"
     region: "EU"
   TKA.DE:
@@ -689,35 +826,13 @@ tickers:
     name: "E.ON SE"
     sector: "Utilities"
     region: "EU"
-  DHL.DE:
-    name: "Deutsche Post AG"
-    sector: "Industrials"
-    region: "EU"
-
-  # EU Healthcare & Finance
   NVO:
     name: "Novo Nordisk A/S"
-    sector: "Healthcare"
-    region: "EU"
-  SAN.PA:
-    name: "Sanofi S.A."
     sector: "Healthcare"
     region: "EU"
   RHHVF:
     name: "Roche Holding AG"
     sector: "Healthcare"
-    region: "EU"
-  INGA.AS:
-    name: "ING Groep N.V."
-    sector: "Financials"
-    region: "EU"
-  DTE.DE:
-    name: "Deutsche Telekom AG"
-    sector: "Comm Services"
-    region: "EU"
-  DBK.DE:
-    name: "Deutsche Bank AG"
-    sector: "Financials"
     region: "EU"
   HNR1.DE:
     name: "Hannover Rück SE"
@@ -827,3 +942,101 @@ tickers:
     name: "CBOE Volatility Index"
     sector: "Volatility"
     region: "US"
+  # S&P 500 Index Components (US)
+  ABBV:
+    name: "AbbVie"
+    sector: "Healthcare"
+    region: "US"
+  ADI:
+    name: "Analog Devices"
+    sector: "Technology"
+    region: "US"
+  ALGN:
+    name: "Align Technology"
+    sector: "Healthcare"
+    region: "US"
+  APH:
+    name: "Amphenol"
+    sector: "Technology"
+    region: "US"
+  AXP:
+    name: "American Express"
+    sector: "Financials"
+    region: "US"
+  BRK-B:
+    name: "Berkshire Hathaway"
+    sector: "Financials"
+    region: "US"
+  BRO:
+    name: "Brown & Brown"
+    sector: "Financials"
+    region: "US"
+  BSX:
+    name: "Boston Scientific"
+    sector: "Healthcare"
+    region: "US"
+  BX:
+    name: "Blackstone Inc."
+    sector: "Financials"
+    region: "US"
+  C:
+    name: "Citigroup"
+    sector: "Financials"
+    region: "US"
+  CDNS:
+    name: "Cadence Design Systems"
+    sector: "Technology"
+    region: "US"
+  CEG:
+    name: "Constellation Energy"
+    sector: "Utilities"
+    region: "US"
+  CL:
+    name: "Colgate-Palmolive"
+    sector: "Consumer Retail"
+    region: "US"
+  CLX:
+    name: "Clorox"
+    sector: "Consumer Retail"
+    region: "US"
+  COHR:
+    name: "Coherent Corp."
+    sector: "Technology"
+    region: "US"
+  COST:
+    name: "Costco"
+    sector: "Consumer Retail"
+    region: "US"
+  CRWD:
+    name: "CrowdStrike"
+    sector: "Technology"
+    region: "US"
+  CVS:
+    name: "CVS Health"
+    sector: "Healthcare"
+    region: "US"
+  D:
+    name: "Dominion Energy"
+    sector: "Utilities"
+    region: "US"
+  DAL:
+    name: "Delta Air Lines"
+    sector: "Industrials"
+    region: "US"
+  DASH:
+    name: "DoorDash"
+    sector: "Consumer Retail"
+    region: "US"
+  EXPE:
+    name: "Expedia Group"
+    sector: "Consumer Retail"
+    region: "US"
+  EXR:
+    name: "Extra Space Storage"
+    sector: "Real Estate"
+    region: "US"
+  F:
+    name: "Ford Motor Company"
+    sector: "Consumer Retail"
+    region: "US"
+  
