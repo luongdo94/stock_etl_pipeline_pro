@@ -8,8 +8,11 @@ Usage:
 # ── SESSION ACTIVE: 2026-04-09 ───────────────────────────────────────────────
 import sys
 import os
+import json
+import logging
 from datetime import timedelta, date
 import streamlit as st
+import auth  # Thư viện xác thực mới
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
@@ -155,8 +158,11 @@ def get_unified_verdict(api_key: str, metrics: dict, nlp_result: dict) -> str:
         company   = metrics.get("company", ticker)
         sector    = metrics.get("sector", "N/A")
         ai_score  = metrics.get("ai_score", "N/A")
-        fmi_score = metrics.get("fmi_score", "N/A")
-        fmi_label = metrics.get("fmi_label", "N/A")
+        z_score   = metrics.get("price_z_score", 0)
+        try:
+            z_score = round(float(z_score), 2)
+        except (TypeError, ValueError):
+            z_score = 0
         price     = metrics.get("price", "N/A")
         upside    = metrics.get("upside_pct", 0)
         rsi       = metrics.get("rsi", 50)
@@ -166,6 +172,22 @@ def get_unified_verdict(api_key: str, metrics: dict, nlp_result: dict) -> str:
         fcf       = metrics.get("fcf_margin", "N/A")
         regime    = metrics.get("market_regime", "NEUTRAL")
         target_p  = metrics.get("target_mean_price", "N/A")
+        # Price structure data for TP/SL calculation
+        high_52w       = metrics.get("price_52w_high", "N/A")
+        low_52w        = metrics.get("price_52w_low", "N/A")
+        pct_from_ma200 = metrics.get("pct_from_ma200", "N/A")
+        try:
+            pct_from_ma200 = f"{float(pct_from_ma200):+.1f}%"
+        except (TypeError, ValueError):
+            pct_from_ma200 = "N/A"
+        # Precise technical levels from price action
+        support_s1     = metrics.get("support_s1", "N/A")
+        support_s2     = metrics.get("support_s2", "N/A")
+        resistance_r1  = metrics.get("resistance_r1", "N/A")
+        resistance_r2  = metrics.get("resistance_r2", "N/A")
+        stop_loss_tech = metrics.get("stop_loss_technical", "N/A")
+        ma20_cur       = metrics.get("ma_20_current", "N/A")
+        ma50_cur       = metrics.get("ma_50_current", "N/A")
 
         # NLP data
         nlp_score     = nlp_result.get("red_flag_score", 0)
@@ -195,8 +217,12 @@ Your task: synthesize both and issue ONE definitive, actionable investment verdi
 ## Stock: {ticker} ({company}) | Sector: {sector}
 
 ### QUANTITATIVE (Fundamental & Technical)
-- AI Quality Score: {ai_score}/100 | FMI: {fmi_score}/100 ({fmi_label})
+- AI Quality Score: {ai_score}/100
+- Price Z-Score: {z_score:+.2f}σ (deviation from 60-day mean; >+2=Overbought, <-2=Oversold)
 - Price: €{_f(price)} | Analyst Target: €{_f(target_p)} | Implied Upside: {_f(upside, 1)}%
+- 52W Range: €{_f(low_52w)} – €{_f(high_52w)} | % from MA200: {pct_from_ma200}
+- Technical Levels: S1=€{_f(support_s1)} | S2=€{_f(support_s2)} | R1=€{_f(resistance_r1)} | R2=€{_f(resistance_r2)} | Stop=€{_f(stop_loss_tech)}
+- Moving Averages: MA20=€{_f(ma20_cur)} | MA50=€{_f(ma50_cur)}
 - RSI: {_f(rsi, 1)} | MA Signal: {ma_signal} | P/E: {_f(pe, 1)}x | PEG: {_f(peg, 2)} | FCF: {_f(fcf, 1, '%')}
 - Market Regime: {regime}
 
@@ -210,7 +236,7 @@ Your task: synthesize both and issue ONE definitive, actionable investment verdi
 {alignment}
 
 ---
-Write a unified analysis with EXACTLY these FOUR sections:
+Write a unified analysis with these FOUR sections:
 
 ### 🏆 CIO Verdict
 One decisive paragraph (3-4 sentences). What is your final call? Reference BOTH the quantitative and qualitative data.
@@ -220,13 +246,19 @@ One paragraph explaining the interplay between the news sentiment and the fundam
 If signals DIVERGE, explain which side (news vs fundamentals) you trust more and why.
 
 ### 🎯 Actionable Recommendation
-State ONE of: **STRONG BUY / BUY / WATCH & ACCUMULATE / HOLD / REDUCE / AVOID**
-Then give 2-3 concrete, specific execution notes (e.g., price entry zone, catalyst to watch, stop-loss level).
+State your recommendation — one of: **STRONG BUY / BUY / WATCH & ACCUMULATE / HOLD / REDUCE / AVOID**
+Include practical execution context where relevant (entry levels, targets, risk management). Use the technical data provided as reference — apply your own judgment, not mechanical formulas.
 
 ### ⚠️ Key Risks to Monitor
-Exactly 3 bullet points. Be specific. Reference data from both quantitative and qualitative signals.
+3 concise bullet points covering the most material risks.
 
-Rules: English only. Be decisive. Under 350 words total. No vague language."""
+### 📊 Decision Guidance
+Consider these thresholds when forming your view (use your judgment, not hard rules):
+- Very weak fundamentals (AI Score < 35) with high news risk (Red Flag ≥ 60) → lean toward REDUCE or AVOID
+- Elevated sentiment risk (Red Flag ≥ 70) → exercise caution regardless of fundamentals
+- Statistically stretched price (Z-Score > +2.5) with mediocre fundamentals → avoid a BUY call
+
+Rules: English only. Be decisive and direct. Under 400 words total. Start the Actionable Recommendation label on its own line."""
 
         response = co.chat(
             model="command-r-plus-08-2024",
@@ -378,6 +410,10 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Activate Authentication Gateway (Multi-tenant)
+auth.require_auth()
+
 
 # ── SESSION STATE INITIALIZATION ───────────────────────────────────────────
 if "active_tab" not in st.session_state:
@@ -603,20 +639,119 @@ def get_rsi_vectorized(df, periods=14):
 
 # ── DATA LOADING ──────────────────────────────────────────────────────────────
 DB_PATH = os.path.join(ROOT, "warehouse", "stock_dw.duckdb")
-WATCHLIST_PATH = os.path.join(ROOT, "warehouse", "user_watchlist.csv")
+WATCHLIST_PATH = os.path.join(ROOT, "warehouse", "user_watchlist.csv")  # Deprecated local fallback
 
 def load_watchlist():
-    if os.path.exists(WATCHLIST_PATH):
-        try:
-            return pd.read_csv(WATCHLIST_PATH)
-        except Exception:
-            pass
-    return pd.DataFrame(columns=["Ticker", "Status", "Thesis", "Catalyst", "Entry Target", "Invalidation Level", "Take Profit", "Next Earnings", "Added Date"])
+    cols = ["Ticker", "Status", "Thesis", "Catalyst", "Entry Target", "Invalidation Level", "Take Profit", "Next Earnings", "Added Date"]
+    if not st.session_state.get("authenticated") or not st.session_state.get("user_id"):
+        return pd.DataFrame(columns=cols)
+        
+    try:
+        supabase = auth.get_supabase_client()
+        response = supabase.table("stock_watchlist").select("*").eq("user_id", st.session_state["user_id"]).execute()
+        
+        if not response.data:
+            return pd.DataFrame(columns=cols)
+            
+        df = pd.DataFrame(response.data)
+        
+        # Render back to Dashboard naming convention
+        rename_map = {
+            "ticker": "Ticker",
+            "status": "Status",
+            "thesis": "Thesis",
+            "catalyst": "Catalyst",
+            "entry_target": "Entry Target",
+            "invalidation_level": "Invalidation Level",
+            "take_profit": "Take Profit",
+            "next_earnings": "Next Earnings",
+            "added_date": "Added Date"
+        }
+        df = df.rename(columns=rename_map)
+        
+        return df[cols]
+    except Exception as e:
+        st.sidebar.error(f"⚠️ Data Sync Error (Supabase Load): {e}")
+        return pd.DataFrame(columns=cols)
 
 def save_watchlist(df):
-    os.makedirs(os.path.dirname(WATCHLIST_PATH), exist_ok=True)
-    df.to_csv(WATCHLIST_PATH, index=False)
+    if not st.session_state.get("authenticated") or not st.session_state.get("user_id"):
+        raise Exception("Authentication required to save data.")
+        
+    try:
+        supabase = auth.get_supabase_client()
+        user_id = st.session_state["user_id"]
+        
+        # Prepare data according to Postgres schema mapping (snake_case)
+        records = []
+        for _, row in df.iterrows():
+            record = {
+                "user_id": user_id,
+                "ticker": str(row.get("Ticker", "")),
+                "status": str(row.get("Status", "🔵 PENDING")),
+                "thesis": str(row.get("Thesis", "")),
+                "catalyst": str(row.get("Catalyst", "")),
+                "entry_target": float(row.get("Entry Target", 0)) if pd.notna(row.get("Entry Target")) and row.get("Entry Target") else None,
+                "invalidation_level": float(row.get("Invalidation Level", 0)) if pd.notna(row.get("Invalidation Level")) and row.get("Invalidation Level") else None,
+                "take_profit": float(row.get("Take Profit", 0)) if pd.notna(row.get("Take Profit")) and row.get("Take Profit") else None,
+                "next_earnings": str(row.get("Next Earnings", "TBD")),
+            }
+            records.append(record)
+            
+        # 1. Overwrite (Delete existing records for the logged-in user)
+        supabase.table("stock_watchlist").delete().eq("user_id", user_id).execute()
+        
+        # 2. Insert the entire new Watchlist DataFrame into Supabase
+        if records:
+            supabase.table("stock_watchlist").insert(records).execute()
+            
+    except Exception as e:
+        raise Exception(f"Failed to sync with Supabase: {e}")
 
+def load_portfolio_from_db():
+    if not st.session_state.get("authenticated") or not st.session_state.get("user_id"):
+        return {}
+    try:
+        supabase = auth.get_supabase_client()
+        response = supabase.table("stock_portfolio").select("ticker, shares, cost_basis").eq("user_id", st.session_state["user_id"]).execute()
+        if not response.data:
+            return {}
+        
+        # Parse logic: output format expected by the app is a dict of shares and cost
+        # Wait, returning a dict of {"AAPL": {"shares": 10.0, "cost": 150.0}}
+        parsed_data = {}
+        for row in response.data:
+            ticker = row.get("ticker")
+            parsed_data[ticker] = {
+                "shares": float(row.get("shares", 0)),
+                "cost": float(row.get("cost_basis", 0))
+            }
+        return parsed_data
+    except Exception as e:
+        st.sidebar.error(f"⚠️ Portfolio Sync Error: {e}")
+        return {}
+
+def save_portfolio_to_db(shares_dict, cost_dict):
+    if not st.session_state.get("authenticated") or not st.session_state.get("user_id"):
+        return
+    try:
+        supabase = auth.get_supabase_client()
+        user_id = st.session_state["user_id"]
+        
+        records = []
+        for ticker in shares_dict.keys():
+            records.append({
+                "user_id": user_id,
+                "ticker": ticker,
+                "shares": float(shares_dict.get(ticker, 0)),
+                "cost_basis": float(cost_dict.get(ticker, 0))
+            })
+            
+        supabase.table("stock_portfolio").delete().eq("user_id", user_id).execute()
+        if records:
+            supabase.table("stock_portfolio").insert(records).execute()
+    except Exception as e:
+        st.sidebar.error(f"⚠️ Failed to save Portfolio to Cloud: {e}")
 @contextlib.contextmanager
 def get_db_connection(read_only=False):
     """Database connection context manager."""
@@ -1963,9 +2098,8 @@ if active_tab == "3. Decision Engine":
             current_universe,
             placeholder="Search and Select an Asset...",
             format_func=format_ticker,
-            key="deep_ticker_selector",
-            index=current_universe.index(st.session_state["deep_ticker_selector"])
-                  if st.session_state.get("deep_ticker_selector") in current_universe else None
+            key="deep_ticker_selector"
+            # Loại bỏ tham số index vì Streamlit tự động dùng Session State cho widget có key
         )
         # Sync back so active_ticker stays aligned
         if deep_ticker:
@@ -2307,148 +2441,16 @@ if active_tab == "3. Decision Engine":
                             st.error(f"Error saving to watchlist: {e}")
 
             st.markdown("---")
-            render_header("activity", "Diagnostic Metrics Portfolio")
-
-            _card_style = "background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:10px 4px 4px 4px;margin-bottom:4px;"
-            _header_style = "color:#aabbcc;font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;padding:0 8px 6px 8px;"
-            
-            with st.container():
-                kcol1, kcol2, kcol3, kcol4, kcol5, kcol6 = st.columns(6)
-
-                with kcol1:
-                    st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Valuation & Size</div>", unsafe_allow_html=True)
-                    m_cap = meta.get('market_cap', 0)
-                    if m_cap >= 1e12: m_cap_txt = f"€{m_cap/1e12:.2f}T"
-                    elif m_cap >= 1e9: m_cap_txt = f"€{m_cap/1e9:.1f}B"
-                    else: m_cap_txt = f"€{m_cap/1e6:.0f}M"
-                    
-                    render_metric_row("Market Cap", m_cap_txt)
-                    fwd_pe_txt = f"Fwd: {meta.get('forward_pe', 0):.1f}" if pd.notnull(meta.get('forward_pe')) and meta.get('forward_pe', 0) > 0 else ""
-                    pe_val = f"{meta['pe_ratio']:.1f}" if pd.notnull(meta['pe_ratio']) else "N/A"
-                    render_metric_row("P/E", pe_val, delta=fwd_pe_txt)
-                    render_metric_row("PEG",        f"{meta.get('peg_ratio', 0):.2f}" if pd.notnull(meta.get('peg_ratio')) else "N/A")
-                    render_metric_row("EV/EBITDA",  f"{meta.get('ev_to_ebitda', 0):.2f}")
-                    render_metric_row("Price/Sales",f"{meta.get('price_to_sales', 0):.2f}")
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-                with kcol2:
-                    st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Profit & Returns</div>", unsafe_allow_html=True)
-                    render_metric_row("Div Yield",    f"{meta['dividend_yield_pct']:.2f}%" if pd.notnull(meta['dividend_yield_pct']) else "0.00%")
-                    
-                    # Net Payout = Div + Buybacks
-                    net_payout = meta.get('net_payout_yield_pct', 0)
-                    bb_yield   = meta.get('buyback_yield_pct', 0)
-                    render_metric_row("Net Payout",   f"{net_payout:.2f}%", delta=f"BB: {bb_yield:.1f}%")
-                    
-                    render_metric_row("ROE",          f"{meta.get('roe', 0)*100:.1f}%")
-                    render_metric_row("Gross Margin", f"{meta.get('gross_margin', 0)*100:.1f}%")
-                    op_margin = meta.get('operating_margin', 0)
-                    op_margin_val = op_margin*100 if pd.notnull(op_margin) else 0
-                    render_metric_row("Op Margin",    f"{op_margin_val:.1f}%", delta="🔴 Weak" if op_margin_val < 5 else "")
-                    fcf_m = meta.get('fcf_margin', 0)
-                    render_metric_row("FCF Margin",   f"{fcf_m:.1f}%", delta="💎 Cash Cow" if fcf_m > 15 else "")
-                    rev_growth = meta.get('revenue_growth', 0) * 100
-                    render_metric_row("Rev Growth",   f"{rev_growth:.1f}%")
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-                with kcol3:
-                    st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Solvency</div>", unsafe_allow_html=True)
-                    debt_eq_raw = meta.get('debt_to_equity', 0)
-                    if pd.notnull(debt_eq_raw) and debt_eq_raw != 0:
-                        debt_eq_txt = f"{(debt_eq_raw / 100.0):.2f}x"
-                    else:
-                        debt_eq_txt = "N/A (Neg Equity)" if meta.get('total_debt', 0) > 0 else "0.00x"
-                    
-                    curr_rat  = meta.get('current_ratio', 0)
-                    quick_rat = meta.get('quick_ratio', 0)
-                    
-                    # Liquidity Status Labels
-                    c_status = "🟢 Healthy" if curr_rat > 1.5 else ("🔴 Risky" if curr_rat < 1.0 else "🟡 Fair")
-                    q_status = "🟢 Solid" if quick_rat > 1.0 else ("🔴 Tight" if quick_rat < 0.7 else "🟡 Caution")
-                    
-                    debt_ebitda = meta.get('total_debt', 0) / meta.get('ebitda', 1.0) if meta.get('ebitda', 0) > 0 else 0
-                    de_status = "🟢 Conservative" if 0 < debt_ebitda < 3.0 else ("🔴 Risky" if debt_ebitda > 5.0 else ("🟡 Leveraged" if debt_ebitda > 0 else "N/A"))
-
-                    render_metric_row("Debt/Eq", debt_eq_txt)
-                    render_metric_row("Debt/EBITDA", f"{debt_ebitda:.2f}x" if debt_ebitda > 0 else "N/A", delta=de_status)
-                    render_metric_row("Current Ratio", f"{curr_rat:.2f}", delta=c_status)
-                    render_metric_row("Quick Ratio",   f"{quick_rat:.2f}", delta=q_status)
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-                with kcol4:
-                    st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Risk & Volume</div>", unsafe_allow_html=True)
-                    beta_val = meta.get('beta', 1.0)
-                    if pd.notnull(beta_val) and beta_val != 0:
-                        beta_status = "High Vol" if beta_val > 1.2 else ("Low Vol" if beta_val < 0.8 else "Market")
-                        render_metric_row("Beta", f"{beta_val:.2f}", delta=beta_status)
-                    else:
-                        render_metric_row("Beta", "N/A")
-                    
-                    inst    = meta.get('inst_ownership', 0) * 100
-                    render_metric_row("Inst Own",    f"{inst:.0f}%")
-                    render_metric_row("Short Float", f"{meta.get('short_percent_of_float', 0)*100:.1f}%")
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-                with kcol5:
-                    st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Price & Context</div>", unsafe_allow_html=True)
-                    render_metric_row("Target",       f"€{target_p:.2f}", delta=upside, is_pct=True)
-                    
-                    pe_5y_avg    = meta.get('pe_5y_avg', 0)
-                    pe_cur       = meta.get('pe_ratio', 0)
-                    pe_delta     = ((pe_cur / pe_5y_avg) - 1) * 100 if pe_5y_avg > 0 and pe_cur > 0 else 0
-                    
-                    render_metric_row("5Y Avg P/E",    f"{pe_5y_avg:.1f}" if pe_5y_avg > 0 else "N/A", delta=pe_delta, is_pct=True, color_invert=True)
-                    render_metric_row("Z-Score (5Y)",  f"{z_score:.2f}",  delta=z_status)
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-                with kcol6:
-                    # ── EARNINGS CALENDAR (v13.0) ──
-                    e_row = earnings_cal[earnings_cal['ticker'] == deep_ticker]
-                    e_header = _header_style
-                    if not e_row.empty:
-                        e_date = e_row.iloc[0]['earnings_date']
-                        if pd.notnull(e_date):
-                            # Handle both Timestamp and date objects safely
-                            e_date_obj = e_date.date() if hasattr(e_date, 'date') else e_date
-                            days_to_e = (e_date_obj - date.today()).days
-                            if 0 <= days_to_e <= 7:
-                                e_header = e_header.replace("#aabbcc", "#f39c12") # Highlight upcoming
-                                e_date_str = f"⚠️ {e_date_obj.strftime('%b %d')}"
-                            else:
-                                e_date_str = e_date_obj.strftime('%b %d, %y')
-                        else:
-                            e_date_str = "TBD"
-                        
-                        eps_est = e_row.iloc[0]['eps_avg']
-                        rev_est = e_row.iloc[0]['rev_avg']
-                    else:
-                        e_date_str = "N/A"
-                        eps_est = None
-                        rev_est = None
-
-                    st.markdown(f"<div style='{_card_style}'><div style='{e_header}'>Earnings & Events</div>", unsafe_allow_html=True)
-                    render_metric_row("Report Date", e_date_str)
-                    render_metric_row("EPS Est",     f"{eps_est:.2f}" if pd.notnull(eps_est) else "N/A")
-                    
-                    if pd.notnull(rev_est) and rev_est > 0:
-                        if rev_est >= 1e9: rev_txt = f"€{rev_est/1e9:.1f}B"
-                        else: rev_txt = f"€{rev_est/1e6:.0f}M"
-                    else:
-                        rev_txt = "N/A"
-                    render_metric_row("Revenue Est", rev_txt)
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-            st.markdown("---")
             
             # ── QUAL vs QUANT: Full-Width 50/50 Split View ───────────────────
-            render_header("zap", "Qualitative vs. Quantitative Risk Analysis", level="####")
-            st.caption("Left: NLP-powered real-time sentiment from news headlines (Cohere AI). Right: Quantitative pillar breakdown from fundamental data.")
+            render_header("zap", "AI Investment Intelligence: Unified Risk Audit", level="####")
+            st.caption("A multi-dimensional synthesis of Qualitative (NLP News) and Quantitative (Fundamental Pillars) risk factors to provide a unified investment verdict.")
             
             qual_col, quant_col = st.columns([1, 1])
             
             # ── LEFT: NLP Qualitative Audit ──────────────────────────────────
             with qual_col:
-                st.markdown("<div style='color:#3498db; font-size:0.85rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; border-bottom:1px solid rgba(52,152,219,0.3); padding-bottom:6px;'>Qualitative NLP Audit</div>", unsafe_allow_html=True)
+                st.markdown("<div style='color:#3498db; font-size:0.85rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; border-bottom:1px solid rgba(52,152,219,0.3); padding-bottom:6px;'>Unified Alpha-Risk Intelligence Hub</div>", unsafe_allow_html=True)
                 
                 if st.button("Run Real-Time AI Risk Audit", type="primary", use_container_width=True):
                     with st.spinner(f"Scanning news for {meta['company']}..."):
@@ -2463,30 +2465,7 @@ if active_tab == "3. Decision Engine":
                             nlp_insights  = llm_res.get("key_insights", [])
                             nlp_category  = llm_res.get("risk_category", "None")
                             
-                            if nlp_score <= 25:   nlp_border, nlp_badge = "#2ecc71", "LOW RISK"
-                            elif nlp_score <= 50: nlp_border, nlp_badge = "#f1c40f", "MODERATE"
-                            elif nlp_score <= 75: nlp_border, nlp_badge = "#e67e22", "ELEVATED"
-                            else:                 nlp_border, nlp_badge = "#e74c3c", "HIGH RISK"
-                            
-                            st.markdown(f"""
-                            <div style='display:flex; align-items:center; gap:12px; margin-bottom:12px; padding:10px; background:rgba(255,255,255,0.03); border-radius:8px; border-left:3px solid {nlp_border};'>
-                                <div style='text-align:center; min-width:55px;'>
-                                    <div style='font-size:1.8rem; font-weight:900; color:{nlp_border}; line-height:1;'>{nlp_score}</div>
-                                    <div style='font-size:0.6rem; color:#888;'>/100</div>
-                                </div>
-                                <div>
-                                    <div style='font-size:0.75rem; font-weight:700; color:{nlp_border};'>{nlp_badge}</div>
-                                    <div style='font-size:0.72rem; color:#aaa;'>Sentiment: <b>{nlp_sentiment}</b> · Category: <b>{nlp_category}</b></div>
-                                </div>
-                            </div>
-                            <div style='font-size:0.8rem; font-style:italic; color:#ddd; border-left:2px solid #3498db; padding-left:8px; margin-bottom:10px;'>"{nlp_reco}"</div>
-                            <div style='color:#999; font-size:0.72rem; font-weight:700; margin-bottom:5px;'>KEY INSIGHTS ({llm_res.get("headlines_analyzed", 0)} sources):</div>
-                            <ul style='color:#bbb; font-size:0.78rem; line-height:1.5; padding-left:14px; margin:0;'>
-                                {"".join([f"<li>{item}</li>" for item in nlp_insights])}
-                            </ul>
-                            """, unsafe_allow_html=True)
-
-                            # ── TRIGGER UNIFIED VERDICT ──────────────────────
+                            # ── TRIGGER UNIFIED VERDICT (Consolidated) ───────
                             _cohere_key_ra = (
                                 os.environ.get("COHERE_API_KEY", "")
                                 or st.session_state.get("cohere_api_key", "")
@@ -2506,10 +2485,37 @@ if active_tab == "3. Decision Engine":
                                     "fmi_label":     _fmi_data_ra.get("label", "N/A"),
                                     "price":         cur_p,
                                     "market_regime": regime,
+                                    # Technical structure — precise S/R for TP/SL suggestions
+                                    "support_s1":    round(_s1, 2),
+                                    "support_s2":    round(_s2, 2),
+                                    "resistance_r1": round(_r1, 2),
+                                    "resistance_r2": round(_r2, 2),
+                                    "stop_loss_technical": round(_stop_loss, 2),
+                                    "ma_20_current": round(float(df_deep["ma_20"].iloc[-1]), 2) if "ma_20" in df_deep.columns and not df_deep["ma_20"].isna().all() else "N/A",
+                                    "ma_50_current": round(float(df_deep["ma_50"].iloc[-1]), 2) if "ma_50" in df_deep.columns and not df_deep["ma_50"].isna().all() else "N/A",
                                 }
                                 with st.spinner("🧠 Synthesizing CIO Unified Verdict..."):
                                     _unified_report = get_unified_verdict(_cohere_key_ra, _unified_metrics, llm_res)
-                                st.session_state[f"unified_verdict_{deep_ticker}"] = _unified_report
+                                
+                                # Compute conflict flag: Quant vs Qual divergence
+                                _qs = int(ai_score) if str(ai_score).isdigit() else 0
+                                _ns = llm_res.get("red_flag_score", 0)
+                                _nst = llm_res.get("sentiment", "Neutral")
+                                _conflict = (
+                                    (_qs >= 65 and (_ns >= 55 or _nst in ["Negative", "Critical"])) or
+                                    (_qs < 45  and (_ns <= 25  and _nst == "Positive"))
+                                )
+                                # Store as dict to keep raw signals for the expander below
+                                st.session_state[f"unified_verdict_{deep_ticker}"] = {
+                                    "report":        _unified_report,
+                                    "nlp_insights":  llm_res.get("key_insights", []),
+                                    "nlp_sentiment": _nst,
+                                    "nlp_score":     _ns,
+                                    "extracted_at":  datetime.now().strftime("%H:%M:%S"),
+                                    "is_conflict":   _conflict,
+                                    "ai_score_snap": _qs,
+                                }
+                                st.success("Audit complete — see AI Risk Overlay below.", icon="✅")
                 else:
                     st.markdown("""
                     <div style='text-align:center; padding:40px 20px; color:#666;'>
@@ -2687,62 +2693,317 @@ if active_tab == "3. Decision Engine":
                     st.markdown(_fmi_html, unsafe_allow_html=True)
 
 
-            # ── UNIFIED ALPHA-RISK INTELLIGENCE HUB ──────────────────────────
+            # ── AI RISK OVERLAY (Decision-First Flow) ────────────────────────
+            # Layer 1: Summary Bar  |  Layer 2: Conflict Banner  |  Layer 3: Narrative
             _unified_key = f"unified_verdict_{deep_ticker}"
             if _unified_key in st.session_state:
-                _uv_text = st.session_state[_unified_key]
-                _uv_lower = _uv_text.lower()
-                if "strong buy" in _uv_lower:
-                    _uv_grad, _uv_border = "linear-gradient(135deg, rgba(0,255,204,0.12), rgba(46,204,113,0.08))", "#00ffcc"
-                    _uv_badge_bg, _uv_badge_text = "rgba(0,255,204,0.2)", "🏆 STRONG BUY"
-                elif "buy" in _uv_lower and "avoid" not in _uv_lower:
-                    _uv_grad, _uv_border = "linear-gradient(135deg, rgba(46,204,113,0.10), rgba(52,152,219,0.06))", "#2ecc71"
-                    _uv_badge_bg, _uv_badge_text = "rgba(46,204,113,0.2)", "✅ BUY"
-                elif "avoid" in _uv_lower or "reduce" in _uv_lower:
-                    _uv_grad, _uv_border = "linear-gradient(135deg, rgba(231,76,60,0.12), rgba(192,57,43,0.06))", "#e74c3c"
-                    _uv_badge_bg, _uv_badge_text = "rgba(231,76,60,0.2)", "🔴 AVOID / REDUCE"
-                elif "watch" in _uv_lower or "accumulate" in _uv_lower:
-                    _uv_grad, _uv_border = "linear-gradient(135deg, rgba(52,152,219,0.12), rgba(41,128,185,0.06))", "#3498db"
-                    _uv_badge_bg, _uv_badge_text = "rgba(52,152,219,0.2)", "👁 WATCH & ACCUMULATE"
+                _uv_data = st.session_state[_unified_key]
+                # Backward compatibility
+                if isinstance(_uv_data, dict):
+                    _uv_text       = _uv_data.get("report", "")
+                    _nlp_insights  = _uv_data.get("nlp_insights", [])
+                    _nlp_score     = _uv_data.get("nlp_score", 0)
+                    _nlp_sent      = _uv_data.get("nlp_sentiment", "Neutral")
+                    _audit_time    = _uv_data.get("extracted_at", "")
+                    _is_conflict   = _uv_data.get("is_conflict", False)
+                    _ai_score_snap = _uv_data.get("ai_score_snap", 0)
                 else:
-                    _uv_grad, _uv_border = "linear-gradient(135deg, rgba(241,196,15,0.10), rgba(230,126,34,0.06))", "#f1c40f"
-                    _uv_badge_bg, _uv_badge_text = "rgba(241,196,15,0.2)", "🟡 HOLD"
+                    _uv_text, _nlp_insights, _nlp_score = _uv_data, [], 0
+                    _nlp_sent, _audit_time, _is_conflict, _ai_score_snap = "N/A", "", False, 0
 
+                # ── Classify verdict from Actionable Recommendation section only ──
+                # Extract the label from the FIRST LINE of the section, before
+                # any em-dash (—) or colon (:) to avoid reading execution notes
+                # which often contain words like "buy" in "buy on dips".
+                import re as _re
+                _action_label = ""
+                _action_match = _re.search(
+                    r"actionable recommendation[^\n]*\n+(.*?)(?:\n+###|\Z)",
+                    _uv_text,
+                    flags=_re.IGNORECASE | _re.DOTALL
+                )
+                if _action_match:
+                    # Take ONLY the first non-empty line
+                    _first_line = next(
+                        (l for l in _action_match.group(1).strip().splitlines() if l.strip()),
+                        ""
+                    )
+                    # Strip everything after — or : (execution notes start here)
+                    _action_label = _re.split(r"[—\-–:]", _first_line)[0].lower().strip()
+                    # Remove markdown bold markers
+                    _action_label = _action_label.replace("*", "").replace("#", "").strip()
+
+                # Use _action_label (pure label before —/:) for priority matching,
+                # fall back to full text only if section was not found at all.
+                _src = _action_label if _action_label else _uv_text.lower()
+
+                if "strong buy" in _src:
+                    _uv_border = "#00ffcc"; _uv_badge_text = "🏆 STRONG BUY"
+                    _uv_grad   = "linear-gradient(135deg,rgba(0,255,204,.12),rgba(46,204,113,.08))"
+                    _uv_badge_bg = "rgba(0,255,204,0.2)"
+                elif "watch" in _src or "accumulate" in _src:
+                    _uv_border = "#3498db"; _uv_badge_text = "👁 WATCH & ACCUMULATE"
+                    _uv_grad   = "linear-gradient(135deg,rgba(52,152,219,.12),rgba(41,128,185,.06))"
+                    _uv_badge_bg = "rgba(52,152,219,0.2)"
+                elif "avoid" in _src or "reduce" in _src:
+                    _uv_border = "#e74c3c"; _uv_badge_text = "🔴 AVOID / REDUCE"
+                    _uv_grad   = "linear-gradient(135deg,rgba(231,76,60,.12),rgba(192,57,43,.06))"
+                    _uv_badge_bg = "rgba(231,76,60,0.2)"
+                elif "buy" in _src:
+                    _uv_border = "#2ecc71"; _uv_badge_text = "✅ BUY"
+                    _uv_grad   = "linear-gradient(135deg,rgba(46,204,113,.10),rgba(52,152,219,.06))"
+                    _uv_badge_bg = "rgba(46,204,113,0.2)"
+                else:
+                    _uv_border = "#f1c40f"; _uv_badge_text = "🟡 HOLD"
+                    _uv_grad   = "linear-gradient(135deg,rgba(241,196,15,.10),rgba(230,126,34,.06))"
+                    _uv_badge_bg = "rgba(241,196,15,0.2)"
+
+                def _hex_to_rgb(h):
+                    h = h.lstrip("#")
+                    return ",".join(str(int(h[i:i+2], 16)) for i in (0, 2, 4))
+                _border_rgb = _hex_to_rgb(_uv_border)
+
+                # ────────────────────────────────────────────────────────────
+                # LAYER 1 — AI Risk Overlay: Compact Summary Bar
+                # ────────────────────────────────────────────────────────────
                 st.markdown(f"""
-                <div style='background:{_uv_grad}; border:1px solid {_uv_border};
-                            border-radius:14px; padding:20px 24px; margin:10px 0 0 0;'>
-                    <div style='display:flex; align-items:center; gap:12px; margin-bottom:12px;'>
-                        <span style='font-size:1.4rem;'>🧠</span>
+                <style>
+                @keyframes pulse-border {{
+                    0%   {{ box-shadow: 0 0 0 0 rgba({_border_rgb}, 0.35); }}
+                    70%  {{ box-shadow: 0 0 0 8px rgba({_border_rgb}, 0); }}
+                    100% {{ box-shadow: 0 0 0 0 rgba({_border_rgb}, 0); }}
+                }}
+                </style>
+                <div style='
+                    display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap;
+                    gap:10px; padding:12px 18px;
+                    background:linear-gradient(90deg,rgba({_border_rgb},0.08),rgba(0,0,0,0));
+                    border:1px solid rgba({_border_rgb},0.4); border-radius:10px;
+                    margin:14px 0 0 0;
+                    animation: pulse-border 2s ease-out 1;
+                '>
+                    <div style='display:flex; align-items:center; gap:10px;'>
+                        <span style='font-size:1.1rem;'>🧠</span>
                         <div>
-                            <div style='color:{_uv_border}; font-weight:900; font-size:0.9rem;
-                                        text-transform:uppercase; letter-spacing:1.5px;'>
-                                CIO Unified Intelligence Verdict
+                            <div style='font-size:0.65rem; color:#888; text-transform:uppercase;
+                                        letter-spacing:1.5px; margin-bottom:2px;'>
+                                AI Risk Overlay &nbsp;&middot;&nbsp; {_audit_time}
                             </div>
-                            <div style='color:#888; font-size:0.72rem;'>
-                                Synthesized from Quantitative fundamentals + Real-time News Intelligence
+                            <div style='font-size:0.82rem; color:#ccc;'>
+                                Quant Score: <b style='color:white;'>{_ai_score_snap}/100</b>
+                                &nbsp;&nbsp;|&nbsp;&nbsp;
+                                News Sentiment: <b style='color:white;'>{_nlp_sent}</b>
+                                &nbsp;&nbsp;|&nbsp;&nbsp;
+                                Red Flag: <b style='color:white;'>{_nlp_score}/100</b>
                             </div>
-                        </div>
-                        <div style='margin-left:auto; background:{_uv_badge_bg}; color:{_uv_border};
-                                    font-size:0.75rem; font-weight:800; padding:4px 14px;
-                                    border-radius:20px; border:1px solid {_uv_border}; white-space:nowrap;'>
-                            {_uv_badge_text}
                         </div>
                     </div>
+                    <div style='
+                        background:{_uv_badge_bg}; color:{_uv_border};
+                        font-size:0.8rem; font-weight:900; padding:6px 16px;
+                        border-radius:20px; border:1px solid {_uv_border};
+                        white-space:nowrap; letter-spacing:0.5px;
+                    '>{_uv_badge_text}</div>
                 </div>
                 """, unsafe_allow_html=True)
-                st.markdown(
-                    f"<div style='background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.07); "
-                    f"border-left:3px solid {_uv_border}; border-radius:0 0 12px 12px; padding:20px; margin-bottom:16px;'>"
-                    + _uv_text + "</div>",
-                    unsafe_allow_html=True
-                )
+
+                # ────────────────────────────────────────────────────────────
+                # LAYER 2 — Signal Conflict Banner (only when diverging)
+                # ────────────────────────────────────────────────────────────
+                if _is_conflict:
+                    _conf_dir = (
+                        "Strong fundamentals but elevated news risk — the market may not have priced in this headline risk yet."
+                        if _ai_score_snap >= 65
+                        else "Positive news momentum but weak underlying fundamentals — beware of a sentiment-driven rally."
+                    )
+                    st.markdown(f"""
+                    <div style='
+                        display:flex; align-items:flex-start; gap:14px;
+                        margin:8px 0; padding:14px 18px;
+                        background:linear-gradient(90deg,rgba(230,126,34,0.14),rgba(231,76,60,0.08));
+                        border:1px solid rgba(230,126,34,0.55);
+                        border-left:4px solid #e67e22;
+                        border-radius:10px;
+                    '>
+                        <span style='font-size:1.4rem; line-height:1; padding-top:2px;'>⚠️</span>
+                        <div>
+                            <div style='color:#e67e22; font-weight:900; font-size:0.78rem;
+                                        text-transform:uppercase; letter-spacing:2px; margin-bottom:4px;'>
+                                ⚡ Signal Conflict Detected
+                            </div>
+                            <div style='color:#ddd; font-size:0.82rem; line-height:1.5;'>
+                                {_conf_dir}
+                                <span style='color:#aaa; font-size:0.75rem;'>
+                                    &nbsp;(Quant: {_ai_score_snap}/100 &nbsp;&middot;&nbsp;
+                                    News: {_nlp_sent} &middot; RedFlag {_nlp_score}/100)
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                # ────────────────────────────────────────────────────────────
+                # LAYER 3 — Detailed Audit Narrative (collapsed by default)
+                # ────────────────────────────────────────────────────────────
+                with st.expander("🔍 Detailed CIO Reasoning & Full Audit", expanded=False):
+                    st.markdown(
+                        f"<div style='background:rgba(255,255,255,0.02); border-left:3px solid {_uv_border};"
+                        f" border-radius:6px; padding:18px; font-size:0.88rem; line-height:1.65;'>"
+                        + _uv_text + "</div>",
+                        unsafe_allow_html=True
+                    )
+                    if _nlp_insights:
+                        st.markdown("---")
+                        st.markdown("<div style='font-size:0.75rem; color:#888; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;'>🧩 Raw Evidence: News Signals Analyzed</div>", unsafe_allow_html=True)
+                        for insight in _nlp_insights:
+                            st.markdown(f"<div style='font-size:0.78rem; color:#ccc; border-left:2px solid #3498db; padding-left:8px; margin-bottom:5px;'>{insight}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='font-size:0.7rem; color:#555; margin-top:8px;'>Red Flag Score: {_nlp_score}/100 &middot; LLM Impression: {_nlp_sent}</div>", unsafe_allow_html=True)
+
             else:
                 if os.environ.get("COHERE_API_KEY", "") or st.session_state.get("cohere_api_key", ""):
                     st.info(
-                        "🧠 **CIO Unified Intelligence** — Click **'Run Real-Time AI Risk Audit'** above "
-                        "to generate a unified verdict combining news sentiment + quantitative data.",
+                        "🧠 **AI Risk Overlay** — Click **'Run Real-Time AI Risk Audit'** above "
+                        "to activate the overlay combining news sentiment + quantitative data.",
                         icon="🧠"
                     )
+
+            st.markdown("---")
+            render_header("activity", "Diagnostic Metrics Portfolio")
+
+            _card_style = "background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:10px 4px 4px 4px;margin-bottom:4px;"
+            _header_style = "color:#aabbcc;font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;padding:0 8px 6px 8px;"
+            
+            with st.container():
+                kcol1, kcol2, kcol3, kcol4, kcol5, kcol6 = st.columns(6)
+
+                with kcol1:
+                    st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Valuation & Size</div>", unsafe_allow_html=True)
+                    m_cap = meta.get('market_cap', 0)
+                    if m_cap >= 1e12: m_cap_txt = f"€{m_cap/1e12:.2f}T"
+                    elif m_cap >= 1e9: m_cap_txt = f"€{m_cap/1e9:.1f}B"
+                    else: m_cap_txt = f"€{m_cap/1e6:.0f}M"
+                    
+                    render_metric_row("Market Cap", m_cap_txt)
+                    fwd_pe_txt = f"Fwd: {meta.get('forward_pe', 0):.1f}" if pd.notnull(meta.get('forward_pe')) and meta.get('forward_pe', 0) > 0 else ""
+                    pe_val = f"{meta['pe_ratio']:.1f}" if pd.notnull(meta['pe_ratio']) else "N/A"
+                    render_metric_row("P/E", pe_val, delta=fwd_pe_txt)
+                    render_metric_row("PEG",        f"{meta.get('peg_ratio', 0):.2f}" if pd.notnull(meta.get('peg_ratio')) else "N/A")
+                    render_metric_row("EV/EBITDA",  f"{meta.get('ev_to_ebitda', 0):.2f}")
+                    render_metric_row("Price/Sales",f"{meta.get('price_to_sales', 0):.2f}")
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                with kcol2:
+                    st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Profit & Returns</div>", unsafe_allow_html=True)
+                    render_metric_row("Div Yield",    f"{meta['dividend_yield_pct']:.2f}%" if pd.notnull(meta['dividend_yield_pct']) else "0.00%")
+                    
+                    # Net Payout = Div + Buybacks
+                    net_payout = meta.get('net_payout_yield_pct', 0)
+                    bb_yield   = meta.get('buyback_yield_pct', 0)
+                    render_metric_row("Net Payout",   f"{net_payout:.2f}%", delta=f"BB: {bb_yield:.1f}%")
+                    
+                    render_metric_row("ROE",          f"{meta.get('roe', 0)*100:.1f}%")
+                    render_metric_row("Gross Margin", f"{meta.get('gross_margin', 0)*100:.1f}%")
+                    op_margin = meta.get('operating_margin', 0)
+                    op_margin_val = op_margin*100 if pd.notnull(op_margin) else 0
+                    render_metric_row("Op Margin",    f"{op_margin_val:.1f}%", delta="🔴 Weak" if op_margin_val < 5 else "")
+                    fcf_m = meta.get('fcf_margin', 0)
+                    render_metric_row("FCF Margin",   f"{fcf_m:.1f}%", delta="💎 Cash Cow" if fcf_m > 15 else "")
+                    rev_growth = meta.get('revenue_growth', 0) * 100
+                    render_metric_row("Rev Growth",   f"{rev_growth:.1f}%")
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                with kcol3:
+                    st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Solvency</div>", unsafe_allow_html=True)
+                    debt_eq_raw = meta.get('debt_to_equity', 0)
+                    if pd.notnull(debt_eq_raw) and debt_eq_raw != 0:
+                        debt_eq_txt = f"{(debt_eq_raw / 100.0):.2f}x"
+                    else:
+                        debt_eq_txt = "N/A (Neg Equity)" if meta.get('total_debt', 0) > 0 else "0.00x"
+                    
+                    curr_rat  = meta.get('current_ratio', 0)
+                    quick_rat = meta.get('quick_ratio', 0)
+                    
+                    # Liquidity Status Labels
+                    c_status = "🟢 Healthy" if curr_rat > 1.5 else ("🔴 Risky" if curr_rat < 1.0 else "🟡 Fair")
+                    q_status = "🟢 Solid" if quick_rat > 1.0 else ("🔴 Tight" if quick_rat < 0.7 else "🟡 Caution")
+                    
+                    _ebitda_val = 0.0
+                    try: _ebitda_val = float(meta.get('ebitda', 0) or 0)
+                    except (TypeError, ValueError): pass
+                    _debt_val = 0.0
+                    try: _debt_val = float(meta.get('total_debt', 0) or 0)
+                    except (TypeError, ValueError): pass
+                    debt_ebitda = (_debt_val / _ebitda_val) if _ebitda_val > 0 else 0
+                    de_status = "🟢 Conservative" if 0 < debt_ebitda < 3.0 else ("🔴 Risky" if debt_ebitda > 5.0 else ("🟡 Leveraged" if debt_ebitda > 0 else "N/A"))
+
+                    render_metric_row("Debt/Eq", debt_eq_txt)
+                    render_metric_row("Debt/EBITDA", f"{debt_ebitda:.2f}x" if debt_ebitda > 0 else "N/A", delta=de_status)
+                    render_metric_row("Current Ratio", f"{curr_rat:.2f}", delta=c_status)
+                    render_metric_row("Quick Ratio",   f"{quick_rat:.2f}", delta=q_status)
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                with kcol4:
+                    st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Risk & Volume</div>", unsafe_allow_html=True)
+                    beta_val = meta.get('beta', 1.0)
+                    if pd.notnull(beta_val) and beta_val != 0:
+                        beta_status = "High Vol" if beta_val > 1.2 else ("Low Vol" if beta_val < 0.8 else "Market")
+                        render_metric_row("Beta", f"{beta_val:.2f}", delta=beta_status)
+                    else:
+                        render_metric_row("Beta", "N/A")
+                    
+                    inst    = meta.get('inst_ownership', 0) * 100
+                    render_metric_row("Inst Own",    f"{inst:.0f}%")
+                    render_metric_row("Short Float", f"{meta.get('short_percent_of_float', 0)*100:.1f}%")
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                with kcol5:
+                    st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Price & Context</div>", unsafe_allow_html=True)
+                    render_metric_row("Target",       f"€{target_p:.2f}", delta=upside, is_pct=True)
+                    
+                    pe_5y_avg    = meta.get('pe_5y_avg', 0)
+                    pe_cur       = meta.get('pe_ratio', 0)
+                    pe_delta     = ((pe_cur / pe_5y_avg) - 1) * 100 if pe_5y_avg > 0 and pe_cur > 0 else 0
+                    
+                    render_metric_row("5Y Avg P/E",    f"{pe_5y_avg:.1f}" if pe_5y_avg > 0 else "N/A", delta=pe_delta, is_pct=True, color_invert=True)
+                    render_metric_row("Z-Score (5Y)",  f"{z_score:.2f}",  delta=z_status)
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                with kcol6:
+                    # ── EARNINGS CALENDAR (v13.0) ──
+                    e_row = earnings_cal[earnings_cal['ticker'] == deep_ticker]
+                    e_header = _header_style
+                    if not e_row.empty:
+                        e_date = e_row.iloc[0]['earnings_date']
+                        if pd.notnull(e_date):
+                            # Handle both Timestamp and date objects safely
+                            e_date_obj = e_date.date() if hasattr(e_date, 'date') else e_date
+                            days_to_e = (e_date_obj - date.today()).days
+                            if 0 <= days_to_e <= 7:
+                                e_header = e_header.replace("#aabbcc", "#f39c12") # Highlight upcoming
+                                e_date_str = f"⚠️ {e_date_obj.strftime('%b %d')}"
+                            else:
+                                e_date_str = e_date_obj.strftime('%b %d, %y')
+                        else:
+                            e_date_str = "TBD"
+                        
+                        eps_est = e_row.iloc[0]['eps_avg']
+                        rev_est = e_row.iloc[0]['rev_avg']
+                    else:
+                        e_date_str = "N/A"
+                        eps_est = None
+                        rev_est = None
+
+                    st.markdown(f"<div style='{_card_style}'><div style='{e_header}'>Earnings & Events</div>", unsafe_allow_html=True)
+                    render_metric_row("Report Date", e_date_str)
+                    render_metric_row("EPS Est",     f"{eps_est:.2f}" if pd.notnull(eps_est) else "N/A")
+                    
+                    if pd.notnull(rev_est) and rev_est > 0:
+                        if rev_est >= 1e9: rev_txt = f"€{rev_est/1e9:.1f}B"
+                        else: rev_txt = f"€{rev_est/1e6:.0f}M"
+                    else:
+                        rev_txt = "N/A"
+                    render_metric_row("Revenue Est", rev_txt)
+                    st.markdown("</div>", unsafe_allow_html=True)
 
             st.markdown("---")
 
@@ -3300,8 +3561,15 @@ if active_tab == "6. Watchlist":
         
         with st.form("watchlist_editor_form"):
             st.caption("Double-click any cell to edit your notes, update Stop Loss levels or change Workflow Status. Click the trash icon to remove an idea.")
+            
+            # Type safety: Ensure text columns are explicitly strings before rendering in editor
+            _wl_df_safe = wl_df.copy()
+            for col in ["Thesis", "Catalyst", "Next Earnings"]:
+                if col in _wl_df_safe.columns:
+                    _wl_df_safe[col] = _wl_df_safe[col].fillna("").astype(str)
+
             edited_df = st.data_editor(
-                wl_df,
+                _wl_df_safe,
                 column_config=config,
                 use_container_width=True,
                 num_rows="dynamic",
@@ -3328,39 +3596,21 @@ if active_tab == "7. Portfolio Builder":
     indices = ["^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"]
     stock_tickers = [t for t in all_available_tickers if t not in indices]
     
-    # ── 1. PORTFOLIO PERSISTENCE (DEEP URL SYNC) ─────────────────────────────
-    # Format in URL: ?p=AAPL:10.0,NVDA:25.5
-    query_p = st.query_params.get("p", "")
-    
-    # helper to parse URL to dict {ticker: shares}
-    def parse_portfolio_url(p_string):
-        if not p_string: return {}
-        out = {}
-        for item in p_string.split(","):
-            if ":" in item:
-                t, s = item.split(":")
-                try: out[t] = float(s)
-                except: out[t] = 10.0
-            else:
-                out[item] = 10.0
-        return out
-
-    # Base Session State Migration/Init
-    if 'portfolio_cost' not in st.session_state:
-        st.session_state.portfolio_cost = {}
-
-    # Initial Load
-    if 'portfolio_tickers' not in st.session_state:
-        url_data = parse_portfolio_url(query_p)
-        if url_data:
-            st.session_state.portfolio_tickers = sorted(list(url_data.keys()))
-            st.session_state.portfolio_shares = url_data
-            st.session_state.portfolio_cost = {t: 0.0 for t in url_data}
+    # ── 1. PORTFOLIO PERSISTENCE (SUPABASE SYNC) ─────────────────────────────
+    # Initial Load from Cloud DB
+    if 'portfolio_db_synced' not in st.session_state:
+        db_portfolio = load_portfolio_from_db()
+        if db_portfolio:
+            st.session_state.portfolio_tickers = sorted(list(db_portfolio.keys()))
+            st.session_state.portfolio_shares = {t: db_portfolio[t]["shares"] for t in db_portfolio}
+            st.session_state.portfolio_cost = {t: db_portfolio[t]["cost"] for t in db_portfolio}
         else:
-            defaults = ["AAPL", "NVDA", "META"]
+            defaults = ["AAPL", "NVDA", "META"] # Safe defaults for new users
             st.session_state.portfolio_tickers = defaults
             st.session_state.portfolio_shares = {t: 10.0 for t in defaults}
             st.session_state.portfolio_cost = {t: 150.0 for t in defaults} # Placeholder defaults
+            
+        st.session_state.portfolio_db_synced = True
 
     p_tickers = st.multiselect(
         "Select Tickers for Portfolio Construction", 
@@ -3369,10 +3619,10 @@ if active_tab == "7. Portfolio Builder":
         key="p_ticker_select"
     )
 
-    # Sync URL if TICKERS changed (Multiselect)
+    # Detect UI Selection Changes
     if p_tickers != st.session_state.portfolio_tickers:
         st.session_state.portfolio_tickers = p_tickers
-        # Re-build shares/cost dict: keep existing, add new defaults
+        # Retain old weights if ticker already existed, else initialize default 10 shares
         new_shares = {}
         new_cost = {}
         for t in p_tickers:
@@ -3380,15 +3630,8 @@ if active_tab == "7. Portfolio Builder":
             new_cost[t] = st.session_state.portfolio_cost.get(t, 0.0)
         st.session_state.portfolio_shares = new_shares
         st.session_state.portfolio_cost = new_cost
-        
-        # Update URL
-        url_str = ",".join([f"{t}:{s}" for t, s in new_shares.items()])
-        st.query_params["p"] = url_str
-        # Don't st.rerun() here — data_editor will rebuild on next natural cycle
 
     if p_tickers:
-        # Prepare Data for Editor
-        # Get latest prices for selected tickers
         latest_prices = prices[prices["ticker"].isin(p_tickers)].groupby("ticker")["price_close"].last().to_dict()
         
         # Build Initial DataFrame for Editor (ONLY if tickers list actually changed or structure is missing/stale)
@@ -3434,8 +3677,8 @@ if active_tab == "7. Portfolio Builder":
                 key="p_portfolio_editor_final"
             )
             
-            # PASSIVE SYNC: Use a button to lock in changes and update URL
-            recompute = st.form_submit_button("⚖️ COMMIT REBALANCE & RECALCULATE ANALYTICS", use_container_width=True, type="primary")
+            # PASSIVE SYNC: Use a button to lock in changes and update Database
+            recompute = st.form_submit_button("Save & Calculate", use_container_width=True, type="primary")
 
         if recompute:
             st.session_state.portfolio_df = edited_df.copy()
@@ -3443,8 +3686,9 @@ if active_tab == "7. Portfolio Builder":
             cost_dict = edited_df.set_index("Ticker")["Cost Basis (€)"].to_dict()
             st.session_state.portfolio_shares = shares_dict
             st.session_state.portfolio_cost = cost_dict
-            st.query_params["p"] = ",".join([f"{t}:{s}" for t, s in shares_dict.items()])
-            st.toast("✅ Portfolio structure updated!", icon="🚀")
+            # Upload to Supabase 
+            save_portfolio_to_db(shares_dict, cost_dict)
+            st.toast("☁️ Portfolio sync to Supabase Database successful!", icon="🚀")
             st.rerun()
         else:
             edited_df = st.session_state.portfolio_df.copy()
@@ -6042,7 +6286,6 @@ if active_tab == "8. System Methodology":
         """, unsafe_allow_html=True)
 
 st.sidebar.markdown("---")
-st.sidebar.info("💡 **Methodology Tip**: Check Tab 8 to understand data lag and how the AI Monte Carlo risk bands are calculated.")
 
 # ── FEATURE 4: Sidebar Export Hub ────────────────────────────────────────────
 st.sidebar.markdown("---")
@@ -6053,24 +6296,4 @@ st.sidebar.download_button("🔽 Download Recommendations", data=csv_reco, file_
 csv_prices = prices.to_csv(index=False).encode('utf-8')
 st.sidebar.download_button("🔽 Download Price History", data=csv_prices, file_name="price_history.csv", mime="text/csv")
 
-# ── AI INTELLIGENCE CONNECTOR ─────────────────────────────────────────────────
-st.sidebar.markdown("---")
-st.sidebar.markdown("<div class='sb-section-label'>\U0001f916 AI Intelligence Connector</div>", unsafe_allow_html=True)
-_env_key = os.environ.get("COHERE_API_KEY", "")
-if _env_key:
-    # Key loaded automatically from .env — no manual input needed
-    st.sidebar.success("\u2705 AI Intelligence: Auto-Connected", icon="\U0001f916")
-    st.sidebar.caption("Key loaded from `.env` — `COHERE_API_KEY`")
-else:
-    # Fallback: allow manual entry via Sidebar
-    st.sidebar.text_input(
-        "Cohere API Key",
-        type="password",
-        placeholder="Paste your Cohere key here...",
-        help="Or add COHERE_API_KEY=<key> to your .env file for auto-load.",
-        key="cohere_api_key"
-    )
-    if st.session_state.get("cohere_api_key"):
-        st.sidebar.success("\u2705 AI Intelligence: Connected", icon="\U0001f916")
-    else:
-        st.sidebar.caption("Enter key above or add `COHERE_API_KEY` to `.env`.")
+auth.render_user_profile()
