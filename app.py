@@ -3922,28 +3922,43 @@ if active_tab == "2. Opportunity Radar":
         st.session_state.scan_mode = scan_presets[0]
         
     # ── Applied Logic (Synced with Backtest Engine) ───────────────────────────
-    st.markdown("#### Geographic & Strategy Filters")
-    r_col1, r_col2 = st.columns([1, 2])
+    st.markdown("#### Geographic, Sector & Strategy Filters")
+    r_col1, r_col2, r_col3 = st.columns([1, 1, 1.5])
     
     with r_col1:
-        # Region Filter
-        all_regions = sorted(m_df["Region"].unique().tolist())
-        selected_regions = st.multiselect(
+        # Region Filter (Dropdown style)
+        all_regions = ["🌎 All Regions"] + sorted(m_df["Region"].unique().tolist())
+        selected_region = st.selectbox(
             "Filter by Region", 
             options=all_regions, 
-            default=all_regions,
+            index=0,
             key="p_region_filter"
         )
         
     with r_col2:
+        # Sector Filter (Dropdown style)
+        all_sectors = ["🌍 All Sectors"] + sorted(m_df["Sector"].unique().tolist())
+        selected_sector = st.selectbox(
+            "Filter by Sector",
+            options=all_sectors,
+            index=0,
+            key="p_sector_filter"
+        )
+        
+    with r_col3:
         scan_mode = st.selectbox(
             "Intelligence Strategy Preset", 
             options=scan_presets, 
             key="scan_mode",
-            label_visibility="collapsed"
+            label_visibility="visible"
         )
 
-    f_df = m_df[m_df["Region"].isin(selected_regions)].copy()
+    # Apply both filters (Supporting "All" options)
+    f_df = m_df.copy()
+    if selected_region != "🌎 All Regions":
+        f_df = f_df[f_df["Region"] == selected_region]
+    if selected_sector != "🌍 All Sectors":
+        f_df = f_df[f_df["Sector"] == selected_sector]
     if "Institutional Pulse" in scan_mode:
         f_df = f_df[(f_df["Quality"] >= 75) & (f_df["Trend"] == "BULLISH")]
         st.success("🏆 Institutional Pulse: Quality Score > 75 and Bullish Trend (Institutional Conviction)")
