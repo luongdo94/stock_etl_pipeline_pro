@@ -22,6 +22,13 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+# Load environment variables from .env (COHERE_API_KEY, etc.)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(ROOT, ".env"))
+except ImportError:
+    pass  # python-dotenv not installed; rely on system env vars
+
 import contextlib
 from plotly.subplots import make_subplots
 import numpy as np
@@ -30,7 +37,216 @@ from etl.llm_parser import analyze_risk_with_llm
 from etl.utils import compute_score, compute_fmi_live
 
 
+# ── COHERE AI INTELLIGENCE ENGINE ───────────────────────────────────────────
+def get_cohere_insight(api_key: str, metrics: dict) -> str:
+    """Generates an institutional-grade stock analysis report using Cohere Command-R+."""
+    try:
+        import cohere
+        co = cohere.ClientV2(api_key=api_key)
+
+        def _fmt(v, decimals=2, suffix=""):
+            if v is None or v == "N/A":
+                return "N/A"
+            try:
+                return f"{float(v):.{decimals}f}{suffix}"
+            except Exception:
+                return str(v)
+
+        ticker    = metrics.get("ticker", "N/A")
+        company   = metrics.get("company", ticker)
+        sector    = metrics.get("sector", "N/A")
+        ai_score  = metrics.get("ai_score", "N/A")
+        fmi_score = metrics.get("fmi_score", "N/A")
+        fmi_label = metrics.get("fmi_label", "N/A")
+        action    = metrics.get("action", "N/A")
+        price     = metrics.get("price", "N/A")
+        upside    = metrics.get("upside_pct", 0)
+        rsi       = metrics.get("rsi", 50)
+        ma_signal = metrics.get("ma_signal", "N/A")
+        z_score   = metrics.get("price_z_score", "N/A")
+        pe        = metrics.get("pe_ratio", "N/A")
+        peg       = metrics.get("peg_ratio", "N/A")
+        pb        = metrics.get("price_to_book", "N/A")
+        roe       = metrics.get("roe", "N/A")
+        fcf       = metrics.get("fcf_margin", "N/A")
+        div_yield = metrics.get("dividend_yield_pct", 0)
+        beta      = metrics.get("beta", "N/A")
+        consensus = metrics.get("recommendation_key", "N/A")
+        regime    = metrics.get("market_regime", "NEUTRAL")
+        w52_pos   = metrics.get("w52_pos", "N/A")
+        target_p  = metrics.get("target_mean_price", "N/A")
+
+        try:
+            rsi_note = "— Overbought territory" if float(rsi) > 70 else "— Oversold territory" if float(rsi) < 30 else "— Neutral zone"
+        except Exception:
+            rsi_note = ""
+
+        prompt = f"""You are a senior equity analyst at a top-tier investment bank (Goldman Sachs, J.P. Morgan level).
+Analyze the following stock data and produce a concise, professional investment report.
+
+## Stock Data: {ticker} ({company})
+- **Sector**: {sector}
+- **Current Price**: \u20ac{_fmt(price)}
+- **AI Quality Score**: {ai_score}/100
+- **Fundamental Momentum Index (FMI)**: {fmi_score}/100 ({fmi_label})
+- **Analyst Recommendation**: {action} | **Consensus**: {consensus}
+- **Analyst Price Target**: \u20ac{_fmt(target_p)} (Implied Upside: {_fmt(upside, 1)}%)
+- **52-Week Position**: {_fmt(w52_pos, 0)}% of range
+
+### Technical Indicators
+- **RSI (14)**: {_fmt(rsi, 1)} {rsi_note}
+- **MA Trend Signal**: {ma_signal}
+- **Price Z-Score**: {_fmt(z_score, 2)} (deviation from 60-day mean)
+
+### Valuation & Profitability
+- **P/E**: {_fmt(pe, 1)}x | **PEG**: {_fmt(peg, 2)} | **P/B**: {_fmt(pb, 2)}x
+- **ROE**: {_fmt(roe, 1, '%')} | **FCF Margin**: {_fmt(fcf, 1, '%')} | **Dividend Yield**: {_fmt(div_yield, 2, '%')}
+- **Beta**: {_fmt(beta, 2)} | **Market Regime**: {regime}
+
+---
+Write a structured analysis with exactly these THREE sections:
+
+### 1. \U0001f3af Investment Verdict
+One clear paragraph (3-5 sentences). State the overall investment thesis, Buy/Hold/Sell, and primary driver.
+
+### 2. \U0001f4ca Technical & Fundamental Analysis
+One paragraph (3-5 sentences). Analyze the interplay between technical signals and the fundamental picture. Highlight any divergence or confirmation.
+
+### 3. \u26a0\ufe0f Key Risks & Catalysts
+- Risk 1: (specific, quantitative)
+- Risk 2: (specific, quantitative)
+- Catalyst 1: (specific, quantitative)
+- Catalyst 2: (specific, quantitative)
+
+Rules: English only. Be direct and decisive. Reference specific data points. Under 300 words."""
+
+        response = co.chat(
+            model="command-r-plus-08-2024",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=600,
+        )
+        return response.message.content[0].text
+
+    except Exception as e:
+        err = str(e)
+        if "invalid api key" in err.lower() or "unauthorized" in err.lower():
+            return "\u274c **Invalid API Key.** Please check your Cohere API Key in the Sidebar."
+        elif "rate limit" in err.lower():
+            return "\u23f3 **Rate limit reached.** Please wait a moment and try again."
+        else:
+            return f"\u274c **AI Engine Error:** {err}"
+
+
+def get_unified_verdict(api_key: str, metrics: dict, nlp_result: dict) -> str:
+    """
+    Unified Alpha-Risk Intelligence — Chief Investment Officer (CIO) mode.
+    Combines quantitative fundamentals + NLP news sentiment into one actionable verdict.
+    """
+    try:
+        import cohere
+        co = cohere.ClientV2(api_key=api_key)
+
+        def _f(v, d=2, s=""):
+            if v is None or v == "N/A": return "N/A"
+            try: return f"{float(v):.{d}f}{s}"
+            except: return str(v)
+
+        ticker    = metrics.get("ticker", "N/A")
+        company   = metrics.get("company", ticker)
+        sector    = metrics.get("sector", "N/A")
+        ai_score  = metrics.get("ai_score", "N/A")
+        fmi_score = metrics.get("fmi_score", "N/A")
+        fmi_label = metrics.get("fmi_label", "N/A")
+        price     = metrics.get("price", "N/A")
+        upside    = metrics.get("upside_pct", 0)
+        rsi       = metrics.get("rsi", 50)
+        ma_signal = metrics.get("ma_signal", "N/A")
+        pe        = metrics.get("pe_ratio", "N/A")
+        peg       = metrics.get("peg_ratio", "N/A")
+        fcf       = metrics.get("fcf_margin", "N/A")
+        regime    = metrics.get("market_regime", "NEUTRAL")
+        target_p  = metrics.get("target_mean_price", "N/A")
+
+        # NLP data
+        nlp_score     = nlp_result.get("red_flag_score", 0)
+        nlp_sentiment = nlp_result.get("sentiment", "Neutral")
+        nlp_category  = nlp_result.get("risk_category", "None")
+        nlp_reco      = nlp_result.get("recommendation", "N/A")
+        nlp_insights  = nlp_result.get("key_insights", [])
+        nlp_headlines = nlp_result.get("headlines_analyzed", 0)
+
+        # Signal alignment check
+        quant_bullish = int(ai_score) >= 65 if str(ai_score).isdigit() else False
+        news_bullish  = nlp_score <= 25 and nlp_sentiment in ["Positive"]
+        news_bearish  = nlp_score >= 60 or nlp_sentiment in ["Negative", "Critical"]
+        if quant_bullish and news_bullish:
+            alignment = "CONVERGENCE — Both quantitative and qualitative signals are bullish."
+        elif quant_bullish and news_bearish:
+            alignment = "DIVERGENCE — Strong fundamentals but negative news sentiment. High risk of surprise downside."
+        elif not quant_bullish and news_bullish:
+            alignment = "DIVERGENCE — Positive news but weak fundamentals. Rally may be unsustainable."
+        else:
+            alignment = "ALIGNMENT (BEARISH) — Both quantitative and qualitative signals are weak."
+
+        prompt = f"""You are a Chief Investment Officer (CIO) at a top-tier hedge fund.
+You have received both QUANTITATIVE data and QUALITATIVE news intelligence for a stock.
+Your task: synthesize both and issue ONE definitive, actionable investment verdict.
+
+## Stock: {ticker} ({company}) | Sector: {sector}
+
+### QUANTITATIVE (Fundamental & Technical)
+- AI Quality Score: {ai_score}/100 | FMI: {fmi_score}/100 ({fmi_label})
+- Price: €{_f(price)} | Analyst Target: €{_f(target_p)} | Implied Upside: {_f(upside, 1)}%
+- RSI: {_f(rsi, 1)} | MA Signal: {ma_signal} | P/E: {_f(pe, 1)}x | PEG: {_f(peg, 2)} | FCF: {_f(fcf, 1, '%')}
+- Market Regime: {regime}
+
+### QUALITATIVE (News Intelligence — {nlp_headlines} sources analyzed)
+- News Red Flag Score: {nlp_score}/100
+- Sentiment: {nlp_sentiment} | Risk Category: {nlp_category}
+- NLP Recommendation: "{nlp_reco}"
+- Key News Signals: {'; '.join(nlp_insights[:3]) if nlp_insights else 'None'}
+
+### SIGNAL ALIGNMENT
+{alignment}
+
+---
+Write a unified analysis with EXACTLY these FOUR sections:
+
+### 🏆 CIO Verdict
+One decisive paragraph (3-4 sentences). What is your final call? Reference BOTH the quantitative and qualitative data.
+
+### 💡 Signal Convergence Analysis
+One paragraph explaining the interplay between the news sentiment and the fundamental data.
+If signals DIVERGE, explain which side (news vs fundamentals) you trust more and why.
+
+### 🎯 Actionable Recommendation
+State ONE of: **STRONG BUY / BUY / WATCH & ACCUMULATE / HOLD / REDUCE / AVOID**
+Then give 2-3 concrete, specific execution notes (e.g., price entry zone, catalyst to watch, stop-loss level).
+
+### ⚠️ Key Risks to Monitor
+Exactly 3 bullet points. Be specific. Reference data from both quantitative and qualitative signals.
+
+Rules: English only. Be decisive. Under 350 words total. No vague language."""
+
+        response = co.chat(
+            model="command-r-plus-08-2024",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=700,
+        )
+        return response.message.content[0].text
+
+    except Exception as e:
+        err = str(e)
+        if "invalid api key" in err.lower() or "unauthorized" in err.lower():
+            return "❌ **Invalid API Key.** Please check your Cohere API Key."
+        elif "rate limit" in err.lower():
+            return "⏳ **Rate limit reached.** Please wait a moment and try again."
+        else:
+            return f"❌ **AI Engine Error:** {err}"
+
+
 # ── MULTI-CURRENCY NORMALIZATION MATRIX (Target: EUR) ───────────────
+
 @st.cache_data(ttl=1800, show_spinner="🌍 Fetching USD->EUR Rate...")
 def get_forex_rates(target="EUR"):
     import yfinance as yf
@@ -1812,6 +2028,8 @@ if active_tab == "3. Decision Engine":
 
             st.markdown("---")
 
+
+
             # ── TRADING CONTEXT (TOP of page) — 52-Week Range & Strategic Plan ─
             # All tactical values computed by the shared helper (identical formula to Screener)
             _tm        = get_tactical_metrics(df_deep, cur_p)
@@ -2267,6 +2485,31 @@ if active_tab == "3. Decision Engine":
                                 {"".join([f"<li>{item}</li>" for item in nlp_insights])}
                             </ul>
                             """, unsafe_allow_html=True)
+
+                            # ── TRIGGER UNIFIED VERDICT ──────────────────────
+                            _cohere_key_ra = (
+                                os.environ.get("COHERE_API_KEY", "")
+                                or st.session_state.get("cohere_api_key", "")
+                            )
+                            if _cohere_key_ra:
+                                _fmi_data_ra = compute_fmi_live(
+                                    quarterly_fin[quarterly_fin["ticker"] == deep_ticker] if not quarterly_fin.empty else pd.DataFrame(),
+                                    df_fin
+                                )
+                                _unified_metrics = {
+                                    **meta_enriched,
+                                    "ticker":        deep_ticker,
+                                    "company":       meta.get("company", deep_ticker),
+                                    "sector":        meta.get("sector", "N/A"),
+                                    "ai_score":      ai_score,
+                                    "fmi_score":     _fmi_data_ra.get("total", "N/A"),
+                                    "fmi_label":     _fmi_data_ra.get("label", "N/A"),
+                                    "price":         cur_p,
+                                    "market_regime": regime,
+                                }
+                                with st.spinner("🧠 Synthesizing CIO Unified Verdict..."):
+                                    _unified_report = get_unified_verdict(_cohere_key_ra, _unified_metrics, llm_res)
+                                st.session_state[f"unified_verdict_{deep_ticker}"] = _unified_report
                 else:
                     st.markdown("""
                     <div style='text-align:center; padding:40px 20px; color:#666;'>
@@ -2274,6 +2517,8 @@ if active_tab == "3. Decision Engine":
                         <div style='font-size:0.85rem; margin-top:10px;'>Click the button above to scan real-time<br>news headlines and detect hidden risks.</div>
                     </div>
                     """, unsafe_allow_html=True)
+
+
 
                 # ── NEWS FEED (Auto-load, FinBERT Sentiment) ─────────────────
                 st.markdown("<div style='color:#f39c12; font-size:0.85rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-top:16px; margin-bottom:8px; border-bottom:1px solid rgba(243,156,18,0.3); padding-bottom:6px;'>📰 News Intelligence</div>", unsafe_allow_html=True)
@@ -2441,6 +2686,63 @@ if active_tab == "3. Decision Engine":
                     )
                     st.markdown(_fmi_html, unsafe_allow_html=True)
 
+
+            # ── UNIFIED ALPHA-RISK INTELLIGENCE HUB ──────────────────────────
+            _unified_key = f"unified_verdict_{deep_ticker}"
+            if _unified_key in st.session_state:
+                _uv_text = st.session_state[_unified_key]
+                _uv_lower = _uv_text.lower()
+                if "strong buy" in _uv_lower:
+                    _uv_grad, _uv_border = "linear-gradient(135deg, rgba(0,255,204,0.12), rgba(46,204,113,0.08))", "#00ffcc"
+                    _uv_badge_bg, _uv_badge_text = "rgba(0,255,204,0.2)", "🏆 STRONG BUY"
+                elif "buy" in _uv_lower and "avoid" not in _uv_lower:
+                    _uv_grad, _uv_border = "linear-gradient(135deg, rgba(46,204,113,0.10), rgba(52,152,219,0.06))", "#2ecc71"
+                    _uv_badge_bg, _uv_badge_text = "rgba(46,204,113,0.2)", "✅ BUY"
+                elif "avoid" in _uv_lower or "reduce" in _uv_lower:
+                    _uv_grad, _uv_border = "linear-gradient(135deg, rgba(231,76,60,0.12), rgba(192,57,43,0.06))", "#e74c3c"
+                    _uv_badge_bg, _uv_badge_text = "rgba(231,76,60,0.2)", "🔴 AVOID / REDUCE"
+                elif "watch" in _uv_lower or "accumulate" in _uv_lower:
+                    _uv_grad, _uv_border = "linear-gradient(135deg, rgba(52,152,219,0.12), rgba(41,128,185,0.06))", "#3498db"
+                    _uv_badge_bg, _uv_badge_text = "rgba(52,152,219,0.2)", "👁 WATCH & ACCUMULATE"
+                else:
+                    _uv_grad, _uv_border = "linear-gradient(135deg, rgba(241,196,15,0.10), rgba(230,126,34,0.06))", "#f1c40f"
+                    _uv_badge_bg, _uv_badge_text = "rgba(241,196,15,0.2)", "🟡 HOLD"
+
+                st.markdown(f"""
+                <div style='background:{_uv_grad}; border:1px solid {_uv_border};
+                            border-radius:14px; padding:20px 24px; margin:10px 0 0 0;'>
+                    <div style='display:flex; align-items:center; gap:12px; margin-bottom:12px;'>
+                        <span style='font-size:1.4rem;'>🧠</span>
+                        <div>
+                            <div style='color:{_uv_border}; font-weight:900; font-size:0.9rem;
+                                        text-transform:uppercase; letter-spacing:1.5px;'>
+                                CIO Unified Intelligence Verdict
+                            </div>
+                            <div style='color:#888; font-size:0.72rem;'>
+                                Synthesized from Quantitative fundamentals + Real-time News Intelligence
+                            </div>
+                        </div>
+                        <div style='margin-left:auto; background:{_uv_badge_bg}; color:{_uv_border};
+                                    font-size:0.75rem; font-weight:800; padding:4px 14px;
+                                    border-radius:20px; border:1px solid {_uv_border}; white-space:nowrap;'>
+                            {_uv_badge_text}
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+                st.markdown(
+                    f"<div style='background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.07); "
+                    f"border-left:3px solid {_uv_border}; border-radius:0 0 12px 12px; padding:20px; margin-bottom:16px;'>"
+                    + _uv_text + "</div>",
+                    unsafe_allow_html=True
+                )
+            else:
+                if os.environ.get("COHERE_API_KEY", "") or st.session_state.get("cohere_api_key", ""):
+                    st.info(
+                        "🧠 **CIO Unified Intelligence** — Click **'Run Real-Time AI Risk Audit'** above "
+                        "to generate a unified verdict combining news sentiment + quantitative data.",
+                        icon="🧠"
+                    )
 
             st.markdown("---")
 
@@ -5750,3 +6052,25 @@ st.sidebar.download_button("🔽 Download Recommendations", data=csv_reco, file_
 
 csv_prices = prices.to_csv(index=False).encode('utf-8')
 st.sidebar.download_button("🔽 Download Price History", data=csv_prices, file_name="price_history.csv", mime="text/csv")
+
+# ── AI INTELLIGENCE CONNECTOR ─────────────────────────────────────────────────
+st.sidebar.markdown("---")
+st.sidebar.markdown("<div class='sb-section-label'>\U0001f916 AI Intelligence Connector</div>", unsafe_allow_html=True)
+_env_key = os.environ.get("COHERE_API_KEY", "")
+if _env_key:
+    # Key loaded automatically from .env — no manual input needed
+    st.sidebar.success("\u2705 AI Intelligence: Auto-Connected", icon="\U0001f916")
+    st.sidebar.caption("Key loaded from `.env` — `COHERE_API_KEY`")
+else:
+    # Fallback: allow manual entry via Sidebar
+    st.sidebar.text_input(
+        "Cohere API Key",
+        type="password",
+        placeholder="Paste your Cohere key here...",
+        help="Or add COHERE_API_KEY=<key> to your .env file for auto-load.",
+        key="cohere_api_key"
+    )
+    if st.session_state.get("cohere_api_key"):
+        st.sidebar.success("\u2705 AI Intelligence: Connected", icon="\U0001f916")
+    else:
+        st.sidebar.caption("Enter key above or add `COHERE_API_KEY` to `.env`.")
