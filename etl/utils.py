@@ -53,6 +53,26 @@ def needs_full_refresh(conn: duckdb.DuckDBPyConnection, force_weekly: bool = Tru
     return False
 
 
+def needs_earnings_refresh(conn: duckdb.DuckDBPyConnection, threshold_hours: int = 24) -> bool:
+    """
+    Checks if the earnings calendar needs a refresh based on the last successful load.
+    Default threshold is 24 hours.
+    """
+    try:
+        # Check the most recent load time in the earnings table
+        result = conn.execute("SELECT MAX(_loaded_at) FROM raw.earnings_calendar").fetchone()
+        if not result or result[0] is None:
+            return True
+            
+        last_load = result[0]
+        from datetime import datetime
+        hours_since = (datetime.now() - last_load).total_seconds() / 3600
+        return hours_since > threshold_hours
+    except Exception:
+        # If table doesn't exist, we definitely need a refresh
+        return True
+
+
 # ── CANONICAL SCORING ENGINE (Single Source of Truth) ───────────────────────
 # This is the authoritative version used by BOTH the Dashboard (app.py)
 # and the ETL email report (Airflow). Any changes here propagate everywhere.

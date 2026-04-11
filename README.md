@@ -11,9 +11,14 @@ Honest Quant is not just a stock screener. It is a comprehensive **Hybrid Intell
 The backbone of Honest Quant is a robust, production-ready Data Engineering pipeline running on a modern data stack.
 
 ### Data Ingestion & Extraction (`etl/extract.py`)
-- **Data Provider**: Utilizes the `yfinance` API to extract daily granular data for US, EU, and Asian equities.
-- **Concurrency**: Integrates `ThreadPoolExecutor` to handle parallel data fetching across hundreds of tickers, reducing total extraction time from hours to minutes.
-- **Resilience**: Implements automatic retry logic and exponential backoff to handle free-tier API rate limits and connection drops.
+- **Data Provider**: Utilizes the `yfinance` & `yahooquery` APIs to extract daily granular data for US, EU, and Asian equities.
+- **Concurrency**: Integrates `ThreadPoolExecutor` to handle parallel data fetching across hundreds of tickers, reducing total extraction time significantly.
+- **Resilience**: Implements automatic retry logic and exponential backoff to handle API rate limits and connection drops.
+
+### Intelligent Loading Strategy
+- **Incremental Load (Watermarking)**: The system automatically detects the last available data point for each ticker. In daily runs, it strictly fetches only the missing "gap" (incremental window), reducing bandwidth consumption and avoiding IP blocks.
+- **New Ticker Bootstrapping**: When a new ticker is added to `config/tickers.yaml`, the ETL engine automatically identifies its absence in the warehouse and triggers a **Full 5-Year History Download** specifically for that ticker, while keeping all other tickers on an incremental path.
+- **Smart Earnings Refresh**: Earnings calendar data is expensive and sensitive. The system implements a **24-hour freshness cache**. It will only trigger an earnings crawl (using `yahooquery` micro-batching) if the last update was > 24 hours ago, preventing unnecessary API pressure.
 
 ### Data Transformation & Warehousing (`etl/transform.py` & `etl/load.py`)
 - **Storage Layer**: Uses **DuckDB** (`stock_dw.duckdb`) as an embedded, highly optimized columnar database. This allows the Streamlit dashboard to execute complex aggregations with millisecond latency.

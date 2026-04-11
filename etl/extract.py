@@ -7,8 +7,11 @@ from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 import numpy as np
+try:
+    from yahooquery import Ticker as YQTicker
+except ImportError:
+    YQTicker = None
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 def load_tickers_config():
@@ -661,10 +664,59 @@ def extract_cashflows(tickers: dict = TICKERS) -> pd.DataFrame:
 def extract_earnings_calendar(tickers: dict = TICKERS) -> pd.DataFrame:
     """
     Parallelized extraction of upcoming earnings dates and estimates.
+    Uses yahooquery as primary (batch mode) with yfinance as secondary fallback.
     """
     logger.info(f"🚀 EARNINGS CALENDAR: Fetching upcoming dates for {len(tickers)} tickers...")
     records = []
+    
+    ticker_keys = [t for t in tickers.keys() if not t.startswith("^")] # Skip indices
+    
+    # ── PRIMARY: yahooquery (Batch Mode) ───────────────────────────────────
+    if YQTicker:
+        logger.info("   📡 Using Primary: yahooquery (Micro-Batching Mode)...")
+        # Micro-batching to avoid IP blocks (30 tickers per call)
+        # Using smaller batches + jittered sleep is the safest path for 600+ tickers
+        batch_size = 30
+        for i in range(0, len(ticker_keys), batch_size):
+            batch = ticker_keys[i:i + batch_size]
+            logger.info(f"   📅 Batch {i//batch_size + 1}/{(len(ticker_keys)//batch_size)+1}...")
+            try:
+                yq = YQTicker(batch, asynchronous=False) # Non-async for better rate control
+                events = yq.calendar_events
+                
+                if isinstance(events, dict):
+                    for ticker, data in events.items():
+                        if isinstance(data, dict) and 'earnings' in data:
+                            earn = data['earnings']
+                            e_date = earn.get('earningsDate')
+                            if isinstance(e_date, list) and len(e_date) > 0:
+                                d_obj = e_date[0]
+                                if isinstance(d_obj, str):
+                                    # Format: '2024-07-30 22:00:00'
+                                    try: d_obj = datetime.strptime(d_obj.split(' ')[0], '%Y-%m-%d').date()
+                                    except: d_obj = None
+                                
+                                if d_obj:
+                                    records.append({
+                                        "ticker": ticker,
+                                        "earnings_date": d_obj,
+                                        "eps_avg": earn.get('earningsAverage'),
+                                        "rev_avg": earn.get('revenueAverage')
+                                    })
+            except Exception as e:
+                logger.warning(f"   ⚠️ Batch failed: {e}")
+            
+            # Jittered sleep (3-5 seconds)
+            import time, random
+            time.sleep(3.0 + random.random() * 2)
+            
+        if records:
+            logger.info(f"✅ yahooquery successful: {len(records)}/{len(ticker_keys)} retrieved.")
+            return pd.DataFrame(records)
 
+    # ── SECONDARY: yfinance Fallback (Slow Sequential Mode) ──────────────────
+    logger.info("   🐢 Falling back to Secondary: yfinance (Ultra-Slow Mode)...")
+    
     def fetch_single(ticker):
         try:
             t = yf.Ticker(ticker)
@@ -672,20 +724,14 @@ def extract_earnings_calendar(tickers: dict = TICKERS) -> pd.DataFrame:
             if cal is None or (isinstance(cal, dict) and not cal) or (isinstance(cal, pd.DataFrame) and cal.empty):
                 return None
             
-            # yfinance returns different formats (dict or DF) depending on version and ticker
             res = {"ticker": ticker, "earnings_date": None, "eps_avg": None, "rev_avg": None}
-            
             if isinstance(cal, dict):
-                # Format: {'Earnings Date': [datetime.datetime(...)], 'Earnings Average': 1.23, ...}
                 ed = cal.get("Earnings Date")
                 if isinstance(ed, list) and len(ed) > 0:
-                    res["earnings_date"] = ed[0] # Use only the nearest date
+                    res["earnings_date"] = ed[0]
                 res["eps_avg"] = cal.get("Earnings Average")
                 res["rev_avg"] = cal.get("Revenue Average")
             elif isinstance(cal, pd.DataFrame):
-                # Format: 0
-                # Earnings Date    2024-07-30
-                # Earnings Average       1.23
                 if "Earnings Date" in cal.index:
                     ed = cal.loc["Earnings Date", 0]
                     if isinstance(ed, list): ed = ed[0]
@@ -696,38 +742,23 @@ def extract_earnings_calendar(tickers: dict = TICKERS) -> pd.DataFrame:
                     res["rev_avg"] = cal.loc["Revenue Average", 0]
 
             if res["earnings_date"]:
-                # Ensure it's a datetime object
                 if isinstance(res["earnings_date"], (pd.Timestamp, datetime)):
                     res["earnings_date"] = res["earnings_date"].date()
                 return res
             return None
         except Exception as e:
-            logger.warning(f"  ⚠️ {ticker} earnings failed: {e}")
+            logger.warning(f"  ⚠️ {ticker} yfinance failed: {e}")
             return None
 
-    # 🎛 Ultra-Slow Mode for Earnings (v3.2)
-    # Yahoo is extremely sensitive to 'calendar' endpoint
-    max_workers = 3        # Reduced from 5
-    batch_size = 10        # Reduced from 30
-    
-    ticker_keys = [t for t in tickers.keys() if not t.startswith("^")] # Skip indices
-    total_batches = (len(ticker_keys) + batch_size - 1) // batch_size
-
+    # Ultra-Slow Throttling
+    batch_size = 10
     for i in range(0, len(ticker_keys), batch_size):
+        if any(r['ticker'] in ticker_keys[i:i+batch_size] for r in records): continue
         batch = ticker_keys[i:i+batch_size]
-        logger.info(f"   📅 Earnings Batch {i//batch_size + 1}/{total_batches} (Throttling active)...")
-        
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            futures = {executor.submit(fetch_single, t): t for t in batch}
-            for future in as_completed(futures):
-                res = future.result()
-                if res:
-                    records.append(res)
-        
-        if i + batch_size < len(ticker_keys):
-            import time, random
-            # Heavy cooldown for calendar endpoint
-            time.sleep(3.0 + random.random() * 2)
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            for res in executor.map(fetch_single, batch):
+                if res: records.append(res)
+        import time; time.sleep(5)
     
-    logger.info(f"✅ Earnings Calendar extracted for {len(records)}/{len(ticker_keys)} tickers")
+    logger.info(f"✅ Final Earnings count: {len(records)}/{len(ticker_keys)}")
     return pd.DataFrame(records) if records else pd.DataFrame(columns=["ticker", "earnings_date", "eps_avg", "rev_avg"])

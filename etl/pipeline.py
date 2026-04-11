@@ -6,7 +6,7 @@ from etl.load      import get_connection, create_raw_schema, \
                           load_stock_prices, load_company_info, load_historical_financials, load_quarterly_financials, load_cashflows, load_earnings_calendar, \
                           perform_atomic_swap, DB_PATH, SHADOW_DB_PATH
 from etl.transform import run_transforms
-from etl.utils     import get_last_price_dates, needs_full_refresh
+from etl.utils     import get_last_price_dates, needs_full_refresh, needs_earnings_refresh
 
 logging.basicConfig(
     level=logging.INFO,
@@ -96,7 +96,13 @@ def run_pipeline(lookback_days: int = 1825, force_full: bool = False):
         financials_df = extract_historical_financials()   # Always refresh financials
         quarterly_df = extract_quarterly_financials()     # Always refresh quarterly
         cashflow_df  = extract_cashflows()                # v3.0: Buyback & Dividend data
-        earnings_df  = extract_earnings_calendar()        # v3.1: Upcoming reports
+        
+        # 🧪 SMART REFRESH: Earnings only if stale (>24h) or in FULL REFRESH mode
+        if is_incremental and not needs_earnings_refresh(conn):
+            logger.info("   🕒 Earnings data is fresh (< 24h) — skipping extraction.")
+            earnings_df = pd.DataFrame()
+        else:
+            earnings_df = extract_earnings_calendar()
 
         extract_time = time.time() - t0
         logger.info(f"   ⏱  Extract: {extract_time:.1f}s | Prices: {len(prices_df):,} rows")

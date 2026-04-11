@@ -1192,7 +1192,7 @@ _tnx_chg = macro.get("US10Y", {}).get("chg", 0)
 # Get SPY Data & Breadth globally
 df_spy_global = prices_full[prices_full["ticker"] == "SPY"].sort_values("date")
 
-# Breadth: chỉ tính trên cổ phiếu thực sự (loại trừ indices, ETF benchmark)
+# Breadth:
 _indices_exclude = ["^VIX", "SPY", "^GSPC", "^DJI", "^IXIC", "^TNX", "^IRX"]
 breadth_data_global = prices_full[
     ~prices_full["ticker"].isin(_indices_exclude) &
