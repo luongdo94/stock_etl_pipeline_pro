@@ -431,6 +431,7 @@ def load_data():
                    f.is_volume_spike, f.cap_category
             FROM marts.fct_daily_returns f
             LEFT JOIN marts.dim_companies d USING (ticker)
+            WHERE f.date >= CURRENT_DATE - INTERVAL 15 MONTH
             ORDER BY f.date
         """).df()
 
@@ -692,10 +693,10 @@ def get_master_screener_data(_companies_df, _prices_df, _quarterly_fin, _annual_
 
         ai_score  = compute_score(score_input)
         
-        # Compute FMI live from quarterly + annual data for this ticker
-        _ticker_qtrs = _quarterly_fin[_quarterly_fin["ticker"] == ticker] if not _quarterly_fin.empty else pd.DataFrame()
-        _ticker_anns = _annual_fin[_annual_fin["ticker"] == ticker] if not _annual_fin.empty else pd.DataFrame()
-        _fmi_res  = compute_fmi_live(_ticker_qtrs, _ticker_anns)
+        # 🚀 OPTIMIZATION: Compute FMI instantly using pre-calculated DuckDB variables 
+        # instead of dataframe filtering which causes heavy CPU load in loops.
+        from etl.utils import compute_fmi_details
+        _fmi_res  = compute_fmi_details(row.to_dict())
         fmi_score = _fmi_res["total"]
         fmi_lbl   = _fmi_res["label"]
         
@@ -1183,6 +1184,11 @@ macro = fetch_macro_data()
 from etl.utils import get_macro_regime
 _macro_regime = get_macro_regime(macro)
 
+# Get raw macro values for scoring
+_vix_val = macro.get("VIX", {}).get("val", 20)
+_dxy_pct = macro.get("DXY", {}).get("pct", 0)
+_tnx_chg = macro.get("US10Y", {}).get("chg", 0)
+
 # Get SPY Data & Breadth globally
 df_spy_global = prices_full[prices_full["ticker"] == "SPY"].sort_values("date")
 
@@ -1221,15 +1227,22 @@ if latest_spy_global is not None:
 if latest_breadth_global > 50: 
     conf_score_global += 30
 else:
-    conf_reasons.append(f"Breadth currently {latest_breadth_global:.0f}%")
+    conf_reasons.append(f"Weak Breadth ({latest_breadth_global:.0f}%)")
 
-if _macro_regime == "RISK_ON": 
-    conf_score_global += 20
-elif _macro_regime == "NEUTRAL": 
+# 3. Volatility Awareness - VIX Explicit (10 pts)
+if _vix_val < 20:
     conf_score_global += 10
-    conf_reasons.append("Macro Neutral")
+elif _vix_val < 28:
+    conf_score_global += 5
+    conf_reasons.append("VIX Elevated")
 else:
-    conf_reasons.append("Macro Defensive")
+    conf_reasons.append("VIX Panic (>28)")
+
+# 4. Macro Stability - DXY/TNX Explicit (10 pts)
+if _dxy_pct < 0.3 and _tnx_chg < 0.05:
+    conf_score_global += 10
+else:
+    conf_reasons.append("Macro Friction (USD/Rates)")
 
 conf_reason_str = "All indicators bullish." if conf_score_global >= 90 else ", ".join(conf_reasons)
 
@@ -1293,7 +1306,7 @@ if macro:
             sign  = "+" if pct >= 0 else ""
             return f"<span class='sb-macro-delta' style='color:{color}'>{sign}{pct:.2f}%</span>"
 
-        spy_sema = "🔥 Strong Risk-On" if _spy_p >= 1 else ("🟢 Risk-On" if _spy_p > 0 else ("🔴 Strong Risk-Off" if _spy_p <= -1 else "🟡 Risk-Off"))
+        spy_sema = "🔥 Strong Rally" if _spy_p >= 1 else ("🟢 Advancing" if _spy_p > 0 else ("🔴 Sharp Sell-off" if _spy_p <= -1 else "🟡 Pullback"))
         vix_sema = "🚨 High Panic" if _vix_v >= 25 else ("⚠️ Volatility Elevated" if _vix_v >= 18 else ("🔵 Normal Volatility" if _vix_v > 13 else "😴 Complacent"))
         tnx_sema = "📈 Yields Spiking" if _tnx_p >= 2 else ("↗️ Yields Rising" if _tnx_p > 0 else ("📉 Yields Dropping" if _tnx_p <= -2 else "↘️ Yields Falling"))
         dxy_sema = "🦅 Strong Dollar" if _dxy_p >= 0.5 else ("↗️ Dollar Strengthening" if _dxy_p > 0 else ("🕊️ Weak Dollar" if _dxy_p <= -0.5 else "↘️ Dollar Weakening"))
@@ -1679,6 +1692,10 @@ if active_tab == "1. Market Regime":
             stance, size, bias = "DEFENSIVE", "20-50%", "Value & Low Vol"
         else:
             stance, size, bias = "PROTECTIVE", "0-20%", "Cash & Hedging"
+
+        # 🚀 DYNAMIC OVERRIDE: If breadth is weak and macro is Risk-Off, force Defensive stance
+        if latest_breadth_global < 50 and _macro_regime == "RISK_OFF" and conf_score_global >= 50:
+            stance, size, bias = "DEFENSIVE (Overridden)", "30-50%", "Defensive Value"
             
         st.markdown(f"""
         <div style='background:rgba(20,30,45,0.7); border:1px solid rgba(255,255,255,0.1); border-radius:12px; padding:25px; height:400px;'>
@@ -2110,6 +2127,8 @@ if active_tab == "3. Decision Engine":
                     op_margin = meta.get('operating_margin', 0)
                     op_margin_val = op_margin*100 if pd.notnull(op_margin) else 0
                     render_metric_row("Op Margin",    f"{op_margin_val:.1f}%", delta="🔴 Weak" if op_margin_val < 5 else "")
+                    fcf_m = meta.get('fcf_margin', 0)
+                    render_metric_row("FCF Margin",   f"{fcf_m:.1f}%", delta="💎 Cash Cow" if fcf_m > 15 else "")
                     rev_growth = meta.get('revenue_growth', 0) * 100
                     render_metric_row("Rev Growth",   f"{rev_growth:.1f}%")
                     st.markdown("</div>", unsafe_allow_html=True)
@@ -3995,8 +4014,13 @@ if active_tab == "2. Opportunity Radar":
 
     st.markdown(f"**Found {len(display_df)} active opportunities** — Sorted by Quality + FMI")
     
+    # ── PAGINATION / LIMIT LOGIC ──────────────────────────────────────────────
+    if 'radar_limit' not in st.session_state:
+        st.session_state.radar_limit = 50
+        
+    paged_df = display_df.iloc[:st.session_state.radar_limit]
     st.dataframe(
-        display_df,
+        paged_df,
         use_container_width=True, 
         height=520,
         column_config={
@@ -4006,6 +4030,16 @@ if active_tab == "2. Opportunity Radar":
             "Debt/EBITDA":     st.column_config.NumberColumn("Debt/EBITDA", format="%.2f"),
         }
     )
+
+    # Load More Button
+    if len(display_df) > st.session_state.radar_limit:
+        if st.button(f"📥 Load More (Showing {st.session_state.radar_limit} of {len(display_df)})", use_container_width=True):
+            st.session_state.radar_limit += 50
+            st.rerun()
+    elif len(display_df) > 50:
+        if st.button("🔄 Reset to Top 50", use_container_width=True):
+            st.session_state.radar_limit = 50
+            st.rerun()
 
     # ── Quality Score Methodology Note (v3.0 — synced with etl/utils.py) ────────
     st.markdown("""

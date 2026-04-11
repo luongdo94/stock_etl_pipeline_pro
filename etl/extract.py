@@ -128,11 +128,25 @@ def extract_stock_prices(
             logger.warning(f"⚠️ Failed to fetch currency for {t}: {e}")
             return t, "USD"
 
-    with ThreadPoolExecutor(max_workers=20) as executor:
-        future_to_tick = {executor.submit(fetch_currency, t): t for t in all_ticker_list}
-        for future in as_completed(future_to_tick):
-            t, cur = future.result()
-            currencies[t] = cur
+    # Use a more conservative worker count to avoid rate limiting
+    max_workers = 5
+    batch_size = 40  # Process in small chunks to allow for pauses
+    
+    ticker_keys = list(all_ticker_list)
+    for i in range(0, len(ticker_keys), batch_size):
+        batch = ticker_keys[i:i + batch_size]
+        logger.info(f"   📥 Fetching currency batch {i//batch_size + 1}/{len(ticker_keys)//batch_size + 1}...")
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_tick = {executor.submit(fetch_currency, t): t for t in batch}
+            for future in as_completed(future_to_tick):
+                t, cur = future.result()
+                currencies[t] = cur
+        
+        # Artificial pause to respect Yahoo rate limits
+        if i + batch_size < len(ticker_keys):
+            import time
+            time.sleep(1.5)
 
     unique_currencies = {c for c in currencies.values() if c != "EUR"}
     fx_data = pd.DataFrame()
@@ -228,9 +242,19 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
         except:
             return t, _guess_currency(t)
             
-    with ThreadPoolExecutor(max_workers=20) as executor:
-        _cur_results = list(executor.map(get_ticker_cur, tickers.keys()))
-        ticker_currencies = dict(_cur_results)
+    # Conservative fetching of currencies
+    max_workers = 5
+    batch_size = 40
+    
+    ticker_keys = list(tickers.keys())
+    for i in range(0, len(ticker_keys), batch_size):
+        batch = ticker_keys[i:i+batch_size]
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            _cur_results = list(executor.map(get_ticker_cur, batch))
+            ticker_currencies.update(dict(_cur_results))
+        if i + batch_size < len(ticker_keys):
+            import time
+            time.sleep(1)
     
     unique_currencies = {c for c in ticker_currencies.values() if c != "EUR"}
     
@@ -320,11 +344,25 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
             logger.warning(f"  ⚠️ {ticker} info failed: {e}")
             return None
 
-    with ThreadPoolExecutor(max_workers=20) as executor:
-        future_to_tick = {executor.submit(fetch_single_ticker_info, t): t for t in tickers.keys()}
-        for future in as_completed(future_to_tick):
-            res = future.result()
-            if res: records.append(res)
+    # Fetch info in batches with limited concurrency
+    max_workers = 5
+    batch_size = 30
+    
+    ticker_keys = list(tickers.keys())
+    for i in range(0, len(ticker_keys), batch_size):
+        batch = ticker_keys[i:i+batch_size]
+        logger.info(f"   🔍 Fetching metadata batch {i//batch_size + 1}/{len(ticker_keys)//batch_size + 1}...")
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_tick = {executor.submit(fetch_single_ticker_info, t): t for t in batch}
+            for future in as_completed(future_to_tick):
+                res = future.result()
+                if res: records.append(res)
+        
+        # Pause between batches
+        if i + batch_size < len(ticker_keys):
+            import time
+            time.sleep(2)
     
     return pd.DataFrame(records)
 
@@ -386,11 +424,24 @@ def extract_historical_financials(tickers: dict = TICKERS) -> pd.DataFrame:
             logger.warning(f"⚠️ Failed to fetch financials for {ticker}: {e}")
             return None
 
-    with ThreadPoolExecutor(max_workers=20) as executor:
-        future_to_tick = {executor.submit(fetch_single_ticker_fin, t): t for t in tickers.keys()}
-        for future in as_completed(future_to_tick):
-            res = future.result()
-            if res is not None: all_data.append(res)
+    # Batch fetch financials
+    max_workers = 5
+    batch_size = 30
+    
+    ticker_keys = list(tickers.keys())
+    for i in range(0, len(ticker_keys), batch_size):
+        batch = ticker_keys[i:i+batch_size]
+        logger.info(f"   📊 Fetching financials batch {i//batch_size + 1}/{len(ticker_keys)//batch_size + 1}...")
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_tick = {executor.submit(fetch_single_ticker_fin, t): t for t in batch}
+            for future in as_completed(future_to_tick):
+                res = future.result()
+                if res is not None: all_data.append(res)
+        
+        if i + batch_size < len(ticker_keys):
+            import time
+            time.sleep(1.5)
             
     if not all_data: return pd.DataFrame()
     final_df = pd.concat(all_data, ignore_index=True)
@@ -455,11 +506,24 @@ def extract_quarterly_financials(tickers: dict = TICKERS) -> pd.DataFrame:
             logger.warning(f"⚠️ Failed to fetch quarterly financials for {ticker}: {e}")
             return None
 
-    with ThreadPoolExecutor(max_workers=20) as executor:
-        future_to_tick = {executor.submit(fetch_single_ticker_fin, t): t for t in tickers.keys()}
-        for future in as_completed(future_to_tick):
-            res = future.result()
-            if res is not None: all_data.append(res)
+    # Batch fetch quarterly financials
+    max_workers = 5
+    batch_size = 30
+    
+    ticker_keys = list(tickers.keys())
+    for i in range(0, len(ticker_keys), batch_size):
+        batch = ticker_keys[i:i+batch_size]
+        logger.info(f"   🕒 Fetching quarterly batch {i//batch_size + 1}/{len(ticker_keys)//batch_size + 1}...")
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_to_tick = {executor.submit(fetch_single_ticker_fin, t): t for t in batch}
+            for future in as_completed(future_to_tick):
+                res = future.result()
+                if res is not None: all_data.append(res)
+        
+        if i + batch_size < len(ticker_keys):
+            import time
+            time.sleep(1.5)
             
     if not all_data: return pd.DataFrame()
     final_df = pd.concat(all_data, ignore_index=True)
@@ -570,12 +634,25 @@ def extract_cashflows(tickers: dict = TICKERS) -> pd.DataFrame:
             logger.warning(f"  ⚠️ Cashflow fetch failed for {ticker}: {e}")
             return None
 
-    with ThreadPoolExecutor(max_workers=20) as executor:
-        futures = {executor.submit(fetch_single, t): t for t in tickers.keys()}
-        for future in as_completed(futures):
-            res = future.result()
-            if res:
-                records.append(res)
+    # Batch fetch cashflows
+    max_workers = 5
+    batch_size = 30
+    
+    ticker_keys = list(tickers.keys())
+    for i in range(0, len(ticker_keys), batch_size):
+        batch = ticker_keys[i:i+batch_size]
+        logger.info(f"   💸 Fetching cashflow batch {i//batch_size + 1}/{len(ticker_keys)//batch_size + 1}...")
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(fetch_single, t): t for t in batch}
+            for future in as_completed(futures):
+                res = future.result()
+                if res:
+                    records.append(res)
+        
+        if i + batch_size < len(ticker_keys):
+            import time
+            time.sleep(1.5)
 
     logger.info(f"✅ Cashflow extracted for {len(records)}/{len(tickers)} tickers")
     return pd.DataFrame(records) if records else pd.DataFrame(columns=["ticker", "buyback_ttm", "dividends_paid_ttm"])
@@ -628,12 +705,29 @@ def extract_earnings_calendar(tickers: dict = TICKERS) -> pd.DataFrame:
             logger.warning(f"  ⚠️ {ticker} earnings failed: {e}")
             return None
 
-    with ThreadPoolExecutor(max_workers=20) as executor:
-        futures = {executor.submit(fetch_single, t): t for t in tickers.keys()}
-        for future in as_completed(futures):
-            res = future.result()
-            if res:
-                records.append(res)
+    # 🎛 Ultra-Slow Mode for Earnings (v3.2)
+    # Yahoo is extremely sensitive to 'calendar' endpoint
+    max_workers = 3        # Reduced from 5
+    batch_size = 10        # Reduced from 30
     
-    logger.info(f"✅ Earnings Calendar extracted for {len(records)}/{len(tickers)} tickers")
+    ticker_keys = [t for t in tickers.keys() if not t.startswith("^")] # Skip indices
+    total_batches = (len(ticker_keys) + batch_size - 1) // batch_size
+
+    for i in range(0, len(ticker_keys), batch_size):
+        batch = ticker_keys[i:i+batch_size]
+        logger.info(f"   📅 Earnings Batch {i//batch_size + 1}/{total_batches} (Throttling active)...")
+        
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {executor.submit(fetch_single, t): t for t in batch}
+            for future in as_completed(futures):
+                res = future.result()
+                if res:
+                    records.append(res)
+        
+        if i + batch_size < len(ticker_keys):
+            import time, random
+            # Heavy cooldown for calendar endpoint
+            time.sleep(3.0 + random.random() * 2)
+    
+    logger.info(f"✅ Earnings Calendar extracted for {len(records)}/{len(ticker_keys)} tickers")
     return pd.DataFrame(records) if records else pd.DataFrame(columns=["ticker", "earnings_date", "eps_avg", "rev_avg"])
