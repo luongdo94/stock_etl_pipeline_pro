@@ -1007,7 +1007,7 @@ def get_tactical_metrics(ticker_prices: "pd.DataFrame", cur_p: float) -> dict:
         "w52_lo":    float(w52_lo),
     }
 
-
+@st.cache_data(ttl=3600)
 def get_master_screener_data(_companies_df, _prices_df, _quarterly_fin, _annual_fin):
     # Exclude non-investable instruments: indices & volatility measures
     _non_equities = {"^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"}
@@ -1254,7 +1254,7 @@ def format_ticker(ticker):
     return f"{ticker}: {name}" if name else ticker
 
 # ── UTILITY FUNCTIONS ───────────────────────────────────────────────────────
-def render_metric_row(label, value, delta=None, suffix="", is_pct=False, color_invert=False):
+def render_metric_row(label, value, delta=None, suffix="", is_pct=False, color_invert=False, value_color=None, help_text=None):
     """Render a compact inline KPI row (label | value | delta)."""
     delta_html = ""
     if delta is not None:
@@ -1267,14 +1267,18 @@ def render_metric_row(label, value, delta=None, suffix="", is_pct=False, color_i
         except:
             delta_html = f"<span style='color:#888;font-size:0.72rem;'>{delta}</span>"
 
+    val_col = value_color if value_color else "#e8eaf6"
+    tooltip_attr = f"title='{help_text}'" if help_text else ""
+    cursor_style = "cursor:help;" if help_text else ""
+
     st.markdown(f"""
-        <div style='display:flex;justify-content:space-between;align-items:center;
+        <div {tooltip_attr} style='display:flex;align-items:center;flex-wrap:wrap;row-gap:2px;{cursor_style}
                     padding:5px 8px;border-bottom:1px solid rgba(255,255,255,0.05);'>
             <span style='color:#8899aa;font-size:0.72rem;font-weight:600;text-transform:uppercase;
-                         letter-spacing:0.04em;white-space:nowrap;flex:1.4;'>{label}</span>
-            <span style='color:#e8eaf6;font-size:0.88rem;font-weight:700;flex:1;text-align:right;
-                         white-space:nowrap;padding-right:8px;'>{value}{suffix}</span>
-            <span style='flex:0.9;text-align:right;'>{delta_html}</span>
+                         letter-spacing:0.04em;white-space:nowrap;margin-right:auto;'>{label}</span>
+            <span style='color:{val_col};font-size:0.88rem;font-weight:700;text-align:right;
+                         white-space:nowrap;margin-left:8px;'>{value}{suffix}</span>
+            <span style='text-align:right;margin-left:8px;'>{delta_html}</span>
         </div>
     """, unsafe_allow_html=True)
 
@@ -2897,29 +2901,52 @@ if active_tab == "3. Decision Engine":
                     fwd_pe_txt = f"Fwd: {meta.get('forward_pe', 0):.1f}" if pd.notnull(meta.get('forward_pe')) and meta.get('forward_pe', 0) > 0 else ""
                     pe_val = f"{meta['pe_ratio']:.1f}" if pd.notnull(meta['pe_ratio']) else "N/A"
                     render_metric_row("P/E", pe_val, delta=fwd_pe_txt)
-                    render_metric_row("PEG",        f"{meta.get('peg_ratio', 0):.2f}" if pd.notnull(meta.get('peg_ratio')) else "N/A")
-                    render_metric_row("EV/EBITDA",  f"{meta.get('ev_to_ebitda', 0):.2f}")
-                    render_metric_row("Price/Sales",f"{meta.get('price_to_sales', 0):.2f}")
+                    render_metric_row("P/E", pe_val, delta=fwd_pe_txt)
+                    
+                    peg_raw = meta.get('peg_ratio', 0)
+                    peg_col = "#2ecc71" if pd.notnull(peg_raw) and 0 < peg_raw <= 1.0 else ("#e74c3c" if pd.notnull(peg_raw) and peg_raw > 2.0 else None)
+                    render_metric_row("PEG", f"{peg_raw:.2f}" if pd.notnull(peg_raw) else "N/A", value_color=peg_col)
+                    
+                    ev_raw = meta.get('ev_to_ebitda', 0)
+                    ev_col = "#2ecc71" if 0 < ev_raw <= 10 else ("#e74c3c" if ev_raw > 20 else None)
+                    render_metric_row("EV/EBITDA",  f"{ev_raw:.2f}", value_color=ev_col, help_text="🟢 <10x (Value) | 🔴 >20x (Expensive)")
+                    
+                    ps_val = meta.get('price_to_sales', 0)
+                    ps_col = "#2ecc71" if 0 < ps_val <= 2 else ("#e74c3c" if ps_val > 10 else None)
+                    render_metric_row("Price/Sales",f"{ps_val:.2f}", value_color=ps_col, help_text="🟢 < 2x (Cheap) | 🔴 > 10x (Expensive)")
                     st.markdown("</div>", unsafe_allow_html=True)
 
                 with kcol2:
                     st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Profit & Returns</div>", unsafe_allow_html=True)
-                    render_metric_row("Div Yield",    f"{meta['dividend_yield_pct']:.2f}%" if pd.notnull(meta['dividend_yield_pct']) else "0.00%")
+                    
+                    div_val = meta.get('dividend_yield_pct', 0)
+                    div_col = "#2ecc71" if pd.notnull(div_val) and div_val > 4 else None
+                    render_metric_row("Div Yield", f"{div_val:.2f}%" if pd.notnull(div_val) else "0.00%", value_color=div_col, help_text="🟢 > 4% (High Yielding)")
                     
                     # Net Payout = Div + Buybacks
                     net_payout = meta.get('net_payout_yield_pct', 0)
                     bb_yield   = meta.get('buyback_yield_pct', 0)
                     render_metric_row("Net Payout",   f"{net_payout:.2f}%", delta=f"BB: {bb_yield:.1f}%")
                     
-                    render_metric_row("ROE",          f"{meta.get('roe', 0)*100:.1f}%")
-                    render_metric_row("Gross Margin", f"{meta.get('gross_margin', 0)*100:.1f}%")
+                    roe_raw = meta.get('roe', 0) * 100
+                    roe_col = "#2ecc71" if roe_raw >= 15 else ("#e74c3c" if roe_raw < 5 else None)
+                    render_metric_row("ROE", f"{roe_raw:.1f}%", value_color=roe_col, help_text="🟢 > 15% (Strong Profitability) | 🔴 < 5% (Poor)")
+                    
+                    gm_val = meta.get('gross_margin', 0) * 100
+                    gm_col = "#2ecc71" if gm_val >= 40 else ("#e74c3c" if gm_val < 10 else None)
+                    render_metric_row("Gross Margin", f"{gm_val:.1f}%", value_color=gm_col, help_text="🟢 > 40% (Wide Moat) | 🔴 < 10% (Thin Margin)")
+                    
                     op_margin = meta.get('operating_margin', 0)
-                    op_margin_val = op_margin*100 if pd.notnull(op_margin) else 0
-                    render_metric_row("Op Margin",    f"{op_margin_val:.1f}%", delta="🔴 Weak" if op_margin_val < 5 else "")
+                    op_val = op_margin*100 if pd.notnull(op_margin) else 0
+                    op_col = "#2ecc71" if op_val >= 15 else ("#e74c3c" if op_val < 5 else None)
+                    render_metric_row("Op Margin", f"{op_val:.1f}%", value_color=op_col)
+                    
                     fcf_m = meta.get('fcf_margin', 0)
-                    render_metric_row("FCF Margin",   f"{fcf_m:.1f}%", delta="💎 Cash Cow" if fcf_m > 15 else "")
+                    render_metric_row("FCF Margin", f"{fcf_m:.1f}%", value_color="#2ecc71" if fcf_m > 15 else None)
+                    
                     rev_growth = meta.get('revenue_growth', 0) * 100
-                    render_metric_row("Rev Growth",   f"{rev_growth:.1f}%")
+                    rev_col = "#2ecc71" if rev_growth > 20 else ("#e74c3c" if rev_growth < 0 else None)
+                    render_metric_row("Rev Growth", f"{rev_growth:.1f}%", value_color=rev_col)
                     st.markdown("</div>", unsafe_allow_html=True)
 
                 with kcol3:
@@ -2933,9 +2960,9 @@ if active_tab == "3. Decision Engine":
                     curr_rat  = meta.get('current_ratio', 0)
                     quick_rat = meta.get('quick_ratio', 0)
                     
-                    # Liquidity Status Labels
-                    c_status = "🟢 Healthy" if curr_rat > 1.5 else ("🔴 Risky" if curr_rat < 1.0 else "🟡 Fair")
-                    q_status = "🟢 Solid" if quick_rat > 1.0 else ("🔴 Tight" if quick_rat < 0.7 else "🟡 Caution")
+                    # Liquidity Status Colors
+                    c_col = "#2ecc71" if curr_rat > 1.5 else ("#e74c3c" if curr_rat < 1.0 else "#f39c12")
+                    q_col = "#2ecc71" if quick_rat > 1.0 else ("#e74c3c" if quick_rat < 0.7 else "#f39c12")
                     
                     _ebitda_val = 0.0
                     try: _ebitda_val = float(meta.get('ebitda', 0) or 0)
@@ -2944,26 +2971,31 @@ if active_tab == "3. Decision Engine":
                     try: _debt_val = float(meta.get('total_debt', 0) or 0)
                     except (TypeError, ValueError): pass
                     debt_ebitda = (_debt_val / _ebitda_val) if _ebitda_val > 0 else 0
-                    de_status = "🟢 Conservative" if 0 < debt_ebitda < 3.0 else ("🔴 Risky" if debt_ebitda > 5.0 else ("🟡 Leveraged" if debt_ebitda > 0 else "N/A"))
+                    
+                    de_col = "#2ecc71" if 0 < debt_ebitda < 3.0 else ("#e74c3c" if debt_ebitda >= 5.0 else "#f39c12")
 
                     render_metric_row("Debt/Eq", debt_eq_txt)
-                    render_metric_row("Debt/EBITDA", f"{debt_ebitda:.2f}x" if debt_ebitda > 0 else "N/A", delta=de_status)
-                    render_metric_row("Current Ratio", f"{curr_rat:.2f}", delta=c_status)
-                    render_metric_row("Quick Ratio",   f"{quick_rat:.2f}", delta=q_status)
+                    render_metric_row("Debt/EBITDA", f"{debt_ebitda:.2f}x" if debt_ebitda > 0 else "N/A", value_color=de_col)
+                    render_metric_row("Current Ratio", f"{curr_rat:.2f}", value_color=c_col)
+                    render_metric_row("Quick Ratio",   f"{quick_rat:.2f}", value_color=q_col)
                     st.markdown("</div>", unsafe_allow_html=True)
 
                 with kcol4:
                     st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Risk & Volume</div>", unsafe_allow_html=True)
                     beta_val = meta.get('beta', 1.0)
                     if pd.notnull(beta_val) and beta_val != 0:
-                        beta_status = "High Vol" if beta_val > 1.2 else ("Low Vol" if beta_val < 0.8 else "Market")
-                        render_metric_row("Beta", f"{beta_val:.2f}", delta=beta_status)
+                        beta_col = "#e74c3c" if beta_val > 1.5 else ("#3498db" if beta_val < 0.8 else None)
+                        render_metric_row("Beta", f"{beta_val:.2f}", value_color=beta_col, help_text="🔴 > 1.5 (High Volatility) | 🔵 < 0.8 (Defensive)")
                     else:
                         render_metric_row("Beta", "N/A")
                     
-                    inst    = meta.get('inst_ownership', 0) * 100
-                    render_metric_row("Inst Own",    f"{inst:.0f}%")
-                    render_metric_row("Short Float", f"{meta.get('short_percent_of_float', 0)*100:.1f}%")
+                    inst = meta.get('inst_ownership', 0) * 100
+                    inst_col = "#2ecc71" if inst > 60 else ("#e74c3c" if inst < 10 else None)
+                    render_metric_row("Inst Own", f"{inst:.0f}%", value_color=inst_col, help_text="🟢 > 60% (Strong Institutional Backing)")
+                    
+                    short_val = meta.get('short_percent_of_float', 0) * 100
+                    short_col = "#e74c3c" if short_val > 10 else ("#2ecc71" if 0 <= short_val <= 2 else None)
+                    render_metric_row("Short Float", f"{short_val:.1f}%", value_color=short_col, help_text="🔴 > 10% (Squeeze Risk) | 🟢 < 2% (Safe)")
                     st.markdown("</div>", unsafe_allow_html=True)
 
                 with kcol5:
@@ -2975,7 +3007,9 @@ if active_tab == "3. Decision Engine":
                     pe_delta     = ((pe_cur / pe_5y_avg) - 1) * 100 if pe_5y_avg > 0 and pe_cur > 0 else 0
                     
                     render_metric_row("5Y Avg P/E",    f"{pe_5y_avg:.1f}" if pe_5y_avg > 0 else "N/A", delta=pe_delta, is_pct=True, color_invert=True)
-                    render_metric_row("Z-Score (5Y)",  f"{z_score:.2f}",  delta=z_status)
+                    
+                    zs_col = "#2ecc71" if z_score < -1 else ("#e74c3c" if z_score > 1.5 else None)
+                    render_metric_row("Z-Score (5Y)",  f"{z_score:.2f}", value_color=zs_col)
                     st.markdown("</div>", unsafe_allow_html=True)
 
                 with kcol6:
@@ -3414,7 +3448,7 @@ if active_tab == "3. Decision Engine":
                     
                     st.markdown(f"""
                     <div style='background:rgba(255,255,255,0.03); border-left:4px solid {dcf_color}; padding:15px; border-radius:4px; margin-top: 10px;'>
-                        <div style='display:flex; justify-content:space-between; align-items:center;'>
+                        <div style='display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;'>
                             <div>
                                 <span style='color:#bbb; font-size:0.9rem; text-transform:uppercase; letter-spacing:1px;'>Intrinsic Value per Share</span><br>
                                 <span style='font-size:2.5rem; font-weight:800; color:#fff;'>€{intrinsic_per_share:,.2f}</span>
@@ -4486,6 +4520,7 @@ if active_tab == "7. Portfolio Builder":
 # ── TAB: MARKET SCANNER & OPPORTUNITY RADAR ──────────────────────────────────
 if active_tab == "2. Opportunity Radar":
     render_header("search", "Market Scanner & Opportunity Radar", level="###")
+    st.info("📊 **Quantitative Engine Note:** All scoring systems, filters, and opportunity signals in this tab are generated entirely through **Hard-coded Quantitative Mathematics** (evaluating Quality, Momentum, and Valuation metrics). They **do not** factor in Qualitative AI Sentiment Reading or NLP Analysis.")
     st.write("Scan the entire ticker universe for institutional-grade opportunities based on Valuation, Momentum, and Quality Scores.")
     m_df = get_master_screener_data(companies_full, prices_full, quarterly_fin, annual_fin)
 
@@ -4514,8 +4549,6 @@ if active_tab == "2. Opportunity Radar":
         }
         </style>
     """, unsafe_allow_html=True)
-    
-    st.markdown("#### Intelligence Presets")
 
     # Final Compact Dropdown Layout (Removed Redundant Reset Button)
     scan_presets = [
@@ -4663,10 +4696,10 @@ if active_tab == "2. Opportunity Radar":
         }
     )
 
-    # Load More Button
+    # Load All Button
     if len(display_df) > st.session_state.radar_limit:
-        if st.button(f"📥 Load More (Showing {st.session_state.radar_limit} of {len(display_df)})", use_container_width=True):
-            st.session_state.radar_limit += 50
+        if st.button(f"📥 Load All (Showing {st.session_state.radar_limit} of {len(display_df)})", use_container_width=True):
+            st.session_state.radar_limit = len(display_df)
             st.rerun()
     elif len(display_df) > 50:
         if st.button("🔄 Reset to Top 50", use_container_width=True):
