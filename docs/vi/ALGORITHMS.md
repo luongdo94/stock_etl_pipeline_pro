@@ -142,3 +142,11 @@ Mức lỗ tối đa dự kiến trong 1 ngày với độ tin cậy 95%. Nếu 
 
 ### 7.4. Conditional Value at Risk (CVaR / Expected Shortfall)
 Số lỗ trung bình trong các kịch bản "xấu nhất" (thuộc nhóm 5% ngoài ngưỡng VaR). CVaR trả lời cho câu hỏi: *"Nếu thị trường sụp đổ cực đoan, tôi sẽ lỗ trung bình bao nhiêu?"*
+
+---
+
+## 8. Unified Alpha-Risk Intelligence Hub
+Hệ thống AI tiên tiến tích hợp trong tab **Deep Dive**, làm nhiệm vụ đối soát và hợp nhất dữ liệu (Convergence Analysis).
+
+- **Mục tiêu:** Tổng hợp dữ liệu định lượng (Metrics) và định tính (News NLP) để đưa ra khuyến nghị hành động dứt khoát.
+- **Chi tiết cơ chế:** Xem tại [AI_INTELLIGENCE.md](./AI_INTELLIGENCE.md).

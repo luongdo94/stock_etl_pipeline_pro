@@ -141,3 +141,11 @@ Der erwartete maximale Verlust an einem Tag mit einer Konfidenz von 95 %. Ein Va
 
 ### 7.4. Conditional Value at Risk (CVaR / Expected Shortfall)
 Der durchschnittliche Verlust in den extremsten Szenarien (die restlichen 5 % außerhalb der VaR-Schwelle). CVaR beantwortet die Frage: *"Wie viel verliere ich im Durchschnitt, wenn ein extremer Markteinbruch eintritt?"*
+
+---
+
+## 8. Unified Alpha-Risk Intelligence Hub
+Ein fortschrittliches KI-System, das im Tab **Deep Dive** integriert ist und für den Datenabgleich sowie die Konsolidierung zuständig ist (Konvergenzanalyse).
+
+- **Ziel:** Kombination von quantitativen Daten (Metriken) und qualitativen Daten (News NLP), um eine definitive Handlungsempfehlung zu geben.
+- **Details zum Mechanismus:** Siehe [AI_INTELLIGENCE.md](./AI_INTELLIGENCE.md).

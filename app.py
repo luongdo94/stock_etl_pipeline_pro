@@ -12,7 +12,7 @@ import json
 import logging
 from datetime import timedelta, date
 import streamlit as st
-import auth  # Thư viện xác thực mới
+import auth  
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
