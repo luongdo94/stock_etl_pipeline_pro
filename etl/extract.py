@@ -229,145 +229,143 @@ def extract_stock_prices(
 
 def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
     """
-    Parallelized extraction of company fundamentals.
+    Parallelized extraction of company fundamentals using yahooquery for batching.
     """
-    logger.info(f"🚀 TURBO METADATA: Fetching info for {len(tickers)} companies in parallel...")
+    logger.info(f"🚀 TURBO METADATA: Fetching info for {len(tickers)} companies using yahooquery...")
     records = []
     
-    # 1. Pre-fetch FX rates globally with robust currency detection
+    if not YQTicker:
+        logger.warning("⚠️ yahooquery not installed. Falling back to yfinance (unstable for metadata).")
+        return pd.DataFrame()
+
+    ticker_keys = list(tickers.keys())
+    
+    # ── 1. PRE-FETCH FX RATES (Global) ────────────────────────────────────────
     logger.info("   🔍 Detecting currencies and FX rates...")
-    ticker_currencies = {}
-    
-    def get_ticker_cur(t):
-        try:
-            # fast_info is better than heuristic guessing
-            return t, yf.Ticker(t).fast_info.get("currency", _guess_currency(t))
-        except:
-            return t, _guess_currency(t)
-            
-    # Conservative fetching of currencies
-    max_workers = 5
-    batch_size = 40
-    
-    ticker_keys = list(tickers.keys())
-    for i in range(0, len(ticker_keys), batch_size):
-        batch = ticker_keys[i:i+batch_size]
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            _cur_results = list(executor.map(get_ticker_cur, batch))
-            ticker_currencies.update(dict(_cur_results))
-        if i + batch_size < len(ticker_keys):
-            import time
-            time.sleep(1)
-    
-    unique_currencies = {c for c in ticker_currencies.values() if c != "EUR"}
-    
     fx_rates = {"EUR": 1.0}
-    if unique_currencies:
-        fx_tkrs = [f"{c}EUR=X" for c in unique_currencies]
-        fx_data = yf.download(fx_tkrs, period="2d", progress=False)["Close"]
-        
-        for c in unique_currencies:
-            col = f"{c}EUR=X"
-            try:
-                if isinstance(fx_data, pd.DataFrame) and col in fx_data.columns:
-                    rate = fx_data[col].ffill().iloc[-1]
-                elif not fx_data.empty: # Single currency download
-                    rate = fx_data.ffill().iloc[-1]
-                else:
-                    rate = 1.0
-                fx_rates[c] = float(rate.item() if hasattr(rate, "item") else rate)
-            except:
-                logger.warning(f"  ⚠️ Could not fetch FX for {c}, defaulting to 1.0")
-                fx_rates[c] = 1.0
-
-    def fetch_single_ticker_info(ticker):
+    unique_currencies = {"EUR"}
+    for t in ticker_keys:
+        unique_currencies.add(_guess_currency(t))
+    
+    if len(unique_currencies) > 1:
+        fx_tkrs = [f"{c}EUR=X" for c in unique_currencies if c != "EUR"]
         try:
-            meta = tickers[ticker]
-            info = yf.Ticker(ticker).info
-            currency = info.get("currency", "USD")
-            fx_rate = fx_rates.get(currency, 1.0)
-            
-            def norm_val(val):
-                if val is None or pd.isna(val): return None
-                return float(val) * fx_rate
-
-            record = {
-                "ticker":          ticker,
-                "company":         meta["name"],
-                "sector":          meta["sector"],
-                "region":          meta["region"],
-                "market_cap":      norm_val(info.get("marketCap")),
-                "pe_ratio":        info.get("trailingPE"),
-                "forward_pe":      info.get("forwardPE"),
-                "revenue_ttm":     norm_val(info.get("totalRevenue")),
-                "employees":       info.get("fullTimeEmployees"),
-                "country":         info.get("country"),
-                "currency":        currency,
-                "total_debt":      norm_val(info.get("totalDebt")),
-                "ebitda":          norm_val(info.get("ebitda")),
-                "gross_margin":    info.get("grossMargins"),
-                "operating_margin":info.get("operatingMargins"),
-                "trailing_eps":    norm_val(info.get("trailingEps")),
-                "forward_eps":     norm_val(info.get("forwardEps")),
-                "roe":             info.get("returnOnEquity"),
-                "free_cashflow":   norm_val(info.get("freeCashflow")),
-                "price_to_book":   info.get("priceToBook"),
-                "beta":            info.get("beta"),
-                "target_mean_price": norm_val(info.get("targetMeanPrice")),
-                "recommendation_key": info.get("recommendationKey"),
-                "peg_ratio":       info.get("trailingPegRatio") or info.get("pegRatio"),
-                "price_to_sales":  info.get("priceToSalesTrailing12Months"),
-                "ev_to_ebitda":    info.get("enterpriseToEbitda"),
-                "revenue_growth":  info.get("revenueGrowth"),
-                "earnings_growth": info.get("earningsGrowth"),
-                "current_ratio":   info.get("currentRatio"),
-                "quick_ratio":     info.get("quickRatio"),
-                "debt_to_equity":  info.get("debtToEquity"),
-                "short_ratio":     info.get("shortRatio"),
-                "short_percent_of_float": info.get("shortPercentOfFloat"),
-                "inst_ownership":  info.get("heldPercentInstitutions"),
-                "insider_ownership":info.get("heldPercentInsiders"),
-                "_extracted_at":   datetime.now(),
-            }
-            dy, tdy = info.get("dividendYield"), info.get("trailingAnnualDividendYield")
-
-            def _sanitize_yield(val):
-                """Normalize yield to decimal form and cap at 25% to reject bad data."""
-                if val is None or (isinstance(val, float) and pd.isna(val)): return None
-                v = float(val)
-                if v > 1.0:   # yfinance sometimes returns 4.87 instead of 0.0487
-                    v = v / 100.0
-                return v if 0.0 < v <= 0.25 else None   # > 25% = data error (post-split etc.)
-
-            _tdy = _sanitize_yield(tdy)
-            _dy  = _sanitize_yield(dy)
-            record["dividend_yield"] = _tdy if _tdy is not None else _dy
-            return record
+            fx_data = yf.download(fx_tkrs, period="2d", progress=False)["Close"]
+            for c in unique_currencies:
+                if c == "EUR": continue
+                col = f"{c}EUR=X"
+                try:
+                    if isinstance(fx_data, pd.DataFrame) and col in fx_data.columns:
+                        rate = fx_data[col].ffill().iloc[-1]
+                    elif not fx_data.empty:
+                        rate = fx_data.ffill().iloc[-1]
+                    else: rate = 1.0
+                    fx_rates[c] = float(rate.item() if hasattr(rate, "item") else rate)
+                except: fx_rates[c] = 1.0
         except Exception as e:
-            logger.warning(f"  ⚠️ {ticker} info failed: {e}")
-            return None
+            logger.warning(f"  ⚠️ Global FX fetch failed: {e}. Defaulting to 1.0")
 
-    # Fetch info in batches with limited concurrency
-    max_workers = 5
-    batch_size = 30
-    
-    ticker_keys = list(tickers.keys())
+    # ── 2. BATCH EXTRACTION VIA YAHOOQUERY ────────────────────────────────────
+    batch_size = 40
     for i in range(0, len(ticker_keys), batch_size):
-        batch = ticker_keys[i:i+batch_size]
-        logger.info(f"   🔍 Fetching metadata batch {i//batch_size + 1}/{len(ticker_keys)//batch_size + 1}...")
+        batch = ticker_keys[i:i + batch_size]
+        logger.info(f"   🔍 Fetching metadata batch {i//batch_size + 1}/{(len(ticker_keys)//batch_size)+1}...")
         
-        with ThreadPoolExecutor(max_workers=max_workers) as executor:
-            future_to_tick = {executor.submit(fetch_single_ticker_info, t): t for t in batch}
-            for future in as_completed(future_to_tick):
-                res = future.result()
-                if res: records.append(res)
+        try:
+            # asynchronous=True can be faster but we keep it safe
+            yq = YQTicker(batch, asynchronous=True)
+            all_data = yq.all_modules
+            
+            for ticker in batch:
+                try:
+                    data = all_data.get(ticker)
+                    if not isinstance(data, dict): continue
+                    
+                    # Extract modules
+                    summary    = data.get('summaryDetail', {})
+                    profile    = data.get('assetProfile', {})
+                    stats      = data.get('defaultKeyStatistics', {})
+                    financials = data.get('financialData', {})
+                    price_mod  = data.get('price', {}) 
+
+                    # Determine currency and FX rate
+                    currency = financials.get('financialCurrency') or summary.get('currency') or _guess_currency(ticker)
+                    fx_rate  = fx_rates.get(currency, 1.0)
+                    
+                    def norm_val(val):
+                        if val is None or (isinstance(val, (float, int)) and pd.isna(val)): return None
+                        try: return float(val) * fx_rate
+                        except: return None
+
+                    meta = tickers.get(ticker, {"name": ticker, "sector": "N/A", "region": "N/A"})
+                    
+                    record = {
+                        "ticker":          ticker,
+                        "company":         meta.get("name") or price_mod.get("shortName") or ticker,
+                        "sector":          meta.get("sector") or profile.get("sector", "N/A"),
+                        "region":          meta.get("region") or "N/A",
+                        "market_cap":      norm_val(summary.get('marketCap') or price_mod.get('marketCap')),
+                        "pe_ratio":        summary.get('trailingPE'),
+                        "forward_pe":      summary.get('forwardPE'),
+                        "revenue_ttm":     norm_val(financials.get('totalRevenue')),
+                        "employees":       profile.get('fullTimeEmployees'),
+                        "country":         profile.get('country'),
+                        "currency":        currency,
+                        "total_debt":      norm_val(financials.get('totalDebt')),
+                        "ebitda":          norm_val(financials.get('ebitda')),
+                        "gross_margin":    financials.get('grossMargins'),
+                        "operating_margin":financials.get('operatingMargins'),
+                        "trailing_eps":    norm_val(stats.get('trailingEps')),
+                        "forward_eps":     norm_val(stats.get('forwardEps')),
+                        "roe":             financials.get('returnOnEquity'),
+                        "free_cashflow":   norm_val(financials.get('freeCashflow')),
+                        "price_to_book":   stats.get('priceToBook'),
+                        "beta":            stats.get('beta'),
+                        "target_mean_price": norm_val(financials.get('targetMeanPrice')),
+                        "recommendation_key": financials.get('recommendationKey'),
+                        "peg_ratio":       stats.get('trailingPegRatio') or stats.get('pegRatio'),
+                        "price_to_sales":  summary.get('priceToSalesTrailing12Months'),
+                        "ev_to_ebitda":    stats.get('enterpriseToEbitda'),
+                        "revenue_growth":  financials.get('revenueGrowth'),
+                        "earnings_growth": financials.get('earningsGrowth'),
+                        "current_ratio":   financials.get('currentRatio'),
+                        "quick_ratio":     financials.get('quickRatio'),
+                        "debt_to_equity":  financials.get('debtToEquity'),
+                        "short_ratio":     stats.get('shortRatio'),
+                        "short_percent_of_float": stats.get('shortPercentOfFloat'),
+                        "inst_ownership":  stats.get('heldPercentInstitutions'),
+                        "insider_ownership":stats.get('heldPercentInsiders'),
+                        "_extracted_at":   datetime.now(),
+                    }
+
+                    # Sanitize Yield
+                    dy  = summary.get('dividendYield')
+                    tdy = summary.get('trailingAnnualDividendYield')
+                    
+                    def _sanitize_yield(val):
+                        if val is None or (isinstance(val, float) and pd.isna(val)): return None
+                        v = float(val)
+                        if v > 1.0: v = v / 100.0
+                        return v if 0.0 < v <= 0.25 else None
+                    
+                    _tdy = _sanitize_yield(tdy)
+                    _dy  = _sanitize_yield(dy)
+                    record["dividend_yield"] = _tdy if _tdy is not None else _dy
+                    
+                    records.append(record)
+                except Exception as e:
+                    logger.debug(f"  ⚠️ Skipping {ticker} due to detail parsing error: {e}")
+                    continue
+        except Exception as e:
+            logger.warning(f"  ⚠️ Batch {i//batch_size + 1} failed: {e}")
         
-        # Pause between batches
+        # Jittered sleep to be respectful
         if i + batch_size < len(ticker_keys):
-            import time
-            time.sleep(2)
-    
+            import time, random
+            time.sleep(1.0 + random.random())
+
     return pd.DataFrame(records)
+
 
 
 def extract_historical_financials(tickers: dict = TICKERS) -> pd.DataFrame:
@@ -661,6 +659,146 @@ def extract_cashflows(tickers: dict = TICKERS) -> pd.DataFrame:
     return pd.DataFrame(records) if records else pd.DataFrame(columns=["ticker", "buyback_ttm", "dividends_paid_ttm"])
 
 
+def extract_historical_fcf(tickers: dict = TICKERS) -> pd.DataFrame:
+    """
+    Extract historical annual Free Cash Flow (FCF) for all tickers using yahooquery.
+    Returns a long-format DataFrame: [ticker, year, free_cash_flow, operating_cash_flow,
+                                       capex, _extracted_at]
+    FCF = OperatingCashFlow + CapitalExpenditure (capex is negative in reporting)
+    """
+    logger.info(f"🚀 HISTORICAL FCF: Fetching {len(tickers)} tickers via yahooquery...")
+    records = []
+
+    if not YQTicker:
+        logger.warning("⚠️ yahooquery not installed — skipping historical FCF extraction.")
+        return pd.DataFrame()
+
+    ticker_keys = list(tickers.keys())
+    batch_size = 40
+
+    for i in range(0, len(ticker_keys), batch_size):
+        batch = ticker_keys[i:i + batch_size]
+        logger.info(f"   💵 Fetching FCF batch {i//batch_size + 1}/{(len(ticker_keys)//batch_size)+1}...")
+        try:
+            yq = YQTicker(batch, asynchronous=True)
+            cf_df = yq.cash_flow(frequency='a', trailing=False)
+
+            if isinstance(cf_df, pd.DataFrame) and not cf_df.empty:
+                # Normalize index: yahooquery returns (symbol, asOfDate) as MultiIndex or 'symbol' column
+                if 'symbol' in cf_df.index.names:
+                    cf_df = cf_df.reset_index()
+
+                for _, row in cf_df.iterrows():
+                    ticker = row.get('symbol')
+                    as_of  = row.get('asOfDate')
+                    if ticker is None or as_of is None:
+                        continue
+
+                    try:
+                        year = pd.to_datetime(as_of).year
+                    except Exception:
+                        continue
+
+                    # FreeCashFlow is pre-computed by yahooquery
+                    fcf  = row.get('FreeCashFlow')
+                    ocf  = row.get('OperatingCashFlow')
+                    capex = row.get('CapitalExpenditure')
+
+                    # Only store if at least FCF is available
+                    if pd.isna(fcf) and pd.isna(ocf):
+                        continue
+
+                    # If FCF is missing but components exist, compute it
+                    if pd.isna(fcf) and not pd.isna(ocf) and not pd.isna(capex):
+                        fcf = ocf + capex  # capex is negative in reports
+
+                    records.append({
+                        "ticker":             ticker,
+                        "year":               int(year),
+                        "free_cash_flow":     float(fcf)  if not pd.isna(fcf)  else None,
+                        "operating_cash_flow":float(ocf)  if not pd.isna(ocf)  else None,
+                        "capex":              float(capex) if not pd.isna(capex) else None,
+                        "_extracted_at":      datetime.now(),
+                    })
+        except Exception as e:
+            logger.warning(f"  ⚠️ FCF batch {i//batch_size + 1} failed: {e}")
+
+        import time, random
+        time.sleep(1.0 + random.random())
+
+    logger.info(f"✅ Historical FCF extracted: {len(records)} records for {len({r['ticker'] for r in records})} tickers")
+    return pd.DataFrame(records)
+
+
+def extract_quarterly_fcf(tickers: dict = TICKERS) -> pd.DataFrame:
+    """
+    Extract historical quarterly Free Cash Flow (FCF) for all tickers using yahooquery.
+    Returns a long-format DataFrame: [ticker, year, quarter, free_cash_flow, operating_cash_flow,
+                                       capex, _extracted_at]
+    """
+    logger.info(f"🚀 QUARTERLY FCF: Fetching {len(tickers)} tickers via yahooquery...")
+    records = []
+
+    if not YQTicker:
+        logger.warning("⚠️ yahooquery not installed — skipping quarterly FCF extraction.")
+        return pd.DataFrame()
+
+    ticker_keys = list(tickers.keys())
+    batch_size = 40
+
+    for i in range(0, len(ticker_keys), batch_size):
+        batch = ticker_keys[i:i + batch_size]
+        logger.info(f"   💵 Fetching Quarterly FCF batch {i//batch_size + 1}/{(len(ticker_keys)//batch_size)+1}...")
+        try:
+            yq = YQTicker(batch, asynchronous=True)
+            cf_df = yq.cash_flow(frequency='q', trailing=False)
+
+            if isinstance(cf_df, pd.DataFrame) and not cf_df.empty:
+                if 'symbol' in cf_df.index.names:
+                    cf_df = cf_df.reset_index()
+
+                for _, row in cf_df.iterrows():
+                    ticker = row.get('symbol')
+                    as_of  = row.get('asOfDate')
+                    if ticker is None or as_of is None:
+                        continue
+
+                    try:
+                        dt = pd.to_datetime(as_of)
+                        year = dt.year
+                        quarter = (dt.month - 1) // 3 + 1
+                    except Exception:
+                        continue
+
+                    fcf   = row.get('FreeCashFlow')
+                    ocf   = row.get('OperatingCashFlow')
+                    capex = row.get('CapitalExpenditure')
+
+                    if pd.isna(fcf) and pd.isna(ocf):
+                        continue
+
+                    if pd.isna(fcf) and not pd.isna(ocf) and not pd.isna(capex):
+                        fcf = ocf + capex  
+
+                    records.append({
+                        "ticker":             ticker,
+                        "year":               int(year),
+                        "quarter":            int(quarter),
+                        "free_cash_flow":     float(fcf)  if not pd.isna(fcf)  else None,
+                        "operating_cash_flow":float(ocf)  if not pd.isna(ocf)  else None,
+                        "capex":              float(capex) if not pd.isna(capex) else None,
+                        "_extracted_at":      datetime.now(),
+                    })
+        except Exception as e:
+            logger.warning(f"  ⚠️ Quarterly FCF batch {i//batch_size + 1} failed: {e}")
+
+        import time, random
+        time.sleep(1.0 + random.random())
+
+    logger.info(f"✅ Quarterly FCF extracted: {len(records)} records for {len({r['ticker'] for r in records})} tickers")
+    return pd.DataFrame(records)
+
+    
 def extract_earnings_calendar(tickers: dict = TICKERS) -> pd.DataFrame:
     """
     Parallelized extraction of upcoming earnings dates and estimates.

@@ -217,6 +217,96 @@ def load_earnings_calendar(
     logger.info(f"✅ Loaded {len(df)} earnings calendar records → raw.earnings_calendar")
 
 
+def load_historical_fcf(
+    conn: duckdb.DuckDBPyConnection,
+    df: pd.DataFrame
+):
+    """
+    Load historical annual FCF data (UPSERT by ticker + year).
+    Creates raw.hist_fcf if it doesn't exist.
+    """
+    if df.empty:
+        logger.info("  ⚠️ No historical FCF data to load — skipping")
+        return
+
+    # Ensure table exists
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS raw.hist_fcf (
+            ticker              VARCHAR NOT NULL,
+            year                INTEGER NOT NULL,
+            free_cash_flow      DOUBLE,
+            operating_cash_flow DOUBLE,
+            capex               DOUBLE,
+            _extracted_at       TIMESTAMP,
+            _loaded_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (ticker, year)
+        )
+    """)
+
+    # Delete existing rows for these (ticker, year) pairs before inserting
+    tickers = df["ticker"].unique().tolist()
+    years   = df["year"].unique().tolist()
+    conn.execute(
+        "DELETE FROM raw.hist_fcf WHERE ticker = ANY(?) AND year = ANY(?)",
+        [tickers, years]
+    )
+
+    conn.register("df_tmp", df)
+    conn.execute("""
+        INSERT INTO raw.hist_fcf (ticker, year, free_cash_flow, operating_cash_flow, capex, _extracted_at)
+        SELECT ticker, year, free_cash_flow, operating_cash_flow, capex, _extracted_at
+        FROM df_tmp
+    """)
+    conn.unregister("df_tmp")
+    logger.info(f"✅ Loaded {len(df)} FCF records → raw.hist_fcf ({df['ticker'].nunique()} tickers)")
+
+
+def load_quarterly_fcf(
+    conn: duckdb.DuckDBPyConnection,
+    df: pd.DataFrame
+):
+    """
+    Load historical quarterly FCF data (UPSERT by ticker + year + quarter).
+    Creates raw.hist_fcf_quarterly if it doesn't exist.
+    """
+    if df.empty:
+        logger.info("  ⚠️ No quarterly FCF data to load — skipping")
+        return
+
+    # Ensure table exists
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS raw.hist_fcf_quarterly (
+            ticker              VARCHAR NOT NULL,
+            year                INTEGER NOT NULL,
+            quarter             INTEGER NOT NULL,
+            free_cash_flow      DOUBLE,
+            operating_cash_flow DOUBLE,
+            capex               DOUBLE,
+            _extracted_at       TIMESTAMP,
+            _loaded_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (ticker, year, quarter)
+        )
+    """)
+
+    # Delete existing rows
+    tickers  = df["ticker"].unique().tolist()
+    years    = df["year"].unique().tolist()
+    quarters = df["quarter"].unique().tolist()
+    conn.execute(
+        "DELETE FROM raw.hist_fcf_quarterly WHERE ticker = ANY(?) AND year = ANY(?) AND quarter = ANY(?)",
+        [tickers, years, quarters]
+    )
+
+    conn.register("df_tmp", df)
+    conn.execute("""
+        INSERT INTO raw.hist_fcf_quarterly (ticker, year, quarter, free_cash_flow, operating_cash_flow, capex, _extracted_at)
+        SELECT ticker, year, quarter, free_cash_flow, operating_cash_flow, capex, _extracted_at
+        FROM df_tmp
+    """)
+    conn.unregister("df_tmp")
+    logger.info(f"✅ Loaded {len(df)} Quarterly FCF records → raw.hist_fcf_quarterly ({df['ticker'].nunique()} tickers)")
+
+
 
 def load_stock_prices(
     conn: duckdb.DuckDBPyConnection,
@@ -260,84 +350,78 @@ def load_company_info(
     df: pd.DataFrame
 ):
     """
-    Atomic Write-Swap pattern with transaction safety.
-    Writes to a staging table first; only swaps into production on full success.
-    Uses atomic RENAME to avoid data loss on failure.
+    UPSERT pattern for company fundamentals.
+    Prevents data loss on partial extraction failures by updating existing 
+    records or adding new ones, while keeping others intact.
     """
     if df.empty:
-        logger.warning("  ⚠️ No company info data to load — skipping atomic swap")
+        logger.warning("  ⚠️ No company info data to load — skipping metadata update")
         return
+
+    # 1. Ensure the table exists with the rigid schema
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS raw.company_info (
+            ticker          VARCHAR PRIMARY KEY,
+            company         VARCHAR,
+            sector          VARCHAR,
+            region          VARCHAR,
+            market_cap      BIGINT,
+            pe_ratio        DOUBLE,
+            forward_pe      DOUBLE,
+            revenue_ttm     BIGINT,
+            employees       INTEGER,
+            country         VARCHAR,
+            currency        VARCHAR,
+            total_debt      BIGINT,
+            ebitda          BIGINT,
+            gross_margin    DOUBLE,
+            operating_margin DOUBLE,
+            trailing_eps    DOUBLE,
+            forward_eps     DOUBLE,
+            roe             DOUBLE,
+            free_cashflow   DOUBLE,
+            price_to_book   DOUBLE,
+            beta            DOUBLE,
+            target_mean_price DOUBLE,
+            recommendation_key VARCHAR,
+            peg_ratio       DOUBLE,
+            price_to_sales  DOUBLE,
+            ev_to_ebitda    DOUBLE,
+            revenue_growth  DOUBLE,
+            earnings_growth DOUBLE,
+            current_ratio   DOUBLE,
+            quick_ratio     DOUBLE,
+            debt_to_equity  DOUBLE,
+            short_ratio     DOUBLE,
+            short_percent_of_float DOUBLE,
+            inst_ownership  DOUBLE,
+            insider_ownership DOUBLE,
+            _extracted_at   TIMESTAMP,
+            dividend_yield  DOUBLE,
+            _loaded_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
 
     conn.execute("BEGIN TRANSACTION")
     try:
-        # 1. Start with the standard fixed schema to prevent columns vanishing (Bug #3)
-        conn.execute("DROP TABLE IF EXISTS raw.company_info_new")
-        conn.execute("""
-            CREATE TABLE raw.company_info_new (
-                ticker          VARCHAR PRIMARY KEY,
-                company         VARCHAR,
-                sector          VARCHAR,
-                region          VARCHAR,
-                market_cap      BIGINT,
-                pe_ratio        DOUBLE,
-                forward_pe      DOUBLE,
-                revenue_ttm     BIGINT,
-                employees       INTEGER,
-                country         VARCHAR,
-                currency        VARCHAR,
-                total_debt      BIGINT,
-                ebitda          BIGINT,
-                gross_margin    DOUBLE,
-                operating_margin DOUBLE,
-                trailing_eps    DOUBLE,
-                forward_eps     DOUBLE,
-                roe             DOUBLE,
-                free_cashflow   DOUBLE,
-                price_to_book   DOUBLE,
-                beta            DOUBLE,
-                target_mean_price DOUBLE,
-                recommendation_key VARCHAR,
-                peg_ratio       DOUBLE,
-                price_to_sales  DOUBLE,
-                ev_to_ebitda    DOUBLE,
-                revenue_growth  DOUBLE,
-                earnings_growth DOUBLE,
-                current_ratio   DOUBLE,
-                quick_ratio     DOUBLE,
-                debt_to_equity  DOUBLE,
-                short_ratio     DOUBLE,
-                short_percent_of_float DOUBLE,
-                inst_ownership  DOUBLE,
-                insider_ownership DOUBLE,
-                _extracted_at   TIMESTAMP,
-                dividend_yield  DOUBLE,
-                _loaded_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-
-        # 2. Register and Insert into the rigid schema
+        # 2. Register and Upsert
         conn.register("df_tmp", df)
         
-        # We explicitly list columns to ensure correct mapping even if yfinance columns change order
+        # Explicit column list to match schema exactly and handle ordering
         cols = [c for c in df.columns if c != "_loaded_at"]
         col_list = ", ".join(cols)
-        conn.execute(f"INSERT INTO raw.company_info_new ({col_list}) SELECT {col_list} FROM df_tmp")
+        
+        # INSERT OR REPLACE handles the UPSERT based on the PRIMARY KEY (ticker)
+        conn.execute(f"INSERT OR REPLACE INTO raw.company_info ({col_list}) SELECT {col_list} FROM df_tmp")
         conn.unregister("df_tmp")
-
-        # 3. Atomic swap: handle existing table upgrade
-        if _table_exists(conn, "raw", "company_info"):
-            conn.execute("DROP TABLE IF EXISTS raw.company_info_old")
-            conn.execute("ALTER TABLE raw.company_info RENAME TO company_info_old")
-            conn.execute("ALTER TABLE raw.company_info_new RENAME TO company_info")
-            conn.execute("DROP TABLE raw.company_info_old")
-        else:
-            conn.execute("ALTER TABLE raw.company_info_new RENAME TO company_info")
             
         conn.execute("COMMIT")
-        logger.info(f"✅ Loaded {len(df)} companies → raw.company_info (atomic swap with rigid schema)")
+        logger.info(f"✅ Upserted {len(df)} companies → raw.company_info (data safety enabled)")
     except Exception as e:
         if conn: conn.execute("ROLLBACK")
+        logger.error(f"❌ Failed to load company info: {e}")
         raise e
+
 
 def load_historical_financials(
     conn: duckdb.DuckDBPyConnection,

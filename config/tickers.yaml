@@ -291,10 +291,6 @@ tickers:
     name: Klarna Bank AB (publ)
     sector: Fintech
     region: US
-  BITF:
-    name: Bitfarms
-    sector: Crypto/Mining
-    region: US
   NU:
     name: Nu Holdings Ltd.
     sector: Fintech

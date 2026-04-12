@@ -1,9 +1,9 @@
 # etl/pipeline.py
 import logging, time, shutil, os, duckdb
 from pathlib import Path
-from etl.extract   import extract_stock_prices, extract_company_info, extract_historical_financials, extract_quarterly_financials, extract_cashflows, extract_earnings_calendar
+from etl.extract   import extract_stock_prices, extract_company_info, extract_historical_financials, extract_quarterly_financials, extract_cashflows, extract_historical_fcf, extract_quarterly_fcf, extract_earnings_calendar
 from etl.load      import get_connection, create_raw_schema, \
-                          load_stock_prices, load_company_info, load_historical_financials, load_quarterly_financials, load_cashflows, load_earnings_calendar, \
+                          load_stock_prices, load_company_info, load_historical_financials, load_quarterly_financials, load_cashflows, load_historical_fcf, load_quarterly_fcf, load_earnings_calendar, \
                           perform_atomic_swap, DB_PATH, SHADOW_DB_PATH
 from etl.transform import run_transforms
 from etl.utils     import get_last_price_dates, needs_full_refresh, needs_earnings_refresh
@@ -38,7 +38,41 @@ def _prepare_shadow_db(is_incremental: bool):
         logger.info("   🆕 Fresh shadow DB (full refresh mode)")
 
 
+def validate_shadow_integrity(conn: duckdb.DuckDBPyConnection) -> bool:
+    """
+    Final sanity check of the shadow database before atomic swap.
+    Returns False if data looks suspiciously incomplete.
+    """
+    try:
+        # 1. Check price data
+        price_count = conn.execute("SELECT COUNT(*) FROM raw.stock_prices").fetchone()[0]
+        if price_count < 1000: # We expect much more for 640 tickers
+            logger.warning(f"  ⚠️ Suspiciously low price count: {price_count}")
+            return False
+            
+        # 2. Check company info
+        company_count = conn.execute("SELECT COUNT(*) FROM raw.company_info").fetchone()[0]
+        if company_count < 100: # Threshold for major failure
+             logger.warning(f"  ⚠️ Suspiciously low company meta count: {company_count}")
+             return False
+             
+        # 3. Check returns mart (if it exists)
+        try:
+             mart_count = conn.execute("SELECT COUNT(*) FROM marts.fct_daily_returns").fetchone()[0]
+             if mart_count == 0:
+                 logger.warning("  ⚠️ Mart fct_daily_returns is empty")
+                 return False
+        except:
+             pass # Mart might not be created yet on first run
+                 
+        return True
+    except Exception as e:
+        logger.error(f"  ⚠️ Error during integrity check: {e}")
+        return False
+
+
 def run_pipeline(lookback_days: int = 1825, force_full: bool = False):
+
     """
     Intelligent ETL Orchestrator with Incremental Load Support.
 
@@ -96,6 +130,8 @@ def run_pipeline(lookback_days: int = 1825, force_full: bool = False):
         financials_df = extract_historical_financials()   # Always refresh financials
         quarterly_df = extract_quarterly_financials()     # Always refresh quarterly
         cashflow_df  = extract_cashflows()                # v3.0: Buyback & Dividend data
+        fcf_df       = extract_historical_fcf()           # v3.2: Historical FCF (yahooquery)
+        fcf_q_df     = extract_quarterly_fcf()            # v3.3: Quarterly FCF (yahooquery)
         
         # 🧪 SMART REFRESH: Earnings only if stale (>24h) or in FULL REFRESH mode
         if is_incremental and not needs_earnings_refresh(conn):
@@ -129,6 +165,8 @@ def run_pipeline(lookback_days: int = 1825, force_full: bool = False):
         load_historical_financials(conn, financials_df)
         load_quarterly_financials(conn, quarterly_df)
         load_cashflows(conn, cashflow_df)                  # v3.0: Net Payout data
+        load_historical_fcf(conn, fcf_df)                 # v3.2: Historical FCF
+        load_quarterly_fcf(conn, fcf_q_df)                # v3.3: Quarterly FCF
         load_earnings_calendar(conn, earnings_df)          # v3.1: Upcoming Report dates
         logger.info(f"   ⏱  Load: {time.time()-t0:.1f}s")
 
@@ -144,9 +182,18 @@ def run_pipeline(lookback_days: int = 1825, force_full: bool = False):
         # ── STEP 5: ATOMIC SWAP ───────────────────────────────────────────────
         logger.info("\n📡 STEP 5/5 — ATOMIC SWAP")
         t0 = time.time()
+        
+        # 🔗 SHADOW INTEGRITY GUARD
+        # We verify that the shadow database isn't "suspiciously empty" before swapping
+        if not validate_shadow_integrity(conn):
+            logger.error("❌ SHADOW INTEGRITY CHECK FAILED: Aborting swap to protect production data.")
+            conn.close()
+            return False
+
         conn.close()
         perform_atomic_swap()
         logger.info(f"   ⏱  Swap: {time.time()-t0:.1f}s")
+
 
         logger.info("\n" + "=" * 55)
         logger.info(f"✅ PIPELINE COMPLETED SUCCESSFULLY [{mode_label}]")

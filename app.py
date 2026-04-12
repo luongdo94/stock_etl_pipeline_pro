@@ -810,7 +810,17 @@ def load_data():
             dq_warnings_f = conn.execute("SELECT * FROM marts.dq_warnings ORDER BY is_critical DESC, violations DESC").df()
         except Exception:
             dq_warnings_f = pd.DataFrame()
-            
+
+        try:
+            hist_fcf_f = conn.execute("SELECT ticker, year, free_cash_flow, operating_cash_flow FROM raw.hist_fcf ORDER BY ticker, year").df()
+        except Exception:
+            hist_fcf_f = pd.DataFrame()
+
+        try:
+            hist_fcf_q_f = conn.execute("SELECT ticker, year, quarter, free_cash_flow, operating_cash_flow FROM raw.hist_fcf_quarterly ORDER BY ticker, year, quarter").df()
+        except Exception:
+            hist_fcf_q_f = pd.DataFrame()
+
     # ── PRE-PROCESSING INSIDE CACHE ──
     prices_f["date"] = pd.to_datetime(prices_f["date"])
     monthly_f["month"] = pd.to_datetime(monthly_f["month"])
@@ -819,7 +829,7 @@ def load_data():
     # Vectorized RSI (only for those missing it or to ensure consistency)
     prices_f['rsi'] = prices_f.groupby('ticker', group_keys=False).apply(lambda x: get_rsi_vectorized(x), include_groups=False)
     
-    return prices_f, companies_f, monthly_f, annual_f, quarterly_f, earnings_calendar, dq_warnings_f
+    return prices_f, companies_f, monthly_f, annual_f, quarterly_f, earnings_calendar, dq_warnings_f, hist_fcf_f, hist_fcf_q_f
 
 
 # ── ANALYTICS ENGINE: Global Screener Data ──────────────────────────────────
@@ -1225,7 +1235,7 @@ def render_sector_health_matrix(m_df: pd.DataFrame):
 
 
 # Primary Data Load (Cached)
-prices_full, companies_full, monthly_full, annual_fin, quarterly_fin, earnings_cal, dq_warnings = load_data()
+prices_full, companies_full, monthly_full, annual_fin, quarterly_fin, earnings_cal, dq_warnings, hist_fcf_full, hist_fcf_q_full = load_data()
 m_df = get_master_screener_data(companies_full, prices_full, quarterly_fin, annual_fin)
 
 
@@ -3151,22 +3161,42 @@ if active_tab == "3. Decision Engine":
                 if not df_fin.empty:
                     df_fin_plot = df_fin.sort_values("year")
                     
-                    # Calculate YoY Growth
                     # Calculate YoY Growth manually to handle negative values properly: (New - Old) / abs(Old)
                     df_fin_plot['rev_growth'] = (df_fin_plot['revenue'] - df_fin_plot['revenue'].shift(1)) / df_fin_plot['revenue'].shift(1).abs() * 100
                     df_fin_plot['eps_growth'] = (df_fin_plot['eps'] - df_fin_plot['eps'].shift(1)) / df_fin_plot['eps'].shift(1).abs() * 100
                     
-                    # Auto-scale Revenue
-                    max_rev = df_fin_plot['revenue'].max()
-                    scale = 1e9 if max_rev >= 1e9 else 1e6
+                    # ── Merge FCF from raw.hist_fcf ──────────────────────────────
+                    df_fcf_ticker = pd.DataFrame()
+                    if not hist_fcf_full.empty and "ticker" in hist_fcf_full.columns:
+                        df_fcf_ticker = hist_fcf_full[hist_fcf_full["ticker"] == deep_ticker].copy()
+                    
+                    if not df_fcf_ticker.empty:
+                        df_fin_plot = df_fin_plot.merge(
+                            df_fcf_ticker[["year", "free_cash_flow", "operating_cash_flow"]],
+                            on="year", how="left"
+                        )
+                        df_fin_plot['fcf_growth'] = (
+                            df_fin_plot['free_cash_flow'] - df_fin_plot['free_cash_flow'].shift(1)
+                        ) / df_fin_plot['free_cash_flow'].shift(1).abs() * 100
+                    else:
+                        df_fin_plot['free_cash_flow'] = None
+                        df_fin_plot['fcf_growth']     = None
+                    
+                    # Auto-scale based on max of Revenue and FCF
+                    max_val = max(
+                        df_fin_plot['revenue'].max(),
+                        df_fin_plot['free_cash_flow'].max() if df_fin_plot['free_cash_flow'].notna().any() else 0
+                    )
+                    scale = 1e9 if max_val >= 1e9 else 1e6
                     unit = "B" if scale == 1e9 else "M"
                     
                     fig_fin = make_subplots(specs=[[{"secondary_y": True}]])
                     
-                    # Helper for text labels
+                    # Text labels for YoY growth
                     rev_text = [f"{v:+.1f}%" if pd.notnull(v) else "" for v in df_fin_plot['rev_growth']]
                     eps_text = [f"{v:+.1f}%" if pd.notnull(v) else "" for v in df_fin_plot['eps_growth']]
 
+                    # Revenue Bar
                     fig_fin.add_trace(
                         go.Bar(
                             x=df_fin_plot['year'], 
@@ -3180,6 +3210,23 @@ if active_tab == "3. Decision Engine":
                         secondary_y=False
                     )
 
+                    # FCF Bar (if available)
+                    if df_fin_plot['free_cash_flow'].notna().any():
+                        fcf_text = [f"{v:+.1f}%" if pd.notnull(v) else "" for v in df_fin_plot['fcf_growth']]
+                        fig_fin.add_trace(
+                            go.Bar(
+                                x=df_fin_plot['year'],
+                                y=df_fin_plot['free_cash_flow']/scale,
+                                name=f"Free Cash Flow (€{unit})",
+                                marker_color="rgba(39, 174, 96, 0.75)",
+                                text=fcf_text,
+                                textposition="outside",
+                                hovertemplate="<b>Year: %{x}</b><br>FCF: €%{y:.2f}" + unit + "<br>YoY Growth: %{text}<extra></extra>"
+                            ),
+                            secondary_y=False
+                        )
+
+                    # EPS Line on secondary axis
                     fig_fin.add_trace(
                         go.Scatter(
                             x=df_fin_plot['year'], 
@@ -3199,11 +3246,11 @@ if active_tab == "3. Decision Engine":
                         margin=dict(l=20, r=20, t=60, b=20),
                         hovermode="x unified",
                         barmode="group",
-                        title_text=f"📊 {deep_ticker} Annual Financial Performance (Revenue & EPS)",
+                        title_text=f"📊 {deep_ticker} Annual Financial Performance (Revenue, FCF & EPS)",
                         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
                     )
                     
-                    fig_fin.update_yaxes(title_text=f"Amount (€{unit})", secondary_y=False, range=[0, (df_fin_plot['revenue'].max()/scale)*1.3]) # space for labels
+                    fig_fin.update_yaxes(title_text=f"Amount (€{unit})", secondary_y=False, range=[0, (max_val/scale)*1.3])
                     fig_fin.update_yaxes(title_text="Earnings Per Share (€)", secondary_y=True)
                     
                     st.plotly_chart(fig_fin, use_container_width=True)
@@ -3217,13 +3264,35 @@ if active_tab == "3. Decision Engine":
                     df_fin_q = quarterly_fin[quarterly_fin["ticker"] == deep_ticker].sort_values("report_date")
                     if not df_fin_q.empty:
                         df_fin_q_plot = df_fin_q.copy()
-                        # Calculate QoQ Growth (Quarter-over-Quarter) locally to avoid NaN issues in DB
+
+                        # ── Merge FCF from raw.hist_fcf_quarterly ──────────────────
+                        df_fcf_q_ticker = pd.DataFrame()
+                        if not hist_fcf_q_full.empty and "ticker" in hist_fcf_q_full.columns:
+                            df_fcf_q_ticker = hist_fcf_q_full[hist_fcf_q_full["ticker"] == deep_ticker].copy()
+                        
+                        if not df_fcf_q_ticker.empty:
+                            df_fin_q_plot = df_fin_q_plot.merge(
+                                df_fcf_q_ticker[["year", "quarter", "free_cash_flow", "operating_cash_flow"]],
+                                on=["year", "quarter"], how="left"
+                            )
+                        else:
+                            df_fin_q_plot['free_cash_flow'] = None
+
+                        # Calculate QoQ Growth locally to avoid NaN issues in DB
                         # Calculate Growth manually to handle negative values properly: (New - Old) / abs(Old)
                         df_fin_q_plot['rev_growth'] = (df_fin_q_plot['revenue'] - df_fin_q_plot['revenue'].shift(1)) / df_fin_q_plot['revenue'].shift(1).abs() * 100
                         df_fin_q_plot['eps_growth'] = (df_fin_q_plot['eps'] - df_fin_q_plot['eps'].shift(1)) / df_fin_q_plot['eps'].shift(1).abs() * 100
+                        if 'free_cash_flow' in df_fin_q_plot.columns and df_fin_q_plot['free_cash_flow'].notna().any():
+                            df_fin_q_plot['fcf_growth'] = (df_fin_q_plot['free_cash_flow'] - df_fin_q_plot['free_cash_flow'].shift(1)) / df_fin_q_plot['free_cash_flow'].shift(1).abs() * 100
+                        else:
+                            df_fin_q_plot['fcf_growth'] = None
                         
-                        max_rev_q = df_fin_q_plot['revenue'].max()
-                        scale_q = 1e9 if max_rev_q >= 1e9 else 1e6
+                        # Auto-scale based on max of Revenue and FCF
+                        max_val_q = max(
+                            df_fin_q_plot['revenue'].max() if not df_fin_q_plot['revenue'].empty else 0,
+                            df_fin_q_plot['free_cash_flow'].max() if 'free_cash_flow' in df_fin_q_plot.columns and df_fin_q_plot['free_cash_flow'].notna().any() else 0
+                        )
+                        scale_q = 1e9 if max_val_q >= 1e9 else 1e6
                         unit_q = "B" if scale_q == 1e9 else "M"
                         
                         fig_fin_q = make_subplots(specs=[[{"secondary_y": True}]])
@@ -3233,6 +3302,7 @@ if active_tab == "3. Decision Engine":
                         
                         x_labels = df_fin_q_plot['year'].astype(str) + " Q" + df_fin_q_plot['quarter'].astype(str)
                         
+                        # Revenue Bar
                         fig_fin_q.add_trace(
                             go.Bar(
                                 x=x_labels, 
@@ -3246,14 +3316,15 @@ if active_tab == "3. Decision Engine":
                             secondary_y=False
                         )
 
-                        if 'free_cashflow' in df_fin_q_plot.columns and not df_fin_q_plot['free_cashflow'].isna().all():
+                        # FCF Bar (if available)
+                        if 'free_cash_flow' in df_fin_q_plot.columns and df_fin_q_plot['free_cash_flow'].notna().any():
                             fcf_text_q = [f"{v:+.1f}%" if pd.notnull(v) else "" for v in df_fin_q_plot['fcf_growth']]
                             fig_fin_q.add_trace(
                                 go.Bar(
                                     x=x_labels, 
-                                    y=df_fin_q_plot['free_cashflow']/scale_q, 
+                                    y=df_fin_q_plot['free_cash_flow']/scale_q, 
                                     name=f"Free Cash Flow (€{unit_q})", 
-                                    marker_color="rgba(39, 174, 96, 0.6)",
+                                    marker_color="rgba(39, 174, 96, 0.75)",
                                     text=fcf_text_q,
                                     textposition="outside",
                                     hovertemplate="<b>Period: %{x}</b><br>FCF: €%{y:.2f}" + unit_q + "<br>QoQ Growth: %{text}<extra></extra>"
@@ -3284,7 +3355,7 @@ if active_tab == "3. Decision Engine":
                             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
                         )
                         
-                        y_range_q = [0, (max_rev_q/scale_q)*1.2] if max_rev_q and pd.notnull(max_rev_q) else None
+                        y_range_q = [0, (max_val_q/scale_q)*1.3] if pd.notnull(max_val_q) else None
                         fig_fin_q.update_yaxes(title_text=f"Amount (€{unit_q})", secondary_y=False, range=y_range_q)
                         fig_fin_q.update_yaxes(title_text="Earnings Per Share (€)", secondary_y=True)
                         
