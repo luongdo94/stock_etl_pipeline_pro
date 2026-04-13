@@ -238,7 +238,7 @@ Your task: synthesize both and issue ONE definitive, actionable investment verdi
 ---
 Write a unified analysis with these FOUR sections:
 
-### 🏆 CIO Verdict
+### CIO Verdict
 One decisive paragraph (3-4 sentences). What is your final call? Reference BOTH the quantitative and qualitative data.
 
 ### 💡 Signal Convergence Analysis
@@ -379,6 +379,26 @@ def render_header(icon_key, text, level="####", color="#e8eaf6"):
     html = f"<div style='display:flex; align-items:center; margin-bottom:12px; color:{color};'>" \
            f"{icon_svg}<span style='font-size:1.15rem; font-weight:700; letter-spacing:0.02em;'>{text}</span></div>"
     st.markdown(html, unsafe_allow_html=True)
+
+def get_flat_svg(key: str, size: int = 18, color: str = "currentColor", margin: str = "8px") -> str:
+    """
+    Returns a resized, recolored SVG string from SVG_ICONS.
+    Dynamically injects size, color and margin so icons can be used
+    inline at any scale without separate per-size definitions.
+    """
+    svg = SVG_ICONS.get(key, "")
+    if not svg:
+        return ""
+    import re as _svg_re
+    # Inject width / height
+    svg = _svg_re.sub(r'width="\d+"', f'width="{size}"', svg)
+    svg = _svg_re.sub(r'height="\d+"', f'height="{size}"', svg)
+    # Inject color (stroke + fill where currentColor is used)
+    svg = svg.replace('stroke="currentColor"', f'stroke="{color}"')
+    svg = svg.replace('fill="currentColor"', f'fill="{color}"')
+    # Inject margin-right
+    svg = _svg_re.sub(r'margin-right:\s*\d+px', f'margin-right:{margin}', svg)
+    return svg
 
 def analyze_sentiment_finbert(headlines):
     """Batch processes headlines using FinBERT and returns an average score (-1 to 1)."""
@@ -1841,8 +1861,8 @@ risk_return = monthly.groupby("ticker").agg(
 tab_labels = [
     "1. Market Regime",        # Strategic Overview
     "2. Opportunity Radar",    # Market Scanner
-    "3. Decision Engine",      # Single Stock Deep Dive
-    "4. Predictive Suite",     # Predictive Suite
+    "3. Qualitative Audit (AI)", # Single Stock Deep Dive
+    "4. Quantitative Forecast (ML)", # Predictive Suite
     "5. Backtest Lab",         # Strategy Backtest
     "6. Watchlist",            # Watchlist / Kanban
     "7. Portfolio Builder",    # Portfolio Management
@@ -1999,7 +2019,7 @@ if active_tab == "1. Market Regime":
                 </div>
                 """, unsafe_allow_html=True)
 
-        sec_tabs = st.tabs(["🗺️ Heatmap", "🏆 Top Sectors", "🚀 Top Movers", "📊 Health Matrix"])
+        sec_tabs = st.tabs(["Heatmap", "Top Sectors", "Top Movers", "Health Matrix"])
         
         with sec_tabs[0]:
             # ... (Heatmap code)
@@ -2096,7 +2116,7 @@ if active_tab == "1. Market Regime":
 
 
 # ── TAB: SINGLE STOCK ANALYSIS ───────────────────────────────────────────────
-if active_tab == "3. Decision Engine":
+if active_tab == "3. Qualitative Audit (AI)":
     render_header("search", "Single Stock Deep Dive")
     if current_universe:
         # Persist selection across reruns via session_state
@@ -2186,7 +2206,7 @@ if active_tab == "3. Decision Engine":
             _s2        = float(df_deep["price_low"].tail(50).min())
             _r2        = float(df_deep["price_high"].tail(50).max())
             _rsi_val   = _tm["rsi"]
-            _ma_sig    = meta.get("ma_signal", "NEUTRAL")
+            _ma_sig    = str(latest_tech.get("ma_signal", meta.get("ma_signal", "NEUTRAL")))
             _w52_pos   = _tm["w52_pos"]
             _w52_hi    = _tm["w52_hi"]
             _w52_lo    = _tm["w52_lo"]
@@ -2508,7 +2528,7 @@ if active_tab == "3. Decision Engine":
                                     "ma_20_current": round(float(df_deep["ma_20"].iloc[-1]), 2) if "ma_20" in df_deep.columns and not df_deep["ma_20"].isna().all() else "N/A",
                                     "ma_50_current": round(float(df_deep["ma_50"].iloc[-1]), 2) if "ma_50" in df_deep.columns and not df_deep["ma_50"].isna().all() else "N/A",
                                 }
-                                with st.spinner("🧠 Synthesizing CIO Unified Verdict..."):
+                                with st.spinner("Synthesizing CIO Unified Verdict..."):
                                     _unified_report = get_unified_verdict(_cohere_key_ra, _unified_metrics, llm_res)
                                 
                                 # Compute conflict flag: Quant vs Qual divergence
@@ -2725,83 +2745,23 @@ if active_tab == "3. Decision Engine":
                     _uv_text, _nlp_insights, _nlp_score = _uv_data, [], 0
                     _nlp_sent, _audit_time, _is_conflict, _ai_score_snap = "N/A", "", False, 0
 
-                # ── Classify verdict from Actionable Recommendation section only ──
-                # Extract the label from the FIRST LINE of the section, before
-                # any em-dash (—) or colon (:) to avoid reading execution notes
-                # which often contain words like "buy" in "buy on dips".
-                import re as _re
-                _action_label = ""
-                _action_match = _re.search(
-                    r"actionable recommendation[^\n]*\n+(.*?)(?:\n+###|\Z)",
-                    _uv_text,
-                    flags=_re.IGNORECASE | _re.DOTALL
-                )
-                if _action_match:
-                    # Take ONLY the first non-empty line
-                    _first_line = next(
-                        (l for l in _action_match.group(1).strip().splitlines() if l.strip()),
-                        ""
-                    )
-                    # Strip everything after — or : (execution notes start here)
-                    _action_label = _re.split(r"[—\-–:]", _first_line)[0].lower().strip()
-                    # Remove markdown bold markers
-                    _action_label = _action_label.replace("*", "").replace("#", "").strip()
-
-                # Use _action_label (pure label before —/:) for priority matching,
-                # fall back to full text only if section was not found at all.
-                _src = _action_label if _action_label else _uv_text.lower()
-
-                if "strong buy" in _src:
-                    _uv_border = "#00ffcc"; _uv_badge_text = "🏆 STRONG BUY"
-                    _uv_grad   = "linear-gradient(135deg,rgba(0,255,204,.12),rgba(46,204,113,.08))"
-                    _uv_badge_bg = "rgba(0,255,204,0.2)"
-                elif "watch" in _src or "accumulate" in _src:
-                    _uv_border = "#3498db"; _uv_badge_text = "👁 WATCH & ACCUMULATE"
-                    _uv_grad   = "linear-gradient(135deg,rgba(52,152,219,.12),rgba(41,128,185,.06))"
-                    _uv_badge_bg = "rgba(52,152,219,0.2)"
-                elif "avoid" in _src or "reduce" in _src:
-                    _uv_border = "#e74c3c"; _uv_badge_text = "🔴 AVOID / REDUCE"
-                    _uv_grad   = "linear-gradient(135deg,rgba(231,76,60,.12),rgba(192,57,43,.06))"
-                    _uv_badge_bg = "rgba(231,76,60,0.2)"
-                elif "buy" in _src:
-                    _uv_border = "#2ecc71"; _uv_badge_text = "✅ BUY"
-                    _uv_grad   = "linear-gradient(135deg,rgba(46,204,113,.10),rgba(52,152,219,.06))"
-                    _uv_badge_bg = "rgba(46,204,113,0.2)"
-                else:
-                    _uv_border = "#f1c40f"; _uv_badge_text = "🟡 HOLD"
-                    _uv_grad   = "linear-gradient(135deg,rgba(241,196,15,.10),rgba(230,126,34,.06))"
-                    _uv_badge_bg = "rgba(241,196,15,0.2)"
-
-                def _hex_to_rgb(h):
-                    h = h.lstrip("#")
-                    return ",".join(str(int(h[i:i+2], 16)) for i in (0, 2, 4))
-                _border_rgb = _hex_to_rgb(_uv_border)
-
                 # ────────────────────────────────────────────────────────────
                 # LAYER 1 — AI Risk Overlay: Compact Summary Bar
                 # ────────────────────────────────────────────────────────────
                 st.markdown(f"""
-                <style>
-                @keyframes pulse-border {{
-                    0%   {{ box-shadow: 0 0 0 0 rgba({_border_rgb}, 0.35); }}
-                    70%  {{ box-shadow: 0 0 0 8px rgba({_border_rgb}, 0); }}
-                    100% {{ box-shadow: 0 0 0 0 rgba({_border_rgb}, 0); }}
-                }}
-                </style>
                 <div style='
                     display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap;
                     gap:10px; padding:12px 18px;
-                    background:linear-gradient(90deg,rgba({_border_rgb},0.08),rgba(0,0,0,0));
-                    border:1px solid rgba({_border_rgb},0.4); border-radius:10px;
-                    margin:14px 0 0 0;
-                    animation: pulse-border 2s ease-out 1;
+                    background:rgba(255,255,255,0.03);
+                    border:1px solid rgba(255,255,255,0.1); border-radius:10px;
+                    margin:14px 0 10px 0;
                 '>
                     <div style='display:flex; align-items:center; gap:10px;'>
-                        <span style='font-size:1.1rem;'>🧠</span>
+                        <span style='font-size:1.1rem;'></span>
                         <div>
                             <div style='font-size:0.65rem; color:#888; text-transform:uppercase;
                                         letter-spacing:1.5px; margin-bottom:2px;'>
-                                AI Risk Overlay &nbsp;&middot;&nbsp; {_audit_time}
+                                AI Risk Audit Metrics &nbsp;&middot;&nbsp; {_audit_time}
                             </div>
                             <div style='font-size:0.82rem; color:#ccc;'>
                                 Quant Score: <b style='color:white;'>{_ai_score_snap}/100</b>
@@ -2812,18 +2772,13 @@ if active_tab == "3. Decision Engine":
                             </div>
                         </div>
                     </div>
-                    <div style='
-                        background:{_uv_badge_bg}; color:{_uv_border};
-                        font-size:0.8rem; font-weight:900; padding:6px 16px;
-                        border-radius:20px; border:1px solid {_uv_border};
-                        white-space:nowrap; letter-spacing:0.5px;
-                    '>{_uv_badge_text}</div>
                 </div>
                 """, unsafe_allow_html=True)
 
                 # ────────────────────────────────────────────────────────────
                 # LAYER 2 — Signal Conflict Banner (only when diverging)
                 # ────────────────────────────────────────────────────────────
+
                 if _is_conflict:
                     _conf_dir = (
                         "Strong fundamentals but elevated news risk — the market may not have priced in this headline risk yet."
@@ -2861,7 +2816,7 @@ if active_tab == "3. Decision Engine":
                 # ────────────────────────────────────────────────────────────
                 with st.expander("🔍 Detailed CIO Reasoning & Full Audit", expanded=False):
                     st.markdown(
-                        f"<div style='background:rgba(255,255,255,0.02); border-left:3px solid {_uv_border};"
+                        f"<div style='background:rgba(255,255,255,0.02); border-left:3px solid #444;"
                         f" border-radius:6px; padding:18px; font-size:0.88rem; line-height:1.65;'>"
                         + _uv_text + "</div>",
                         unsafe_allow_html=True
@@ -2876,7 +2831,7 @@ if active_tab == "3. Decision Engine":
             else:
                 if os.environ.get("COHERE_API_KEY", "") or st.session_state.get("cohere_api_key", ""):
                     st.info(
-                        "🧠 **AI Risk Overlay** — Click **'Run Real-Time AI Risk Audit'** above "
+                        "**AI Risk Overlay** — Click **'Run Real-Time AI Risk Audit'** above "
                         "to activate the overlay combining news sentiment + quantitative data.",
                         icon="🧠"
                     )
@@ -4710,7 +4665,7 @@ if active_tab == "2. Opportunity Radar":
     st.markdown("""
     <div style='margin-top:16px; padding:14px 18px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:10px;'>
         <div style='font-size:0.78rem; font-weight:700; color:#8899aa; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:10px;'>
-            🧠 Quality Score Methodology v3.0 — 6 Pillars, Max 100 Points
+            Quality Score Methodology v3.0 — 6 Pillars, Max 100 Points
         </div>
         <div style='display:grid; grid-template-columns: repeat(6, 1fr); gap:10px;'>
             <div style='background:rgba(52,152,219,0.08); border-left:3px solid #3498db; padding:8px 10px; border-radius:5px;'>
@@ -4766,14 +4721,14 @@ if active_tab == "2. Opportunity Radar":
         - **If High Upside but Neutral/Bearish Trend**: Potential Value Trap. Wait for MA20 breakout.
         - **If High Quality + RSI < 30**: Extreme Oversold opportunity for mean reversion.
         """)
-if active_tab == "4. Predictive Suite":
+if active_tab == "4. Quantitative Forecast (ML)":
     import torch
     import optuna
     import numpy as np
     from arch import arch_model
-    render_header("zap", "Context-Aware Direct Multi-Step Forecasting (v11.0)", "Institutional-Grade Adaptive AI Ensemble")
+    render_header("zap", "Context-Aware Direct Multi-Step Forecasting (v11.0)", "Institutional-Grade Adaptive ML Ensemble")
     
-    # ── AI Model Architectures (Support for 13th Feature: Market Regime) ──────────────
+    # ── ML Model Architectures (Support for 13th Feature: Market Regime) ──────────────
     
     # ── LSTM Architecture (v7.0: Direct Multi-step Mapping) ───────────
     class StockLSTM(torch.nn.Module):
@@ -5040,7 +4995,7 @@ if active_tab == "4. Predictive Suite":
                         op.step()
                     time.sleep(0.005) # Micro-yield
                 return l.item()
-            with st.spinner(f"🧠 Tuning Direct Intelligence for {ticker_id}..."):
+            with st.spinner(f"Tuning Direct Intelligence for {ticker_id}..."):
                 study = optuna.create_study(direction="minimize")
                 study.optimize(objective, n_trials=5, timeout=10) # Optimized: 5 trials, 10s
                 best = study.best_params; best['epochs']=80
@@ -5456,7 +5411,7 @@ if active_tab == "4. Predictive Suite":
                  "models": {k: {"rmse": v["RMSE"], "mape": v["MAPE (%)"], "weight": float(v["Weight"].replace("%",""))/100} for k, v in em.items()}}
         d = _load_perf_log(); d["logs"].append(entry); d["logs"] = d["logs"][-500:]; _save_perf_log(d)
 
-    render_header("ai", "Price & Monte Carlo Forecasting", level="###")
+    render_header("trending-up", "Price & Monte Carlo Forecasting", level="###")
     
     # ── AI STRATEGIST GUIDE (Synchronized with Master Tactical Regime) ──
     if regime == "STRONG BULLISH" or regime == "BULLISH":
@@ -5468,7 +5423,7 @@ if active_tab == "4. Predictive Suite":
 
     st.markdown(f"""
     <div style='background:rgba(52,152,219,0.08); border:1px solid #3498db; padding:16px; border-radius:8px; margin-bottom:25px;'>
-        <div style='display:flex; align-items:center; margin-bottom:8px;'>{SVG_ICONS["brain"]} <b style='color:#3498db; font-size:1rem; margin-left:4px;'>AI Strategist Guide</b></div>
+        <div style='display:flex; align-items:center; margin-bottom:8px;'>{SVG_ICONS["brain"]} <b style='color:#3498db; font-size:1rem; margin-left:4px;'>ML Model Strategist</b></div>
         <div style='font-size:0.92rem; color:#e0e0e0; line-height:1.5;'>Market Context: <b style='color:{regime_ui_color};'>{regime}</b><br>Recommended Model: <b style='color:#00ffcc;'>{_rec_model}</b><br>Rationale: <i>{_rec_reason}</i></div>
         <div style='margin-top:12px; font-size:0.82rem; color:#8899aa; border-top:1px solid rgba(255,255,255,0.1); padding-top:8px;'><b>Pro Tip:</b> LSTM+ARIMA anchors mean-reversion • Transformer excels in patterns • <b>PatchTST (v10.0)</b> gives high fundamental resolution — ideal for stable markets.</div>
     </div>
@@ -5495,14 +5450,14 @@ if active_tab == "4. Predictive Suite":
             n_sims = st.selectbox("Monte Carlo Simulations", [500, 1000, 1500, 2000, 5000], index=3, key="n_sims_form")
         with fcol4:
             engine_mode = st.radio(
-                "🧠 Core Engine",
+                "Core Engine",
                 options=["LSTM Core", "Transformer", "PatchTST (SOTA)", "Smart Blend (Best of 3)"],
-                index=0,
+                index=3,
                 key="engine_mode_form",
                 help="LSTM Core: stable mean-reversion • Transformer: high-vol pattern recognition • PatchTST: channel-independent fundamentals • Smart Blend: trains all 3 engines and auto-weights them by accuracy (RMSE)."
             )
             
-        run_forecast = st.form_submit_button("🎯 RUN ENSEMBLE FORECAST", use_container_width=True, type="primary")
+        run_forecast = st.form_submit_button("🎯 EXECUTE ML ENSEMBLE FORECAST", use_container_width=True, type="primary")
 
     # Initialize before the forecast block so the metrics panel never hits NameError
     ensemble_metrics = {}
@@ -5530,11 +5485,11 @@ if active_tab == "4. Predictive Suite":
         use_patchtst    = (engine_mode == "PatchTST (SOTA)")
         use_transformer = (engine_mode == "Transformer")
         if len(df_fc) < 30:
-            st.warning(f"⚠️ Insufficient historical data ({len(df_fc)} days) to train the AI neural network. At least 30 days are required.")
+            st.warning(f"⚠️ Insufficient historical data ({len(df_fc)} days) to train the ML neural network. At least 30 days are required.")
             lstm_path, lstm_return, feat_imp = None, 0.0, {}
             st.session_state['ensemble_metrics'] = {}
         elif use_ensemble:
-            with st.spinner(f"Smart Blend: Training all 3 engines ({std_lookback}D Lookback)..."):
+            with st.spinner(f"Smart Blend: Training all 3 ML engines ({std_lookback}D Lookback)..."):
                 _ens = train_predict_ensemble(
                     df_fc, lookback=std_lookback, forecast_days=forecast_days,
                     sector_name=sector_val, quality_score=drift_score)
@@ -5574,7 +5529,7 @@ if active_tab == "4. Predictive Suite":
                     sector_name=sector_val, quality_score=drift_score)
             st.session_state['ensemble_metrics'] = {}
         else:  # LSTM Core
-            with st.spinner(f"🧠 Running LSTM Core ({std_lookback}D Lookback)..."):
+            with st.spinner(f"Running LSTM Core ({std_lookback}D Lookback)..."):
                 lstm_path, lstm_return, feat_imp = train_predict_lstm(
                     df_fc, lookback=std_lookback, forecast_days=forecast_days,
                     sector_name=sector_val, quality_score=drift_score)
@@ -5685,7 +5640,7 @@ if active_tab == "4. Predictive Suite":
         # ── ROW 2: AI Metrics (Horizontal Cards) ─────────────────────────────
         mcol1, mcol2, mcol3, mcol4 = st.columns(4)
         with mcol1:
-            st.metric("AI Ensemble Target", f"€{lstm_path[-1]:.2f}" if lstm_path is not None else "N/A", delta=f"{lstm_return*100:.2f}%" if lstm_return else "N/A")
+            st.metric("ML Ensemble Target", f"€{lstm_path[-1]:.2f}" if lstm_path is not None else "N/A", delta=f"{lstm_return*100:.2f}%" if lstm_return else "N/A")
             if lstm_path is not None:
                 st.session_state[f"ai_target_for_de_{fc_ticker}"] = float(lstm_path[-1])
                 st.caption(f"→ Synced to Decision Engine TP1")
@@ -5705,10 +5660,10 @@ if active_tab == "4. Predictive Suite":
         with mcol4:
             if precision_score is not None:
                 p_val = f"{precision_score:.1f}%"
-                p_label = f"AI Precision ({forecast_days}d Holdout)"
+                p_label = f"Model Precision ({forecast_days}d Holdout)"
                 p_delta = f"±{mape_raw*100:.1f}% uncertainty" if mape_raw else None
             else:
-                p_val, p_label, p_delta = "N/A", f"AI Precision ({forecast_days}d Holdout)", None
+                p_val, p_label, p_delta = "N/A", f"Model Precision ({forecast_days}d Holdout)", None
             st.metric(p_label, p_val, delta=p_delta)
             
         # Highlight divergence
@@ -5743,29 +5698,29 @@ if active_tab == "4. Predictive Suite":
         # ── Executive Verdict ────────────────────────────────────────────────
         if _conv_pts == 3 and _sig_rr >= 1.5:
             _sig_verdict, _sig_color, _sig_badge = "STRONG LONG", "#00ffcc", "HIGH CONVICTION"
-            _sig_desc = (f"All 3 pillars are aligned: AI projects +{_ai_upside:.1f}% upside, "
+            _sig_desc = (f"All 3 pillars are aligned: Projects +{_ai_upside:.1f}% upside, "
                          f"institutions are in Accumulation mode, and news sentiment is "
                          f"{'Bullish' if avg_sent > 0.1 else 'leaning constructive'}. "
                          f"A {_sig_rr:.1f}x R/R setup with Monte Carlo support — ideal for a full position.")
         elif _conv_pts >= 2 and _sig_rr >= 1.0:
             _sig_verdict, _sig_color, _sig_badge = "BUY / ACCUMULATE", "#2ecc71", "MODERATE CONVICTION"
-            _sig_desc = (f"2 of 3 pillars are constructive. AI targets €{_ai_target:.2f} "
+            _sig_desc = (f"2 of 3 pillars are constructive. Targets €{_ai_target:.2f} "
                          f"({_ai_upside:+.1f}%), Smart Money shows {sm_spirit}. "
                          f"R/R of {_sig_rr:.1f}x supports a partial position entry. "
                          f"Reserve allocation for a dip toward €{_ai_stop:.2f}.")
         elif _ai_upside <= -3:
             _sig_verdict, _sig_color, _sig_badge = "REDUCE / HEDGE", "#e74c3c", "BEARISH SIGNAL"
-            _sig_desc = (f"AI model projects {_ai_upside:.1f}% downside to €{_ai_target:.2f}. "
+            _sig_desc = (f"Model projects {_ai_upside:.1f}% downside to €{_ai_target:.2f}. "
                          f"Smart Money shows {sm_spirit} and sentiment is {sent_label}. "
                          f"Consider reducing exposure or hedging until price stabilizes above €{_ai_stop:.2f}.")
         elif _conv_pts == 0:
             _sig_verdict, _sig_color, _sig_badge = "AVOID / WAIT", "#e74c3c", "NO CONVICTION"
-            _sig_desc = (f"All 3 pillars are negative: AI upside is weak ({_ai_upside:+.1f}%), "
+            _sig_desc = (f"All 3 pillars are negative: Upside is weak ({_ai_upside:+.1f}%), "
                          f"Smart Money shows {sm_spirit}, and sentiment is {sent_label}. "
                          f"Best to stay flat or look for a better setup.")
         else:
             _sig_verdict, _sig_color, _sig_badge = "NEUTRAL / MONITOR", "#f1c40f", "MIXED SIGNALS"
-            _sig_desc = (f"Conflicting signals: AI projects {_ai_upside:+.1f}% to €{_ai_target:.2f}, "
+            _sig_desc = (f"Conflicting signals: Projects {_ai_upside:+.1f}% to €{_ai_target:.2f}, "
                          f"but Smart Money ({sm_spirit}) and sentiment ({sent_label}) "
                          f"are not fully aligned. Monitor for a confluence trigger before entry.")
 
@@ -5778,11 +5733,11 @@ if active_tab == "4. Predictive Suite":
                     f"<span style='color:#ccc;'>{label}:</span> "
                     f"<span style='color:#fff; font-weight:700;'>{value}</span></span>")
 
-        _pill_ai   = _pill("AI Upside",    f"{_ai_upside:+.1f}%",  _ai_upside >= 3)
+        _pill_ai   = _pill("Upside",    f"{_ai_upside:+.1f}%",  _ai_upside >= 3)
         _pill_sm   = _pill("Smart Money",  sm_spirit,              sm_spirit == "Accumulation")
         _pill_sent = _pill("Sentiment",    sent_label,             avg_sent > 0.05)
         _pill_rr   = _pill("R/R",          f"{_sig_rr:.1f}x",      _sig_rr >= 1.5)
-        _pill_prec = _pill("AI Precision", f"{precision_score:.1f}%" if precision_score else "N/A", (precision_score or 0) >= 75)
+        _pill_prec = _pill("ML Precision", f"{precision_score:.1f}%" if precision_score else "N/A", (precision_score or 0) >= 75)
 
         _unc_str = f"±{mape_raw*100:.1f}% CI" if mape_raw else ""
         _vix_now_sig = float(prices_full[prices_full['ticker']=='^VIX']['price_close'].iloc[-1]) \
@@ -5832,7 +5787,7 @@ if active_tab == "4. Predictive Suite":
 <div style='color:#8899aa; font-size:0.65rem;'>Risk: {((last_price-_ai_stop)/last_price*100):.1f}%</div>
 </div>
 <div style='background:rgba(0,255,204,0.06); border-radius:8px; padding:10px 12px; border-top:2px solid #00ffcc;'>
-<div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px;'>TARGET 1 (AI)</div>
+<div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px;'>TARGET 1 (ML)</div>
 <div style='color:#00ffcc; font-weight:800; font-size:1.05rem;'>€{_ai_target:.2f}</div>
 <div style='color:#8899aa; font-size:0.65rem;'>{_unc_str} · {_ai_upside:+.1f}%</div>
 </div>
@@ -5947,7 +5902,7 @@ Monte Carlo 90% CI: <b style='color:#fff;'>€{p5_final:.2f}</b> ↔ <b style='c
             _em_display = st.session_state.get('ensemble_metrics', {})
             if _em_display:
                 st.markdown("")
-                render_header("activity", "🏆 Ensemble Performance Breakdown")
+                render_header("activity", "Ensemble Performance Breakdown")
                 rows_html = ""
                 for model_name, m in _em_display.items():
                     icon_key = "brain" if model_name == "LSTM" else "bot" if model_name == "Transformer" else "dna"
@@ -5997,7 +5952,7 @@ Monte Carlo 90% CI: <b style='color:#fff;'>€{p5_final:.2f}</b> ↔ <b style='c
                     st.info("📊 Insufficient history. Please run Smart Blend at least twice to build Regime analysis.")
                 else:
                     # Section A: Recent Anchor History
-                    st.markdown("​**🏆 Anchor Model by Run (Latest 20):**")
+                    st.markdown("​**Anchor Model by Run (Latest 20):**")
                     anchor_rows = [{
                         "Time": e["ts"], "Ticker": e["ticker"],
                         "Horizon": f"{e['horizon']}D",
@@ -6166,7 +6121,7 @@ if active_tab == "5. Backtest Lab":
         _bt_options = [t for t in all_tickers if t not in ["^VIX","SPY","^GSPC","^DJI","^IXIC"]]
         
         # Move Mode Toggle OUTSIDE the form to trigger immediate UI rerun for 'disabled' logic
-        bt_mode = st.radio("Simulation Mode", ["Single Strategy", "🏆 Find Best Strategy (Auto-Run All)"], index=0, horizontal=True)
+        bt_mode = st.radio("Simulation Mode", ["Single Strategy", "Find Best Strategy (Auto-Run All)"], index=0, horizontal=True)
         
         # --- Market Regime Integration ---
         st.markdown(f"""
@@ -6286,7 +6241,7 @@ if active_tab == "5. Backtest Lab":
                 best_strat_name = comp_df.iloc[0]["Strategy"]
                 st.markdown(f"""
                 <div style='background:rgba(46, 204, 113, 0.1); border-left:4px solid #2ecc71; padding:15px; border-radius:4px; margin-bottom:20px;'>
-                    <span style='color:#2ecc71; font-weight:800; font-size:1.1rem;'>🏆 WINNER: {best_strat_name}</span><br>
+                    <span style='color:#2ecc71; font-weight:800; font-size:1.1rem;'>WINNER: {best_strat_name}</span><br>
                     <span style='color:#bbb; font-size:0.9rem;'>For {r['ticker']}, this strategy offers the superior risk-adjusted performance (Sharpe: {comp_df.iloc[0]['Sharpe']:.2f}).</span>
                 </div>
                 """, unsafe_allow_html=True)

@@ -1639,10 +1639,6 @@ tickers:
     name: Generac
     sector: Industrials
     region: US
-  GOOG:
-    name: Alphabet Inc. (Class C)
-    sector: Cloud/Software
-    region: US
   GPC:
     name: Genuine Parts Company
     sector: Consumer Retail
