@@ -818,7 +818,7 @@ def load_data():
             SELECT f.date, f.ticker, d.company, d.sector, d.region,
                    f.price_open, f.price_high, f.price_low, f.price_close, 
                    f.daily_return_pct, f.volume,
-                   f.ma_20, f.ma_50, f.ma_200, f.ma_signal, 
+                   f.ma_20, f.ma_50, f.ma_200, f.rsi, f.ma_signal, 
                    f.price_z_score, f.pct_from_ma200, f.pct_from_52w_high,
                    f.is_volume_spike, f.cap_category
             FROM marts.fct_daily_returns f
