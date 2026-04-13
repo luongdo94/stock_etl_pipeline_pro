@@ -2198,6 +2198,8 @@ if active_tab == "3. Qualitative Audit (AI)":
 
 
 
+
+            st.markdown("<div style='margin-top:10px; padding:6px 12px; background:rgba(255,255,255,0.03); border-left:4px solid #3498db; color:#3498db; font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:1.5px;'>LAYER 1: STRUCTURAL CONTEXT</div>", unsafe_allow_html=True)
             # ── TRADING CONTEXT (TOP of page) — 52-Week Range & Strategic Plan ─
             # All tactical values computed by the shared helper (identical formula to Screener)
             _tm        = get_tactical_metrics(df_deep, cur_p)
@@ -2238,6 +2240,8 @@ if active_tab == "3. Qualitative Audit (AI)":
             </div>
             """, unsafe_allow_html=True)
 
+
+            st.markdown("<div style='margin-top:35px; margin-bottom:-10px; padding:6px 12px; background:rgba(255,255,255,0.03); border-left:4px solid #e67e22; color:#e67e22; font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:1.5px;'>LAYER 2: TACTICAL EXECUTION MATRIX</div>", unsafe_allow_html=True)
             # ── UNIFIED DECISION SUPPORT MATRIX (ACTION LAYER) ────────────────
             render_header("activity", "360° Decision & Action Matrix")
             
@@ -2429,139 +2433,190 @@ if active_tab == "3. Qualitative Audit (AI)":
                 </div>
             </div>
             """, unsafe_allow_html=True)
-            # --- WATCHLIST QUICK SAVE WORKFLOW ---
-            with st.expander("📥 📝 Save Idea to Watchlist Pipeline", expanded=False):
-                with st.form(f"quick_save_form_{deep_ticker}"):
-                    st.write("**Idea Management & Catalyst Tracking**")
-                    _wl_col1, _wl_col2 = st.columns(2)
-                    with _wl_col1:
-                        # Auto-suggest status based on Logic
-                        _s_index = 1 if act_str.startswith("🔥") or "ACCUMULATE" in act_str else 0
-                        opt_status = st.selectbox("Status", ["🔵 PENDING", "🟢 ACTIVE", "🟡 REVIEW", "🔴 INVALIDATED", "⚫ CLOSED"], index=_s_index)
-                        opt_thesis = st.text_area("Investment Thesis (Why buy/hold?)", value=act_desc, height=110)
-                    with _wl_col2:
-                        opt_catalyst = st.text_input("Upcoming Catalyst (Earnings, FDA, Macro, etc.)", placeholder="e.g. Q4 Earnings expected positive...")
-                        
-                        _kcol1, _kcol2, _kcol3 = st.columns(3)
-                        with _kcol1: opt_entry = st.number_input("Entry (€)", value=float(_s1), step=1.0)
-                        with _kcol2: opt_inval = st.number_input("Inval / Stop (€)", value=float(_stop_loss), step=1.0)
-                        with _kcol3: opt_tp = st.number_input("Take Profit (€)", value=float(_tp1), step=1.0)
 
-                        opt_erd = meta.get("next_earnings_date", "TBD")
-                        if pd.isna(opt_erd): opt_erd = "TBD"
-                        st.caption(f"Next Earnings: **{opt_erd}**")
-                        
-                    if st.form_submit_button("💾 Save Candidate to Watchlist", type="primary"):
-                        try:
-                            wl_df = load_watchlist()
-                            # Delete existing to overwrite
-                            wl_df = wl_df[wl_df["Ticker"] != deep_ticker]
-                            
-                            new_row = pd.DataFrame([{
-                                "Ticker": deep_ticker,
-                                "Status": opt_status,
-                                "Thesis": opt_thesis,
-                                "Catalyst": opt_catalyst,
-                                "Entry Target": round(opt_entry, 2),
-                                "Invalidation Level": round(opt_inval, 2),
-                                "Take Profit": round(opt_tp, 2),
-                                "Next Earnings": str(opt_erd),
-                                "Added Date": pd.Timestamp.now().strftime("%Y-%m-%d")
-                            }])
-                            wl_df = pd.concat([wl_df, new_row], ignore_index=True)
-                            save_watchlist(wl_df)
-                            st.success(f"✅ Successfully added **{deep_ticker}** to Watchlist Pipeline!")
-                        except Exception as e:
-                            st.error(f"Error saving to watchlist: {e}")
-
-            st.markdown("---")
-            
-            # ── QUAL vs QUANT: Full-Width 50/50 Split View ───────────────────
+            st.markdown("<div style='margin-top:35px; padding:6px 12px; background:rgba(255,255,255,0.03); border-left:4px solid #9b59b6; color:#9b59b6; font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:1.5px;'>LAYER 3: RISK INTELLIGENCE HUB</div>", unsafe_allow_html=True)
+            # ── RISK INTELLIGENCE HUB: Full-Width Top, then Split View ─────
             render_header("zap", "AI Investment Intelligence: Unified Risk Audit", level="####")
             st.caption("A multi-dimensional synthesis of Qualitative (NLP News) and Quantitative (Fundamental Pillars) risk factors to provide a unified investment verdict.")
+
+            # ── PART A (Full-Width): Audit Button + Cockpit + Conflict Banner ─
             
-            qual_col, quant_col = st.columns([1, 1])
-            
-            # ── LEFT: NLP Qualitative Audit ──────────────────────────────────
-            with qual_col:
-                st.markdown("<div style='color:#3498db; font-size:0.85rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; border-bottom:1px solid rgba(52,152,219,0.3); padding-bottom:6px;'>Unified Alpha-Risk Intelligence Hub</div>", unsafe_allow_html=True)
-                
-                if st.button("Run Real-Time AI Risk Audit", type="primary", use_container_width=True):
-                    with st.spinner(f"Scanning news for {meta['company']}..."):
-                        llm_res = analyze_risk_with_llm(deep_ticker, meta['company'])
-                        
-                        if llm_res.get("error"):
-                            st.error(f"NLP Error: {llm_res['error'][:80]}")
-                        else:
-                            nlp_score     = llm_res.get("red_flag_score", 0)
-                            nlp_sentiment = llm_res.get("sentiment", "Neutral")
-                            nlp_reco      = llm_res.get("recommendation", "N/A")
-                            nlp_insights  = llm_res.get("key_insights", [])
-                            nlp_category  = llm_res.get("risk_category", "None")
-                            
-                            # ── TRIGGER UNIFIED VERDICT (Consolidated) ───────
-                            _cohere_key_ra = (
-                                os.environ.get("COHERE_API_KEY", "")
-                                or st.session_state.get("cohere_api_key", "")
+            if st.button("Run Real-Time AI Risk Audit", type="primary", use_container_width=True):
+                with st.spinner(f"Scanning news for {meta['company']}..."):
+                    llm_res = analyze_risk_with_llm(deep_ticker, meta['company'])
+                    if llm_res.get("error"):
+                        st.error(f"NLP Error: {llm_res['error'][:80]}")
+                    else:
+                        nlp_score     = llm_res.get("red_flag_score", 0)
+                        nlp_sentiment = llm_res.get("sentiment", "Neutral")
+                        nlp_reco      = llm_res.get("recommendation", "N/A")
+                        nlp_insights  = llm_res.get("key_insights", [])
+                        nlp_category  = llm_res.get("risk_category", "None")
+                        _cohere_key_ra = (
+                            os.environ.get("COHERE_API_KEY", "")
+                            or st.session_state.get("cohere_api_key", "")
+                        )
+                        if _cohere_key_ra:
+                            _fmi_data_ra = compute_fmi_live(
+                                quarterly_fin[quarterly_fin["ticker"] == deep_ticker] if not quarterly_fin.empty else pd.DataFrame(),
+                                df_fin
                             )
-                            if _cohere_key_ra:
-                                _fmi_data_ra = compute_fmi_live(
-                                    quarterly_fin[quarterly_fin["ticker"] == deep_ticker] if not quarterly_fin.empty else pd.DataFrame(),
-                                    df_fin
-                                )
-                                _unified_metrics = {
-                                    **meta_enriched,
-                                    "ticker":        deep_ticker,
-                                    "company":       meta.get("company", deep_ticker),
-                                    "sector":        meta.get("sector", "N/A"),
-                                    "ai_score":      ai_score,
-                                    "fmi_score":     _fmi_data_ra.get("total", "N/A"),
-                                    "fmi_label":     _fmi_data_ra.get("label", "N/A"),
-                                    "price":         cur_p,
-                                    "market_regime": regime,
-                                    # Technical structure — precise S/R for TP/SL suggestions
-                                    "support_s1":    round(_s1, 2),
-                                    "support_s2":    round(_s2, 2),
-                                    "resistance_r1": round(_r1, 2),
-                                    "resistance_r2": round(_r2, 2),
-                                    "stop_loss_technical": round(_stop_loss, 2),
-                                    "ma_20_current": round(float(df_deep["ma_20"].iloc[-1]), 2) if "ma_20" in df_deep.columns and not df_deep["ma_20"].isna().all() else "N/A",
-                                    "ma_50_current": round(float(df_deep["ma_50"].iloc[-1]), 2) if "ma_50" in df_deep.columns and not df_deep["ma_50"].isna().all() else "N/A",
-                                }
-                                with st.spinner("Synthesizing CIO Unified Verdict..."):
-                                    _unified_report = get_unified_verdict(_cohere_key_ra, _unified_metrics, llm_res)
-                                
-                                # Compute conflict flag: Quant vs Qual divergence
-                                _qs = int(ai_score) if str(ai_score).isdigit() else 0
-                                _ns = llm_res.get("red_flag_score", 0)
-                                _nst = llm_res.get("sentiment", "Neutral")
-                                _conflict = (
-                                    (_qs >= 65 and (_ns >= 55 or _nst in ["Negative", "Critical"])) or
-                                    (_qs < 45  and (_ns <= 25  and _nst == "Positive"))
-                                )
-                                # Store as dict to keep raw signals for the expander below
-                                st.session_state[f"unified_verdict_{deep_ticker}"] = {
-                                    "report":        _unified_report,
-                                    "nlp_insights":  llm_res.get("key_insights", []),
-                                    "nlp_sentiment": _nst,
-                                    "nlp_score":     _ns,
-                                    "extracted_at":  datetime.now().strftime("%H:%M:%S"),
-                                    "is_conflict":   _conflict,
-                                    "ai_score_snap": _qs,
-                                }
-                                st.success("Audit complete — see AI Risk Overlay below.", icon="✅")
+                            _unified_metrics = {
+                                **meta_enriched,
+                                "ticker":        deep_ticker,
+                                "company":       meta.get("company", deep_ticker),
+                                "sector":        meta.get("sector", "N/A"),
+                                "ai_score":      ai_score,
+                                "fmi_score":     _fmi_data_ra.get("total", "N/A"),
+                                "fmi_label":     _fmi_data_ra.get("label", "N/A"),
+                                "price":         cur_p,
+                                "market_regime": regime,
+                                "support_s1":    round(_s1, 2),
+                                "support_s2":    round(_s2, 2),
+                                "resistance_r1": round(_r1, 2),
+                                "resistance_r2": round(_r2, 2),
+                                "stop_loss_technical": round(_stop_loss, 2),
+                                "ma_20_current": round(float(df_deep["ma_20"].iloc[-1]), 2) if "ma_20" in df_deep.columns and not df_deep["ma_20"].isna().all() else "N/A",
+                                "ma_50_current": round(float(df_deep["ma_50"].iloc[-1]), 2) if "ma_50" in df_deep.columns and not df_deep["ma_50"].isna().all() else "N/A",
+                            }
+                            with st.spinner("Synthesizing CIO Unified Verdict..."):
+                                _unified_report = get_unified_verdict(_cohere_key_ra, _unified_metrics, llm_res)
+                            _qs = int(ai_score) if str(ai_score).isdigit() else 0
+                            _ns = llm_res.get("red_flag_score", 0)
+                            _nst = llm_res.get("sentiment", "Neutral")
+                            _conflict = (
+                                (_qs >= 65 and (_ns >= 55 or _nst in ["Negative", "Critical"])) or
+                                (_qs < 45  and (_ns <= 25  and _nst == "Positive"))
+                            )
+                            st.session_state[f"unified_verdict_{deep_ticker}"] = {
+                                "report":        _unified_report,
+                                "nlp_insights":  llm_res.get("key_insights", []),
+                                "nlp_sentiment": _nst,
+                                "nlp_score":     _ns,
+                                "extracted_at":  datetime.now().strftime("%H:%M:%S"),
+                                "is_conflict":   _conflict,
+                                "ai_score_snap": _qs,
+                            }
+                            st.success("Audit complete — see AI Risk Overlay below.", icon="✅")
+            else:
+                st.markdown("""
+                <div style='text-align:center; padding:30px 20px; color:#666;'>
+                    <div style='font-size:2rem; font-weight: 800; font-family: monospace; letter-spacing: -2px;'>NLP</div>
+                    <div style='font-size:0.85rem; margin-top:10px;'>Click the button above to scan real-time<br>news headlines and detect hidden risks.</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+
+
+            # ── AI RISK OVERLAY (Full-Width) ──────────────────────────────────
+            _unified_key = f"unified_verdict_{deep_ticker}"
+            if _unified_key in st.session_state:
+                _uv_data = st.session_state[_unified_key]
+                if isinstance(_uv_data, dict):
+                    _uv_text       = _uv_data.get("report", "")
+                    _nlp_insights  = _uv_data.get("nlp_insights", [])
+                    _nlp_score     = _uv_data.get("nlp_score", 0)
+                    _nlp_sent      = _uv_data.get("nlp_sentiment", "Neutral")
+                    _audit_time    = _uv_data.get("extracted_at", "")
+                    _is_conflict   = _uv_data.get("is_conflict", False)
+                    _ai_score_snap = _uv_data.get("ai_score_snap", 0)
                 else:
-                    st.markdown("""
-                    <div style='text-align:center; padding:40px 20px; color:#666;'>
-                        <div style='font-size:2rem; font-weight: 800; font-family: monospace; letter-spacing: -2px;'>NLP</div>
-                        <div style='font-size:0.85rem; margin-top:10px;'>Click the button above to scan real-time<br>news headlines and detect hidden risks.</div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    _uv_text, _nlp_insights, _nlp_score = _uv_data, [], 0
+                    _nlp_sent, _audit_time, _is_conflict, _ai_score_snap = "N/A", "", False, 0
 
+                # ── AI Risk Cockpit: 3-Column Premium Scorecard (Full-Width) ──
+                _pulse_style = "border: 1px solid rgba(230,126,34,0.6); box-shadow: 0 0 15px rgba(230,126,34,0.15); border-left: 4px solid #e67e22;" if _is_conflict else "border: 1px solid rgba(255,255,255,0.08); border-left: 4px solid #444;"
+                _q_color = "#00ffcc" if _ai_score_snap >= 70 else "#f1c40f" if _ai_score_snap >= 45 else "#e74c3c"
+                _r_color = "#e74c3c" if _nlp_score >= 60 else "#f39c12" if _nlp_score >= 30 else "#2ecc71"
+                _s_color = "#00ffcc" if _nlp_sent == "Positive" else "#e74c3c" if _nlp_sent in ["Negative", "Critical"] else "#8899aa"
 
+                st.markdown(f"""
+    <div style='
+        display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap:12px; margin:16px 0 10px 0;
+        background: rgba(255,255,255,0.02);
+        backdrop-filter: blur(8px);
+        padding: 1px; border-radius: 12px;
+        {_pulse_style}
+    '>
+        <!-- Card 1: Quant Health -->
+        <div style='padding:15px; background:rgba(255,255,255,0.01); border-radius:10px;'>
+            <div style='font-size:0.65rem; color:#8899aa; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;'>{SVG_ICONS["chart"]} Quant Health</div>
+            <div style='display:flex; align-items:baseline; gap:6px;'>
+                <span style='font-size:1.4rem; font-weight:700; color:white;'>{_ai_score_snap}</span>
+                <span style='font-size:0.75rem; color:#666;'>/100</span>
+            </div>
+            <div style='width:100%; height:3px; background:rgba(255,255,255,0.05); border-radius:2px; margin-top:8px;'>
+                <div style='width:{_ai_score_snap}%; height:100%; background:{_q_color}; border-radius:2px;'></div>
+            </div>
+        </div>
+        <!-- Card 2: News Sentiment -->
+        <div style='padding:15px; background:rgba(255,255,255,0.01); border-radius:10px;'>
+            <div style='font-size:0.65rem; color:#8899aa; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;'>{SVG_ICONS["globe"]} News Tone</div>
+            <div style='display:flex; align-items:center; gap:8px;'>
+                <span style='font-size:1.2rem; font-weight:600; color:{_s_color};'>{_nlp_sent}</span>
+            </div>
+            <div style='margin-top:8px; font-size:0.7rem; color:#666;'>Extracting sentiment from latest financial headlines</div>
+        </div>
+        <!-- Card 3: Risk Exposure -->
+        <div style='padding:15px; background:rgba(255,255,255,0.01); border-radius:10px;'>
+            <div style='font-size:0.65rem; color:#8899aa; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;'>{SVG_ICONS["risk"]} Risk Exposure</div>
+            <div style='display:flex; align-items:baseline; gap:6px;'>
+                <span style='font-size:1.4rem; font-weight:700; color:{_r_color};'>{_nlp_score}</span>
+                <span style='font-size:0.75rem; color:#666;'>/100</span>
+            </div>
+            <div style='width:100%; height:3px; background:rgba(255,255,255,0.05); border-radius:2px; margin-top:8px;'>
+                <div style='width:{_nlp_score}%; height:100%; background:{_r_color}; border-radius:2px;'></div>
+            </div>
+        </div>
+    </div>
+    <div style='font-size:0.62rem; color:#556677; text-align:right; margin-bottom:12px; letter-spacing:0.5px;'>
+        SYNCHRONIZED AUDIT TIMESTAMP: {_audit_time} &nbsp;&middot;&nbsp; <b>DYNAMIC OVERLAY V12.1</b>
+    </div>
+    """, unsafe_allow_html=True)
+
+                # ── Signal Conflict Banner (full-width, only when diverging) ──
+                if _is_conflict:
+                    if _ai_score_snap >= 65:
+                        if _nlp_sent in ["Negative", "Critical"]:
+                            _conf_dir = f"Strong Quant Health ({_ai_score_snap}/100), but News Tone is distinctly <b>{_nlp_sent.upper()}</b>. The market may penalize the stock soon."
+                        else:
+                            _conf_dir = f"Strong Quant Health ({_ai_score_snap}/100), but Risk Exposure is elevated (<b>Red Flag: {_nlp_score}/100</b>). Monitor for potential headline shocks."
+                    else:
+                        _conf_dir = f"Weak Quant Health ({_ai_score_snap}/100), but News Tone is <b>POSITIVE</b>. Beware of a temporary, sentiment-driven rally."
+                    st.markdown(f"""
+<div style='display:flex; align-items:flex-start; gap:14px; margin:8px 0; padding:14px 18px; background:linear-gradient(90deg,rgba(230,126,34,0.14),rgba(231,76,60,0.08)); border:1px solid rgba(230,126,34,0.55); border-left:4px solid #e67e22; border-radius:10px;'>
+    <span style='font-size:1.4rem; line-height:1; padding-top:2px;'>⚠️</span>
+    <div>
+        <div style='color:#e67e22; font-weight:900; font-size:0.75rem; text-transform:uppercase; letter-spacing:2px; margin-bottom:4px;'>⚡ Signal Conflict Detected</div>
+        <div style='color:#ddd; font-size:0.85rem; line-height:1.5;'>{_conf_dir}</div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+            # ── PART B: 50/50 Split — Narrative (left) | Radar (right) ──────
+            st.markdown("<hr style='border:0; height:1px; background:rgba(255,255,255,0.08); margin:24px 0;'>", unsafe_allow_html=True)
+            qual_col, quant_col = st.columns([1, 1])
+
+            with qual_col:
+                # Detailed Audit Narrative (only when audit has been run)
+                if _unified_key in st.session_state:
+                    with st.expander("🔍 Detailed CIO Reasoning & Full Audit", expanded=True):
+                        st.markdown(
+                            f"<div style='background:rgba(255,255,255,0.03); border-left:4px solid #555;"
+                            f" border-radius:8px; padding:20px; font-size:0.9rem; line-height:1.7; color:#efefef;'>"
+                            + _uv_data.get("report", "") + "</div>",
+                            unsafe_allow_html=True
+                        )
+                        _show_insights = _uv_data.get("nlp_insights", []) if isinstance(_uv_data, dict) else []
+                        if _show_insights:
+                            st.markdown("---")
+                            st.markdown("<div style='font-size:0.75rem; color:#888; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;'>🧩 Raw Evidence: News Signals Analyzed</div>", unsafe_allow_html=True)
+                            for insight in _show_insights:
+                                st.markdown(f"<div style='font-size:0.78rem; color:#ccc; border-left:2px solid #3498db; padding-left:8px; margin-bottom:5px;'>{insight}</div>", unsafe_allow_html=True)
 
                 # ── NEWS FEED (Auto-load, FinBERT Sentiment) ─────────────────
-                st.markdown("<div style='color:#f39c12; font-size:0.85rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-top:16px; margin-bottom:8px; border-bottom:1px solid rgba(243,156,18,0.3); padding-bottom:6px;'>📰 News Intelligence</div>", unsafe_allow_html=True)
+                st.markdown("<div style='color:#f39c12; font-size:0.85rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-top:16px; margin-bottom:8px; border-bottom:1px solid rgba(243,156,18,0.3); padding-bottom:6px;'>📰 Market Sentiment (FinBERT)</div>", unsafe_allow_html=True)
                 try:
                     import feedparser
                     _rss_url = f"https://news.google.com/rss/search?q={deep_ticker}+stock&hl=en-US&gl=US&ceid=US:en"
@@ -2609,8 +2664,7 @@ if active_tab == "3. Qualitative Audit (AI)":
                 except Exception as _e:
                     st.caption(f"⚠️ News feed unavailable: {str(_e)[:60]}")
 
-            
-            # ── RIGHT: Radar Chart & Metrics (Quantitative) ────────────
+
             with quant_col:
                 tab_q, tab_m = st.tabs(["Quality Breakdown", "Momentum (FMI)"])
                 
@@ -2726,117 +2780,8 @@ if active_tab == "3. Qualitative Audit (AI)":
                     )
                     st.markdown(_fmi_html, unsafe_allow_html=True)
 
-
-            # ── AI RISK OVERLAY (Decision-First Flow) ────────────────────────
-            # Layer 1: Summary Bar  |  Layer 2: Conflict Banner  |  Layer 3: Narrative
-            _unified_key = f"unified_verdict_{deep_ticker}"
-            if _unified_key in st.session_state:
-                _uv_data = st.session_state[_unified_key]
-                # Backward compatibility
-                if isinstance(_uv_data, dict):
-                    _uv_text       = _uv_data.get("report", "")
-                    _nlp_insights  = _uv_data.get("nlp_insights", [])
-                    _nlp_score     = _uv_data.get("nlp_score", 0)
-                    _nlp_sent      = _uv_data.get("nlp_sentiment", "Neutral")
-                    _audit_time    = _uv_data.get("extracted_at", "")
-                    _is_conflict   = _uv_data.get("is_conflict", False)
-                    _ai_score_snap = _uv_data.get("ai_score_snap", 0)
-                else:
-                    _uv_text, _nlp_insights, _nlp_score = _uv_data, [], 0
-                    _nlp_sent, _audit_time, _is_conflict, _ai_score_snap = "N/A", "", False, 0
-
-                # ────────────────────────────────────────────────────────────
-                # LAYER 1 — AI Risk Overlay: Compact Summary Bar
-                # ────────────────────────────────────────────────────────────
-                st.markdown(f"""
-                <div style='
-                    display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap;
-                    gap:10px; padding:12px 18px;
-                    background:rgba(255,255,255,0.03);
-                    border:1px solid rgba(255,255,255,0.1); border-radius:10px;
-                    margin:14px 0 10px 0;
-                '>
-                    <div style='display:flex; align-items:center; gap:10px;'>
-                        <span style='font-size:1.1rem;'></span>
-                        <div>
-                            <div style='font-size:0.65rem; color:#888; text-transform:uppercase;
-                                        letter-spacing:1.5px; margin-bottom:2px;'>
-                                AI Risk Audit Metrics &nbsp;&middot;&nbsp; {_audit_time}
-                            </div>
-                            <div style='font-size:0.82rem; color:#ccc;'>
-                                Quant Score: <b style='color:white;'>{_ai_score_snap}/100</b>
-                                &nbsp;&nbsp;|&nbsp;&nbsp;
-                                News Sentiment: <b style='color:white;'>{_nlp_sent}</b>
-                                &nbsp;&nbsp;|&nbsp;&nbsp;
-                                Red Flag: <b style='color:white;'>{_nlp_score}/100</b>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
-
-                # ────────────────────────────────────────────────────────────
-                # LAYER 2 — Signal Conflict Banner (only when diverging)
-                # ────────────────────────────────────────────────────────────
-
-                if _is_conflict:
-                    _conf_dir = (
-                        "Strong fundamentals but elevated news risk — the market may not have priced in this headline risk yet."
-                        if _ai_score_snap >= 65
-                        else "Positive news momentum but weak underlying fundamentals — beware of a sentiment-driven rally."
-                    )
-                    st.markdown(f"""
-                    <div style='
-                        display:flex; align-items:flex-start; gap:14px;
-                        margin:8px 0; padding:14px 18px;
-                        background:linear-gradient(90deg,rgba(230,126,34,0.14),rgba(231,76,60,0.08));
-                        border:1px solid rgba(230,126,34,0.55);
-                        border-left:4px solid #e67e22;
-                        border-radius:10px;
-                    '>
-                        <span style='font-size:1.4rem; line-height:1; padding-top:2px;'>⚠️</span>
-                        <div>
-                            <div style='color:#e67e22; font-weight:900; font-size:0.78rem;
-                                        text-transform:uppercase; letter-spacing:2px; margin-bottom:4px;'>
-                                ⚡ Signal Conflict Detected
-                            </div>
-                            <div style='color:#ddd; font-size:0.82rem; line-height:1.5;'>
-                                {_conf_dir}
-                                <span style='color:#aaa; font-size:0.75rem;'>
-                                    &nbsp;(Quant: {_ai_score_snap}/100 &nbsp;&middot;&nbsp;
-                                    News: {_nlp_sent} &middot; RedFlag {_nlp_score}/100)
-                                </span>
-                            </div>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-
-                # ────────────────────────────────────────────────────────────
-                # LAYER 3 — Detailed Audit Narrative (collapsed by default)
-                # ────────────────────────────────────────────────────────────
-                with st.expander("🔍 Detailed CIO Reasoning & Full Audit", expanded=False):
-                    st.markdown(
-                        f"<div style='background:rgba(255,255,255,0.02); border-left:3px solid #444;"
-                        f" border-radius:6px; padding:18px; font-size:0.88rem; line-height:1.65;'>"
-                        + _uv_text + "</div>",
-                        unsafe_allow_html=True
-                    )
-                    if _nlp_insights:
-                        st.markdown("---")
-                        st.markdown("<div style='font-size:0.75rem; color:#888; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;'>🧩 Raw Evidence: News Signals Analyzed</div>", unsafe_allow_html=True)
-                        for insight in _nlp_insights:
-                            st.markdown(f"<div style='font-size:0.78rem; color:#ccc; border-left:2px solid #3498db; padding-left:8px; margin-bottom:5px;'>{insight}</div>", unsafe_allow_html=True)
-                        st.markdown(f"<div style='font-size:0.7rem; color:#555; margin-top:8px;'>Red Flag Score: {_nlp_score}/100 &middot; LLM Impression: {_nlp_sent}</div>", unsafe_allow_html=True)
-
-            else:
-                if os.environ.get("COHERE_API_KEY", "") or st.session_state.get("cohere_api_key", ""):
-                    st.info(
-                        "**AI Risk Overlay** — Click **'Run Real-Time AI Risk Audit'** above "
-                        "to activate the overlay combining news sentiment + quantitative data.",
-                        icon="🧠"
-                    )
-
             st.markdown("---")
+            st.markdown("<div style='margin-top:35px; margin-bottom:15px; padding:6px 12px; background:rgba(255,255,255,0.03); border-left:4px solid #e74c3c; color:#e74c3c; font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:1.5px;'>LAYER 4: DEEP DIAGNOSTICS & RAW DATA</div>", unsafe_allow_html=True)
             render_header("activity", "Diagnostic Metrics Portfolio")
 
             _card_style = "background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:10px 4px 4px 4px;margin-bottom:4px;"
@@ -2855,7 +2800,6 @@ if active_tab == "3. Qualitative Audit (AI)":
                     render_metric_row("Market Cap", m_cap_txt)
                     fwd_pe_txt = f"Fwd: {meta.get('forward_pe', 0):.1f}" if pd.notnull(meta.get('forward_pe')) and meta.get('forward_pe', 0) > 0 else ""
                     pe_val = f"{meta['pe_ratio']:.1f}" if pd.notnull(meta['pe_ratio']) else "N/A"
-                    render_metric_row("P/E", pe_val, delta=fwd_pe_txt)
                     render_metric_row("P/E", pe_val, delta=fwd_pe_txt)
                     
                     peg_raw = meta.get('peg_ratio', 0)
@@ -3142,7 +3086,6 @@ if active_tab == "3. Qualitative Audit (AI)":
 
             # --- HISTORICAL FUNDAMENTAL TRENDS (Dual Axis) ---
             st.markdown("---")
-            st.markdown(f"#### 📅 {deep_ticker} Historical Fundamental Trends")
             
             tab_annual, tab_quarterly = st.tabs(["📊 Annual", "📉 Quarterly"])
             
@@ -3585,6 +3528,55 @@ if active_tab == "3. Qualitative Audit (AI)":
             fig_rel.add_trace(go.Scatter(x=common_dates, y=spy_cum, name="SPY (%)", line=dict(color="rgba(255,255,255,0.4)", width=2, dash="dot")))
             fig_rel.update_layout(template="plotly_dark", height=450, yaxis_title="Return (%)", hovermode="x unified", margin=dict(t=20, l=10, r=10, b=10))
             st.plotly_chart(fig_rel, use_container_width=True)
+
+            st.markdown("<div style='margin-top:35px; padding:6px 12px; background:rgba(255,255,255,0.03); border-left:4px solid #2ecc71; color:#2ecc71; font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:1.5px;'>LAYER 5: PORTFOLIO IDEA MANAGEMENT</div>", unsafe_allow_html=True)
+            # --- WATCHLIST QUICK SAVE WORKFLOW ---
+            with st.expander("📥 📝 Save Idea to Watchlist Pipeline", expanded=False):
+                with st.form(f"quick_save_form_{deep_ticker}"):
+                    st.write("**Idea Management & Catalyst Tracking**")
+                    _wl_col1, _wl_col2 = st.columns(2)
+                    with _wl_col1:
+                        # Auto-suggest status based on Logic
+                        _s_index = 1 if act_str.startswith("🔥") or "ACCUMULATE" in act_str else 0
+                        opt_status = st.selectbox("Status", ["🔵 PENDING", "🟢 ACTIVE", "🟡 REVIEW", "🔴 INVALIDATED", "⚫ CLOSED"], index=_s_index)
+                        opt_thesis = st.text_area("Investment Thesis (Why buy/hold?)", value=act_desc, height=110)
+                    with _wl_col2:
+                        opt_catalyst = st.text_input("Upcoming Catalyst (Earnings, FDA, Macro, etc.)", placeholder="e.g. Q4 Earnings expected positive...")
+                        
+                        _kcol1, _kcol2, _kcol3 = st.columns(3)
+                        with _kcol1: opt_entry = st.number_input("Entry (€)", value=float(_s1), step=1.0)
+                        with _kcol2: opt_inval = st.number_input("Inval / Stop (€)", value=float(_stop_loss), step=1.0)
+                        with _kcol3: opt_tp = st.number_input("Take Profit (€)", value=float(_tp1), step=1.0)
+
+                        opt_erd = meta.get("next_earnings_date", "TBD")
+                        if pd.isna(opt_erd): opt_erd = "TBD"
+                        st.caption(f"Next Earnings: **{opt_erd}**")
+                        
+                    if st.form_submit_button("💾 Save Candidate to Watchlist", type="primary"):
+                        try:
+                            wl_df = load_watchlist()
+                            # Delete existing to overwrite
+                            wl_df = wl_df[wl_df["Ticker"] != deep_ticker]
+                            
+                            new_row = pd.DataFrame([{
+                                "Ticker": deep_ticker,
+                                "Status": opt_status,
+                                "Thesis": opt_thesis,
+                                "Catalyst": opt_catalyst,
+                                "Entry Target": round(opt_entry, 2),
+                                "Invalidation Level": round(opt_inval, 2),
+                                "Take Profit": round(opt_tp, 2),
+                                "Next Earnings": str(opt_erd),
+                                "Added Date": pd.Timestamp.now().strftime("%Y-%m-%d")
+                            }])
+                            wl_df = pd.concat([wl_df, new_row], ignore_index=True)
+                            save_watchlist(wl_df)
+                            st.success(f"✅ Successfully added **{deep_ticker}** to Watchlist Pipeline!")
+                        except Exception as e:
+                            st.error(f"Error saving to watchlist: {e}")
+
+            st.markdown("---")
+
 
 # ── FEATURE 1.5: Correlation Matrix ──────────────────────────────────────────
 
@@ -4471,6 +4463,14 @@ if active_tab == "7. Portfolio Builder":
                 st.success(f"✅ Rule saved: If **{a_ticker} {a_metric}** is **{a_condition} {a_value}**, notify **{a_email}**.")
 
 # ── FEATURE 3: AI Price & Monte Carlo Forecasting ────────────────────────────
+
+
+
+            
+
+
+
+
 
 # ── TAB: MARKET SCANNER & OPPORTUNITY RADAR ──────────────────────────────────
 if active_tab == "2. Opportunity Radar":
