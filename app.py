@@ -403,16 +403,37 @@ def save_watchlist(df):
 
 @contextlib.contextmanager
 def get_db_connection(read_only=False):
-    """Database connection context manager."""
-    # Diagnostic: Print path and check existence
-    if not os.path.exists(DB_PATH):
+    """Database connection context manager with fallback search."""
+    # Discovery for local and Cloud environments
+    possible_paths = [
+        DB_PATH,
+        os.path.join(ROOT, "warehouse", "stock_demo.duckdb")
+    ]
+    
+    actual_path = None
+    for p in possible_paths:
+        if os.path.exists(p):
+            actual_path = p
+            break
+            
+    # Final backup: check for ANY duckdb file in warehouse folder
+    if not actual_path:
+        wh_dir = os.path.join(ROOT, "warehouse")
+        if os.path.exists(wh_dir):
+            all_files = os.listdir(wh_dir)
+            duck_files = [f for f in all_files if f.endswith(".duckdb")]
+            if duck_files:
+                actual_path = os.path.join(wh_dir, duck_files[0])
+    
+    if not actual_path:
         st.error(f"FATAL: Database file not found at {DB_PATH}")
-        st.info(f"Existing files in {os.path.dirname(DB_PATH)}: {os.listdir(os.path.dirname(DB_PATH)) if os.path.exists(os.path.dirname(DB_PATH)) else 'Dir missing'}")
+        if os.path.exists(os.path.dirname(DB_PATH)):
+            st.info(f"Existing files in {os.path.dirname(DB_PATH)}: {os.listdir(os.path.dirname(DB_PATH))}")
+        else:
+            st.info("Warehouse directory is missing.")
         raise FileNotFoundError(f"Database missing at {DB_PATH}")
         
-    import duckdb
-    st.sidebar.info(f"DuckDB Ver on Cloud: {duckdb.__version__}")
-    conn = duckdb.connect(DB_PATH, read_only=read_only)
+    conn = duckdb.connect(actual_path, read_only=read_only)
     try:
         yield conn
     finally:

@@ -15,6 +15,7 @@ airflow
 
 # Databases (Data Warehouse)
 warehouse/*.duckdb
+!warehouse/stock_demo.duckdb
 *.db
 *.duckdb
 
