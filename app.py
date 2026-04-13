@@ -466,19 +466,22 @@ def load_data():
         try:
             quarterly_f = conn.execute("SELECT * FROM marts.dim_quarterly_financials").df()
         except Exception:
-            quarterly_f = pd.DataFrame()
+            quarterly_f = pd.DataFrame(columns=["ticker", "year", "quarter", "report_date", "revenue", "eps"])
             
         try:
             earnings_calendar = conn.execute("SELECT * FROM raw.earnings_calendar").df()
             if not earnings_calendar.empty:
                 earnings_calendar["earnings_date"] = pd.to_datetime(earnings_calendar["earnings_date"])
+            else:
+                # Ensure columns exist even if empty
+                earnings_calendar = pd.DataFrame(columns=["ticker", "earnings_date", "eps_avg", "rev_avg"])
         except Exception:
-            earnings_calendar = pd.DataFrame()
+            earnings_calendar = pd.DataFrame(columns=["ticker", "earnings_date", "eps_avg", "rev_avg"])
 
         try:
             dq_warnings_f = conn.execute("SELECT * FROM marts.dq_warnings ORDER BY is_critical DESC, violations DESC").df()
         except Exception:
-            dq_warnings_f = pd.DataFrame()
+            dq_warnings_f = pd.DataFrame(columns=["check_name", "status", "violations", "is_critical"])
             
     # ── PRE-PROCESSING INSIDE CACHE ──
     prices_f["date"] = pd.to_datetime(prices_f["date"])
@@ -2187,7 +2190,10 @@ if active_tab == "3. Decision Engine":
 
                 with kcol6:
                     # ── EARNINGS CALENDAR (v13.0) ──
-                    e_row = earnings_cal[earnings_cal['ticker'] == deep_ticker]
+                    if not earnings_cal.empty and 'ticker' in earnings_cal.columns:
+                        e_row = earnings_cal[earnings_cal['ticker'] == deep_ticker]
+                    else:
+                        e_row = pd.DataFrame()
                     e_header = _header_style
                     if not e_row.empty:
                         e_date = e_row.iloc[0]['earnings_date']
