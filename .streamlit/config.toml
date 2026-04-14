@@ -1,0 +1,22 @@
+[theme]
+primaryColor = "#2ecc71"
+backgroundColor = "#0d0e14"
+secondaryBackgroundColor = "#1a1c2c"
+textColor = "#e0e0e0"
+font = "sans serif"
+
+[client]
+showSidebarNavigation = false
+
+[browser]
+gatherUsageStats = false
+
+[server]
+headless = true
+
+[ui]
+hideSidebarNav = false
+
+[development]
+# Ẩn menu "View Source" và các nút phát triển khác
+toolbarMode = "minimal"

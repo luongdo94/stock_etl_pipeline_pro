@@ -23,6 +23,6 @@ warehouse/*.duckdb
 *.log
 model_performance_log.json
 
-# Streamlit Local Secrets (CRITICAL for security)
+# Streamlit (Ignore secrets, allow config)
 .streamlit/secrets.toml
-.streamlit/
+# .streamlit/ # Commented out to allow config.toml
