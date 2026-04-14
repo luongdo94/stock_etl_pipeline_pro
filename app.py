@@ -2627,57 +2627,6 @@ if active_tab == "3. Qualitative Audit (AI)":
 
 
 
-                with kcol5:
-                    st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Price & Context</div>", unsafe_allow_html=True)
-                    render_metric_row("Target",       f"€{target_p:.2f}", delta=upside, is_pct=True)
-                    
-                    pe_5y_avg    = meta.get('pe_5y_avg', 0)
-                    pe_cur       = meta.get('pe_ratio', 0)
-                    pe_delta     = ((pe_cur / pe_5y_avg) - 1) * 100 if pe_5y_avg > 0 and pe_cur > 0 else 0
-                    
-                    render_metric_row("5Y Avg P/E",    f"{pe_5y_avg:.1f}" if pe_5y_avg > 0 else "N/A", delta=pe_delta, is_pct=True, color_invert=True)
-                    render_metric_row("Z-Score (5Y)",  f"{z_score:.2f}",  delta=z_status)
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-                with kcol6:
-                    # ── EARNINGS CALENDAR (v13.0) ──
-                    if not earnings_cal.empty and 'ticker' in earnings_cal.columns:
-                        e_row = earnings_cal[earnings_cal['ticker'] == deep_ticker]
-                    else:
-                        e_row = pd.DataFrame()
-                    e_header = _header_style
-                    if not e_row.empty:
-                        e_date = e_row.iloc[0]['earnings_date']
-                        if pd.notnull(e_date):
-                            # Handle both Timestamp and date objects safely
-                            e_date_obj = e_date.date() if hasattr(e_date, 'date') else e_date
-                            days_to_e = (e_date_obj - date.today()).days
-                            if 0 <= days_to_e <= 7:
-                                e_header = e_header.replace("#aabbcc", "#f39c12") # Highlight upcoming
-                                e_date_str = f"⚠️ {e_date_obj.strftime('%b %d')}"
-                            else:
-                                e_date_str = e_date_obj.strftime('%b %d, %y')
-                        else:
-                            e_date_str = "TBD"
-                        
-                        eps_est = e_row.iloc[0]['eps_avg']
-                        rev_est = e_row.iloc[0]['rev_avg']
-                    else:
-                        e_date_str = "N/A"
-                        eps_est = None
-                        rev_est = None
-
-                    st.markdown(f"<div style='{_card_style}'><div style='{e_header}'>Earnings & Events</div>", unsafe_allow_html=True)
-                    render_metric_row("Report Date", e_date_str)
-                    render_metric_row("EPS Est",     f"{eps_est:.2f}" if pd.notnull(eps_est) else "N/A")
-                    
-                    if pd.notnull(rev_est) and rev_est > 0:
-                        if rev_est >= 1e9: rev_txt = f"€{rev_est/1e9:.1f}B"
-                        else: rev_txt = f"€{rev_est/1e6:.0f}M"
-                    else:
-                        rev_txt = "N/A"
-                    render_metric_row("Revenue Est", rev_txt)
-                    st.markdown("</div>", unsafe_allow_html=True)
 
             st.markdown("---")
             
