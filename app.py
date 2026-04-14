@@ -2561,6 +2561,20 @@ if active_tab == "3. Qualitative Audit (AI)":
             # ── PART A (Full-Width): Audit Button + Cockpit + Conflict Banner ─
             _uv_data = st.session_state.get(f"unified_verdict_{deep_ticker}")
             
+            # Initialize safe defaults to prevent NameErrors in later blocks
+            _nlp_score, _nlp_sent, _nlp_insights = 0, "N/A", []
+            _is_conflict, _ai_score_snap, _audit_time = False, 0, ""
+            _unified_report = ""
+            
+            if _uv_data:
+                _nlp_score     = _uv_data.get("nlp_score", 0)
+                _nlp_sent      = _uv_data.get("nlp_sentiment", "Neutral")
+                _nlp_insights  = _uv_data.get("nlp_insights", [])
+                _is_conflict   = _uv_data.get("is_conflict", False)
+                _ai_score_snap = _uv_data.get("ai_score_snap", 0)
+                _audit_time    = _uv_data.get("extracted_at", "")
+                _unified_report = _uv_data.get("report", "")
+
             if st.button("Run Real-Time AI Risk Audit", type="primary", use_container_width=True):
                 with st.spinner(f"Scanning news for {meta['company']}..."):
                     llm_res = analyze_risk_with_llm(deep_ticker, meta['company'])
@@ -2671,13 +2685,13 @@ if active_tab == "3. Qualitative Audit (AI)":
                     </div>
                     """, unsafe_allow_html=True)
 
-                # ── AI Risk Cockpit: 3-Column Premium Scorecard (Full-Width) ──
-                _pulse_style = "border: 1px solid rgba(230,126,34,0.6); box-shadow: 0 0 15px rgba(230,126,34,0.15); border-left: 4px solid #e67e22;" if _is_conflict else "border: 1px solid rgba(255,255,255,0.08); border-left: 4px solid #444;"
-                _q_color = "#00ffcc" if _ai_score_snap >= 70 else "#f1c40f" if _ai_score_snap >= 45 else "#e74c3c"
-                _r_color = "#e74c3c" if _nlp_score >= 60 else "#f39c12" if _nlp_score >= 30 else "#2ecc71"
-                _s_color = "#00ffcc" if _nlp_sent == "Positive" else "#e74c3c" if _nlp_sent in ["Negative", "Critical"] else "#8899aa"
+            # ── AI Risk Cockpit: 3-Column Premium Scorecard (Full-Width) ──
+            _pulse_style = "border: 1px solid rgba(230,126,34,0.6); box-shadow: 0 0 15px rgba(230,126,34,0.15); border-left: 4px solid #e67e22;" if _is_conflict else "border: 1px solid rgba(255,255,255,0.08); border-left: 4px solid #444;"
+            _q_color = "#00ffcc" if _ai_score_snap >= 70 else "#f1c40f" if _ai_score_snap >= 45 else "#e74c3c"
+            _r_color = "#e74c3c" if _nlp_score >= 60 else "#f39c12" if _nlp_score >= 30 else "#2ecc71"
+            _s_color = "#00ffcc" if _nlp_sent == "Positive" else "#e74c3c" if _nlp_sent in ["Negative", "Critical"] else "#8899aa"
 
-                st.markdown(f"""
+            st.markdown(f"""
     <div style='
         display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
         gap:12px; margin:16px 0 10px 0;
@@ -2722,16 +2736,16 @@ if active_tab == "3. Qualitative Audit (AI)":
     </div>
     """, unsafe_allow_html=True)
 
-                # ── Signal Conflict Banner (full-width, only when diverging) ──
-                if _is_conflict:
-                    if _ai_score_snap >= 65:
-                        if _nlp_sent in ["Negative", "Critical"]:
-                            _conf_dir = f"Strong Quant Health ({_ai_score_snap}/100), but News Tone is distinctly <b>{_nlp_sent.upper()}</b>. The market may penalize the stock soon."
-                        else:
-                            _conf_dir = f"Strong Quant Health ({_ai_score_snap}/100), but Risk Exposure is elevated (<b>Red Flag: {_nlp_score}/100</b>). Monitor for potential headline shocks."
+            # ── Signal Conflict Banner (full-width, only when diverging) ──
+            if _is_conflict:
+                if _ai_score_snap >= 65:
+                    if _nlp_sent in ["Negative", "Critical"]:
+                        _conf_dir = f"Strong Quant Health ({_ai_score_snap}/100), but News Tone is distinctly <b>{_nlp_sent.upper()}</b>. The market may penalize the stock soon."
                     else:
-                        _conf_dir = f"Weak Quant Health ({_ai_score_snap}/100), but News Tone is <b>POSITIVE</b>. Beware of a temporary, sentiment-driven rally."
-                    st.markdown(f"""
+                        _conf_dir = f"Strong Quant Health ({_ai_score_snap}/100), but Risk Exposure is elevated (<b>Red Flag: {_nlp_score}/100</b>). Monitor for potential headline shocks."
+                else:
+                    _conf_dir = f"Weak Quant Health ({_ai_score_snap}/100), but News Tone is <b>POSITIVE</b>. Beware of a temporary, sentiment-driven rally."
+                st.markdown(f"""
 <div style='display:flex; align-items:flex-start; gap:14px; margin:8px 0; padding:14px 18px; background:linear-gradient(90deg,rgba(230,126,34,0.14),rgba(231,76,60,0.08)); border:1px solid rgba(230,126,34,0.55); border-left:4px solid #e67e22; border-radius:10px;'>
     <span style='font-size:1.4rem; line-height:1; padding-top:2px;'>⚠️</span>
     <div>
@@ -2747,7 +2761,7 @@ if active_tab == "3. Qualitative Audit (AI)":
 
             with qual_col:
                 # Detailed Audit Narrative (only when audit has been run)
-                if _unified_key in st.session_state:
+                if _uv_data:
                     with st.expander("🔍 Detailed CIO Reasoning & Full Audit", expanded=True):
                         st.markdown(
                             f"<div style='background:rgba(255,255,255,0.03); border-left:4px solid #555;"
