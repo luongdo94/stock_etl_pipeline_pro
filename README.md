@@ -11,9 +11,20 @@ Honest Quant is not just a stock screener. It is a comprehensive **Hybrid Intell
 The backbone of Honest Quant is a robust, production-ready Data Engineering pipeline running on a modern data stack.
 
 ### Data Ingestion & Extraction (`etl/extract.py`)
-- **Data Provider**: Utilizes the `yfinance` API to extract daily granular data for US, EU, and Asian equities.
-- **Concurrency**: Integrates `ThreadPoolExecutor` to handle parallel data fetching across hundreds of tickers, reducing total extraction time from hours to minutes.
-- **Resilience**: Implements automatic retry logic and exponential backoff to handle free-tier API rate limits and connection drops.
+- **Data Providers**: Utilizes a dual-source strategy combining `yahooquery` (for sensitive Financials/Earnings) and `yfinance` (for high-velocity Price/FX data).
+- **Concurrency**: Integrates `ThreadPoolExecutor` and `yahooquery` batch modes to handle parallel data fetching across 600+ tickers.
+- **Resilience (Multi-Pass)**: Implements a two-pass surgical strategy:
+    - **Pass 1**: Batch concurrent extraction for speed.
+    - **Pass 2 (Surgical)**: Sequential, throttled retry for failed tickers with randomized jitter to bypass API blocks and reach 100% coverage.
+
+### Intelligent Loading Strategy
+- **Incremental Load (Watermarking)**: The system automatically detects the last available data point for each ticker. In daily runs, it strictly fetches only the missing "gap" (incremental window), reducing bandwidth consumption and avoiding IP blocks.
+- **New Ticker Bootstrapping**: When a new ticker is added to `config/tickers.yaml`, the ETL engine automatically identifies its absence in the warehouse and triggers a **Full 5-Year History Download** specifically for that ticker, while keeping all other tickers on an incremental path.
+- **Multi-tier Smart Refresh**: To maximize speed and avoid API throttling, the system implements a tiered caching strategy:
+    - **Tier 1 (Daily)**: Stock Prices & Technicals. Always updated.
+    - **Tier 2 (Weekly - 168h)**: Quarterly Financials, Cashflow, and Earnings.
+    - **Tier 3 (Monthly - 720h)**: Company Metadata (Sector, Industry), Historical Annual Financials.
+- **Coverage Guard**: Regardless of the timers, a deep refresh is automatically triggered if total warehouse coverage drops below **95%** (Metadata) or **90%** (Quarterly data).
 
 ### Data Transformation & Warehousing (`etl/transform.py` & `etl/load.py`)
 - **Storage Layer**: Uses **DuckDB** (`stock_dw.duckdb`) as an embedded, highly optimized columnar database. This allows the Streamlit dashboard to execute complex aggregations with millisecond latency.
@@ -103,7 +114,34 @@ An institutional-grade simulation engine that allows you to directly trade your 
 
 ---
 
-## 🛠️ 5. Installation & Deployment
+## 🛡️ 5. Observability & System Integrity
+
+Honest Quant is built for production reliability, incorporating an enterprise-grade observability layer to ensure data fidelity.
+
+### Persistent Audit Layer (`marts.etl_audit`)
+Every ETL execution is cryptographically logged in the warehouse. The system tracks:
+- **Run Status**: `SUCCESS` or `FAILED` indicators.
+- **Performance**: Start/End timestamps and total processing duration.
+- **Intake volume**: Exact count of rows processed in each run.
+
+### Data Quality (DQ) Guardrails (`marts.dq_warnings`)
+The pipeline executes automated integrity checks post-transformation to detect anomalies before they reach the dashboard:
+- **Schema Validation**: Ensures all critical columns exist.
+- **Null Checks**: Detects missing prices or financials.
+- **Volatility Thresholds**: Flags suspicious price jumps (e.g., >100% in a single day).
+
+### Infrastructure Engine (Sidebar Health)
+The Streamlit dashboard features a high-fidelity **Infrastructure Engine** indicator in the sidebar, providing real-time visibility into the last sync status and data integrity without cluttering the analytical views.
+
+### Automated Testing Suite (`tests/`)
+A comprehensive test suite powered by `pytest` ensures the pipeline's logic remains sound during refactors:
+- **`test_config.py`**: Validates ticker lists and environment variables.
+- **`test_transform.py`**: Verifies complex math for RSI, Z-Score, and FMI logic using mocked data.
+- **`test_load.py`**: Ensures DuckDB persistence and schema alignment.
+
+---
+
+## 🛠️ 6. Installation & Deployment
 
 ### Global Requirements
 - Python 3.9+ 
@@ -123,10 +161,25 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Step 2. Master ETL Run
-Before launching the UI, you must compile the data warehouse (DuckDB) by explicitly pulling the latest end-of-day metrics:
+### Step 2. Run ETL Pipeline
+You have two main ways to run the pipeline depending on your needs:
+
+**Daily Update (Fast & Safe)**
+Updates only stock prices and runs technical indicators. Recommended for weekdays.
 ```bash
-python run.py
+python run.py --fast --sync
+```
+
+**Weekly/Full Update (Deep Dive)**
+Refreshes everything including Financials, Cashflows, and Earnings (if last update > 7 days).
+```bash
+python run.py --sync
+```
+
+**Force Rebuild**
+Ignore all caches and download 5 years of full history for everything.
+```bash
+python run.py --full
 ```
 
 ### Step 3. Spin Up The Control Room
@@ -136,7 +189,17 @@ Run the Streamlit frontend locally:
 # Alternatively: streamlit run app.py
 ```
 
-### Step 4. Continuous Integration (Airflow)
+### Step 4. Cloud Deployment (Optional)
+To run the dashboard on the web (e.g., Streamlit Cloud) without pushing the database to Git:
+1. Set up a **Supabase** project and enable **S3-compatible Storage**.
+2. Create a private bucket named `warehouse`.
+3. Set the following environment variables in your deployment platform:
+    - `SUPABASE_REMOTE_MODE = "true"`
+    - `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`
+    - `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_ENDPOINT`
+4. The dashboard will now stream data directly from the cloud via HTTP Parquet querying.
+
+### Step 5. Continuous Integration (Airflow)
 To set up completely automated daily ETL runs so your data is always fresh:
 ```bash
 docker-compose up -d
@@ -145,7 +208,7 @@ docker-compose up -d
 
 ---
 
-## 📂 6. Directory Structure
+## 📂 7. Directory Structure
 ```text
 stock_etl_pipeline/
 │
@@ -162,6 +225,7 @@ stock_etl_pipeline/
 │   ├── dags/              # Master DAGs
 │   └── docker-compose.yml # Container definitions
 │
+├── tests/                 # Automated pytest suite
 ├── app.py                 # Main Streamlit Tactical Dashboard UI
 ├── run.py                 # Pipeline trigger entry point
 ├── requirements.txt       # Python dependencies

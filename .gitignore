@@ -22,3 +22,7 @@ warehouse/*.duckdb
 # Logs & Meta
 *.log
 model_performance_log.json
+
+# Streamlit Local Secrets (CRITICAL for security)
+.streamlit/secrets.toml
+.streamlit/

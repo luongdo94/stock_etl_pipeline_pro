@@ -53,6 +53,112 @@ def needs_full_refresh(conn: duckdb.DuckDBPyConnection, force_weekly: bool = Tru
     return False
 
 
+def get_total_ticker_count() -> int:
+    """Helper to get expected ticker count from config/tickers.yaml."""
+    try:
+        import yaml
+        from pathlib import Path
+        config_path = Path(__file__).parent.parent / "config" / "tickers.yaml"
+        if config_path.exists():
+            config = yaml.safe_load(config_path.read_text())
+            return len(config.get("tickers", []))
+    except Exception:
+        pass
+    return 600 # Fallback default
+
+
+def needs_earnings_refresh(conn: duckdb.DuckDBPyConnection, threshold_hours: int = 168) -> bool:
+    """
+    Checks if the earnings calendar needs a refresh.
+    Conditions to skip (returns False):
+      1. Last load was < threshold_hours ago.
+      2. AND Data coverage is > 95% of total tickers.
+    """
+    total_target = get_total_ticker_count()
+    try:
+        # Check coverage and timing
+        stats = conn.execute("""
+            SELECT 
+                COUNT(DISTINCT ticker) as ticker_count,
+                MAX(_loaded_at) as last_load
+            FROM raw.earnings_calendar
+        """).fetchone()
+        
+        if not stats or stats[0] == 0:
+            return True # No data at all
+            
+        ticker_count, last_load = stats
+        
+        if ticker_count < (total_target * 0.95):
+            return True # Significant coverage gap — force retry
+            
+        from datetime import datetime
+        hours_since = (datetime.now() - last_load).total_seconds() / 3600
+        return hours_since > threshold_hours
+    except Exception:
+        return True
+
+
+def needs_fundamentals_refresh(conn: duckdb.DuckDBPyConnection, threshold_hours: int = 168) -> bool:
+    """
+    Checks if dynamic fundamental data (Quarterlies, Cashflows, FCF) needs a refresh.
+    Toggled every 7 days (168h) by default.
+    """
+    total_target = get_total_ticker_count()
+    try:
+        # Check coverage and timing based on quarterly financials table
+        stats = conn.execute("""
+            SELECT 
+                COUNT(DISTINCT ticker) as ticker_count,
+                MAX(_loaded_at) as last_load
+            FROM raw.quarterly_financials
+        """).fetchone()
+        
+        if not stats or stats[0] == 0:
+            return True # No data at all
+            
+        ticker_count, last_load = stats
+        
+        if ticker_count < (total_target * 0.90): # Lower threshold for obscure stocks
+            return True
+            
+        from datetime import datetime
+        hours_since = (datetime.now() - last_load).total_seconds() / 3600
+        return hours_since > threshold_hours
+    except Exception:
+        return True
+
+
+def needs_metadata_refresh(conn: duckdb.DuckDBPyConnection, threshold_hours: int = 720) -> bool:
+    """
+    Checks if static metadata (Company Info, Historical Annuals) needs a refresh.
+    Toggled every 30 days (720h) by default.
+    """
+    total_target = get_total_ticker_count()
+    try:
+        # Check coverage and timing based on company info table
+        stats = conn.execute("""
+            SELECT 
+                COUNT(DISTINCT ticker) as ticker_count,
+                MAX(_loaded_at) as last_load
+            FROM raw.company_info
+        """).fetchone()
+        
+        if not stats or stats[0] == 0:
+            return True # No data at all
+            
+        ticker_count, last_load = stats
+        
+        if ticker_count < (total_target * 0.95):
+            return True # Metadata should be high coverage
+            
+        from datetime import datetime
+        hours_since = (datetime.now() - last_load).total_seconds() / 3600
+        return hours_since > threshold_hours
+    except Exception:
+        return True
+
+
 # ── CANONICAL SCORING ENGINE (Single Source of Truth) ───────────────────────
 # This is the authoritative version used by BOTH the Dashboard (app.py)
 # and the ETL email report (Airflow). Any changes here propagate everywhere.

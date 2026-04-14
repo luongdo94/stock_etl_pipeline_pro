@@ -40,16 +40,51 @@ loads into DuckDB, and runs dbt-style transformations.
 ) as dag:
 
     def _extract(**context):
-        prices_df  = extract_stock_prices(lookback_days=2)  # Daily: only last 2 days
-        company_df = extract_company_info()
-        annual_df  = extract_historical_financials()
-        quarterly_df = extract_quarterly_financials()
+        import pandas as pd
+        from etl.extract import (extract_stock_prices, extract_company_info, 
+                                 extract_historical_financials, extract_quarterly_financials,
+                                 extract_cashflows, extract_historical_fcf, 
+                                 extract_quarterly_fcf, extract_earnings_calendar)
         
-        # Pass data via temp file (DataFrames are too large for XCom)
+        conn = get_connection()
+        prices_df = extract_stock_prices(lookback_days=2)  # Daily: only last 2 days
+        
+        # 🔗 SYNC: Tier 1 - Metadata & Annuals (720h/30d)
+        if utils.needs_metadata_refresh(conn):
+            company_df    = extract_company_info()
+            annual_df     = extract_historical_financials()
+        else:
+            print("   🕒 Metadata (Info/Annuals) is fresh (< 30 days) — skipping.")
+            company_df = annual_df = pd.DataFrame()
+
+        # 🔗 SYNC: Tier 2 - Quarterly Fundamentals & FCF (168h/7d)
+        if utils.needs_fundamentals_refresh(conn):
+            quarterly_df  = extract_quarterly_financials()
+            cashflow_df   = extract_cashflows()
+            fcf_df        = extract_historical_fcf()
+            fcf_q_df      = extract_quarterly_fcf()
+        else:
+            print("   🕒 Quarterly data (Q/FCF/Cashflow) is fresh (< 7 days) — skipping.")
+            quarterly_df = cashflow_df = fcf_df = fcf_q_df = pd.DataFrame()
+
+        # 🔗 SYNC: Tier 3 - Earnings Refresh (168h/7d)
+        if utils.needs_earnings_refresh(conn):
+            earnings_df = extract_earnings_calendar()
+        else:
+            print("   🕒 Earnings data is fresh (< 7 days) — skipping.")
+            earnings_df = pd.DataFrame()
+            
+        conn.close()
+
+        # Pass data via temp file
         prices_df.to_parquet("/tmp/prices.parquet")
         company_df.to_parquet("/tmp/companies.parquet")
         annual_df.to_parquet("/tmp/fin_annual.parquet")
         quarterly_df.to_parquet("/tmp/fin_quarterly.parquet")
+        cashflow_df.to_parquet("/tmp/cashflows.parquet")
+        fcf_df.to_parquet("/tmp/fcf_historical.parquet")
+        fcf_q_df.to_parquet("/tmp/fcf_quarterly.parquet")
+        earnings_df.to_parquet("/tmp/earnings.parquet")
         
         context["ti"].xcom_push(key="row_count", value=len(prices_df))
         return len(prices_df)
@@ -75,10 +110,18 @@ loads into DuckDB, and runs dbt-style transformations.
 
     def _load(**context):
         import pandas as pd
+        from etl.load import (load_stock_prices, load_company_info, load_historical_financials, 
+                              load_quarterly_financials, load_cashflows, load_historical_fcf, 
+                              load_quarterly_fcf, load_earnings_calendar)
+        
         prices_df    = pd.read_parquet("/tmp/prices.parquet")
         company_df   = pd.read_parquet("/tmp/companies.parquet")
         annual_df    = pd.read_parquet("/tmp/fin_annual.parquet")
         quarterly_df = pd.read_parquet("/tmp/fin_quarterly.parquet")
+        cashflow_df  = pd.read_parquet("/tmp/cashflows.parquet")
+        fcf_df       = pd.read_parquet("/tmp/fcf_historical.parquet")
+        fcf_q_df     = pd.read_parquet("/tmp/fcf_quarterly.parquet")
+        earnings_df  = pd.read_parquet("/tmp/earnings.parquet")
         
         conn = get_connection()
         create_raw_schema(conn)
@@ -86,6 +129,10 @@ loads into DuckDB, and runs dbt-style transformations.
         load_company_info(conn, company_df)
         load_historical_financials(conn, annual_df)
         load_quarterly_financials(conn, quarterly_df)
+        load_cashflows(conn, cashflow_df)
+        load_historical_fcf(conn, fcf_df)
+        load_quarterly_fcf(conn, fcf_q_df)
+        load_earnings_calendar(conn, earnings_df)
         conn.close()
 
     def _transform(**context):

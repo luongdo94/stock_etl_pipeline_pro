@@ -8,8 +8,11 @@ Usage:
 # ── SESSION ACTIVE: 2026-04-09 ───────────────────────────────────────────────
 import sys
 import os
+import json
+import logging
 from datetime import timedelta, date
 import streamlit as st
+import auth  
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
@@ -22,6 +25,13 @@ ROOT = os.path.dirname(os.path.abspath(__file__))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
+# Load environment variables from .env (COHERE_API_KEY, etc.)
+try:
+    from dotenv import load_dotenv
+    load_dotenv(os.path.join(ROOT, ".env"))
+except ImportError:
+    pass  # python-dotenv not installed; rely on system env vars
+
 import contextlib
 from plotly.subplots import make_subplots
 import numpy as np
@@ -30,7 +40,245 @@ from etl.llm_parser import analyze_risk_with_llm
 from etl.utils import compute_score, compute_fmi_live
 
 
+# ── COHERE AI INTELLIGENCE ENGINE ───────────────────────────────────────────
+def get_cohere_insight(api_key: str, metrics: dict) -> str:
+    """Generates an institutional-grade stock analysis report using Cohere Command-R+."""
+    try:
+        import cohere
+        co = cohere.ClientV2(api_key=api_key)
+
+        def _fmt(v, decimals=2, suffix=""):
+            if v is None or v == "N/A":
+                return "N/A"
+            try:
+                return f"{float(v):.{decimals}f}{suffix}"
+            except Exception:
+                return str(v)
+
+        ticker    = metrics.get("ticker", "N/A")
+        company   = metrics.get("company", ticker)
+        sector    = metrics.get("sector", "N/A")
+        ai_score  = metrics.get("ai_score", "N/A")
+        fmi_score = metrics.get("fmi_score", "N/A")
+        fmi_label = metrics.get("fmi_label", "N/A")
+        action    = metrics.get("action", "N/A")
+        price     = metrics.get("price", "N/A")
+        upside    = metrics.get("upside_pct", 0)
+        rsi       = metrics.get("rsi", 50)
+        ma_signal = metrics.get("ma_signal", "N/A")
+        z_score   = metrics.get("price_z_score", "N/A")
+        pe        = metrics.get("pe_ratio", "N/A")
+        peg       = metrics.get("peg_ratio", "N/A")
+        pb        = metrics.get("price_to_book", "N/A")
+        roe       = metrics.get("roe", "N/A")
+        fcf       = metrics.get("fcf_margin", "N/A")
+        div_yield = metrics.get("dividend_yield_pct", 0)
+        beta      = metrics.get("beta", "N/A")
+        consensus = metrics.get("recommendation_key", "N/A")
+        regime    = metrics.get("market_regime", "NEUTRAL")
+        w52_pos   = metrics.get("w52_pos", "N/A")
+        target_p  = metrics.get("target_mean_price", "N/A")
+
+        try:
+            rsi_note = "— Overbought territory" if float(rsi) > 70 else "— Oversold territory" if float(rsi) < 30 else "— Neutral zone"
+        except Exception:
+            rsi_note = ""
+
+        prompt = f"""You are a senior equity analyst at a top-tier investment bank (Goldman Sachs, J.P. Morgan level).
+Analyze the following stock data and produce a concise, professional investment report.
+
+## Stock Data: {ticker} ({company})
+- **Sector**: {sector}
+- **Current Price**: \u20ac{_fmt(price)}
+- **AI Quality Score**: {ai_score}/100
+- **Fundamental Momentum Index (FMI)**: {fmi_score}/100 ({fmi_label})
+- **Analyst Recommendation**: {action} | **Consensus**: {consensus}
+- **Analyst Price Target**: \u20ac{_fmt(target_p)} (Implied Upside: {_fmt(upside, 1)}%)
+- **52-Week Position**: {_fmt(w52_pos, 0)}% of range
+
+### Technical Indicators
+- **RSI (14)**: {_fmt(rsi, 1)} {rsi_note}
+- **MA Trend Signal**: {ma_signal}
+- **Price Z-Score**: {_fmt(z_score, 2)} (deviation from 60-day mean)
+
+### Valuation & Profitability
+- **P/E**: {_fmt(pe, 1)}x | **PEG**: {_fmt(peg, 2)} | **P/B**: {_fmt(pb, 2)}x
+- **ROE**: {_fmt(roe, 1, '%')} | **FCF Margin**: {_fmt(fcf, 1, '%')} | **Dividend Yield**: {_fmt(div_yield, 2, '%')}
+- **Beta**: {_fmt(beta, 2)} | **Market Regime**: {regime}
+
+---
+Write a structured analysis with exactly these THREE sections:
+
+### 1. \U0001f3af Investment Verdict
+One clear paragraph (3-5 sentences). State the overall investment thesis, Buy/Hold/Sell, and primary driver.
+
+### 2. \U0001f4ca Technical & Fundamental Analysis
+One paragraph (3-5 sentences). Analyze the interplay between technical signals and the fundamental picture. Highlight any divergence or confirmation.
+
+### 3. \u26a0\ufe0f Key Risks & Catalysts
+- Risk 1: (specific, quantitative)
+- Risk 2: (specific, quantitative)
+- Catalyst 1: (specific, quantitative)
+- Catalyst 2: (specific, quantitative)
+
+Rules: English only. Be direct and decisive. Reference specific data points. Under 300 words."""
+
+        response = co.chat(
+            model="command-r-plus-08-2024",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=600,
+        )
+        return response.message.content[0].text
+
+    except Exception as e:
+        err = str(e)
+        if "invalid api key" in err.lower() or "unauthorized" in err.lower():
+            return "\u274c **Invalid API Key.** Please check your Cohere API Key in the Sidebar."
+        elif "rate limit" in err.lower():
+            return "\u23f3 **Rate limit reached.** Please wait a moment and try again."
+        else:
+            return f"\u274c **AI Engine Error:** {err}"
+
+
+def get_unified_verdict(api_key: str, metrics: dict, nlp_result: dict) -> str:
+    """
+    Unified Alpha-Risk Intelligence — Chief Investment Officer (CIO) mode.
+    Combines quantitative fundamentals + NLP news sentiment into one actionable verdict.
+    """
+    try:
+        import cohere
+        co = cohere.ClientV2(api_key=api_key)
+
+        def _f(v, d=2, s=""):
+            if v is None or v == "N/A": return "N/A"
+            try: return f"{float(v):.{d}f}{s}"
+            except: return str(v)
+
+        ticker    = metrics.get("ticker", "N/A")
+        company   = metrics.get("company", ticker)
+        sector    = metrics.get("sector", "N/A")
+        ai_score  = metrics.get("ai_score", "N/A")
+        z_score   = metrics.get("price_z_score", 0)
+        try:
+            z_score = round(float(z_score), 2)
+        except (TypeError, ValueError):
+            z_score = 0
+        price     = metrics.get("price", "N/A")
+        upside    = metrics.get("upside_pct", 0)
+        rsi       = metrics.get("rsi", 50)
+        ma_signal = metrics.get("ma_signal", "N/A")
+        pe        = metrics.get("pe_ratio", "N/A")
+        peg       = metrics.get("peg_ratio", "N/A")
+        fcf       = metrics.get("fcf_margin", "N/A")
+        regime    = metrics.get("market_regime", "NEUTRAL")
+        target_p  = metrics.get("target_mean_price", "N/A")
+        # Price structure data for TP/SL calculation
+        high_52w       = metrics.get("price_52w_high", "N/A")
+        low_52w        = metrics.get("price_52w_low", "N/A")
+        pct_from_ma200 = metrics.get("pct_from_ma200", "N/A")
+        try:
+            pct_from_ma200 = f"{float(pct_from_ma200):+.1f}%"
+        except (TypeError, ValueError):
+            pct_from_ma200 = "N/A"
+        # Precise technical levels from price action
+        support_s1     = metrics.get("support_s1", "N/A")
+        support_s2     = metrics.get("support_s2", "N/A")
+        resistance_r1  = metrics.get("resistance_r1", "N/A")
+        resistance_r2  = metrics.get("resistance_r2", "N/A")
+        stop_loss_tech = metrics.get("stop_loss_technical", "N/A")
+        ma20_cur       = metrics.get("ma_20_current", "N/A")
+        ma50_cur       = metrics.get("ma_50_current", "N/A")
+
+        # NLP data
+        nlp_score     = nlp_result.get("red_flag_score", 0)
+        nlp_sentiment = nlp_result.get("sentiment", "Neutral")
+        nlp_category  = nlp_result.get("risk_category", "None")
+        nlp_reco      = nlp_result.get("recommendation", "N/A")
+        nlp_insights  = nlp_result.get("key_insights", [])
+        nlp_headlines = nlp_result.get("headlines_analyzed", 0)
+
+        # Signal alignment check
+        quant_bullish = int(ai_score) >= 65 if str(ai_score).isdigit() else False
+        news_bullish  = nlp_score <= 25 and nlp_sentiment in ["Positive"]
+        news_bearish  = nlp_score >= 60 or nlp_sentiment in ["Negative", "Critical"]
+        if quant_bullish and news_bullish:
+            alignment = "CONVERGENCE — Both quantitative and qualitative signals are bullish."
+        elif quant_bullish and news_bearish:
+            alignment = "DIVERGENCE — Strong fundamentals but negative news sentiment. High risk of surprise downside."
+        elif not quant_bullish and news_bullish:
+            alignment = "DIVERGENCE — Positive news but weak fundamentals. Rally may be unsustainable."
+        else:
+            alignment = "ALIGNMENT (BEARISH) — Both quantitative and qualitative signals are weak."
+
+        prompt = f"""You are a Chief Investment Officer (CIO) at a top-tier hedge fund.
+You have received both QUANTITATIVE data and QUALITATIVE news intelligence for a stock.
+Your task: synthesize both and issue ONE definitive, actionable investment verdict.
+
+## Stock: {ticker} ({company}) | Sector: {sector}
+
+### QUANTITATIVE (Fundamental & Technical)
+- AI Quality Score: {ai_score}/100
+- Price Z-Score: {z_score:+.2f}σ (deviation from 60-day mean; >+2=Overbought, <-2=Oversold)
+- Price: €{_f(price)} | Analyst Target: €{_f(target_p)} | Implied Upside: {_f(upside, 1)}%
+- 52W Range: €{_f(low_52w)} – €{_f(high_52w)} | % from MA200: {pct_from_ma200}
+- Technical Levels: S1=€{_f(support_s1)} | S2=€{_f(support_s2)} | R1=€{_f(resistance_r1)} | R2=€{_f(resistance_r2)} | Stop=€{_f(stop_loss_tech)}
+- Moving Averages: MA20=€{_f(ma20_cur)} | MA50=€{_f(ma50_cur)}
+- RSI: {_f(rsi, 1)} | MA Signal: {ma_signal} | P/E: {_f(pe, 1)}x | PEG: {_f(peg, 2)} | FCF: {_f(fcf, 1, '%')}
+- Market Regime: {regime}
+
+### QUALITATIVE (News Intelligence — {nlp_headlines} sources analyzed)
+- News Red Flag Score: {nlp_score}/100
+- Sentiment: {nlp_sentiment} | Risk Category: {nlp_category}
+- NLP Recommendation: "{nlp_reco}"
+- Key News Signals: {'; '.join(nlp_insights[:3]) if nlp_insights else 'None'}
+
+### SIGNAL ALIGNMENT
+{alignment}
+
+---
+Write a unified analysis with these FOUR sections:
+
+### CIO Verdict
+One decisive paragraph (3-4 sentences). What is your final call? Reference BOTH the quantitative and qualitative data.
+
+### 💡 Signal Convergence Analysis
+One paragraph explaining the interplay between the news sentiment and the fundamental data.
+If signals DIVERGE, explain which side (news vs fundamentals) you trust more and why.
+
+### 🎯 Actionable Recommendation
+State your recommendation — one of: **STRONG BUY / BUY / WATCH & ACCUMULATE / HOLD / REDUCE / AVOID**
+Include practical execution context where relevant (entry levels, targets, risk management). Use the technical data provided as reference — apply your own judgment, not mechanical formulas.
+
+### ⚠️ Key Risks to Monitor
+3 concise bullet points covering the most material risks.
+
+### 📊 Decision Guidance
+Consider these thresholds when forming your view (use your judgment, not hard rules):
+- Very weak fundamentals (AI Score < 35) with high news risk (Red Flag ≥ 60) → lean toward REDUCE or AVOID
+- Elevated sentiment risk (Red Flag ≥ 70) → exercise caution regardless of fundamentals
+- Statistically stretched price (Z-Score > +2.5) with mediocre fundamentals → avoid a BUY call
+
+Rules: English only. Be decisive and direct. Under 400 words total. Start the Actionable Recommendation label on its own line."""
+
+        response = co.chat(
+            model="command-r-plus-08-2024",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=700,
+        )
+        return response.message.content[0].text
+
+    except Exception as e:
+        err = str(e)
+        if "invalid api key" in err.lower() or "unauthorized" in err.lower():
+            return "❌ **Invalid API Key.** Please check your Cohere API Key."
+        elif "rate limit" in err.lower():
+            return "⏳ **Rate limit reached.** Please wait a moment and try again."
+        else:
+            return f"❌ **AI Engine Error:** {err}"
+
+
 # ── MULTI-CURRENCY NORMALIZATION MATRIX (Target: EUR) ───────────────
+
 @st.cache_data(ttl=1800, show_spinner="🌍 Fetching USD->EUR Rate...")
 def get_forex_rates(target="EUR"):
     import yfinance as yf
@@ -132,6 +380,26 @@ def render_header(icon_key, text, level="####", color="#e8eaf6"):
            f"{icon_svg}<span style='font-size:1.15rem; font-weight:700; letter-spacing:0.02em;'>{text}</span></div>"
     st.markdown(html, unsafe_allow_html=True)
 
+def get_flat_svg(key: str, size: int = 18, color: str = "currentColor", margin: str = "8px") -> str:
+    """
+    Returns a resized, recolored SVG string from SVG_ICONS.
+    Dynamically injects size, color and margin so icons can be used
+    inline at any scale without separate per-size definitions.
+    """
+    svg = SVG_ICONS.get(key, "")
+    if not svg:
+        return ""
+    import re as _svg_re
+    # Inject width / height
+    svg = _svg_re.sub(r'width="\d+"', f'width="{size}"', svg)
+    svg = _svg_re.sub(r'height="\d+"', f'height="{size}"', svg)
+    # Inject color (stroke + fill where currentColor is used)
+    svg = svg.replace('stroke="currentColor"', f'stroke="{color}"')
+    svg = svg.replace('fill="currentColor"', f'fill="{color}"')
+    # Inject margin-right
+    svg = _svg_re.sub(r'margin-right:\s*\d+px', f'margin-right:{margin}', svg)
+    return svg
+
 def analyze_sentiment_finbert(headlines):
     """Batch processes headlines using FinBERT and returns an average score (-1 to 1)."""
     pipe = get_finbert_pipeline()
@@ -162,6 +430,10 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
+# Activate Authentication Gateway (Multi-tenant)
+auth.require_auth()
+
 
 # ── SESSION STATE INITIALIZATION ───────────────────────────────────────────
 if "active_tab" not in st.session_state:
@@ -387,24 +659,181 @@ def get_rsi_vectorized(df, periods=14):
 
 # ── DATA LOADING ──────────────────────────────────────────────────────────────
 DB_PATH = os.path.join(ROOT, "warehouse", "stock_dw.duckdb")
-WATCHLIST_PATH = os.path.join(ROOT, "warehouse", "user_watchlist.csv")
+WATCHLIST_PATH = os.path.join(ROOT, "warehouse", "user_watchlist.csv")  # Deprecated local fallback
 
 def load_watchlist():
-    if os.path.exists(WATCHLIST_PATH):
-        try:
-            return pd.read_csv(WATCHLIST_PATH)
-        except Exception:
-            pass
-    return pd.DataFrame(columns=["Ticker", "Status", "Thesis", "Catalyst", "Entry Target", "Invalidation Level", "Take Profit", "Next Earnings", "Added Date"])
+    cols = ["Ticker", "Status", "Thesis", "Catalyst", "Entry Target", "Invalidation Level", "Take Profit", "Next Earnings", "Added Date"]
+    if not st.session_state.get("authenticated") or not st.session_state.get("user_id"):
+        return pd.DataFrame(columns=cols)
+        
+    try:
+        supabase = auth.get_supabase_client()
+        response = supabase.table("stock_watchlist").select("*").eq("user_id", st.session_state["user_id"]).execute()
+        
+        if not response.data:
+            return pd.DataFrame(columns=cols)
+            
+        df = pd.DataFrame(response.data)
+        
+        # Render back to Dashboard naming convention
+        rename_map = {
+            "ticker": "Ticker",
+            "status": "Status",
+            "thesis": "Thesis",
+            "catalyst": "Catalyst",
+            "entry_target": "Entry Target",
+            "invalidation_level": "Invalidation Level",
+            "take_profit": "Take Profit",
+            "next_earnings": "Next Earnings",
+            "added_date": "Added Date"
+        }
+        df = df.rename(columns=rename_map)
+        
+        return df[cols]
+    except Exception as e:
+        st.sidebar.error(f"⚠️ Data Sync Error (Supabase Load): {e}")
+        return pd.DataFrame(columns=cols)
 
 def save_watchlist(df):
-    os.makedirs(os.path.dirname(WATCHLIST_PATH), exist_ok=True)
-    df.to_csv(WATCHLIST_PATH, index=False)
+    if not st.session_state.get("authenticated") or not st.session_state.get("user_id"):
+        raise Exception("Authentication required to save data.")
+        
+    try:
+        supabase = auth.get_supabase_client()
+        user_id = st.session_state["user_id"]
+        
+        # Prepare data according to Postgres schema mapping (snake_case)
+        records = []
+        for _, row in df.iterrows():
+            record = {
+                "user_id": user_id,
+                "ticker": str(row.get("Ticker", "")),
+                "status": str(row.get("Status", "🔵 PENDING")),
+                "thesis": str(row.get("Thesis", "")),
+                "catalyst": str(row.get("Catalyst", "")),
+                "entry_target": float(row.get("Entry Target", 0)) if pd.notna(row.get("Entry Target")) and row.get("Entry Target") else None,
+                "invalidation_level": float(row.get("Invalidation Level", 0)) if pd.notna(row.get("Invalidation Level")) and row.get("Invalidation Level") else None,
+                "take_profit": float(row.get("Take Profit", 0)) if pd.notna(row.get("Take Profit")) and row.get("Take Profit") else None,
+                "next_earnings": str(row.get("Next Earnings", "TBD")),
+            }
+            records.append(record)
+            
+        # 1. Overwrite (Delete existing records for the logged-in user)
+        supabase.table("stock_watchlist").delete().eq("user_id", user_id).execute()
+        
+        # 2. Insert the entire new Watchlist DataFrame into Supabase
+        if records:
+            supabase.table("stock_watchlist").insert(records).execute()
+            
+    except Exception as e:
+        raise Exception(f"Failed to sync with Supabase: {e}")
 
+def load_portfolio_from_db():
+    if not st.session_state.get("authenticated") or not st.session_state.get("user_id"):
+        return {}
+    try:
+        supabase = auth.get_supabase_client()
+        response = supabase.table("stock_portfolio").select("ticker, shares, cost_basis").eq("user_id", st.session_state["user_id"]).execute()
+        if not response.data:
+            return {}
+        
+        # Parse logic: output format expected by the app is a dict of shares and cost
+        # Wait, returning a dict of {"AAPL": {"shares": 10.0, "cost": 150.0}}
+        parsed_data = {}
+        for row in response.data:
+            ticker = row.get("ticker")
+            parsed_data[ticker] = {
+                "shares": float(row.get("shares", 0)),
+                "cost": float(row.get("cost_basis", 0))
+            }
+        return parsed_data
+    except Exception as e:
+        st.sidebar.error(f"⚠️ Portfolio Sync Error: {e}")
+        return {}
+
+def save_portfolio_to_db(shares_dict, cost_dict):
+    if not st.session_state.get("authenticated") or not st.session_state.get("user_id"):
+        return
+    try:
+        supabase = auth.get_supabase_client()
+        user_id = st.session_state["user_id"]
+        
+        records = []
+        for ticker in shares_dict.keys():
+            records.append({
+                "user_id": user_id,
+                "ticker": ticker,
+                "shares": float(shares_dict.get(ticker, 0)),
+                "cost_basis": float(cost_dict.get(ticker, 0))
+            })
+            
+        supabase.table("stock_portfolio").delete().eq("user_id", user_id).execute()
+        if records:
+            supabase.table("stock_portfolio").insert(records).execute()
+    except Exception as e:
+        st.sidebar.error(f"⚠️ Failed to save Portfolio to Cloud: {e}")
 @contextlib.contextmanager
 def get_db_connection(read_only=False):
-    """Database connection context manager with fallback search."""
-    # Discovery for local and Cloud environments
+    """Database connection context manager with fallback and Hybrid Remote support."""
+    is_remote = os.environ.get("SUPABASE_REMOTE_MODE", "false").lower() == "true"
+    
+    if is_remote:
+        # ── HYBRID REMOTE MODE (Parquet over S3/HTTP) ──
+        try:
+            conn = duckdb.connect(":memory:")
+            conn.execute("INSTALL httpfs; LOAD httpfs;")
+            
+            # S3 Secrets from environment
+            s3_key = os.environ.get("S3_ACCESS_KEY_ID")
+            s3_secret = os.environ.get("S3_SECRET_ACCESS_KEY")
+            s3_endpoint = os.environ.get("S3_ENDPOINT", "").replace("https://", "")
+            s3_region = os.environ.get("S3_REGION", "us-east-1")
+            bucket = os.environ.get("S3_BUCKET_NAME", "warehouse")
+            
+            if not all([s3_key, s3_secret, s3_endpoint]):
+                st.error("Missing S3 credentials for Remote Mode.")
+                raise ValueError("Incomplete S3 configuration.")
+            
+            conn.execute(f"SET s3_region='{s3_region}';")
+            conn.execute(f"SET s3_endpoint='{s3_endpoint}';")
+            conn.execute(f"SET s3_access_key_id='{s3_key}';")
+            conn.execute(f"SET s3_secret_access_key='{s3_secret}';")
+            conn.execute("SET s3_use_ssl=true;")
+            conn.execute("SET s3_url_style='path';")
+            
+            # Create Views to map remote Parquet to local table names
+            # Tables to map (synced via etl/supabase_manager.py)
+            table_map = {
+                "marts.fct_daily_returns": "fct_daily_returns_p*.parquet", # Support sharding
+                "marts.dim_companies": "dim_companies.parquet",
+                "marts.dq_warnings": "dq_warnings.parquet",
+                "marts.etl_audit": "etl_audit.parquet",
+                "marts.agg_monthly_performance": "agg_monthly_performance.parquet", # Need to add this to sync
+                "marts.dim_annual_financials": "dim_annual_financials.parquet", # Need to add this to sync
+                "marts.dim_quarterly_financials": "dim_quarterly_financials.parquet", # Need to add this to sync
+                "raw.hist_fcf": "hist_fcf.parquet",
+                "raw.hist_fcf_quarterly": "hist_fcf_quarterly.parquet",
+                "raw.earnings_calendar": "earnings_calendar.parquet",
+                "raw.historical_financials": "historical_financials.parquet",
+                "raw.quarterly_financials": "quarterly_financials.parquet",
+                "raw.company_info": "company_info.parquet", # Need to add this to sync
+            }
+            
+            conn.execute("CREATE SCHEMA IF NOT EXISTS marts; CREATE SCHEMA IF NOT EXISTS raw;")
+            for table, file in table_map.items():
+                s3_path = f"s3://{bucket}/{file}"
+                conn.execute(f"CREATE VIEW {table} AS SELECT * FROM read_parquet('{s3_path}')")
+                
+            yield conn
+            return
+        except Exception as e:
+            st.error(f"Failed to initialize Remote Mode: {e}")
+            raise e
+        finally:
+            if 'conn' in locals():
+                conn.close()
+
+    # ── LOCAL MODE (File-based DuckDB) ──
     possible_paths = [
         DB_PATH,
         os.path.join(ROOT, "warehouse", "stock_demo.duckdb")
@@ -416,7 +845,6 @@ def get_db_connection(read_only=False):
             actual_path = p
             break
             
-    # Final backup: check for ANY duckdb file in warehouse folder
     if not actual_path:
         wh_dir = os.path.join(ROOT, "warehouse")
         if os.path.exists(wh_dir):
@@ -427,10 +855,6 @@ def get_db_connection(read_only=False):
     
     if not actual_path:
         st.error(f"FATAL: Database file not found at {DB_PATH}")
-        if os.path.exists(os.path.dirname(DB_PATH)):
-            st.info(f"Existing files in {os.path.dirname(DB_PATH)}: {os.listdir(os.path.dirname(DB_PATH))}")
-        else:
-            st.info("Warehouse directory is missing.")
         raise FileNotFoundError(f"Database missing at {DB_PATH}")
         
     conn = duckdb.connect(actual_path, read_only=read_only)
@@ -452,6 +876,7 @@ def load_data():
                    f.is_volume_spike, f.cap_category
             FROM marts.fct_daily_returns f
             LEFT JOIN marts.dim_companies d USING (ticker)
+            WHERE f.date >= CURRENT_DATE - INTERVAL 15 MONTH
             ORDER BY f.date
         """).df()
 
@@ -479,7 +904,33 @@ def load_data():
             dq_warnings_f = conn.execute("SELECT * FROM marts.dq_warnings ORDER BY is_critical DESC, violations DESC").df()
         except Exception:
             dq_warnings_f = pd.DataFrame()
-            
+
+        try:
+            hist_fcf_f = conn.execute("SELECT ticker, year, free_cash_flow, operating_cash_flow FROM raw.hist_fcf ORDER BY ticker, year").df()
+        except Exception:
+            hist_fcf_f = pd.DataFrame()
+
+        try:
+            hist_fcf_q_f = conn.execute("SELECT ticker, year, quarter, free_cash_flow, operating_cash_flow FROM raw.hist_fcf_quarterly ORDER BY ticker, year, quarter").df()
+        except Exception:
+            hist_fcf_q_f = pd.DataFrame()
+
+        # ── Pipeline Health Data ──
+        try:
+            etl_audit_f = conn.execute("""
+                SELECT status, start_time, rows_processed
+                FROM marts.etl_audit 
+                ORDER BY start_time DESC 
+                LIMIT 1
+            """).df()
+        except:
+            etl_audit_f = pd.DataFrame()
+
+        try:
+            total_tickers_f = conn.execute("SELECT COUNT(*) FROM marts.dim_companies").fetchone()[0]
+        except:
+            total_tickers_f = 0
+
     # ── PRE-PROCESSING INSIDE CACHE ──
     prices_f["date"] = pd.to_datetime(prices_f["date"])
     monthly_f["month"] = pd.to_datetime(monthly_f["month"])
@@ -488,7 +939,12 @@ def load_data():
     # Vectorized RSI (only for those missing it or to ensure consistency)
     prices_f['rsi'] = prices_f.groupby('ticker', group_keys=False).apply(lambda x: get_rsi_vectorized(x), include_groups=False)
     
-    return prices_f, companies_f, monthly_f, annual_f, quarterly_f, earnings_calendar, dq_warnings_f
+
+
+    return (
+        prices_f, companies_f, monthly_f, annual_f, quarterly_f, earnings_calendar, 
+        dq_warnings_f, hist_fcf_f, hist_fcf_q_f, etl_audit_f, total_tickers_f
+    )
 
 
 # ── ANALYTICS ENGINE: Global Screener Data ──────────────────────────────────
@@ -666,7 +1122,7 @@ def get_tactical_metrics(ticker_prices: "pd.DataFrame", cur_p: float) -> dict:
         "w52_lo":    float(w52_lo),
     }
 
-
+@st.cache_data(ttl=3600)
 def get_master_screener_data(_companies_df, _prices_df, _quarterly_fin, _annual_fin):
     # Exclude non-investable instruments: indices & volatility measures
     _non_equities = {"^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"}
@@ -713,10 +1169,10 @@ def get_master_screener_data(_companies_df, _prices_df, _quarterly_fin, _annual_
 
         ai_score  = compute_score(score_input)
         
-        # Compute FMI live from quarterly + annual data for this ticker
-        _ticker_qtrs = _quarterly_fin[_quarterly_fin["ticker"] == ticker] if not _quarterly_fin.empty else pd.DataFrame()
-        _ticker_anns = _annual_fin[_annual_fin["ticker"] == ticker] if not _annual_fin.empty else pd.DataFrame()
-        _fmi_res  = compute_fmi_live(_ticker_qtrs, _ticker_anns)
+        # 🚀 OPTIMIZATION: Compute FMI instantly using pre-calculated DuckDB variables 
+        # instead of dataframe filtering which causes heavy CPU load in loops.
+        from etl.utils import compute_fmi_details
+        _fmi_res  = compute_fmi_details(row.to_dict())
         fmi_score = _fmi_res["total"]
         fmi_lbl   = _fmi_res["label"]
         
@@ -894,7 +1350,7 @@ def render_sector_health_matrix(m_df: pd.DataFrame):
 
 
 # Primary Data Load (Cached)
-prices_full, companies_full, monthly_full, annual_fin, quarterly_fin, earnings_cal, dq_warnings = load_data()
+prices_full, companies_full, monthly_full, annual_fin, quarterly_fin, earnings_cal, dq_warnings, hist_fcf_full, hist_fcf_q_full, etl_audit, total_universe_size = load_data()
 m_df = get_master_screener_data(companies_full, prices_full, quarterly_fin, annual_fin)
 
 
@@ -913,7 +1369,7 @@ def format_ticker(ticker):
     return f"{ticker}: {name}" if name else ticker
 
 # ── UTILITY FUNCTIONS ───────────────────────────────────────────────────────
-def render_metric_row(label, value, delta=None, suffix="", is_pct=False, color_invert=False):
+def render_metric_row(label, value, delta=None, suffix="", is_pct=False, color_invert=False, value_color=None, help_text=None):
     """Render a compact inline KPI row (label | value | delta)."""
     delta_html = ""
     if delta is not None:
@@ -926,14 +1382,18 @@ def render_metric_row(label, value, delta=None, suffix="", is_pct=False, color_i
         except:
             delta_html = f"<span style='color:#888;font-size:0.72rem;'>{delta}</span>"
 
+    val_col = value_color if value_color else "#e8eaf6"
+    tooltip_attr = f"title='{help_text}'" if help_text else ""
+    cursor_style = "cursor:help;" if help_text else ""
+
     st.markdown(f"""
-        <div style='display:flex;justify-content:space-between;align-items:center;
+        <div {tooltip_attr} style='display:flex;align-items:center;flex-wrap:wrap;row-gap:2px;{cursor_style}
                     padding:5px 8px;border-bottom:1px solid rgba(255,255,255,0.05);'>
             <span style='color:#8899aa;font-size:0.72rem;font-weight:600;text-transform:uppercase;
-                         letter-spacing:0.04em;white-space:nowrap;flex:1.4;'>{label}</span>
-            <span style='color:#e8eaf6;font-size:0.88rem;font-weight:700;flex:1;text-align:right;
-                         white-space:nowrap;padding-right:8px;'>{value}{suffix}</span>
-            <span style='flex:0.9;text-align:right;'>{delta_html}</span>
+                         letter-spacing:0.04em;white-space:nowrap;margin-right:auto;'>{label}</span>
+            <span style='color:{val_col};font-size:0.88rem;font-weight:700;text-align:right;
+                         white-space:nowrap;margin-left:8px;'>{value}{suffix}</span>
+            <span style='text-align:right;margin-left:8px;'>{delta_html}</span>
         </div>
     """, unsafe_allow_html=True)
 
@@ -972,17 +1432,39 @@ if not prices_full.empty:
     min_db_date = prices_full["date"].min().date()
     max_db_date = prices_full["date"].max().date()
 
-    # ── Phase 2: Data Quality Transparency (Sidebar) ──
-    if not dq_warnings.empty:
-        critical_count = len(dq_warnings[dq_warnings['is_critical']])
-        warn_count = len(dq_warnings[~dq_warnings['is_critical']])
+    # ── Integrated Infrastructure & DQ Pulse (Unified Sidebar) ──
+    if not etl_audit.empty:
+        last_run = etl_audit.iloc[0]
+        st.sidebar.markdown("<div class='sb-section-label'>Infrastructure Engine</div>", unsafe_allow_html=True)
+        h_color = "#2ecc71" if last_run['status'] == 'SUCCESS' else "#e74c3c"
+        try:
+            ls_time = pd.to_datetime(last_run['start_time']).strftime('%b %d, %H:%M')
+        except: ls_time = "N/A"
         
-        with st.sidebar.expander(f"🔍 Data Quality: {critical_count} Crit, {warn_count} Warn", expanded=False):
-            for _, row in dq_warnings.iterrows():
-                icon = "❌" if row['is_critical'] else "⚠️"
-                st.write(f"{icon} **{row['check_name']}**")
-                st.write(f"&nbsp;&nbsp;&nbsp;&nbsp;Violations: {row['violations']} ({row['status']})")
-            st.info("Pipeline auto-skips minor gaps to ensure trading continuity.")
+        # DQ Summary and detail preparation
+        crit_dq = len(dq_warnings[dq_warnings['is_critical']]) if not dq_warnings.empty else 0
+        warn_dq = len(dq_warnings[~dq_warnings['is_critical']]) if not dq_warnings.empty else 0
+        dq_color = "#2ecc71" if (crit_dq == 0 and warn_dq == 0) else ("#e74c3c" if crit_dq > 0 else "#f1c40f")
+        dq_text = "CLEAN" if (crit_dq == 0 and warn_dq == 0) else (f"{crit_dq} CRIT" if crit_dq > 0 else f"{warn_dq} WARN")
+
+        # UI rendering is simplified below
+
+        rows_in = last_run['rows_processed'] if 'rows_processed' in last_run else 0
+        pulse_html = f"""
+<div style='padding:12px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:8px; margin-bottom:10px;'>
+<div style='display:flex; align-items:center; gap:10px;'>
+<div style='width:10px; height:10px; border-radius:50%; background:{h_color}; box-shadow:0 0 10px {h_color};'></div>
+<div style='flex-grow:1;'>
+<div style='font-size:0.75rem; color:#e8eaf6; font-weight:700; line-height:1.1;'>{last_run['status']}</div>
+<div style='font-size:0.6rem; color:#8899aa; margin-top:2px;'>Sync: {ls_time}</div>
+</div>
+<div style='text-align:right;'>
+<div style='font-size:0.65rem; color:{dq_color}; font-weight:700; line-height:1.1;'>{dq_text}</div>
+<div style='font-size:0.5rem; color:#667788; text-transform:uppercase; letter-spacing:0.04em;'>Integrity</div>
+</div>
+</div>
+</div>""".strip()
+        st.sidebar.markdown(pulse_html, unsafe_allow_html=True)
     
     indices = ["^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"]
 
@@ -1204,10 +1686,15 @@ macro = fetch_macro_data()
 from etl.utils import get_macro_regime
 _macro_regime = get_macro_regime(macro)
 
+# Get raw macro values for scoring
+_vix_val = macro.get("VIX", {}).get("val", 20)
+_dxy_pct = macro.get("DXY", {}).get("pct", 0)
+_tnx_chg = macro.get("US10Y", {}).get("chg", 0)
+
 # Get SPY Data & Breadth globally
 df_spy_global = prices_full[prices_full["ticker"] == "SPY"].sort_values("date")
 
-# Breadth: chỉ tính trên cổ phiếu thực sự (loại trừ indices, ETF benchmark)
+# Breadth:
 _indices_exclude = ["^VIX", "SPY", "^GSPC", "^DJI", "^IXIC", "^TNX", "^IRX"]
 breadth_data_global = prices_full[
     ~prices_full["ticker"].isin(_indices_exclude) &
@@ -1242,15 +1729,22 @@ if latest_spy_global is not None:
 if latest_breadth_global > 50: 
     conf_score_global += 30
 else:
-    conf_reasons.append(f"Breadth currently {latest_breadth_global:.0f}%")
+    conf_reasons.append(f"Weak Breadth ({latest_breadth_global:.0f}%)")
 
-if _macro_regime == "RISK_ON": 
-    conf_score_global += 20
-elif _macro_regime == "NEUTRAL": 
+# 3. Volatility Awareness - VIX Explicit (10 pts)
+if _vix_val < 20:
     conf_score_global += 10
-    conf_reasons.append("Macro Neutral")
+elif _vix_val < 28:
+    conf_score_global += 5
+    conf_reasons.append("VIX Elevated")
 else:
-    conf_reasons.append("Macro Defensive")
+    conf_reasons.append("VIX Panic (>28)")
+
+# 4. Macro Stability - DXY/TNX Explicit (10 pts)
+if _dxy_pct < 0.3 and _tnx_chg < 0.05:
+    conf_score_global += 10
+else:
+    conf_reasons.append("Macro Friction (USD/Rates)")
 
 conf_reason_str = "All indicators bullish." if conf_score_global >= 90 else ", ".join(conf_reasons)
 
@@ -1314,7 +1808,7 @@ if macro:
             sign  = "+" if pct >= 0 else ""
             return f"<span class='sb-macro-delta' style='color:{color}'>{sign}{pct:.2f}%</span>"
 
-        spy_sema = "🔥 Strong Risk-On" if _spy_p >= 1 else ("🟢 Risk-On" if _spy_p > 0 else ("🔴 Strong Risk-Off" if _spy_p <= -1 else "🟡 Risk-Off"))
+        spy_sema = "🔥 Strong Rally" if _spy_p >= 1 else ("🟢 Advancing" if _spy_p > 0 else ("🔴 Sharp Sell-off" if _spy_p <= -1 else "🟡 Pullback"))
         vix_sema = "🚨 High Panic" if _vix_v >= 25 else ("⚠️ Volatility Elevated" if _vix_v >= 18 else ("🔵 Normal Volatility" if _vix_v > 13 else "😴 Complacent"))
         tnx_sema = "📈 Yields Spiking" if _tnx_p >= 2 else ("↗️ Yields Rising" if _tnx_p > 0 else ("📉 Yields Dropping" if _tnx_p <= -2 else "↘️ Yields Falling"))
         dxy_sema = "🦅 Strong Dollar" if _dxy_p >= 0.5 else ("↗️ Dollar Strengthening" if _dxy_p > 0 else ("🕊️ Weak Dollar" if _dxy_p <= -0.5 else "↘️ Dollar Weakening"))
@@ -1484,8 +1978,8 @@ risk_return = monthly.groupby("ticker").agg(
 tab_labels = [
     "1. Market Regime",        # Strategic Overview
     "2. Opportunity Radar",    # Market Scanner
-    "3. Decision Engine",      # Single Stock Deep Dive
-    "4. Predictive Suite",     # Predictive Suite
+    "3. Qualitative Audit (AI)", # Single Stock Deep Dive
+    "4. Quantitative Forecast (ML)", # Predictive Suite
     "5. Backtest Lab",         # Strategy Backtest
     "6. Watchlist",            # Watchlist / Kanban
     "7. Portfolio Builder",    # Portfolio Management
@@ -1642,7 +2136,7 @@ if active_tab == "1. Market Regime":
                 </div>
                 """, unsafe_allow_html=True)
 
-        sec_tabs = st.tabs(["🗺️ Heatmap", "🏆 Top Sectors", "🚀 Top Movers", "📊 Health Matrix"])
+        sec_tabs = st.tabs(["Heatmap", "Top Sectors", "Top Movers", "Health Matrix"])
         
         with sec_tabs[0]:
             # ... (Heatmap code)
@@ -1700,6 +2194,10 @@ if active_tab == "1. Market Regime":
             stance, size, bias = "DEFENSIVE", "20-50%", "Value & Low Vol"
         else:
             stance, size, bias = "PROTECTIVE", "0-20%", "Cash & Hedging"
+
+        # 🚀 DYNAMIC OVERRIDE: If breadth is weak and macro is Risk-Off, force Defensive stance
+        if latest_breadth_global < 50 and _macro_regime == "RISK_OFF" and conf_score_global >= 50:
+            stance, size, bias = "DEFENSIVE (Overridden)", "30-50%", "Defensive Value"
             
         st.markdown(f"""
         <div style='background:rgba(20,30,45,0.7); border:1px solid rgba(255,255,255,0.1); border-radius:12px; padding:25px; height:400px;'>
@@ -1735,7 +2233,7 @@ if active_tab == "1. Market Regime":
 
 
 # ── TAB: SINGLE STOCK ANALYSIS ───────────────────────────────────────────────
-if active_tab == "3. Decision Engine":
+if active_tab == "3. Qualitative Audit (AI)":
     render_header("search", "Single Stock Deep Dive")
     if current_universe:
         # Persist selection across reruns via session_state
@@ -1751,9 +2249,8 @@ if active_tab == "3. Decision Engine":
             current_universe,
             placeholder="Search and Select an Asset...",
             format_func=format_ticker,
-            key="deep_ticker_selector",
-            index=current_universe.index(st.session_state["deep_ticker_selector"])
-                  if st.session_state.get("deep_ticker_selector") in current_universe else None
+            key="deep_ticker_selector"
+            # Loại bỏ tham số index vì Streamlit tự động dùng Session State cho widget có key
         )
         # Sync back so active_ticker stays aligned
         if deep_ticker:
@@ -1816,6 +2313,10 @@ if active_tab == "3. Decision Engine":
 
             st.markdown("---")
 
+
+
+
+            st.markdown("<div style='margin-top:10px; padding:6px 12px; background:rgba(255,255,255,0.03); border-left:4px solid #3498db; color:#3498db; font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:1.5px;'>LAYER 1: STRUCTURAL CONTEXT</div>", unsafe_allow_html=True)
             # ── TRADING CONTEXT (TOP of page) — 52-Week Range & Strategic Plan ─
             # All tactical values computed by the shared helper (identical formula to Screener)
             _tm        = get_tactical_metrics(df_deep, cur_p)
@@ -1824,7 +2325,7 @@ if active_tab == "3. Decision Engine":
             _s2        = float(df_deep["price_low"].tail(50).min())
             _r2        = float(df_deep["price_high"].tail(50).max())
             _rsi_val   = _tm["rsi"]
-            _ma_sig    = meta.get("ma_signal", "NEUTRAL")
+            _ma_sig    = str(latest_tech.get("ma_signal", meta.get("ma_signal", "NEUTRAL")))
             _w52_pos   = _tm["w52_pos"]
             _w52_hi    = _tm["w52_hi"]
             _w52_lo    = _tm["w52_lo"]
@@ -1856,6 +2357,8 @@ if active_tab == "3. Decision Engine":
             </div>
             """, unsafe_allow_html=True)
 
+
+            st.markdown("<div style='margin-top:35px; margin-bottom:-10px; padding:6px 12px; background:rgba(255,255,255,0.03); border-left:4px solid #e67e22; color:#e67e22; font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:1.5px;'>LAYER 2: TACTICAL EXECUTION MATRIX</div>", unsafe_allow_html=True)
             # ── UNIFIED DECISION SUPPORT MATRIX (ACTION LAYER) ────────────────
             render_header("activity", "360° Decision & Action Matrix")
             
@@ -2047,238 +2550,190 @@ if active_tab == "3. Decision Engine":
                 </div>
             </div>
             """, unsafe_allow_html=True)
-            # --- WATCHLIST QUICK SAVE WORKFLOW ---
-            with st.expander("📥 📝 Save Idea to Watchlist Pipeline", expanded=False):
-                with st.form(f"quick_save_form_{deep_ticker}"):
-                    st.write("**Idea Management & Catalyst Tracking**")
-                    _wl_col1, _wl_col2 = st.columns(2)
-                    with _wl_col1:
-                        # Auto-suggest status based on Logic
-                        _s_index = 1 if act_str.startswith("🔥") or "ACCUMULATE" in act_str else 0
-                        opt_status = st.selectbox("Status", ["🔵 PENDING", "🟢 ACTIVE", "🟡 REVIEW", "🔴 INVALIDATED", "⚫ CLOSED"], index=_s_index)
-                        opt_thesis = st.text_area("Investment Thesis (Why buy/hold?)", value=act_desc, height=110)
-                    with _wl_col2:
-                        opt_catalyst = st.text_input("Upcoming Catalyst (Earnings, FDA, Macro, etc.)", placeholder="e.g. Q4 Earnings expected positive...")
-                        
-                        _kcol1, _kcol2, _kcol3 = st.columns(3)
-                        with _kcol1: opt_entry = st.number_input("Entry (€)", value=float(_s1), step=1.0)
-                        with _kcol2: opt_inval = st.number_input("Inval / Stop (€)", value=float(_stop_loss), step=1.0)
-                        with _kcol3: opt_tp = st.number_input("Take Profit (€)", value=float(_tp1), step=1.0)
 
-                        opt_erd = meta.get("next_earnings_date", "TBD")
-                        if pd.isna(opt_erd): opt_erd = "TBD"
-                        st.caption(f"Next Earnings: **{opt_erd}**")
-                        
-                    if st.form_submit_button("💾 Save Candidate to Watchlist", type="primary"):
-                        try:
-                            wl_df = load_watchlist()
-                            # Delete existing to overwrite
-                            wl_df = wl_df[wl_df["Ticker"] != deep_ticker]
-                            
-                            new_row = pd.DataFrame([{
-                                "Ticker": deep_ticker,
-                                "Status": opt_status,
-                                "Thesis": opt_thesis,
-                                "Catalyst": opt_catalyst,
-                                "Entry Target": round(opt_entry, 2),
-                                "Invalidation Level": round(opt_inval, 2),
-                                "Take Profit": round(opt_tp, 2),
-                                "Next Earnings": str(opt_erd),
-                                "Added Date": pd.Timestamp.now().strftime("%Y-%m-%d")
-                            }])
-                            wl_df = pd.concat([wl_df, new_row], ignore_index=True)
-                            save_watchlist(wl_df)
-                            st.success(f"✅ Successfully added **{deep_ticker}** to Watchlist Pipeline!")
-                        except Exception as e:
-                            st.error(f"Error saving to watchlist: {e}")
+            st.markdown("<div style='margin-top:35px; padding:6px 12px; background:rgba(255,255,255,0.03); border-left:4px solid #9b59b6; color:#9b59b6; font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:1.5px;'>LAYER 3: RISK INTELLIGENCE HUB</div>", unsafe_allow_html=True)
+            # ── RISK INTELLIGENCE HUB: Full-Width Top, then Split View ─────
+            render_header("zap", "AI Investment Intelligence: Unified Risk Audit", level="####")
+            st.caption("A multi-dimensional synthesis of Qualitative (NLP News) and Quantitative (Fundamental Pillars) risk factors to provide a unified investment verdict.")
 
-            st.markdown("---")
-            render_header("activity", "Diagnostic Metrics Portfolio")
-
-            _card_style = "background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:10px 4px 4px 4px;margin-bottom:4px;"
-            _header_style = "color:#aabbcc;font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;padding:0 8px 6px 8px;"
+            # ── PART A (Full-Width): Audit Button + Cockpit + Conflict Banner ─
             
-            with st.container():
-                kcol1, kcol2, kcol3, kcol4, kcol5, kcol6 = st.columns(6)
-
-                with kcol1:
-                    st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Valuation & Size</div>", unsafe_allow_html=True)
-                    m_cap = meta.get('market_cap', 0)
-                    if m_cap >= 1e12: m_cap_txt = f"€{m_cap/1e12:.2f}T"
-                    elif m_cap >= 1e9: m_cap_txt = f"€{m_cap/1e9:.1f}B"
-                    else: m_cap_txt = f"€{m_cap/1e6:.0f}M"
-                    
-                    render_metric_row("Market Cap", m_cap_txt)
-                    fwd_pe_txt = f"Fwd: {meta.get('forward_pe', 0):.1f}" if pd.notnull(meta.get('forward_pe')) and meta.get('forward_pe', 0) > 0 else ""
-                    pe_val = f"{meta['pe_ratio']:.1f}" if pd.notnull(meta['pe_ratio']) else "N/A"
-                    render_metric_row("P/E", pe_val, delta=fwd_pe_txt)
-                    render_metric_row("PEG",        f"{meta.get('peg_ratio', 0):.2f}" if pd.notnull(meta.get('peg_ratio')) else "N/A")
-                    render_metric_row("EV/EBITDA",  f"{meta.get('ev_to_ebitda', 0):.2f}")
-                    render_metric_row("Price/Sales",f"{meta.get('price_to_sales', 0):.2f}")
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-                with kcol2:
-                    st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Profit & Returns</div>", unsafe_allow_html=True)
-                    render_metric_row("Div Yield",    f"{meta['dividend_yield_pct']:.2f}%" if pd.notnull(meta['dividend_yield_pct']) else "0.00%")
-                    
-                    # Net Payout = Div + Buybacks
-                    net_payout = meta.get('net_payout_yield_pct', 0)
-                    bb_yield   = meta.get('buyback_yield_pct', 0)
-                    render_metric_row("Net Payout",   f"{net_payout:.2f}%", delta=f"BB: {bb_yield:.1f}%")
-                    
-                    render_metric_row("ROE",          f"{meta.get('roe', 0)*100:.1f}%")
-                    render_metric_row("Gross Margin", f"{meta.get('gross_margin', 0)*100:.1f}%")
-                    op_margin = meta.get('operating_margin', 0)
-                    op_margin_val = op_margin*100 if pd.notnull(op_margin) else 0
-                    render_metric_row("Op Margin",    f"{op_margin_val:.1f}%", delta="🔴 Weak" if op_margin_val < 5 else "")
-                    rev_growth = meta.get('revenue_growth', 0) * 100
-                    render_metric_row("Rev Growth",   f"{rev_growth:.1f}%")
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-                with kcol3:
-                    st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Solvency</div>", unsafe_allow_html=True)
-                    debt_eq_raw = meta.get('debt_to_equity', 0)
-                    if pd.notnull(debt_eq_raw) and debt_eq_raw != 0:
-                        debt_eq_txt = f"{(debt_eq_raw / 100.0):.2f}x"
+            if st.button("Run Real-Time AI Risk Audit", type="primary", use_container_width=True):
+                with st.spinner(f"Scanning news for {meta['company']}..."):
+                    llm_res = analyze_risk_with_llm(deep_ticker, meta['company'])
+                    if llm_res.get("error"):
+                        st.error(f"NLP Error: {llm_res['error'][:80]}")
                     else:
-                        debt_eq_txt = "N/A (Neg Equity)" if meta.get('total_debt', 0) > 0 else "0.00x"
-                    
-                    curr_rat  = meta.get('current_ratio', 0)
-                    quick_rat = meta.get('quick_ratio', 0)
-                    
-                    # Liquidity Status Labels
-                    c_status = "🟢 Healthy" if curr_rat > 1.5 else ("🔴 Risky" if curr_rat < 1.0 else "🟡 Fair")
-                    q_status = "🟢 Solid" if quick_rat > 1.0 else ("🔴 Tight" if quick_rat < 0.7 else "🟡 Caution")
-                    
-                    debt_ebitda = meta.get('total_debt', 0) / meta.get('ebitda', 1.0) if meta.get('ebitda', 0) > 0 else 0
-                    de_status = "🟢 Conservative" if 0 < debt_ebitda < 3.0 else ("🔴 Risky" if debt_ebitda > 5.0 else ("🟡 Leveraged" if debt_ebitda > 0 else "N/A"))
+                        nlp_score     = llm_res.get("red_flag_score", 0)
+                        nlp_sentiment = llm_res.get("sentiment", "Neutral")
+                        nlp_reco      = llm_res.get("recommendation", "N/A")
+                        nlp_insights  = llm_res.get("key_insights", [])
+                        nlp_category  = llm_res.get("risk_category", "None")
+                        _cohere_key_ra = (
+                            os.environ.get("COHERE_API_KEY", "")
+                            or st.session_state.get("cohere_api_key", "")
+                        )
+                        if _cohere_key_ra:
+                            _fmi_data_ra = compute_fmi_live(
+                                quarterly_fin[quarterly_fin["ticker"] == deep_ticker] if not quarterly_fin.empty else pd.DataFrame(),
+                                df_fin
+                            )
+                            _unified_metrics = {
+                                **meta_enriched,
+                                "ticker":        deep_ticker,
+                                "company":       meta.get("company", deep_ticker),
+                                "sector":        meta.get("sector", "N/A"),
+                                "ai_score":      ai_score,
+                                "fmi_score":     _fmi_data_ra.get("total", "N/A"),
+                                "fmi_label":     _fmi_data_ra.get("label", "N/A"),
+                                "price":         cur_p,
+                                "market_regime": regime,
+                                "support_s1":    round(_s1, 2),
+                                "support_s2":    round(_s2, 2),
+                                "resistance_r1": round(_r1, 2),
+                                "resistance_r2": round(_r2, 2),
+                                "stop_loss_technical": round(_stop_loss, 2),
+                                "ma_20_current": round(float(df_deep["ma_20"].iloc[-1]), 2) if "ma_20" in df_deep.columns and not df_deep["ma_20"].isna().all() else "N/A",
+                                "ma_50_current": round(float(df_deep["ma_50"].iloc[-1]), 2) if "ma_50" in df_deep.columns and not df_deep["ma_50"].isna().all() else "N/A",
+                            }
+                            with st.spinner("Synthesizing CIO Unified Verdict..."):
+                                _unified_report = get_unified_verdict(_cohere_key_ra, _unified_metrics, llm_res)
+                            _qs = int(ai_score) if str(ai_score).isdigit() else 0
+                            _ns = llm_res.get("red_flag_score", 0)
+                            _nst = llm_res.get("sentiment", "Neutral")
+                            _conflict = (
+                                (_qs >= 65 and (_ns >= 55 or _nst in ["Negative", "Critical"])) or
+                                (_qs < 45  and (_ns <= 25  and _nst == "Positive"))
+                            )
+                            st.session_state[f"unified_verdict_{deep_ticker}"] = {
+                                "report":        _unified_report,
+                                "nlp_insights":  llm_res.get("key_insights", []),
+                                "nlp_sentiment": _nst,
+                                "nlp_score":     _ns,
+                                "extracted_at":  datetime.now().strftime("%H:%M:%S"),
+                                "is_conflict":   _conflict,
+                                "ai_score_snap": _qs,
+                            }
+                            st.success("Audit complete — see AI Risk Overlay below.", icon="✅")
+            else:
+                st.markdown("""
+                <div style='text-align:center; padding:30px 20px; color:#666;'>
+                    <div style='font-size:2rem; font-weight: 800; font-family: monospace; letter-spacing: -2px;'>NLP</div>
+                    <div style='font-size:0.85rem; margin-top:10px;'>Click the button above to scan real-time<br>news headlines and detect hidden risks.</div>
+                </div>
+                """, unsafe_allow_html=True)
 
-                    render_metric_row("Debt/Eq", debt_eq_txt)
-                    render_metric_row("Debt/EBITDA", f"{debt_ebitda:.2f}x" if debt_ebitda > 0 else "N/A", delta=de_status)
-                    render_metric_row("Current Ratio", f"{curr_rat:.2f}", delta=c_status)
-                    render_metric_row("Quick Ratio",   f"{quick_rat:.2f}", delta=q_status)
-                    st.markdown("</div>", unsafe_allow_html=True)
 
-                with kcol4:
-                    st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Risk & Volume</div>", unsafe_allow_html=True)
-                    beta_val = meta.get('beta', 1.0)
-                    if pd.notnull(beta_val) and beta_val != 0:
-                        beta_status = "High Vol" if beta_val > 1.2 else ("Low Vol" if beta_val < 0.8 else "Market")
-                        render_metric_row("Beta", f"{beta_val:.2f}", delta=beta_status)
-                    else:
-                        render_metric_row("Beta", "N/A")
-                    
-                    inst    = meta.get('inst_ownership', 0) * 100
-                    render_metric_row("Inst Own",    f"{inst:.0f}%")
-                    render_metric_row("Short Float", f"{meta.get('short_percent_of_float', 0)*100:.1f}%")
-                    st.markdown("</div>", unsafe_allow_html=True)
 
-                with kcol5:
-                    st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Price & Context</div>", unsafe_allow_html=True)
-                    render_metric_row("Target",       f"€{target_p:.2f}", delta=upside, is_pct=True)
-                    
-                    pe_5y_avg    = meta.get('pe_5y_avg', 0)
-                    pe_cur       = meta.get('pe_ratio', 0)
-                    pe_delta     = ((pe_cur / pe_5y_avg) - 1) * 100 if pe_5y_avg > 0 and pe_cur > 0 else 0
-                    
-                    render_metric_row("5Y Avg P/E",    f"{pe_5y_avg:.1f}" if pe_5y_avg > 0 else "N/A", delta=pe_delta, is_pct=True, color_invert=True)
-                    render_metric_row("Z-Score (5Y)",  f"{z_score:.2f}",  delta=z_status)
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-                with kcol6:
-                    # ── EARNINGS CALENDAR (v13.0) ──
-                    e_row = earnings_cal[earnings_cal['ticker'] == deep_ticker]
-                    e_header = _header_style
-                    if not e_row.empty:
-                        e_date = e_row.iloc[0]['earnings_date']
-                        if pd.notnull(e_date):
-                            # Handle both Timestamp and date objects safely
-                            e_date_obj = e_date.date() if hasattr(e_date, 'date') else e_date
-                            days_to_e = (e_date_obj - date.today()).days
-                            if 0 <= days_to_e <= 7:
-                                e_header = e_header.replace("#aabbcc", "#f39c12") # Highlight upcoming
-                                e_date_str = f"⚠️ {e_date_obj.strftime('%b %d')}"
-                            else:
-                                e_date_str = e_date_obj.strftime('%b %d, %y')
-                        else:
-                            e_date_str = "TBD"
-                        
-                        eps_est = e_row.iloc[0]['eps_avg']
-                        rev_est = e_row.iloc[0]['rev_avg']
-                    else:
-                        e_date_str = "N/A"
-                        eps_est = None
-                        rev_est = None
-
-                    st.markdown(f"<div style='{_card_style}'><div style='{e_header}'>Earnings & Events</div>", unsafe_allow_html=True)
-                    render_metric_row("Report Date", e_date_str)
-                    render_metric_row("EPS Est",     f"{eps_est:.2f}" if pd.notnull(eps_est) else "N/A")
-                    
-                    if pd.notnull(rev_est) and rev_est > 0:
-                        if rev_est >= 1e9: rev_txt = f"€{rev_est/1e9:.1f}B"
-                        else: rev_txt = f"€{rev_est/1e6:.0f}M"
-                    else:
-                        rev_txt = "N/A"
-                    render_metric_row("Revenue Est", rev_txt)
-                    st.markdown("</div>", unsafe_allow_html=True)
-
-            st.markdown("---")
-            
-            # ── QUAL vs QUANT: Full-Width 50/50 Split View ───────────────────
-            render_header("zap", "Qualitative vs. Quantitative Risk Analysis", level="####")
-            st.caption("Left: NLP-powered real-time sentiment from news headlines (Cohere AI). Right: Quantitative pillar breakdown from fundamental data.")
-            
-            qual_col, quant_col = st.columns([1, 1])
-            
-            # ── LEFT: NLP Qualitative Audit ──────────────────────────────────
-            with qual_col:
-                st.markdown("<div style='color:#3498db; font-size:0.85rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; border-bottom:1px solid rgba(52,152,219,0.3); padding-bottom:6px;'>Qualitative NLP Audit</div>", unsafe_allow_html=True)
-                
-                if st.button("Run Real-Time AI Risk Audit", type="primary", use_container_width=True):
-                    with st.spinner(f"Scanning news for {meta['company']}..."):
-                        llm_res = analyze_risk_with_llm(deep_ticker, meta['company'])
-                        
-                        if llm_res.get("error"):
-                            st.error(f"NLP Error: {llm_res['error'][:80]}")
-                        else:
-                            nlp_score     = llm_res.get("red_flag_score", 0)
-                            nlp_sentiment = llm_res.get("sentiment", "Neutral")
-                            nlp_reco      = llm_res.get("recommendation", "N/A")
-                            nlp_insights  = llm_res.get("key_insights", [])
-                            nlp_category  = llm_res.get("risk_category", "None")
-                            
-                            if nlp_score <= 25:   nlp_border, nlp_badge = "#2ecc71", "LOW RISK"
-                            elif nlp_score <= 50: nlp_border, nlp_badge = "#f1c40f", "MODERATE"
-                            elif nlp_score <= 75: nlp_border, nlp_badge = "#e67e22", "ELEVATED"
-                            else:                 nlp_border, nlp_badge = "#e74c3c", "HIGH RISK"
-                            
-                            st.markdown(f"""
-                            <div style='display:flex; align-items:center; gap:12px; margin-bottom:12px; padding:10px; background:rgba(255,255,255,0.03); border-radius:8px; border-left:3px solid {nlp_border};'>
-                                <div style='text-align:center; min-width:55px;'>
-                                    <div style='font-size:1.8rem; font-weight:900; color:{nlp_border}; line-height:1;'>{nlp_score}</div>
-                                    <div style='font-size:0.6rem; color:#888;'>/100</div>
-                                </div>
-                                <div>
-                                    <div style='font-size:0.75rem; font-weight:700; color:{nlp_border};'>{nlp_badge}</div>
-                                    <div style='font-size:0.72rem; color:#aaa;'>Sentiment: <b>{nlp_sentiment}</b> · Category: <b>{nlp_category}</b></div>
-                                </div>
-                            </div>
-                            <div style='font-size:0.8rem; font-style:italic; color:#ddd; border-left:2px solid #3498db; padding-left:8px; margin-bottom:10px;'>"{nlp_reco}"</div>
-                            <div style='color:#999; font-size:0.72rem; font-weight:700; margin-bottom:5px;'>KEY INSIGHTS ({llm_res.get("headlines_analyzed", 0)} sources):</div>
-                            <ul style='color:#bbb; font-size:0.78rem; line-height:1.5; padding-left:14px; margin:0;'>
-                                {"".join([f"<li>{item}</li>" for item in nlp_insights])}
-                            </ul>
-                            """, unsafe_allow_html=True)
+            # ── AI RISK OVERLAY (Full-Width) ──────────────────────────────────
+            _unified_key = f"unified_verdict_{deep_ticker}"
+            if _unified_key in st.session_state:
+                _uv_data = st.session_state[_unified_key]
+                if isinstance(_uv_data, dict):
+                    _uv_text       = _uv_data.get("report", "")
+                    _nlp_insights  = _uv_data.get("nlp_insights", [])
+                    _nlp_score     = _uv_data.get("nlp_score", 0)
+                    _nlp_sent      = _uv_data.get("nlp_sentiment", "Neutral")
+                    _audit_time    = _uv_data.get("extracted_at", "")
+                    _is_conflict   = _uv_data.get("is_conflict", False)
+                    _ai_score_snap = _uv_data.get("ai_score_snap", 0)
                 else:
-                    st.markdown("""
-                    <div style='text-align:center; padding:40px 20px; color:#666;'>
-                        <div style='font-size:2rem; font-weight: 800; font-family: monospace; letter-spacing: -2px;'>NLP</div>
-                        <div style='font-size:0.85rem; margin-top:10px;'>Click the button above to scan real-time<br>news headlines and detect hidden risks.</div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    _uv_text, _nlp_insights, _nlp_score = _uv_data, [], 0
+                    _nlp_sent, _audit_time, _is_conflict, _ai_score_snap = "N/A", "", False, 0
+
+                # ── AI Risk Cockpit: 3-Column Premium Scorecard (Full-Width) ──
+                _pulse_style = "border: 1px solid rgba(230,126,34,0.6); box-shadow: 0 0 15px rgba(230,126,34,0.15); border-left: 4px solid #e67e22;" if _is_conflict else "border: 1px solid rgba(255,255,255,0.08); border-left: 4px solid #444;"
+                _q_color = "#00ffcc" if _ai_score_snap >= 70 else "#f1c40f" if _ai_score_snap >= 45 else "#e74c3c"
+                _r_color = "#e74c3c" if _nlp_score >= 60 else "#f39c12" if _nlp_score >= 30 else "#2ecc71"
+                _s_color = "#00ffcc" if _nlp_sent == "Positive" else "#e74c3c" if _nlp_sent in ["Negative", "Critical"] else "#8899aa"
+
+                st.markdown(f"""
+    <div style='
+        display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap:12px; margin:16px 0 10px 0;
+        background: rgba(255,255,255,0.02);
+        backdrop-filter: blur(8px);
+        padding: 1px; border-radius: 12px;
+        {_pulse_style}
+    '>
+        <!-- Card 1: Quant Health -->
+        <div style='padding:15px; background:rgba(255,255,255,0.01); border-radius:10px;'>
+            <div style='font-size:0.65rem; color:#8899aa; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;'>{SVG_ICONS["chart"]} Quant Health</div>
+            <div style='display:flex; align-items:baseline; gap:6px;'>
+                <span style='font-size:1.4rem; font-weight:700; color:white;'>{_ai_score_snap}</span>
+                <span style='font-size:0.75rem; color:#666;'>/100</span>
+            </div>
+            <div style='width:100%; height:3px; background:rgba(255,255,255,0.05); border-radius:2px; margin-top:8px;'>
+                <div style='width:{_ai_score_snap}%; height:100%; background:{_q_color}; border-radius:2px;'></div>
+            </div>
+        </div>
+        <!-- Card 2: News Sentiment -->
+        <div style='padding:15px; background:rgba(255,255,255,0.01); border-radius:10px;'>
+            <div style='font-size:0.65rem; color:#8899aa; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;'>{SVG_ICONS["globe"]} News Tone</div>
+            <div style='display:flex; align-items:center; gap:8px;'>
+                <span style='font-size:1.2rem; font-weight:600; color:{_s_color};'>{_nlp_sent}</span>
+            </div>
+            <div style='margin-top:8px; font-size:0.7rem; color:#666;'>Extracting sentiment from latest financial headlines</div>
+        </div>
+        <!-- Card 3: Risk Exposure -->
+        <div style='padding:15px; background:rgba(255,255,255,0.01); border-radius:10px;'>
+            <div style='font-size:0.65rem; color:#8899aa; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;'>{SVG_ICONS["risk"]} Risk Exposure</div>
+            <div style='display:flex; align-items:baseline; gap:6px;'>
+                <span style='font-size:1.4rem; font-weight:700; color:{_r_color};'>{_nlp_score}</span>
+                <span style='font-size:0.75rem; color:#666;'>/100</span>
+            </div>
+            <div style='width:100%; height:3px; background:rgba(255,255,255,0.05); border-radius:2px; margin-top:8px;'>
+                <div style='width:{_nlp_score}%; height:100%; background:{_r_color}; border-radius:2px;'></div>
+            </div>
+        </div>
+    </div>
+    <div style='font-size:0.62rem; color:#556677; text-align:right; margin-bottom:12px; letter-spacing:0.5px;'>
+        SYNCHRONIZED AUDIT TIMESTAMP: {_audit_time} &nbsp;&middot;&nbsp; <b>DYNAMIC OVERLAY V12.1</b>
+    </div>
+    """, unsafe_allow_html=True)
+
+                # ── Signal Conflict Banner (full-width, only when diverging) ──
+                if _is_conflict:
+                    if _ai_score_snap >= 65:
+                        if _nlp_sent in ["Negative", "Critical"]:
+                            _conf_dir = f"Strong Quant Health ({_ai_score_snap}/100), but News Tone is distinctly <b>{_nlp_sent.upper()}</b>. The market may penalize the stock soon."
+                        else:
+                            _conf_dir = f"Strong Quant Health ({_ai_score_snap}/100), but Risk Exposure is elevated (<b>Red Flag: {_nlp_score}/100</b>). Monitor for potential headline shocks."
+                    else:
+                        _conf_dir = f"Weak Quant Health ({_ai_score_snap}/100), but News Tone is <b>POSITIVE</b>. Beware of a temporary, sentiment-driven rally."
+                    st.markdown(f"""
+<div style='display:flex; align-items:flex-start; gap:14px; margin:8px 0; padding:14px 18px; background:linear-gradient(90deg,rgba(230,126,34,0.14),rgba(231,76,60,0.08)); border:1px solid rgba(230,126,34,0.55); border-left:4px solid #e67e22; border-radius:10px;'>
+    <span style='font-size:1.4rem; line-height:1; padding-top:2px;'>⚠️</span>
+    <div>
+        <div style='color:#e67e22; font-weight:900; font-size:0.75rem; text-transform:uppercase; letter-spacing:2px; margin-bottom:4px;'>⚡ Signal Conflict Detected</div>
+        <div style='color:#ddd; font-size:0.85rem; line-height:1.5;'>{_conf_dir}</div>
+    </div>
+</div>
+""", unsafe_allow_html=True)
+
+            # ── PART B: 50/50 Split — Narrative (left) | Radar (right) ──────
+            st.markdown("<hr style='border:0; height:1px; background:rgba(255,255,255,0.08); margin:24px 0;'>", unsafe_allow_html=True)
+            qual_col, quant_col = st.columns([1, 1])
+
+            with qual_col:
+                # Detailed Audit Narrative (only when audit has been run)
+                if _unified_key in st.session_state:
+                    with st.expander("🔍 Detailed CIO Reasoning & Full Audit", expanded=True):
+                        st.markdown(
+                            f"<div style='background:rgba(255,255,255,0.03); border-left:4px solid #555;"
+                            f" border-radius:8px; padding:20px; font-size:0.9rem; line-height:1.7; color:#efefef;'>"
+                            + _uv_data.get("report", "") + "</div>",
+                            unsafe_allow_html=True
+                        )
+                        _show_insights = _uv_data.get("nlp_insights", []) if isinstance(_uv_data, dict) else []
+                        if _show_insights:
+                            st.markdown("---")
+                            st.markdown("<div style='font-size:0.75rem; color:#888; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;'>🧩 Raw Evidence: News Signals Analyzed</div>", unsafe_allow_html=True)
+                            for insight in _show_insights:
+                                st.markdown(f"<div style='font-size:0.78rem; color:#ccc; border-left:2px solid #3498db; padding-left:8px; margin-bottom:5px;'>{insight}</div>", unsafe_allow_html=True)
 
                 # ── NEWS FEED (Auto-load, FinBERT Sentiment) ─────────────────
-                st.markdown("<div style='color:#f39c12; font-size:0.85rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-top:16px; margin-bottom:8px; border-bottom:1px solid rgba(243,156,18,0.3); padding-bottom:6px;'>📰 News Intelligence</div>", unsafe_allow_html=True)
+                st.markdown("<div style='color:#f39c12; font-size:0.85rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-top:16px; margin-bottom:8px; border-bottom:1px solid rgba(243,156,18,0.3); padding-bottom:6px;'>📰 Market Sentiment (FinBERT)</div>", unsafe_allow_html=True)
                 try:
                     import feedparser
                     _rss_url = f"https://news.google.com/rss/search?q={deep_ticker}+stock&hl=en-US&gl=US&ceid=US:en"
@@ -2326,8 +2781,7 @@ if active_tab == "3. Decision Engine":
                 except Exception as _e:
                     st.caption(f"⚠️ News feed unavailable: {str(_e)[:60]}")
 
-            
-            # ── RIGHT: Radar Chart & Metrics (Quantitative) ────────────
+
             with quant_col:
                 tab_q, tab_m = st.tabs(["Quality Breakdown", "Momentum (FMI)"])
                 
@@ -2443,6 +2897,173 @@ if active_tab == "3. Decision Engine":
                     )
                     st.markdown(_fmi_html, unsafe_allow_html=True)
 
+            st.markdown("---")
+            st.markdown("<div style='margin-top:35px; margin-bottom:15px; padding:6px 12px; background:rgba(255,255,255,0.03); border-left:4px solid #e74c3c; color:#e74c3c; font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:1.5px;'>LAYER 4: DEEP DIAGNOSTICS & RAW DATA</div>", unsafe_allow_html=True)
+            render_header("activity", "Diagnostic Metrics Portfolio")
+
+            _card_style = "background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:10px 4px 4px 4px;margin-bottom:4px;"
+            _header_style = "color:#aabbcc;font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;padding:0 8px 6px 8px;"
+            
+            with st.container():
+                kcol1, kcol2, kcol3, kcol4, kcol5, kcol6 = st.columns(6)
+
+                with kcol1:
+                    st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Valuation & Size</div>", unsafe_allow_html=True)
+                    m_cap = meta.get('market_cap', 0)
+                    if m_cap >= 1e12: m_cap_txt = f"€{m_cap/1e12:.2f}T"
+                    elif m_cap >= 1e9: m_cap_txt = f"€{m_cap/1e9:.1f}B"
+                    else: m_cap_txt = f"€{m_cap/1e6:.0f}M"
+                    
+                    render_metric_row("Market Cap", m_cap_txt)
+                    fwd_pe_txt = f"Fwd: {meta.get('forward_pe', 0):.1f}" if pd.notnull(meta.get('forward_pe')) and meta.get('forward_pe', 0) > 0 else ""
+                    pe_val = f"{meta['pe_ratio']:.1f}" if pd.notnull(meta['pe_ratio']) else "N/A"
+                    render_metric_row("P/E", pe_val, delta=fwd_pe_txt)
+                    
+                    peg_raw = meta.get('peg_ratio', 0)
+                    peg_col = "#2ecc71" if pd.notnull(peg_raw) and 0 < peg_raw <= 1.0 else ("#e74c3c" if pd.notnull(peg_raw) and peg_raw > 2.0 else None)
+                    render_metric_row("PEG", f"{peg_raw:.2f}" if pd.notnull(peg_raw) else "N/A", value_color=peg_col)
+                    
+                    ev_raw = meta.get('ev_to_ebitda', 0)
+                    ev_col = "#2ecc71" if 0 < ev_raw <= 10 else ("#e74c3c" if ev_raw > 20 else None)
+                    render_metric_row("EV/EBITDA",  f"{ev_raw:.2f}", value_color=ev_col, help_text="🟢 <10x (Value) | 🔴 >20x (Expensive)")
+                    
+                    ps_val = meta.get('price_to_sales', 0)
+                    ps_col = "#2ecc71" if 0 < ps_val <= 2 else ("#e74c3c" if ps_val > 10 else None)
+                    render_metric_row("Price/Sales",f"{ps_val:.2f}", value_color=ps_col, help_text="🟢 < 2x (Cheap) | 🔴 > 10x (Expensive)")
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                with kcol2:
+                    st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Profit & Returns</div>", unsafe_allow_html=True)
+                    
+                    div_val = meta.get('dividend_yield_pct', 0)
+                    div_col = "#2ecc71" if pd.notnull(div_val) and div_val > 4 else None
+                    render_metric_row("Div Yield", f"{div_val:.2f}%" if pd.notnull(div_val) else "0.00%", value_color=div_col, help_text="🟢 > 4% (High Yielding)")
+                    
+                    # Net Payout = Div + Buybacks
+                    net_payout = meta.get('net_payout_yield_pct', 0)
+                    bb_yield   = meta.get('buyback_yield_pct', 0)
+                    render_metric_row("Net Payout",   f"{net_payout:.2f}%", delta=f"BB: {bb_yield:.1f}%")
+                    
+                    roe_raw = meta.get('roe', 0) * 100
+                    roe_col = "#2ecc71" if roe_raw >= 15 else ("#e74c3c" if roe_raw < 5 else None)
+                    render_metric_row("ROE", f"{roe_raw:.1f}%", value_color=roe_col, help_text="🟢 > 15% (Strong Profitability) | 🔴 < 5% (Poor)")
+                    
+                    gm_val = meta.get('gross_margin', 0) * 100
+                    gm_col = "#2ecc71" if gm_val >= 40 else ("#e74c3c" if gm_val < 10 else None)
+                    render_metric_row("Gross Margin", f"{gm_val:.1f}%", value_color=gm_col, help_text="🟢 > 40% (Wide Moat) | 🔴 < 10% (Thin Margin)")
+                    
+                    op_margin = meta.get('operating_margin', 0)
+                    op_val = op_margin*100 if pd.notnull(op_margin) else 0
+                    op_col = "#2ecc71" if op_val >= 15 else ("#e74c3c" if op_val < 5 else None)
+                    render_metric_row("Op Margin", f"{op_val:.1f}%", value_color=op_col)
+                    
+                    fcf_m = meta.get('fcf_margin', 0)
+                    render_metric_row("FCF Margin", f"{fcf_m:.1f}%", value_color="#2ecc71" if fcf_m > 15 else None)
+                    
+                    rev_growth = meta.get('revenue_growth', 0) * 100
+                    rev_col = "#2ecc71" if rev_growth > 20 else ("#e74c3c" if rev_growth < 0 else None)
+                    render_metric_row("Rev Growth", f"{rev_growth:.1f}%", value_color=rev_col)
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                with kcol3:
+                    st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Solvency</div>", unsafe_allow_html=True)
+                    debt_eq_raw = meta.get('debt_to_equity', 0)
+                    if pd.notnull(debt_eq_raw) and debt_eq_raw != 0:
+                        debt_eq_txt = f"{(debt_eq_raw / 100.0):.2f}x"
+                    else:
+                        debt_eq_txt = "N/A (Neg Equity)" if meta.get('total_debt', 0) > 0 else "0.00x"
+                    
+                    curr_rat  = meta.get('current_ratio', 0)
+                    quick_rat = meta.get('quick_ratio', 0)
+                    
+                    # Liquidity Status Colors
+                    c_col = "#2ecc71" if curr_rat > 1.5 else ("#e74c3c" if curr_rat < 1.0 else "#f39c12")
+                    q_col = "#2ecc71" if quick_rat > 1.0 else ("#e74c3c" if quick_rat < 0.7 else "#f39c12")
+                    
+                    _ebitda_val = 0.0
+                    try: _ebitda_val = float(meta.get('ebitda', 0) or 0)
+                    except (TypeError, ValueError): pass
+                    _debt_val = 0.0
+                    try: _debt_val = float(meta.get('total_debt', 0) or 0)
+                    except (TypeError, ValueError): pass
+                    debt_ebitda = (_debt_val / _ebitda_val) if _ebitda_val > 0 else 0
+                    
+                    de_col = "#2ecc71" if 0 < debt_ebitda < 3.0 else ("#e74c3c" if debt_ebitda >= 5.0 else "#f39c12")
+
+                    render_metric_row("Debt/Eq", debt_eq_txt)
+                    render_metric_row("Debt/EBITDA", f"{debt_ebitda:.2f}x" if debt_ebitda > 0 else "N/A", value_color=de_col)
+                    render_metric_row("Current Ratio", f"{curr_rat:.2f}", value_color=c_col)
+                    render_metric_row("Quick Ratio",   f"{quick_rat:.2f}", value_color=q_col)
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                with kcol4:
+                    st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Risk & Volume</div>", unsafe_allow_html=True)
+                    beta_val = meta.get('beta', 1.0)
+                    if pd.notnull(beta_val) and beta_val != 0:
+                        beta_col = "#e74c3c" if beta_val > 1.5 else ("#3498db" if beta_val < 0.8 else None)
+                        render_metric_row("Beta", f"{beta_val:.2f}", value_color=beta_col, help_text="🔴 > 1.5 (High Volatility) | 🔵 < 0.8 (Defensive)")
+                    else:
+                        render_metric_row("Beta", "N/A")
+                    
+                    inst = meta.get('inst_ownership', 0) * 100
+                    inst_col = "#2ecc71" if inst > 60 else ("#e74c3c" if inst < 10 else None)
+                    render_metric_row("Inst Own", f"{inst:.0f}%", value_color=inst_col, help_text="🟢 > 60% (Strong Institutional Backing)")
+                    
+                    short_val = meta.get('short_percent_of_float', 0) * 100
+                    short_col = "#e74c3c" if short_val > 10 else ("#2ecc71" if 0 <= short_val <= 2 else None)
+                    render_metric_row("Short Float", f"{short_val:.1f}%", value_color=short_col, help_text="🔴 > 10% (Squeeze Risk) | 🟢 < 2% (Safe)")
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                with kcol5:
+                    st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Price & Context</div>", unsafe_allow_html=True)
+                    render_metric_row("Target",       f"€{target_p:.2f}", delta=upside, is_pct=True)
+                    
+                    pe_5y_avg    = meta.get('pe_5y_avg', 0)
+                    pe_cur       = meta.get('pe_ratio', 0)
+                    pe_delta     = ((pe_cur / pe_5y_avg) - 1) * 100 if pe_5y_avg > 0 and pe_cur > 0 else 0
+                    
+                    render_metric_row("5Y Avg P/E",    f"{pe_5y_avg:.1f}" if pe_5y_avg > 0 else "N/A", delta=pe_delta, is_pct=True, color_invert=True)
+                    
+                    zs_col = "#2ecc71" if z_score < -1 else ("#e74c3c" if z_score > 1.5 else None)
+                    render_metric_row("Z-Score (5Y)",  f"{z_score:.2f}", value_color=zs_col)
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                with kcol6:
+                    # ── EARNINGS CALENDAR (v13.0) ──
+                    e_row = earnings_cal[earnings_cal['ticker'] == deep_ticker]
+                    e_header = _header_style
+                    if not e_row.empty:
+                        e_date = e_row.iloc[0]['earnings_date']
+                        if pd.notnull(e_date):
+                            # Handle both Timestamp and date objects safely
+                            e_date_obj = e_date.date() if hasattr(e_date, 'date') else e_date
+                            days_to_e = (e_date_obj - date.today()).days
+                            if 0 <= days_to_e <= 7:
+                                e_header = e_header.replace("#aabbcc", "#f39c12") # Highlight upcoming
+                                e_date_str = f"⚠️ {e_date_obj.strftime('%b %d')}"
+                            else:
+                                e_date_str = e_date_obj.strftime('%b %d, %y')
+                        else:
+                            e_date_str = "TBD"
+                        
+                        eps_est = e_row.iloc[0]['eps_avg']
+                        rev_est = e_row.iloc[0]['rev_avg']
+                    else:
+                        e_date_str = "N/A"
+                        eps_est = None
+                        rev_est = None
+
+                    st.markdown(f"<div style='{_card_style}'><div style='{e_header}'>Earnings & Events</div>", unsafe_allow_html=True)
+                    render_metric_row("Report Date", e_date_str)
+                    render_metric_row("EPS Est",     f"{eps_est:.2f}" if pd.notnull(eps_est) else "N/A")
+                    
+                    if pd.notnull(rev_est) and rev_est > 0:
+                        if rev_est >= 1e9: rev_txt = f"€{rev_est/1e9:.1f}B"
+                        else: rev_txt = f"€{rev_est/1e6:.0f}M"
+                    else:
+                        rev_txt = "N/A"
+                    render_metric_row("Revenue Est", rev_txt)
+                    st.markdown("</div>", unsafe_allow_html=True)
 
             st.markdown("---")
 
@@ -2582,7 +3203,6 @@ if active_tab == "3. Decision Engine":
 
             # --- HISTORICAL FUNDAMENTAL TRENDS (Dual Axis) ---
             st.markdown("---")
-            st.markdown(f"#### 📅 {deep_ticker} Historical Fundamental Trends")
             
             tab_annual, tab_quarterly = st.tabs(["📊 Annual", "📉 Quarterly"])
             
@@ -2590,22 +3210,42 @@ if active_tab == "3. Decision Engine":
                 if not df_fin.empty:
                     df_fin_plot = df_fin.sort_values("year")
                     
-                    # Calculate YoY Growth
                     # Calculate YoY Growth manually to handle negative values properly: (New - Old) / abs(Old)
                     df_fin_plot['rev_growth'] = (df_fin_plot['revenue'] - df_fin_plot['revenue'].shift(1)) / df_fin_plot['revenue'].shift(1).abs() * 100
                     df_fin_plot['eps_growth'] = (df_fin_plot['eps'] - df_fin_plot['eps'].shift(1)) / df_fin_plot['eps'].shift(1).abs() * 100
                     
-                    # Auto-scale Revenue
-                    max_rev = df_fin_plot['revenue'].max()
-                    scale = 1e9 if max_rev >= 1e9 else 1e6
+                    # ── Merge FCF from raw.hist_fcf ──────────────────────────────
+                    df_fcf_ticker = pd.DataFrame()
+                    if not hist_fcf_full.empty and "ticker" in hist_fcf_full.columns:
+                        df_fcf_ticker = hist_fcf_full[hist_fcf_full["ticker"] == deep_ticker].copy()
+                    
+                    if not df_fcf_ticker.empty:
+                        df_fin_plot = df_fin_plot.merge(
+                            df_fcf_ticker[["year", "free_cash_flow", "operating_cash_flow"]],
+                            on="year", how="left"
+                        )
+                        df_fin_plot['fcf_growth'] = (
+                            df_fin_plot['free_cash_flow'] - df_fin_plot['free_cash_flow'].shift(1)
+                        ) / df_fin_plot['free_cash_flow'].shift(1).abs() * 100
+                    else:
+                        df_fin_plot['free_cash_flow'] = None
+                        df_fin_plot['fcf_growth']     = None
+                    
+                    # Auto-scale based on max of Revenue and FCF
+                    max_val = max(
+                        df_fin_plot['revenue'].max(),
+                        df_fin_plot['free_cash_flow'].max() if df_fin_plot['free_cash_flow'].notna().any() else 0
+                    )
+                    scale = 1e9 if max_val >= 1e9 else 1e6
                     unit = "B" if scale == 1e9 else "M"
                     
                     fig_fin = make_subplots(specs=[[{"secondary_y": True}]])
                     
-                    # Helper for text labels
+                    # Text labels for YoY growth
                     rev_text = [f"{v:+.1f}%" if pd.notnull(v) else "" for v in df_fin_plot['rev_growth']]
                     eps_text = [f"{v:+.1f}%" if pd.notnull(v) else "" for v in df_fin_plot['eps_growth']]
 
+                    # Revenue Bar
                     fig_fin.add_trace(
                         go.Bar(
                             x=df_fin_plot['year'], 
@@ -2619,6 +3259,23 @@ if active_tab == "3. Decision Engine":
                         secondary_y=False
                     )
 
+                    # FCF Bar (if available)
+                    if df_fin_plot['free_cash_flow'].notna().any():
+                        fcf_text = [f"{v:+.1f}%" if pd.notnull(v) else "" for v in df_fin_plot['fcf_growth']]
+                        fig_fin.add_trace(
+                            go.Bar(
+                                x=df_fin_plot['year'],
+                                y=df_fin_plot['free_cash_flow']/scale,
+                                name=f"Free Cash Flow (€{unit})",
+                                marker_color="rgba(39, 174, 96, 0.75)",
+                                text=fcf_text,
+                                textposition="outside",
+                                hovertemplate="<b>Year: %{x}</b><br>FCF: €%{y:.2f}" + unit + "<br>YoY Growth: %{text}<extra></extra>"
+                            ),
+                            secondary_y=False
+                        )
+
+                    # EPS Line on secondary axis
                     fig_fin.add_trace(
                         go.Scatter(
                             x=df_fin_plot['year'], 
@@ -2638,11 +3295,11 @@ if active_tab == "3. Decision Engine":
                         margin=dict(l=20, r=20, t=60, b=20),
                         hovermode="x unified",
                         barmode="group",
-                        title_text=f"📊 {deep_ticker} Annual Financial Performance (Revenue & EPS)",
+                        title_text=f"📊 {deep_ticker} Annual Financial Performance (Revenue, FCF & EPS)",
                         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
                     )
                     
-                    fig_fin.update_yaxes(title_text=f"Amount (€{unit})", secondary_y=False, range=[0, (df_fin_plot['revenue'].max()/scale)*1.3]) # space for labels
+                    fig_fin.update_yaxes(title_text=f"Amount (€{unit})", secondary_y=False, range=[0, (max_val/scale)*1.3])
                     fig_fin.update_yaxes(title_text="Earnings Per Share (€)", secondary_y=True)
                     
                     st.plotly_chart(fig_fin, use_container_width=True)
@@ -2656,13 +3313,35 @@ if active_tab == "3. Decision Engine":
                     df_fin_q = quarterly_fin[quarterly_fin["ticker"] == deep_ticker].sort_values("report_date")
                     if not df_fin_q.empty:
                         df_fin_q_plot = df_fin_q.copy()
-                        # Calculate QoQ Growth (Quarter-over-Quarter) locally to avoid NaN issues in DB
+
+                        # ── Merge FCF from raw.hist_fcf_quarterly ──────────────────
+                        df_fcf_q_ticker = pd.DataFrame()
+                        if not hist_fcf_q_full.empty and "ticker" in hist_fcf_q_full.columns:
+                            df_fcf_q_ticker = hist_fcf_q_full[hist_fcf_q_full["ticker"] == deep_ticker].copy()
+                        
+                        if not df_fcf_q_ticker.empty:
+                            df_fin_q_plot = df_fin_q_plot.merge(
+                                df_fcf_q_ticker[["year", "quarter", "free_cash_flow", "operating_cash_flow"]],
+                                on=["year", "quarter"], how="left"
+                            )
+                        else:
+                            df_fin_q_plot['free_cash_flow'] = None
+
+                        # Calculate QoQ Growth locally to avoid NaN issues in DB
                         # Calculate Growth manually to handle negative values properly: (New - Old) / abs(Old)
                         df_fin_q_plot['rev_growth'] = (df_fin_q_plot['revenue'] - df_fin_q_plot['revenue'].shift(1)) / df_fin_q_plot['revenue'].shift(1).abs() * 100
                         df_fin_q_plot['eps_growth'] = (df_fin_q_plot['eps'] - df_fin_q_plot['eps'].shift(1)) / df_fin_q_plot['eps'].shift(1).abs() * 100
+                        if 'free_cash_flow' in df_fin_q_plot.columns and df_fin_q_plot['free_cash_flow'].notna().any():
+                            df_fin_q_plot['fcf_growth'] = (df_fin_q_plot['free_cash_flow'] - df_fin_q_plot['free_cash_flow'].shift(1)) / df_fin_q_plot['free_cash_flow'].shift(1).abs() * 100
+                        else:
+                            df_fin_q_plot['fcf_growth'] = None
                         
-                        max_rev_q = df_fin_q_plot['revenue'].max()
-                        scale_q = 1e9 if max_rev_q >= 1e9 else 1e6
+                        # Auto-scale based on max of Revenue and FCF
+                        max_val_q = max(
+                            df_fin_q_plot['revenue'].max() if not df_fin_q_plot['revenue'].empty else 0,
+                            df_fin_q_plot['free_cash_flow'].max() if 'free_cash_flow' in df_fin_q_plot.columns and df_fin_q_plot['free_cash_flow'].notna().any() else 0
+                        )
+                        scale_q = 1e9 if max_val_q >= 1e9 else 1e6
                         unit_q = "B" if scale_q == 1e9 else "M"
                         
                         fig_fin_q = make_subplots(specs=[[{"secondary_y": True}]])
@@ -2672,6 +3351,7 @@ if active_tab == "3. Decision Engine":
                         
                         x_labels = df_fin_q_plot['year'].astype(str) + " Q" + df_fin_q_plot['quarter'].astype(str)
                         
+                        # Revenue Bar
                         fig_fin_q.add_trace(
                             go.Bar(
                                 x=x_labels, 
@@ -2685,14 +3365,15 @@ if active_tab == "3. Decision Engine":
                             secondary_y=False
                         )
 
-                        if 'free_cashflow' in df_fin_q_plot.columns and not df_fin_q_plot['free_cashflow'].isna().all():
+                        # FCF Bar (if available)
+                        if 'free_cash_flow' in df_fin_q_plot.columns and df_fin_q_plot['free_cash_flow'].notna().any():
                             fcf_text_q = [f"{v:+.1f}%" if pd.notnull(v) else "" for v in df_fin_q_plot['fcf_growth']]
                             fig_fin_q.add_trace(
                                 go.Bar(
                                     x=x_labels, 
-                                    y=df_fin_q_plot['free_cashflow']/scale_q, 
+                                    y=df_fin_q_plot['free_cash_flow']/scale_q, 
                                     name=f"Free Cash Flow (€{unit_q})", 
-                                    marker_color="rgba(39, 174, 96, 0.6)",
+                                    marker_color="rgba(39, 174, 96, 0.75)",
                                     text=fcf_text_q,
                                     textposition="outside",
                                     hovertemplate="<b>Period: %{x}</b><br>FCF: €%{y:.2f}" + unit_q + "<br>QoQ Growth: %{text}<extra></extra>"
@@ -2723,7 +3404,7 @@ if active_tab == "3. Decision Engine":
                             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
                         )
                         
-                        y_range_q = [0, (max_rev_q/scale_q)*1.2] if max_rev_q and pd.notnull(max_rev_q) else None
+                        y_range_q = [0, (max_val_q/scale_q)*1.3] if pd.notnull(max_val_q) else None
                         fig_fin_q.update_yaxes(title_text=f"Amount (€{unit_q})", secondary_y=False, range=y_range_q)
                         fig_fin_q.update_yaxes(title_text="Earnings Per Share (€)", secondary_y=True)
                         
@@ -2782,7 +3463,7 @@ if active_tab == "3. Decision Engine":
                     
                     st.markdown(f"""
                     <div style='background:rgba(255,255,255,0.03); border-left:4px solid {dcf_color}; padding:15px; border-radius:4px; margin-top: 10px;'>
-                        <div style='display:flex; justify-content:space-between; align-items:center;'>
+                        <div style='display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;'>
                             <div>
                                 <span style='color:#bbb; font-size:0.9rem; text-transform:uppercase; letter-spacing:1px;'>Intrinsic Value per Share</span><br>
                                 <span style='font-size:2.5rem; font-weight:800; color:#fff;'>€{intrinsic_per_share:,.2f}</span>
@@ -2965,6 +3646,55 @@ if active_tab == "3. Decision Engine":
             fig_rel.update_layout(template="plotly_dark", height=450, yaxis_title="Return (%)", hovermode="x unified", margin=dict(t=20, l=10, r=10, b=10))
             st.plotly_chart(fig_rel, use_container_width=True)
 
+            st.markdown("<div style='margin-top:35px; padding:6px 12px; background:rgba(255,255,255,0.03); border-left:4px solid #2ecc71; color:#2ecc71; font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:1.5px;'>LAYER 5: PORTFOLIO IDEA MANAGEMENT</div>", unsafe_allow_html=True)
+            # --- WATCHLIST QUICK SAVE WORKFLOW ---
+            with st.expander("📥 📝 Save Idea to Watchlist Pipeline", expanded=False):
+                with st.form(f"quick_save_form_{deep_ticker}"):
+                    st.write("**Idea Management & Catalyst Tracking**")
+                    _wl_col1, _wl_col2 = st.columns(2)
+                    with _wl_col1:
+                        # Auto-suggest status based on Logic
+                        _s_index = 1 if act_str.startswith("🔥") or "ACCUMULATE" in act_str else 0
+                        opt_status = st.selectbox("Status", ["🔵 PENDING", "🟢 ACTIVE", "🟡 REVIEW", "🔴 INVALIDATED", "⚫ CLOSED"], index=_s_index)
+                        opt_thesis = st.text_area("Investment Thesis (Why buy/hold?)", value=act_desc, height=110)
+                    with _wl_col2:
+                        opt_catalyst = st.text_input("Upcoming Catalyst (Earnings, FDA, Macro, etc.)", placeholder="e.g. Q4 Earnings expected positive...")
+                        
+                        _kcol1, _kcol2, _kcol3 = st.columns(3)
+                        with _kcol1: opt_entry = st.number_input("Entry (€)", value=float(_s1), step=1.0)
+                        with _kcol2: opt_inval = st.number_input("Inval / Stop (€)", value=float(_stop_loss), step=1.0)
+                        with _kcol3: opt_tp = st.number_input("Take Profit (€)", value=float(_tp1), step=1.0)
+
+                        opt_erd = meta.get("next_earnings_date", "TBD")
+                        if pd.isna(opt_erd): opt_erd = "TBD"
+                        st.caption(f"Next Earnings: **{opt_erd}**")
+                        
+                    if st.form_submit_button("💾 Save Candidate to Watchlist", type="primary"):
+                        try:
+                            wl_df = load_watchlist()
+                            # Delete existing to overwrite
+                            wl_df = wl_df[wl_df["Ticker"] != deep_ticker]
+                            
+                            new_row = pd.DataFrame([{
+                                "Ticker": deep_ticker,
+                                "Status": opt_status,
+                                "Thesis": opt_thesis,
+                                "Catalyst": opt_catalyst,
+                                "Entry Target": round(opt_entry, 2),
+                                "Invalidation Level": round(opt_inval, 2),
+                                "Take Profit": round(opt_tp, 2),
+                                "Next Earnings": str(opt_erd),
+                                "Added Date": pd.Timestamp.now().strftime("%Y-%m-%d")
+                            }])
+                            wl_df = pd.concat([wl_df, new_row], ignore_index=True)
+                            save_watchlist(wl_df)
+                            st.success(f"✅ Successfully added **{deep_ticker}** to Watchlist Pipeline!")
+                        except Exception as e:
+                            st.error(f"Error saving to watchlist: {e}")
+
+            st.markdown("---")
+
+
 # ── FEATURE 1.5: Correlation Matrix ──────────────────────────────────────────
 
 # ── TAB 6: WATCHLIST PIPELINE ────────────────────────────────────────────────
@@ -3000,8 +3730,15 @@ if active_tab == "6. Watchlist":
         
         with st.form("watchlist_editor_form"):
             st.caption("Double-click any cell to edit your notes, update Stop Loss levels or change Workflow Status. Click the trash icon to remove an idea.")
+            
+            # Type safety: Ensure text columns are explicitly strings before rendering in editor
+            _wl_df_safe = wl_df.copy()
+            for col in ["Thesis", "Catalyst", "Next Earnings"]:
+                if col in _wl_df_safe.columns:
+                    _wl_df_safe[col] = _wl_df_safe[col].fillna("").astype(str)
+
             edited_df = st.data_editor(
-                wl_df,
+                _wl_df_safe,
                 column_config=config,
                 use_container_width=True,
                 num_rows="dynamic",
@@ -3028,39 +3765,21 @@ if active_tab == "7. Portfolio Builder":
     indices = ["^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"]
     stock_tickers = [t for t in all_available_tickers if t not in indices]
     
-    # ── 1. PORTFOLIO PERSISTENCE (DEEP URL SYNC) ─────────────────────────────
-    # Format in URL: ?p=AAPL:10.0,NVDA:25.5
-    query_p = st.query_params.get("p", "")
-    
-    # helper to parse URL to dict {ticker: shares}
-    def parse_portfolio_url(p_string):
-        if not p_string: return {}
-        out = {}
-        for item in p_string.split(","):
-            if ":" in item:
-                t, s = item.split(":")
-                try: out[t] = float(s)
-                except: out[t] = 10.0
-            else:
-                out[item] = 10.0
-        return out
-
-    # Base Session State Migration/Init
-    if 'portfolio_cost' not in st.session_state:
-        st.session_state.portfolio_cost = {}
-
-    # Initial Load
-    if 'portfolio_tickers' not in st.session_state:
-        url_data = parse_portfolio_url(query_p)
-        if url_data:
-            st.session_state.portfolio_tickers = sorted(list(url_data.keys()))
-            st.session_state.portfolio_shares = url_data
-            st.session_state.portfolio_cost = {t: 0.0 for t in url_data}
+    # ── 1. PORTFOLIO PERSISTENCE (SUPABASE SYNC) ─────────────────────────────
+    # Initial Load from Cloud DB
+    if 'portfolio_db_synced' not in st.session_state:
+        db_portfolio = load_portfolio_from_db()
+        if db_portfolio:
+            st.session_state.portfolio_tickers = sorted(list(db_portfolio.keys()))
+            st.session_state.portfolio_shares = {t: db_portfolio[t]["shares"] for t in db_portfolio}
+            st.session_state.portfolio_cost = {t: db_portfolio[t]["cost"] for t in db_portfolio}
         else:
-            defaults = ["AAPL", "NVDA", "META"]
+            defaults = ["AAPL", "NVDA", "META"] # Safe defaults for new users
             st.session_state.portfolio_tickers = defaults
             st.session_state.portfolio_shares = {t: 10.0 for t in defaults}
             st.session_state.portfolio_cost = {t: 150.0 for t in defaults} # Placeholder defaults
+            
+        st.session_state.portfolio_db_synced = True
 
     p_tickers = st.multiselect(
         "Select Tickers for Portfolio Construction", 
@@ -3069,10 +3788,10 @@ if active_tab == "7. Portfolio Builder":
         key="p_ticker_select"
     )
 
-    # Sync URL if TICKERS changed (Multiselect)
+    # Detect UI Selection Changes
     if p_tickers != st.session_state.portfolio_tickers:
         st.session_state.portfolio_tickers = p_tickers
-        # Re-build shares/cost dict: keep existing, add new defaults
+        # Retain old weights if ticker already existed, else initialize default 10 shares
         new_shares = {}
         new_cost = {}
         for t in p_tickers:
@@ -3080,15 +3799,8 @@ if active_tab == "7. Portfolio Builder":
             new_cost[t] = st.session_state.portfolio_cost.get(t, 0.0)
         st.session_state.portfolio_shares = new_shares
         st.session_state.portfolio_cost = new_cost
-        
-        # Update URL
-        url_str = ",".join([f"{t}:{s}" for t, s in new_shares.items()])
-        st.query_params["p"] = url_str
-        # Don't st.rerun() here — data_editor will rebuild on next natural cycle
 
     if p_tickers:
-        # Prepare Data for Editor
-        # Get latest prices for selected tickers
         latest_prices = prices[prices["ticker"].isin(p_tickers)].groupby("ticker")["price_close"].last().to_dict()
         
         # Build Initial DataFrame for Editor (ONLY if tickers list actually changed or structure is missing/stale)
@@ -3134,8 +3846,8 @@ if active_tab == "7. Portfolio Builder":
                 key="p_portfolio_editor_final"
             )
             
-            # PASSIVE SYNC: Use a button to lock in changes and update URL
-            recompute = st.form_submit_button("⚖️ COMMIT REBALANCE & RECALCULATE ANALYTICS", use_container_width=True, type="primary")
+            # PASSIVE SYNC: Use a button to lock in changes and update Database
+            recompute = st.form_submit_button("Save & Calculate", use_container_width=True, type="primary")
 
         if recompute:
             st.session_state.portfolio_df = edited_df.copy()
@@ -3143,8 +3855,9 @@ if active_tab == "7. Portfolio Builder":
             cost_dict = edited_df.set_index("Ticker")["Cost Basis (€)"].to_dict()
             st.session_state.portfolio_shares = shares_dict
             st.session_state.portfolio_cost = cost_dict
-            st.query_params["p"] = ",".join([f"{t}:{s}" for t, s in shares_dict.items()])
-            st.toast("✅ Portfolio structure updated!", icon="🚀")
+            # Upload to Supabase 
+            save_portfolio_to_db(shares_dict, cost_dict)
+            st.toast("☁️ Portfolio sync to Supabase Database successful!", icon="🚀")
             st.rerun()
         else:
             edited_df = st.session_state.portfolio_df.copy()
@@ -3868,9 +4581,18 @@ if active_tab == "7. Portfolio Builder":
 
 # ── FEATURE 3: AI Price & Monte Carlo Forecasting ────────────────────────────
 
+
+
+            
+
+
+
+
+
 # ── TAB: MARKET SCANNER & OPPORTUNITY RADAR ──────────────────────────────────
 if active_tab == "2. Opportunity Radar":
     render_header("search", "Market Scanner & Opportunity Radar", level="###")
+    st.info("📊 **Quantitative Engine Note:** All scoring systems, filters, and opportunity signals in this tab are generated entirely through **Hard-coded Quantitative Mathematics** (evaluating Quality, Momentum, and Valuation metrics). They **do not** factor in Qualitative AI Sentiment Reading or NLP Analysis.")
     st.write("Scan the entire ticker universe for institutional-grade opportunities based on Valuation, Momentum, and Quality Scores.")
     m_df = get_master_screener_data(companies_full, prices_full, quarterly_fin, annual_fin)
 
@@ -3899,8 +4621,6 @@ if active_tab == "2. Opportunity Radar":
         }
         </style>
     """, unsafe_allow_html=True)
-    
-    st.markdown("#### Intelligence Presets")
 
     # Final Compact Dropdown Layout (Removed Redundant Reset Button)
     scan_presets = [
@@ -3924,28 +4644,43 @@ if active_tab == "2. Opportunity Radar":
         st.session_state.scan_mode = scan_presets[0]
         
     # ── Applied Logic (Synced with Backtest Engine) ───────────────────────────
-    st.markdown("#### Geographic & Strategy Filters")
-    r_col1, r_col2 = st.columns([1, 2])
+    st.markdown("#### Geographic, Sector & Strategy Filters")
+    r_col1, r_col2, r_col3 = st.columns([1, 1, 1.5])
     
     with r_col1:
-        # Region Filter
-        all_regions = sorted(m_df["Region"].unique().tolist())
-        selected_regions = st.multiselect(
+        # Region Filter (Dropdown style)
+        all_regions = ["🌎 All Regions"] + sorted(m_df["Region"].unique().tolist())
+        selected_region = st.selectbox(
             "Filter by Region", 
             options=all_regions, 
-            default=all_regions,
+            index=0,
             key="p_region_filter"
         )
         
     with r_col2:
+        # Sector Filter (Dropdown style)
+        all_sectors = ["🌍 All Sectors"] + sorted(m_df["Sector"].unique().tolist())
+        selected_sector = st.selectbox(
+            "Filter by Sector",
+            options=all_sectors,
+            index=0,
+            key="p_sector_filter"
+        )
+        
+    with r_col3:
         scan_mode = st.selectbox(
             "Intelligence Strategy Preset", 
             options=scan_presets, 
             key="scan_mode",
-            label_visibility="collapsed"
+            label_visibility="visible"
         )
 
-    f_df = m_df[m_df["Region"].isin(selected_regions)].copy()
+    # Apply both filters (Supporting "All" options)
+    f_df = m_df.copy()
+    if selected_region != "🌎 All Regions":
+        f_df = f_df[f_df["Region"] == selected_region]
+    if selected_sector != "🌍 All Sectors":
+        f_df = f_df[f_df["Sector"] == selected_sector]
     if "Institutional Pulse" in scan_mode:
         f_df = f_df[(f_df["Quality"] >= 75) & (f_df["Trend"] == "BULLISH")]
         st.success("🏆 Institutional Pulse: Quality Score > 75 and Bullish Trend (Institutional Conviction)")
@@ -4016,8 +4751,13 @@ if active_tab == "2. Opportunity Radar":
 
     st.markdown(f"**Found {len(display_df)} active opportunities** — Sorted by Quality + FMI")
     
+    # ── PAGINATION / LIMIT LOGIC ──────────────────────────────────────────────
+    if 'radar_limit' not in st.session_state:
+        st.session_state.radar_limit = 50
+        
+    paged_df = display_df.iloc[:st.session_state.radar_limit]
     st.dataframe(
-        display_df,
+        paged_df,
         use_container_width=True, 
         height=520,
         column_config={
@@ -4028,11 +4768,21 @@ if active_tab == "2. Opportunity Radar":
         }
     )
 
+    # Load All Button
+    if len(display_df) > st.session_state.radar_limit:
+        if st.button(f"📥 Load All (Showing {st.session_state.radar_limit} of {len(display_df)})", use_container_width=True):
+            st.session_state.radar_limit = len(display_df)
+            st.rerun()
+    elif len(display_df) > 50:
+        if st.button("🔄 Reset to Top 50", use_container_width=True):
+            st.session_state.radar_limit = 50
+            st.rerun()
+
     # ── Quality Score Methodology Note (v3.0 — synced with etl/utils.py) ────────
     st.markdown("""
     <div style='margin-top:16px; padding:14px 18px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:10px;'>
         <div style='font-size:0.78rem; font-weight:700; color:#8899aa; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:10px;'>
-            🧠 Quality Score Methodology v3.0 — 6 Pillars, Max 100 Points
+            Quality Score Methodology v3.0 — 6 Pillars, Max 100 Points
         </div>
         <div style='display:grid; grid-template-columns: repeat(6, 1fr); gap:10px;'>
             <div style='background:rgba(52,152,219,0.08); border-left:3px solid #3498db; padding:8px 10px; border-radius:5px;'>
@@ -4088,14 +4838,14 @@ if active_tab == "2. Opportunity Radar":
         - **If High Upside but Neutral/Bearish Trend**: Potential Value Trap. Wait for MA20 breakout.
         - **If High Quality + RSI < 30**: Extreme Oversold opportunity for mean reversion.
         """)
-if active_tab == "4. Predictive Suite":
+if active_tab == "4. Quantitative Forecast (ML)":
     import torch
     import optuna
     import numpy as np
     from arch import arch_model
-    render_header("zap", "Context-Aware Direct Multi-Step Forecasting (v11.0)", "Institutional-Grade Adaptive AI Ensemble")
+    render_header("zap", "Context-Aware Direct Multi-Step Forecasting (v11.0)", "Institutional-Grade Adaptive ML Ensemble")
     
-    # ── AI Model Architectures (Support for 13th Feature: Market Regime) ──────────────
+    # ── ML Model Architectures (Support for 13th Feature: Market Regime) ──────────────
     
     # ── LSTM Architecture (v7.0: Direct Multi-step Mapping) ───────────
     class StockLSTM(torch.nn.Module):
@@ -4362,7 +5112,7 @@ if active_tab == "4. Predictive Suite":
                         op.step()
                     time.sleep(0.005) # Micro-yield
                 return l.item()
-            with st.spinner(f"🧠 Tuning Direct Intelligence for {ticker_id}..."):
+            with st.spinner(f"Tuning Direct Intelligence for {ticker_id}..."):
                 study = optuna.create_study(direction="minimize")
                 study.optimize(objective, n_trials=5, timeout=10) # Optimized: 5 trials, 10s
                 best = study.best_params; best['epochs']=80
@@ -4778,7 +5528,7 @@ if active_tab == "4. Predictive Suite":
                  "models": {k: {"rmse": v["RMSE"], "mape": v["MAPE (%)"], "weight": float(v["Weight"].replace("%",""))/100} for k, v in em.items()}}
         d = _load_perf_log(); d["logs"].append(entry); d["logs"] = d["logs"][-500:]; _save_perf_log(d)
 
-    render_header("ai", "Price & Monte Carlo Forecasting", level="###")
+    render_header("trending-up", "Price & Monte Carlo Forecasting", level="###")
     
     # ── AI STRATEGIST GUIDE (Synchronized with Master Tactical Regime) ──
     if regime == "STRONG BULLISH" or regime == "BULLISH":
@@ -4790,7 +5540,7 @@ if active_tab == "4. Predictive Suite":
 
     st.markdown(f"""
     <div style='background:rgba(52,152,219,0.08); border:1px solid #3498db; padding:16px; border-radius:8px; margin-bottom:25px;'>
-        <div style='display:flex; align-items:center; margin-bottom:8px;'>{SVG_ICONS["brain"]} <b style='color:#3498db; font-size:1rem; margin-left:4px;'>AI Strategist Guide</b></div>
+        <div style='display:flex; align-items:center; margin-bottom:8px;'>{SVG_ICONS["brain"]} <b style='color:#3498db; font-size:1rem; margin-left:4px;'>ML Model Strategist</b></div>
         <div style='font-size:0.92rem; color:#e0e0e0; line-height:1.5;'>Market Context: <b style='color:{regime_ui_color};'>{regime}</b><br>Recommended Model: <b style='color:#00ffcc;'>{_rec_model}</b><br>Rationale: <i>{_rec_reason}</i></div>
         <div style='margin-top:12px; font-size:0.82rem; color:#8899aa; border-top:1px solid rgba(255,255,255,0.1); padding-top:8px;'><b>Pro Tip:</b> LSTM+ARIMA anchors mean-reversion • Transformer excels in patterns • <b>PatchTST (v10.0)</b> gives high fundamental resolution — ideal for stable markets.</div>
     </div>
@@ -4817,14 +5567,14 @@ if active_tab == "4. Predictive Suite":
             n_sims = st.selectbox("Monte Carlo Simulations", [500, 1000, 1500, 2000, 5000], index=3, key="n_sims_form")
         with fcol4:
             engine_mode = st.radio(
-                "🧠 Core Engine",
+                "Core Engine",
                 options=["LSTM Core", "Transformer", "PatchTST (SOTA)", "Smart Blend (Best of 3)"],
-                index=0,
+                index=3,
                 key="engine_mode_form",
                 help="LSTM Core: stable mean-reversion • Transformer: high-vol pattern recognition • PatchTST: channel-independent fundamentals • Smart Blend: trains all 3 engines and auto-weights them by accuracy (RMSE)."
             )
             
-        run_forecast = st.form_submit_button("🎯 RUN ENSEMBLE FORECAST", use_container_width=True, type="primary")
+        run_forecast = st.form_submit_button("🎯 EXECUTE ML ENSEMBLE FORECAST", use_container_width=True, type="primary")
 
     # Initialize before the forecast block so the metrics panel never hits NameError
     ensemble_metrics = {}
@@ -4852,11 +5602,11 @@ if active_tab == "4. Predictive Suite":
         use_patchtst    = (engine_mode == "PatchTST (SOTA)")
         use_transformer = (engine_mode == "Transformer")
         if len(df_fc) < 30:
-            st.warning(f"⚠️ Insufficient historical data ({len(df_fc)} days) to train the AI neural network. At least 30 days are required.")
+            st.warning(f"⚠️ Insufficient historical data ({len(df_fc)} days) to train the ML neural network. At least 30 days are required.")
             lstm_path, lstm_return, feat_imp = None, 0.0, {}
             st.session_state['ensemble_metrics'] = {}
         elif use_ensemble:
-            with st.spinner(f"Smart Blend: Training all 3 engines ({std_lookback}D Lookback)..."):
+            with st.spinner(f"Smart Blend: Training all 3 ML engines ({std_lookback}D Lookback)..."):
                 _ens = train_predict_ensemble(
                     df_fc, lookback=std_lookback, forecast_days=forecast_days,
                     sector_name=sector_val, quality_score=drift_score)
@@ -4896,7 +5646,7 @@ if active_tab == "4. Predictive Suite":
                     sector_name=sector_val, quality_score=drift_score)
             st.session_state['ensemble_metrics'] = {}
         else:  # LSTM Core
-            with st.spinner(f"🧠 Running LSTM Core ({std_lookback}D Lookback)..."):
+            with st.spinner(f"Running LSTM Core ({std_lookback}D Lookback)..."):
                 lstm_path, lstm_return, feat_imp = train_predict_lstm(
                     df_fc, lookback=std_lookback, forecast_days=forecast_days,
                     sector_name=sector_val, quality_score=drift_score)
@@ -5007,7 +5757,7 @@ if active_tab == "4. Predictive Suite":
         # ── ROW 2: AI Metrics (Horizontal Cards) ─────────────────────────────
         mcol1, mcol2, mcol3, mcol4 = st.columns(4)
         with mcol1:
-            st.metric("AI Ensemble Target", f"€{lstm_path[-1]:.2f}" if lstm_path is not None else "N/A", delta=f"{lstm_return*100:.2f}%" if lstm_return else "N/A")
+            st.metric("ML Ensemble Target", f"€{lstm_path[-1]:.2f}" if lstm_path is not None else "N/A", delta=f"{lstm_return*100:.2f}%" if lstm_return else "N/A")
             if lstm_path is not None:
                 st.session_state[f"ai_target_for_de_{fc_ticker}"] = float(lstm_path[-1])
                 st.caption(f"→ Synced to Decision Engine TP1")
@@ -5027,10 +5777,10 @@ if active_tab == "4. Predictive Suite":
         with mcol4:
             if precision_score is not None:
                 p_val = f"{precision_score:.1f}%"
-                p_label = f"AI Precision ({forecast_days}d Holdout)"
+                p_label = f"Model Precision ({forecast_days}d Holdout)"
                 p_delta = f"±{mape_raw*100:.1f}% uncertainty" if mape_raw else None
             else:
-                p_val, p_label, p_delta = "N/A", f"AI Precision ({forecast_days}d Holdout)", None
+                p_val, p_label, p_delta = "N/A", f"Model Precision ({forecast_days}d Holdout)", None
             st.metric(p_label, p_val, delta=p_delta)
             
         # Highlight divergence
@@ -5065,29 +5815,29 @@ if active_tab == "4. Predictive Suite":
         # ── Executive Verdict ────────────────────────────────────────────────
         if _conv_pts == 3 and _sig_rr >= 1.5:
             _sig_verdict, _sig_color, _sig_badge = "STRONG LONG", "#00ffcc", "HIGH CONVICTION"
-            _sig_desc = (f"All 3 pillars are aligned: AI projects +{_ai_upside:.1f}% upside, "
+            _sig_desc = (f"All 3 pillars are aligned: Projects +{_ai_upside:.1f}% upside, "
                          f"institutions are in Accumulation mode, and news sentiment is "
                          f"{'Bullish' if avg_sent > 0.1 else 'leaning constructive'}. "
                          f"A {_sig_rr:.1f}x R/R setup with Monte Carlo support — ideal for a full position.")
         elif _conv_pts >= 2 and _sig_rr >= 1.0:
             _sig_verdict, _sig_color, _sig_badge = "BUY / ACCUMULATE", "#2ecc71", "MODERATE CONVICTION"
-            _sig_desc = (f"2 of 3 pillars are constructive. AI targets €{_ai_target:.2f} "
+            _sig_desc = (f"2 of 3 pillars are constructive. Targets €{_ai_target:.2f} "
                          f"({_ai_upside:+.1f}%), Smart Money shows {sm_spirit}. "
                          f"R/R of {_sig_rr:.1f}x supports a partial position entry. "
                          f"Reserve allocation for a dip toward €{_ai_stop:.2f}.")
         elif _ai_upside <= -3:
             _sig_verdict, _sig_color, _sig_badge = "REDUCE / HEDGE", "#e74c3c", "BEARISH SIGNAL"
-            _sig_desc = (f"AI model projects {_ai_upside:.1f}% downside to €{_ai_target:.2f}. "
+            _sig_desc = (f"Model projects {_ai_upside:.1f}% downside to €{_ai_target:.2f}. "
                          f"Smart Money shows {sm_spirit} and sentiment is {sent_label}. "
                          f"Consider reducing exposure or hedging until price stabilizes above €{_ai_stop:.2f}.")
         elif _conv_pts == 0:
             _sig_verdict, _sig_color, _sig_badge = "AVOID / WAIT", "#e74c3c", "NO CONVICTION"
-            _sig_desc = (f"All 3 pillars are negative: AI upside is weak ({_ai_upside:+.1f}%), "
+            _sig_desc = (f"All 3 pillars are negative: Upside is weak ({_ai_upside:+.1f}%), "
                          f"Smart Money shows {sm_spirit}, and sentiment is {sent_label}. "
                          f"Best to stay flat or look for a better setup.")
         else:
             _sig_verdict, _sig_color, _sig_badge = "NEUTRAL / MONITOR", "#f1c40f", "MIXED SIGNALS"
-            _sig_desc = (f"Conflicting signals: AI projects {_ai_upside:+.1f}% to €{_ai_target:.2f}, "
+            _sig_desc = (f"Conflicting signals: Projects {_ai_upside:+.1f}% to €{_ai_target:.2f}, "
                          f"but Smart Money ({sm_spirit}) and sentiment ({sent_label}) "
                          f"are not fully aligned. Monitor for a confluence trigger before entry.")
 
@@ -5100,11 +5850,11 @@ if active_tab == "4. Predictive Suite":
                     f"<span style='color:#ccc;'>{label}:</span> "
                     f"<span style='color:#fff; font-weight:700;'>{value}</span></span>")
 
-        _pill_ai   = _pill("AI Upside",    f"{_ai_upside:+.1f}%",  _ai_upside >= 3)
+        _pill_ai   = _pill("Upside",    f"{_ai_upside:+.1f}%",  _ai_upside >= 3)
         _pill_sm   = _pill("Smart Money",  sm_spirit,              sm_spirit == "Accumulation")
         _pill_sent = _pill("Sentiment",    sent_label,             avg_sent > 0.05)
         _pill_rr   = _pill("R/R",          f"{_sig_rr:.1f}x",      _sig_rr >= 1.5)
-        _pill_prec = _pill("AI Precision", f"{precision_score:.1f}%" if precision_score else "N/A", (precision_score or 0) >= 75)
+        _pill_prec = _pill("ML Precision", f"{precision_score:.1f}%" if precision_score else "N/A", (precision_score or 0) >= 75)
 
         _unc_str = f"±{mape_raw*100:.1f}% CI" if mape_raw else ""
         _vix_now_sig = float(prices_full[prices_full['ticker']=='^VIX']['price_close'].iloc[-1]) \
@@ -5154,7 +5904,7 @@ if active_tab == "4. Predictive Suite":
 <div style='color:#8899aa; font-size:0.65rem;'>Risk: {((last_price-_ai_stop)/last_price*100):.1f}%</div>
 </div>
 <div style='background:rgba(0,255,204,0.06); border-radius:8px; padding:10px 12px; border-top:2px solid #00ffcc;'>
-<div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px;'>TARGET 1 (AI)</div>
+<div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px;'>TARGET 1 (ML)</div>
 <div style='color:#00ffcc; font-weight:800; font-size:1.05rem;'>€{_ai_target:.2f}</div>
 <div style='color:#8899aa; font-size:0.65rem;'>{_unc_str} · {_ai_upside:+.1f}%</div>
 </div>
@@ -5269,7 +6019,7 @@ Monte Carlo 90% CI: <b style='color:#fff;'>€{p5_final:.2f}</b> ↔ <b style='c
             _em_display = st.session_state.get('ensemble_metrics', {})
             if _em_display:
                 st.markdown("")
-                render_header("activity", "🏆 Ensemble Performance Breakdown")
+                render_header("activity", "Ensemble Performance Breakdown")
                 rows_html = ""
                 for model_name, m in _em_display.items():
                     icon_key = "brain" if model_name == "LSTM" else "bot" if model_name == "Transformer" else "dna"
@@ -5319,7 +6069,7 @@ Monte Carlo 90% CI: <b style='color:#fff;'>€{p5_final:.2f}</b> ↔ <b style='c
                     st.info("📊 Insufficient history. Please run Smart Blend at least twice to build Regime analysis.")
                 else:
                     # Section A: Recent Anchor History
-                    st.markdown("​**🏆 Anchor Model by Run (Latest 20):**")
+                    st.markdown("​**Anchor Model by Run (Latest 20):**")
                     anchor_rows = [{
                         "Time": e["ts"], "Ticker": e["ticker"],
                         "Horizon": f"{e['horizon']}D",
@@ -5488,7 +6238,7 @@ if active_tab == "5. Backtest Lab":
         _bt_options = [t for t in all_tickers if t not in ["^VIX","SPY","^GSPC","^DJI","^IXIC"]]
         
         # Move Mode Toggle OUTSIDE the form to trigger immediate UI rerun for 'disabled' logic
-        bt_mode = st.radio("Simulation Mode", ["Single Strategy", "🏆 Find Best Strategy (Auto-Run All)"], index=0, horizontal=True)
+        bt_mode = st.radio("Simulation Mode", ["Single Strategy", "Find Best Strategy (Auto-Run All)"], index=0, horizontal=True)
         
         # --- Market Regime Integration ---
         st.markdown(f"""
@@ -5608,7 +6358,7 @@ if active_tab == "5. Backtest Lab":
                 best_strat_name = comp_df.iloc[0]["Strategy"]
                 st.markdown(f"""
                 <div style='background:rgba(46, 204, 113, 0.1); border-left:4px solid #2ecc71; padding:15px; border-radius:4px; margin-bottom:20px;'>
-                    <span style='color:#2ecc71; font-weight:800; font-size:1.1rem;'>🏆 WINNER: {best_strat_name}</span><br>
+                    <span style='color:#2ecc71; font-weight:800; font-size:1.1rem;'>WINNER: {best_strat_name}</span><br>
                     <span style='color:#bbb; font-size:0.9rem;'>For {r['ticker']}, this strategy offers the superior risk-adjusted performance (Sharpe: {comp_df.iloc[0]['Sharpe']:.2f}).</span>
                 </div>
                 """, unsafe_allow_html=True)
@@ -5712,7 +6462,6 @@ if active_tab == "8. System Methodology":
         """, unsafe_allow_html=True)
 
 st.sidebar.markdown("---")
-st.sidebar.info("💡 **Methodology Tip**: Check Tab 8 to understand data lag and how the AI Monte Carlo risk bands are calculated.")
 
 # ── FEATURE 4: Sidebar Export Hub ────────────────────────────────────────────
 st.sidebar.markdown("---")
@@ -5722,3 +6471,5 @@ st.sidebar.download_button("🔽 Download Recommendations", data=csv_reco, file_
 
 csv_prices = prices.to_csv(index=False).encode('utf-8')
 st.sidebar.download_button("🔽 Download Price History", data=csv_prices, file_name="price_history.csv", mime="text/csv")
+
+auth.render_user_profile()
