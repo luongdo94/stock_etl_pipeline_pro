@@ -2559,6 +2559,7 @@ if active_tab == "3. Qualitative Audit (AI)":
             st.caption("A multi-dimensional synthesis of Qualitative (NLP News) and Quantitative (Fundamental Pillars) risk factors to provide a unified investment verdict.")
 
             # ── PART A (Full-Width): Audit Button + Cockpit + Conflict Banner ─
+            _uv_data = st.session_state.get(f"unified_verdict_{deep_ticker}")
             
             if st.button("Run Real-Time AI Risk Audit", type="primary", use_container_width=True):
                 with st.spinner(f"Scanning news for {meta['company']}..."):
@@ -2617,13 +2618,6 @@ if active_tab == "3. Qualitative Audit (AI)":
                                 "ai_score_snap": _qs,
                             }
                             st.success("Audit complete — see AI Risk Overlay below.", icon="✅")
-            else:
-                st.markdown("""
-                <div style='text-align:center; padding:30px 20px; color:#666;'>
-                    <div style='font-size:2rem; font-weight: 800; font-family: monospace; letter-spacing: -2px;'>NLP</div>
-                    <div style='font-size:0.85rem; margin-top:10px;'>Click the button above to scan real-time<br>news headlines and detect hidden risks.</div>
-                </div>
-                """, unsafe_allow_html=True)
 
 
 
@@ -2640,44 +2634,42 @@ if active_tab == "3. Qualitative Audit (AI)":
             with qual_col:
                 st.markdown("<div style='color:#3498db; font-size:0.85rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; border-bottom:1px solid rgba(52,152,219,0.3); padding-bottom:6px;'>Qualitative NLP Audit</div>", unsafe_allow_html=True)
                 
-                if st.button("Run Real-Time AI Risk Audit", type="primary", use_container_width=True):
-                    with st.spinner(f"Scanning news for {meta['company']}..."):
-                        llm_res = analyze_risk_with_llm(deep_ticker, meta['company'])
-                        
-                        if llm_res.get("error"):
-                            st.error(f"NLP Error: {llm_res['error'][:80]}")
-                        else:
-                            nlp_score     = llm_res.get("red_flag_score", 0)
-                            nlp_sentiment = llm_res.get("sentiment", "Neutral")
-                            nlp_reco      = llm_res.get("recommendation", "N/A")
-                            nlp_insights  = llm_res.get("key_insights", [])
-                            nlp_category  = llm_res.get("risk_category", "None")
-                            
-                            if nlp_score <= 25:   nlp_border, nlp_badge = "#2ecc71", "LOW RISK"
-                            elif nlp_score <= 50: nlp_border, nlp_badge = "#f1c40f", "MODERATE"
-                            elif nlp_score <= 75: nlp_border, nlp_badge = "#e67e22", "ELEVATED"
-                            else:                 nlp_border, nlp_badge = "#e74c3c", "HIGH RISK"
-                            
-                            st.markdown(f"""
-                            <div style='display:flex; align-items:center; gap:12px; margin-bottom:12px; padding:10px; background:rgba(255,255,255,0.03); border-radius:8px; border-left:3px solid {nlp_border};'>
-                                <div style='text-align:center; min-width:55px;'>
-                                    <div style='font-size:1.8rem; font-weight:900; color:{nlp_border}; line-height:1;'>{nlp_score}</div>
-                                    <div style='font-size:0.6rem; color:#888;'>/100</div>
-                                </div>
-                                <div>
-                                    <div style='font-size:0.75rem; font-weight:700; color:{nlp_border};'>{nlp_badge}</div>
-                                    <div style='font-size:0.72rem; color:#aaa;'>Sentiment: <b>{nlp_sentiment}</b> · Category: <b>{nlp_category}</b></div>
-                                </div>
-                            </div>
-                            <div style='font-size:0.8rem; font-style:italic; color:#ddd; border-left:2px solid #3498db; padding-left:8px; margin-bottom:10px;'>"{nlp_reco}"</div>
-                            <div style='color:#999; font-size:0.72rem; font-weight:700; margin-bottom:5px;'>KEY INSIGHTS ({llm_res.get("headlines_analyzed", 0)} sources):</div>
-                            <ul style='color:#bbb; font-size:0.78rem; line-height:1.5; padding-left:14px; margin:0;'>
-                                {"".join([f"<li>{item}</li>" for item in nlp_insights])}
-                            </ul>
-                            """, unsafe_allow_html=True)
+                if _uv_data:
+                    # nlp_score, nlp_sentiment, nlp_insights come from _uv_data (set in session_state)
+                    nlp_score     = _uv_data.get("nlp_score", 0)
+                    nlp_sentiment = _uv_data.get("nlp_sentiment", "Neutral")
+                    nlp_insights  = _uv_data.get("nlp_insights", [])
+                    nlp_report    = _uv_data.get("report", "N/A")
+                    
+                    if nlp_score <= 25:   nlp_border, nlp_badge = "#2ecc71", "LOW RISK"
+                    elif nlp_score <= 50: nlp_border, nlp_badge = "#f1c40f", "MODERATE"
+                    elif nlp_score <= 75: nlp_border, nlp_badge = "#e67e22", "ELEVATED"
+                    else:                 nlp_border, nlp_badge = "#e74c3c", "HIGH RISK"
+                    
+                    st.markdown(f"""
+                    <div style='display:flex; align-items:center; gap:12px; margin-bottom:12px; padding:10px; background:rgba(255,255,255,0.03); border-radius:8px; border-left:3px solid {nlp_border};'>
+                        <div style='text-align:center; min-width:55px;'>
+                            <div style='font-size:1.8rem; font-weight:900; color:{nlp_border}; line-height:1;'>{nlp_score}</div>
+                            <div style='font-size:0.6rem; color:#888;'>/100</div>
+                        </div>
+                        <div>
+                            <div style='font-size:0.75rem; font-weight:700; color:{nlp_border};'>{nlp_badge}</div>
+                            <div style='font-size:0.72rem; color:#aaa;'>Sentiment: <b>{nlp_sentiment}</b></div>
+                        </div>
+                    </div>
+                    <div style='font-size:0.8rem; font-style:italic; color:#ddd; border-left:2px solid #3498db; padding-left:8px; margin-bottom:10px;'>"{nlp_report[:200]}..."</div>
+                    <div style='color:#999; font-size:0.72rem; font-weight:700; margin-bottom:5px;'>KEY INSIGHTS:</div>
+                    <ul style='color:#bbb; font-size:0.78rem; line-height:1.5; padding-left:14px; margin:0;'>
+                        {"".join([f"<li>{item}</li>" for item in nlp_insights])}
+                    </ul>
+                    """, unsafe_allow_html=True)
                 else:
-                    _uv_text, _nlp_insights, _nlp_score = _uv_data, [], 0
-                    _nlp_sent, _audit_time, _is_conflict, _ai_score_snap = "N/A", "", False, 0
+                    st.markdown("""
+                    <div style='text-align:center; padding:40px 20px; color:#666; background:rgba(255,255,255,0.02); border-radius:10px; border:1px dashed rgba(255,255,255,0.1);'>
+                        <div style='font-size:2.5rem; filter:grayscale(1); opacity:0.3; margin-bottom:15px;'>🔍</div>
+                        <div style='font-size:0.85rem;'>Click <b>'Run Real-Time AI Risk Audit'</b> above<br>to analyze news sentiment and detected hidden risks.</div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
                 # ── AI Risk Cockpit: 3-Column Premium Scorecard (Full-Width) ──
                 _pulse_style = "border: 1px solid rgba(230,126,34,0.6); box-shadow: 0 0 15px rgba(230,126,34,0.15); border-left: 4px solid #e67e22;" if _is_conflict else "border: 1px solid rgba(255,255,255,0.08); border-left: 4px solid #444;"
