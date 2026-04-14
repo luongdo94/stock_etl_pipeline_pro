@@ -141,8 +141,17 @@ class TestTransformMarts:
 def test_data_quality_checks_integration(conn):
     """Ensure DQ checks catch violations in marts."""
     conn.execute("CREATE SCHEMA marts")
-    conn.execute("CREATE TABLE marts.fct_daily_returns (ticker VARCHAR, date DATE, price_close DOUBLE)")
-    conn.execute("INSERT INTO marts.fct_daily_returns (ticker, date, price_close) VALUES (NULL, '2024-01-01', 100)")
+    conn.execute("CREATE TABLE marts.fct_daily_returns (ticker VARCHAR, date DATE, price_close DOUBLE, volume INTEGER)")
+    conn.execute("INSERT INTO marts.fct_daily_returns (ticker, date, price_close, volume) VALUES (NULL, '2024-01-01', 100, 1000)")
+    
+    # Add dim_companies to satisfy DQ checks
+    conn.execute("""
+        CREATE TABLE marts.dim_companies (
+            ticker VARCHAR, company VARCHAR, sector VARCHAR, 
+            market_cap DOUBLE, revenue_ttm DOUBLE, roe DOUBLE, fcf_margin DOUBLE
+        )
+    """)
+    conn.execute("INSERT INTO marts.dim_companies (ticker) VALUES ('AAPL')")
     
     with pytest.raises(ValueError, match="Data quality checks failed"):
         _run_data_quality_checks(conn)

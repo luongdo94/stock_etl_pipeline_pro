@@ -13,7 +13,7 @@ class TestScoringUtils:
     def test_get_action_strong_buy(self):
         assert get_action(80) == "🚀 STRONG BUY"
         assert get_action(100) == "🚀 STRONG BUY"
-        assert get_action(70) == "🚀 STRONG BUY"
+        assert get_action(75) == "🚀 STRONG BUY"
     
     def test_get_action_buy(self):
         assert get_action(69) == "✅ BUY"

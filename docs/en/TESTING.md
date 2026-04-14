@@ -1,66 +1,55 @@
-# 📂 Testing Suite Documentation
+# 🧪 Testing Strategy
 
-This document provides a detailed overview of the automated testing framework for the **Stock Market ETL Pipeline** project.
+This document outlines the unit testing procedures used to ensure the stability, accuracy, and resilience of the Stock ETL Pipeline.
 
----
+## 1. Testing Architecture
+The project leverages `pytest` as its primary testing framework, combined with `pytest-mock` for dependency simulation and in-memory `duckdb` for validating data logic without impacting the production database.
 
-## 1. Overview
-The test suite is built using `pytest`. It ensures system stability and logic accuracy whenever changes are made to the codebase. The system currently features **21 test cases** covering all application layers.
+## 2. Test Suite Breakdown
 
----
+### 2.1. Configuration Testing (`tests/test_config.py`)
+- **Goal**: Ensure the system starts with valid parameters.
+- **Scenarios**:
+    - Verify the existence and validity of `config/tickers.yaml`.
+    - Confirm all tickers contain mandatory fields: `name`, `sector`, and `region`.
 
-## 2. List of Tests
+### 2.2. Extraction Testing (`tests/test_extract.py`)
+- **Goal**: Ensure accurate data extraction across international markets.
+- **Scenarios**:
+    - Validate the `_guess_currency` logic to assign correct currencies (USD, EUR, JPY, GBP, DKK) based on ticker suffixes.
 
-### 🧪 1. Configuration Check (`test_config.py`)
-Verifies the integrity of the `config/tickers.yaml` file.
-- **Goal**: Ensure the config file exists, is valid YAML, and all tickers have required fields (`name`, `sector`, `region`).
-- **Mechanism**: Reads the YAML and uses assertions to validate keys/values.
+### 2.3. Loading Testing (`tests/test_load.py`)
+- **Goal**: Securely ingest raw data into the DuckDB warehouse.
+- **Scenarios**:
+    - **Schema Creation**: Verify the automated setup of tables in the `raw` schema.
+    - **Upsert Logic**: Confirm that loading prevents duplicates and handles record overrides correctly.
 
-### 🧪 2. Extraction Logic (`test_extract.py`)
-Tests internal functions during the data gathering phase from Yahoo Finance.
-- **Goal**: Confirm that the currency detection function (`_guess_currency`) works correctly for various markets (US, Japan, Germany, France, Netherlands, Denmark, UK).
-- **Mechanism**: Passes sample ticker symbols and compares the output with expected currency codes (e.g., `RR.L` -> `GBP`).
+### 2.4. Transformation & Analytics Testing (`tests/test_transform.py`)
+This is the core of the test suite, validating complex business logic.
+- **Staging Layer**: Ensures invalid prices (negative values) and malformed dates are filtered out.
+- **Intermediate Layer**: 
+    - Validates technical indicator formulas: `MA_20` (Moving Average) and `RSI` (Relative Strength Index).
+    - Verifies Market Cap categorization logic.
+- **Marts Layer**: Tests **FMI Acceleration** logic for Revenue and EPS.
+- **Data Quality (DQ)**: Ensures that data constraints (e.g., non-NULL values) are strictly enforced across final tables.
 
-### 🧪 3. Data Loading (`test_load.py`)
-Tests interaction with the DuckDB warehouse.
-- **Goal**: Ensure the database schema is initialized correctly and data can be loaded without errors (including `upsert` mode).
-- **Mechanism**: Uses an in-memory DuckDB instance (`:memory:`) to create tables and perform trial `INSERT` operations.
+### 2.5. Audit Infrastructure Testing (`tests/test_audit.py`)
+- **Goal**: Protect the pipeline's telemetry and monitoring system.
+- **Scenarios**:
+    - Verify successful run logging.
+    - Validate error capture and `Traceback` persistence during pipeline failures.
 
-### 🧪 4. SQL Transformation Logic (`test_transform.py`)
-The core of the testing suite, verifying complex financial calculations.
-- **Goal**: 
-    - Validate data filtering logic (handling invalid/zero prices).
-    - Check accuracy of Moving Averages (MA7/20/50/200).
-    - Verify RSI (Relative Strength Index) calculations and edge cases (e.g., purely trending markets).
-    - Test the **FMI (Fundamental Momentum Index)** for revenue and EPS growth acceleration.
-- **Mechanism**: Generates granular synthetic data, pushes it into the staging layer, and verifies the aggregated results in the marts layer.
+## 3. How to Run Tests
 
-### 🧪 5. Scoring Utilities (`test_utils.py`)
-Tests business logic helper functions.
-- **Goal**: Ensure that AI-based action labels (STRONG BUY, BUY, HOLD, SELL) are assigned correctly based on scores.
-- **Mechanism**: Passes various score thresholds (e.g., 80 -> STRONG BUY) and verifies the returned string.
-
----
-
-## 3. How to Run
-
-### Run all Tests
-To execute the full suite and see a summary report:
+Execute the full suite using:
 ```bash
-python3 -m pytest tests/
+python3 -m pytest
 ```
 
-### Run a specific Test File
-For example, if you want to test only the SQL logic:
+For detailed output (Verbose mode):
 ```bash
-python3 -m pytest tests/test_transform.py
+python3 -m pytest -v
 ```
 
----
-
-## 4. Technical Details
-- **Mocking**: We use synthetic data and in-memory databases for fast execution (under 1 second) without requiring internet or disk writes.
-- **CI/CD Ready**: This suite is integrated into Airflow. If any test fails, the ETL pipeline will automatically abort to protect your production database.
-
-> [!TIP]
-> You should run `python3 -m pytest tests/` every time you modify code in the `etl/` directory to ensure system stability.
+> [!IMPORTANT]
+> **Golden Rule**: Never push code to production unless this test suite is green. Unit tests are the firewall protecting a Data Engineer's career and system integrity.

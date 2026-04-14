@@ -1,66 +1,55 @@
-# 📂 Tài liệu Hệ thống Kiểm thử (Testing Suite)
+# 🧪 Chiến lược Kiểm thử (Testing Strategy)
 
-Tài liệu này cung cấp cái nhìn chi tiết về cấu trúc, mục đích và cách thức vận hành của bộ kiểm thử tự động trong dự án **Stock ETL Pipeline**.
+Tài liệu này thuyết minh về quy trình kiểm thử đơn vị (Unit Test) để đảm bảo tính ổn định, chính xác và khả năng phục hồi của hệ thống Stock ETL Pipeline.
 
----
+## 1. Kiến trúc Kiểm thử
+Dự án sử dụng `pytest` làm nền tảng kiểm thử chính, kết hợp với các công cụ như `pytest-mock` để giả lập các thành phần hệ thống và `duckdb` (In-memory) để kiểm tra logic dữ liệu mà không làm ảnh hưởng đến cơ sở dữ liệu thật.
 
-## 1. Tổng quan
-Bộ kiểm thử được xây dựng trên nền tảng `pytest`, giúp đảm bảo tính ổn định của hệ thống mỗi khi có thay đổi về mã nguồn. Hiện tại hệ thống có **21 bài test** bao phủ toàn bộ các lớp (layers) của ứng dụng.
+## 2. Chi tiết các bộ kiểm thử (Test Suites)
 
----
+### 2.1. Kiểm thử Cấu hình (`tests/test_config.py`)
+- **Mục tiêu**: Đảm bảo hệ thống luôn khởi động với các tham số hợp lệ.
+- **Kịch bản**:
+    - Kiểm tra sự tồn tại và tính hợp lệ của tệp `config/tickers.yaml`.
+    - Xác nhận mọi mã chứng khoán đều có đầy đủ các trường bắt buộc (`name`, `sector`, `region`).
 
-## 2. Danh sách các bài Test
+### 2.2. Kiểm thử Trích xuất (`tests/test_extract.py`)
+- **Mục tiêu**: Đảm bảo việc nhận diện và trích xuất dữ liệu từ các thị trường khác nhau diễn ra chính xác.
+- **Kịch bản**:
+    - Kiểm tra hàm `_guess_currency` để gán đúng loại tiền tệ (USD, EUR, JPY, GBP, DKK) dựa trên hậu tố của mã (Ticker Suffix).
 
-### 🧪 1. Kiểm tra Cấu hình (`test_config.py`)
-Kiểm tra tính toàn vẹn của tệp `config/tickers.yaml`.
-- **Mục tiêu**: Đảm bảo tệp cấu hình tồn tại, đúng định dạng YAML và mọi cổ phiếu đều có đủ các trường thông tin bắt buộc (`name`, `sector`, `region`).
-- **Cách thức**: Đọc tệp YAML và sử dụng `assert` để kiểm tra từng key/value.
+### 2.3. Kiểm thử Nạp dữ liệu (`tests/test_load.py`)
+- **Mục tiêu**: Đảm bảo dữ liệu Raw được đưa vào kho DuckDB an toàn.
+- **Kịch bản**:
+    - **Schema Creation**: Kiểm tra việc tự động tạo các bảng trong schema `raw`.
+    - **Upsert Logic**: Xác nhận rằng việc nạp dữ liệu không gây ra trùng lặp và xử lý đúng các bản ghi ghi đè.
 
-### 🧪 2. Kiểm tra Trích xuất (`test_extract.py`)
-Kiểm tra các hàm logic trong quá trình lấy dữ liệu từ Yahoo Finance.
-- **Mục tiêu**: Xác nhận hàm nhận diện tiền tệ (`_guess_currency`) hoạt động đúng cho nhiều thị trường khác nhau (Mỹ, Nhật, Đức, Pháp, Hà Lan, Đan Mạch, Anh).
-- **Cách thức**: Truyền các mã chứng khoán mẫu và so sánh kết quả trả về với đơn vị tiền tệ kỳ vọng (ví dụ: `RR.L` -> `GBP`).
+### 2.4. Kiểm thử Chuyển đổi & Analytics (`tests/test_transform.py`)
+Đây là phần cốt lõi của dự án, kiểm tra toàn bộ logic kinh doanh (Business Logic).
+- **Staging Layer**: Kiểm tra việc lọc bỏ dữ liệu lỗi (giá âm, ngày không hợp lệ).
+- **Intermediate Layer**: 
+    - Xác thực công thức tính các chỉ số kỹ thuật: `MA_20` (Đường trung bình 20 ngày) và `RSI` (Chỉ số sức mạnh tương đối).
+    - Kiểm tra logic phân loại vốn hóa thị trường (`Cap Category`).
+- **Marts Layer**: Kiểm tra logic **Gia tốc FMI (FMI Acceleration)** đối với doanh thu và lợi nhuận (EPS).
+- **Data Quality (DQ)**: Đảm bảo các ràng buộc về dữ liệu (như giá trị không được NULL) được thực thi nghiêm ngặt.
 
-### 🧪 3. Kiểm tra Lưu trữ (`test_load.py`)
-Kiểm tra khả năng tương tác với Database (DuckDB).
-- **Mục tiêu**: Đảm bảo Schema của Database được khởi tạo đúng và dữ liệu có thể được nạp vào mà không bị lỗi (bao gồm cả chế độ `upsert`).
-- **Cách thức**: Sử dụng DuckDB ở chế độ bộ nhớ tạm (`:memory:`) để tạo bảng và thực hiện lệnh `INSERT` thử nghiệm.
+### 2.5. Kiểm thử Hệ thống Giám sát (`tests/test_audit.py`)
+- **Mục tiêu**: Bảo vệ hệ thống "Ghi nhật ký" của Pipeline.
+- **Kịch bản**:
+    - Ghi lại lịch sử chạy thành công.
+    - Bắt lỗi và lưu vết `Traceback` khi Pipeline thất bại.
 
-### 🧪 4. Kiểm tra Chuyển đổi SQL (`test_transform.py`)
-Đây là phần quan trọng nhất, kiểm tra các công thức tài chính phức tạp.
-- **Mục tiêu**: 
-    - Xác nhận logic lọc dữ liệu rác (giá âm, giá bằng 0).
-    - Kiểm tra độ chính xác của các đường trung bình động (MA7/20/50/200).
-    - Kiểm tra chỉ số RSI (Relative Strength Index) và các trường hợp chia cho 0.
-    - Kiểm tra chỉ số **FMI (Fundamental Momentum Index)** để phát hiện gia tốc tăng trưởng doanh thu/lợi nhuận.
-- **Cách thức**: Tạo dữ liệu giả lập (Synthetic data) cực kỳ chi tiết, đẩy vào Stage layer và kiểm tra kết quả tính toán ở Marts layer.
+## 3. Hướng dẫn vận hành
 
-### 🧪 5. Kiểm tra Tiện ích (`test_utils.py`)
-Kiểm tra các hàm hỗ trợ logic kinh doanh.
-- **Mục tiêu**: Đảm bảo việc phân loại hành động (STRONG BUY, BUY, HOLD, SELL) dựa trên điểm số AI là chính xác.
-- **Cách thức**: Truyền các ngưỡng điểm khác nhau (ví dụ: 80 -> STRONG BUY) và kiểm tra nhãn trả về.
-
----
-
-## 3. Cách thức vận hành
-
-### Chạy toàn bộ Test
-Để chạy tất cả các bài test và xem báo cáo tổng quát:
+Để chạy toàn bộ hệ thống kiểm thử, sử dụng lệnh:
 ```bash
-python3 -m pytest tests/
+python3 -m pytest
 ```
 
-### Chạy một tệp Test cụ thể
-Ví dụ, nếu bạn chỉ muốn kiểm tra logic SQL:
+Để xem chi tiết quá trình chạy (Verbose mode):
 ```bash
-python3 -m pytest tests/test_transform.py
+python3 -m pytest -v
 ```
 
----
-
-## 4. Đặc điểm Kỹ thuật
-- **Mocking**: Chúng ta sử dụng dữ liệu giả lập và Database bộ nhớ tạm để test nhanh (dưới 1 giây) mà không cần kết nối mạng hay ghi tệp thật vào ổ cứng.
-- **CI/CD Ready**: Bộ test này đã được tích hợp vào Airflow. Nếu bất kỳ bài test nào thất bại, quy trình ETL sẽ tự động dừng lại để bảo vệ Database của bạn.
-
-> [!TIP]
-> Bạn nên chạy lệnh `python3 -m pytest tests/` mỗi khi sửa bất kỳ dòng code nào trong thư mục `etl/` để đảm bảo hệ thống luôn ổn định.
+> [!IMPORTANT]
+> **Quy tắc Vàng**: Tuyệt đối không đẩy code lên production nếu bộ bài test này chưa chuyển sang màu xanh (Passed). Unit Test chính là bức tường lửa bảo vệ sự nghiệp của một Data Engineer.

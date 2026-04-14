@@ -6,8 +6,8 @@ Please select your preferred language / Bitte wählen Sie Ihre bevorzugte Sprach
 
 | Language | Portal | Coverage |
 | :--- | :--- | :--- |
-| **Tiếng Việt** | [🇻🇳 Vietnam Entry](./vi/ALGORITHMS.md) | Full (AI, ETL, Algorithms, QA) |
-| **English** | [🇺🇸 English Entry](./en/ALGORITHMS.md) | Full (AI, ETL, Algorithms, QA) |
+| **Tiếng Việt** | [🇻🇳 Vietnam Entry](./vi/ALGORITHMS.md) | Full (AI, ETL, Algorithms, QA, Testing) |
+| **English** | [🇺🇸 English Entry](./en/ALGORITHMS.md) | Full (AI, ETL, Algorithms, QA, Testing) |
 | **Deutsch** | [🇩🇪 Deutsch Entry](./de/ALGORITHMS.md) | Core (AI, ETL, Algorithms) |
 
 ---
@@ -25,6 +25,7 @@ Vui lòng tham khảo các tệp sau trong thư mục ngôn ngữ tương ứng 
 2.  **AI_INTELLIGENCE.md:** Thuyết minh về cơ chế hỗ trợ quyết định của AI (CIO Mode).
 3.  **ETL_ARCHITECTURE.md:** Sơ đồ luồng dữ liệu, cơ chế Shadow DB và chuẩn hóa tiền tệ EUR.
 4.  **DATA_QUALITY.md:** Quy trình kiểm soát lỗi và đảm bảo tính toàn vẹn dữ liệu.
+5.  **TESTING.md:** Chiến lược Unit Test và hướng dẫn chạy kiểm thử hạ tầng.
 
 ---
 > [!NOTE]
