@@ -774,8 +774,66 @@ def save_portfolio_to_db(shares_dict, cost_dict):
         st.sidebar.error(f"⚠️ Failed to save Portfolio to Cloud: {e}")
 @contextlib.contextmanager
 def get_db_connection(read_only=False):
-    """Database connection context manager with fallback search."""
-    # Discovery for local and Cloud environments
+    """Database connection context manager with fallback and Hybrid Remote support."""
+    is_remote = os.environ.get("SUPABASE_REMOTE_MODE", "false").lower() == "true"
+    
+    if is_remote:
+        # ── HYBRID REMOTE MODE (Parquet over S3/HTTP) ──
+        try:
+            conn = duckdb.connect(":memory:")
+            conn.execute("INSTALL httpfs; LOAD httpfs;")
+            
+            # S3 Secrets from environment
+            s3_key = os.environ.get("S3_ACCESS_KEY_ID")
+            s3_secret = os.environ.get("S3_SECRET_ACCESS_KEY")
+            s3_endpoint = os.environ.get("S3_ENDPOINT", "").replace("https://", "")
+            s3_region = os.environ.get("S3_REGION", "us-east-1")
+            bucket = os.environ.get("S3_BUCKET_NAME", "warehouse")
+            
+            if not all([s3_key, s3_secret, s3_endpoint]):
+                st.error("Missing S3 credentials for Remote Mode.")
+                raise ValueError("Incomplete S3 configuration.")
+            
+            conn.execute(f"SET s3_region='{s3_region}';")
+            conn.execute(f"SET s3_endpoint='{s3_endpoint}';")
+            conn.execute(f"SET s3_access_key_id='{s3_key}';")
+            conn.execute(f"SET s3_secret_access_key='{s3_secret}';")
+            conn.execute("SET s3_use_ssl=true;")
+            conn.execute("SET s3_url_style='path';")
+            
+            # Create Views to map remote Parquet to local table names
+            # Tables to map (synced via etl/supabase_manager.py)
+            table_map = {
+                "marts.fct_daily_returns": "fct_daily_returns_p*.parquet", # Support sharding
+                "marts.dim_companies": "dim_companies.parquet",
+                "marts.dq_warnings": "dq_warnings.parquet",
+                "marts.etl_audit": "etl_audit.parquet",
+                "marts.agg_monthly_performance": "agg_monthly_performance.parquet", # Need to add this to sync
+                "marts.dim_annual_financials": "dim_annual_financials.parquet", # Need to add this to sync
+                "marts.dim_quarterly_financials": "dim_quarterly_financials.parquet", # Need to add this to sync
+                "raw.hist_fcf": "hist_fcf.parquet",
+                "raw.hist_fcf_quarterly": "hist_fcf_quarterly.parquet",
+                "raw.earnings_calendar": "earnings_calendar.parquet",
+                "raw.historical_financials": "historical_financials.parquet",
+                "raw.quarterly_financials": "quarterly_financials.parquet",
+                "raw.company_info": "company_info.parquet", # Need to add this to sync
+            }
+            
+            conn.execute("CREATE SCHEMA IF NOT EXISTS marts; CREATE SCHEMA IF NOT EXISTS raw;")
+            for table, file in table_map.items():
+                s3_path = f"s3://{bucket}/{file}"
+                conn.execute(f"CREATE VIEW {table} AS SELECT * FROM read_parquet('{s3_path}')")
+                
+            yield conn
+            return
+        except Exception as e:
+            st.error(f"Failed to initialize Remote Mode: {e}")
+            raise e
+        finally:
+            if 'conn' in locals():
+                conn.close()
+
+    # ── LOCAL MODE (File-based DuckDB) ──
     possible_paths = [
         DB_PATH,
         os.path.join(ROOT, "warehouse", "stock_demo.duckdb")
@@ -787,7 +845,6 @@ def get_db_connection(read_only=False):
             actual_path = p
             break
             
-    # Final backup: check for ANY duckdb file in warehouse folder
     if not actual_path:
         wh_dir = os.path.join(ROOT, "warehouse")
         if os.path.exists(wh_dir):
@@ -798,10 +855,6 @@ def get_db_connection(read_only=False):
     
     if not actual_path:
         st.error(f"FATAL: Database file not found at {DB_PATH}")
-        if os.path.exists(os.path.dirname(DB_PATH)):
-            st.info(f"Existing files in {os.path.dirname(DB_PATH)}: {os.listdir(os.path.dirname(DB_PATH))}")
-        else:
-            st.info("Warehouse directory is missing.")
         raise FileNotFoundError(f"Database missing at {DB_PATH}")
         
     conn = duckdb.connect(actual_path, read_only=read_only)
