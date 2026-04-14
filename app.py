@@ -4386,14 +4386,15 @@ if active_tab == "7. Portfolio Builder":
                     st.error(f"Optimization failed: {e}")
 
         with act_col2:
-            csv = edited_df.to_csv(index=False).encode('utf-8')
-            st.download_button(
-                label="📥 DOWNLOAD PORTFOLIO (CSV)",
-                data=csv,
-                file_name=f"portfolio_{datetime.now().strftime('%Y%m%d')}.csv",
-                mime="text/csv",
-                use_container_width=True
-            )
+            pass
+            # csv = edited_df.to_csv(index=False).encode('utf-8')
+            # st.download_button(
+            #     label="📥 DOWNLOAD PORTFOLIO (CSV)",
+            #     data=csv,
+            #     file_name=f"portfolio_{datetime.now().strftime('%Y%m%d')}.csv",
+            #     mime="text/csv",
+            #     use_container_width=True
+            # )
 
         # ── Display Suggestions ────────────────────────────────────────────
         if st.session_state.pending_optimization is not None:
@@ -6552,13 +6553,13 @@ if active_tab == "8. System Methodology":
 
 st.sidebar.markdown("---")
 
-# ── FEATURE 4: Sidebar Export Hub ────────────────────────────────────────────
-st.sidebar.markdown("---")
-st.sidebar.subheader("📥 Export Data (CSV)")
-csv_reco = reco_df.to_csv(index=False).encode('utf-8')
-st.sidebar.download_button("🔽 Download Recommendations", data=csv_reco, file_name="ai_reco.csv", mime="text/csv")
-
-csv_prices = prices.to_csv(index=False).encode('utf-8')
-st.sidebar.download_button("🔽 Download Price History", data=csv_prices, file_name="price_history.csv", mime="text/csv")
+# ── FEATURE 4: Sidebar Export Hub (HIDDEN) ──────────────────────────────────
+# st.sidebar.markdown("---")
+# st.sidebar.subheader("📥 Export Data (CSV)")
+# csv_reco = reco_df.to_csv(index=False).encode('utf-8')
+# st.sidebar.download_button("🔽 Download Recommendations", data=csv_reco, file_name="ai_reco.csv", mime="text/csv")
+# 
+# csv_prices = prices.to_csv(index=False).encode('utf-8')
+# st.sidebar.download_button("🔽 Download Price History", data=csv_prices, file_name="price_history.csv", mime="text/csv")
 
 auth.render_user_profile()
