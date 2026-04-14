@@ -21,9 +21,10 @@ Hệ thống tạo một bản sao "bóng" của cơ sở dữ liệu sản xu�
 - **Nguồn:** Kết hợp đa nguồn để tối ưu độ bền bỉ:
     - `yahooquery`: Nguồn chính cho dữ liệu tài chính (Financials), Dòng tiền (Cashflow), và Lịch lợi nhuận (Earnings) để tránh bị block.
     - `yfinance`: Nguồn chính cho Dữ liệu giá (Prices) và Tỷ giá (FX).
-- **Chiến lược Multi-Pass (Trích xuất đa lượt):** 
-    - **Pass 1 (Batch):** Tải dữ liệu theo cụm lớn để tối ưu tốc độ.
-    - **Pass 2 (Surgical Retry):** Tự động nhận diện các mã bị lỗi và thực hiện truy quét đơn lẻ với độ trễ ngẫu nhiên (Stealth mode) để đạt bao phủ 100%.
+- **Chiến lược Smart Refresh đa tầng (Multi-tier Strategy):** Để tối ưu tốc độ và bảo vệ API, hệ thống phân loại dữ liệu theo 3 tầng cập nhật:
+    - **Tầng 1 (Cấp tốc - 24h):** Dữ liệu Giá và Chỉ số kỹ thuật. Luôn được cập nhật hàng ngày.
+    - **Tầng 2 (Chiến thuật - 7 ngày):** Báo cáo tài chính Quý, Dòng tiền (FCF) và Lịch lợi nhuận.
+    - **Tầng 3 (Chiến lược - 30 ngày):** Hồ sơ doanh nghiệp (Ngành, Lĩnh vực) và Báo cáo tài chính Năm.
 - **Normalize:** Tự động lấy tỷ giá FX (ví dụ: `USDEUR=X`) để quy đổi mọi giá trị về đồng Euro.
 
 ### Bước 2: Validate (Kiểm tra dữ liệu thô)

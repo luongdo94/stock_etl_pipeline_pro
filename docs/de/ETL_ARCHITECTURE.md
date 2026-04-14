@@ -18,11 +18,12 @@ Das System wird über die Funktion `run_pipeline()` in `etl/pipeline.py` durch f
 Das System erstellt eine "Schattenkopie" (Shadow Copy) der Produktionsdatenbank. Alle neuen Schreibvorgänge werden auf dieser Kopie durchgeführt, um Auswirkungen auf Endbenutzer zu vermeiden, die gerade auf das Dashboard zugreifen.
 
 ### Schritt 1: Extraktion & Währungsnormalisierung
-- **Quellen:** Yahoo Finance (yfinance) & Google News RSS.
-- **Modi:** 
-    - `INCREMENTAL`: Lädt nur Daten seit dem letzten Zeitstempel herunter (schnell, ~3-5 Sek.).
-    - `FULL REFRESH`: Lädt das gesamte historische Fenster neu herunter (Standard: 5 Jahre).
-- **Normalisierung:** Ruft automatisch Live-Wechselkurse ab (z. B. `USDEUR=X`), um Kurse und Fundamentaldaten während der Aufnahme direkt umzurechnen.
+- **Quellen:** Kombination aus `yahooquery` (Fundamentaldaten/Cashflows) und `yfinance` (Kursdaten/FX) für maximale Stabilität.
+- **Multi-Tier Smart Refresh Strategie:** Um die Geschwindigkeit zu maximieren und API-Drosselungen zu vermeiden, werden Daten in drei Frequenzen unterteilt:
+    - **Tier 1 (Täglich - 24h):** Kursdaten und technische Indikatoren. Werden immer aktualisiert.
+    - **Tier 2 (Taktisch - 7 Tage):** Quartalszahlen, Free Cash Flow (FCF) und Earnings-Kalender.
+    - **Tier 3 (Strategisch - 30 Tage):** Unternehmens-Stammdaten (Sektoren, Industrien) und historische Jahresberichte.
+- **Normalisierung:** Ruft automatisch Live-Wechselkurse ab (z. B. `USDEUR=X`), um alle Werte bei der Aufnahme direkt in Euro zu normalisieren.
 
 ### Schritt 2: Validierung
 Führt erste Integritätsprüfungen der extrahierten Daten durch (keine negativen Kurse, keine Nullwerte in kritischen Spalten). Wenn die Validierung fehlschlägt, wird der Prozess abgebrochen (Fail-fast).

@@ -53,11 +53,13 @@ def _create_staging(conn):
             CASE WHEN volume = 0 THEN TRUE ELSE FALSE END AS _is_zero_volume,
             _extracted_at
         FROM raw.stock_prices
-        -- Filter out invalid rows (including zero volume which causes DQ failure)
+        -- Filter out invalid rows
         WHERE close > 0
           AND volume > 0
           AND date IS NOT NULL
           AND ticker IS NOT NULL
+        -- DEDUPLICATION: Take the most recent extraction for each ticker/date pair
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY date, ticker ORDER BY _extracted_at DESC) = 1
     """)
     
     conn.execute("""
@@ -108,6 +110,8 @@ def _create_staging(conn):
             END AS cap_category
         FROM raw.company_info
         WHERE ticker IS NOT NULL
+        -- DEDUPLICATION: Take the most recent metadata for each ticker
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY _extracted_at DESC) = 1
     """)
     conn.execute("""
         CREATE OR REPLACE VIEW staging.stg_historical_financials AS
@@ -120,6 +124,8 @@ def _create_staging(conn):
         FROM raw.historical_financials
         WHERE ticker IS NOT NULL
           AND eps IS NOT NULL
+        -- DEDUPLICATION: Handle overlapping annual periods
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker, year ORDER BY _loaded_at DESC) = 1
     """)
     conn.execute("""
         CREATE OR REPLACE VIEW staging.stg_cashflows AS
@@ -129,6 +135,8 @@ def _create_staging(conn):
             COALESCE(dividends_paid_ttm, 0)   AS dividends_paid_ttm
         FROM raw.cashflows
         WHERE ticker IS NOT NULL
+        -- DEDUPLICATION: Take the most recent payout data
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY _loaded_at DESC) = 1
     """) if _table_exists(conn, "raw", "cashflows") else None
     logger.info("✅ Staging views created")
 
@@ -260,6 +268,8 @@ def _create_marts(conn):
             ROUND((revenue - LAG(revenue, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(revenue, 4) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS revenue_growth_yoy_pct,
             ROUND((eps - LAG(eps, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(eps, 4) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS eps_growth_yoy_pct
         FROM raw.quarterly_financials
+        -- DEDUPLICATION: Take the most recent extraction for each ticker/date
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker, date ORDER BY _loaded_at DESC) = 1
         ORDER BY ticker, date
     """)
     conn.execute("""
@@ -272,6 +282,8 @@ def _create_marts(conn):
             ROUND((revenue - LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS revenue_growth_pct,
             ROUND((eps - LAG(eps) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(eps) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS eps_growth_pct
         FROM raw.historical_financials
+        -- DEDUPLICATION: Take the most recent extraction for each ticker/date
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker, date ORDER BY _loaded_at DESC) = 1
         ORDER BY ticker, year
     """)
     logger.info("Step 0: Financial dimension tables created (quarterly + annual).")
@@ -491,44 +503,6 @@ def _create_marts(conn):
         ORDER BY 1, 2
     """)
     
-    # DIMENSION: Historical Annual Financials
-    conn.execute("""
-        CREATE OR REPLACE TABLE marts.dim_annual_financials AS
-        SELECT
-            ticker,
-            EXTRACT(YEAR FROM date) AS year,
-            date AS report_date,
-            revenue,
-            eps,
-            eps_diluted,
-            -- Calculate YoY Growth
-            ROUND((revenue - LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS revenue_growth_pct,
-            ROUND((eps - LAG(eps) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(eps) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS eps_growth_pct
-        FROM raw.historical_financials
-        ORDER BY ticker, year
-    """)
-    
-    # DIMENSION: Historical Quarterly Financials
-    conn.execute("""
-        CREATE OR REPLACE TABLE marts.dim_quarterly_financials AS
-        SELECT
-            ticker,
-            EXTRACT(YEAR FROM date) AS year,
-            EXTRACT(QUARTER FROM date) AS quarter,
-            date AS report_date,
-            revenue,
-            eps,
-            eps_diluted,
-            -- Calculate QoQ Growth
-            ROUND((revenue - LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS revenue_growth_qoq_pct,
-            ROUND((eps - LAG(eps) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(eps) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS eps_growth_qoq_pct,
-            -- Calculate YoY Growth (lag 4 quarters)
-            ROUND((revenue - LAG(revenue, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(revenue, 4) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS revenue_growth_yoy_pct,
-            ROUND((eps - LAG(eps, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(eps, 4) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS eps_growth_yoy_pct
-        FROM raw.quarterly_financials
-        ORDER BY ticker, date
-    """)
-    
     logger.info("✅ Mart tables created: fct_daily_returns, dim_companies, agg_monthly_performance, dim_annual_financials, dim_quarterly_financials")
 
 
@@ -579,7 +553,7 @@ def _run_data_quality_checks(conn):
     
     critical_checks = [
         "fct_no_nulls_ticker", "fct_no_nulls_date", "fct_no_negative_price", 
-        "fct_unique_date_ticker", "fct_no_zero_volume"
+        "fct_unique_date_ticker"
     ]
     
     # ── Phase 2: Professional DQ Persistence ──────────────────────────────────

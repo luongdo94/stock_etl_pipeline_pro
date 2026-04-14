@@ -21,9 +21,10 @@ The system creates a "shadow" copy of the production database. All new write ope
 - **Sources:** Utilizes a dual-source strategy for maximum resilience:
     - `yahooquery`: Primary source for sensitive Financials, Cashflows, and Earnings to bypass blocks.
     - `yfinance`: Primary source for high-velocity Price and FX data.
-- **Multi-Pass Strategy (Resilient Extraction):** 
-    - **Pass 1 (Batch):** Fetches most tickers in parallel batch mode for speed.
-    - **Pass 2 (Surgical Retry):** Automatically identifies failed tickers and retries them sequentially with randomized jitter (Stealth mode) to reach 100% coverage.
+- **Multi-tier Smart Refresh Strategy:** To maximize speed and avoid API throttling, the system groups data into three update frequencies:
+    - **Tier 1 (High Velocity - 24h):** Price data and technical indicators. Always updated daily.
+    - **Tier 2 (Tactical - 7 Days):** Quarterly financials, Free Cash Flow (FCF), and Earnings calendars.
+    - **Tier 3 (Strategic - 30 Days):** Company metadata (Sectors, Industries) and Historical Annual financials.
 - **Normalize:** Automatically fetches live FX rates (e.g., `USDEUR=X`) to normalize all values to Euro at ingestion.
 
 ### Step 2: Validate

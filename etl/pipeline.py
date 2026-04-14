@@ -7,7 +7,7 @@ from etl.load      import get_connection, create_raw_schema, \
                           load_stock_prices, load_company_info, load_historical_financials, load_quarterly_financials, load_cashflows, load_historical_fcf, load_quarterly_fcf, load_earnings_calendar, \
                           perform_atomic_swap, DB_PATH, SHADOW_DB_PATH
 from etl.transform import run_transforms
-from etl.utils     import get_last_price_dates, needs_full_refresh, needs_earnings_refresh, needs_fundamentals_refresh
+from etl.utils     import get_last_price_dates, needs_full_refresh, needs_earnings_refresh, needs_fundamentals_refresh, needs_metadata_refresh
 
 logging.basicConfig(
     level=logging.INFO,
@@ -128,7 +128,7 @@ def run_pipeline(lookback_days: int = 1825, force_full: bool = False, fast_mode:
             watermarks=watermarks if is_incremental else None
         )
         
-        # 🧪 SMART REFRESH: Fundamentals only if stale (> 7 days) or in FULL REFRESH mode
+        # 🧪 SMART REFRESH: Tiered logic (Metadata 30d vs Fundamentals 7d)
         if fast_mode:
             logger.info("   🚀 FAST MODE: Skipping all fundamentals extraction.")
             company_df    = pd.DataFrame()
@@ -137,21 +137,28 @@ def run_pipeline(lookback_days: int = 1825, force_full: bool = False, fast_mode:
             cashflow_df   = pd.DataFrame()
             fcf_df        = pd.DataFrame()
             fcf_q_df      = pd.DataFrame()
-        elif is_incremental and not needs_fundamentals_refresh(conn):
-            logger.info("   🕒 Fundamentals data is fresh (< 7 days) — skipping extraction.")
-            company_df    = pd.DataFrame()
-            financials_df = pd.DataFrame()
-            quarterly_df  = pd.DataFrame()
-            cashflow_df   = pd.DataFrame()
-            fcf_df        = pd.DataFrame()
-            fcf_q_df      = pd.DataFrame()
         else:
-            company_df   = extract_company_info()
-            financials_df = extract_historical_financials()
-            quarterly_df = extract_quarterly_financials()
-            cashflow_df  = extract_cashflows()
-            fcf_df       = extract_historical_fcf()
-            fcf_q_df     = extract_quarterly_fcf()
+            # Tier 1: Metadata & Annuals (30-day cycle)
+            if is_incremental and not needs_metadata_refresh(conn):
+                logger.info("   🕒 Metadata (Info/Annuals) is fresh (< 30 days) — skipping.")
+                company_df    = pd.DataFrame()
+                financials_df = pd.DataFrame()
+            else:
+                company_df    = extract_company_info()
+                financials_df = extract_historical_financials()
+
+            # Tier 2: Quarterly Fundamentals & FCF (7-day cycle)
+            if is_incremental and not needs_fundamentals_refresh(conn):
+                logger.info("   🕒 Quarterly data (Q/FCF/Cashflow) is fresh (< 7 days) — skipping.")
+                quarterly_df  = pd.DataFrame()
+                cashflow_df   = pd.DataFrame()
+                fcf_df        = pd.DataFrame()
+                fcf_q_df      = pd.DataFrame()
+            else:
+                quarterly_df  = extract_quarterly_financials()
+                cashflow_df   = extract_cashflows()
+                fcf_df        = extract_historical_fcf()
+                fcf_q_df      = extract_quarterly_fcf()
         
         # 🧪 SMART REFRESH: Earnings only if stale (> 7 days) or in FULL REFRESH mode
         if fast_mode:

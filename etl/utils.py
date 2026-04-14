@@ -101,14 +101,42 @@ def needs_earnings_refresh(conn: duckdb.DuckDBPyConnection, threshold_hours: int
 
 def needs_fundamentals_refresh(conn: duckdb.DuckDBPyConnection, threshold_hours: int = 168) -> bool:
     """
-    Checks if fundamentals need a refresh.
-    Conditions to skip (returns False):
-      1. Last load was < threshold_hours ago.
-      2. AND Data coverage is > 95% of total tickers.
+    Checks if dynamic fundamental data (Quarterlies, Cashflows, FCF) needs a refresh.
+    Toggled every 7 days (168h) by default.
     """
     total_target = get_total_ticker_count()
     try:
-        # Check coverage and timing
+        # Check coverage and timing based on quarterly financials table
+        stats = conn.execute("""
+            SELECT 
+                COUNT(DISTINCT ticker) as ticker_count,
+                MAX(_loaded_at) as last_load
+            FROM raw.quarterly_financials
+        """).fetchone()
+        
+        if not stats or stats[0] == 0:
+            return True # No data at all
+            
+        ticker_count, last_load = stats
+        
+        if ticker_count < (total_target * 0.90): # Lower threshold for obscure stocks
+            return True
+            
+        from datetime import datetime
+        hours_since = (datetime.now() - last_load).total_seconds() / 3600
+        return hours_since > threshold_hours
+    except Exception:
+        return True
+
+
+def needs_metadata_refresh(conn: duckdb.DuckDBPyConnection, threshold_hours: int = 720) -> bool:
+    """
+    Checks if static metadata (Company Info, Historical Annuals) needs a refresh.
+    Toggled every 30 days (720h) by default.
+    """
+    total_target = get_total_ticker_count()
+    try:
+        # Check coverage and timing based on company info table
         stats = conn.execute("""
             SELECT 
                 COUNT(DISTINCT ticker) as ticker_count,
@@ -122,7 +150,7 @@ def needs_fundamentals_refresh(conn: duckdb.DuckDBPyConnection, threshold_hours:
         ticker_count, last_load = stats
         
         if ticker_count < (total_target * 0.95):
-            return True # Significant coverage gap — force retry
+            return True # Metadata should be high coverage
             
         from datetime import datetime
         hours_since = (datetime.now() - last_load).total_seconds() / 3600

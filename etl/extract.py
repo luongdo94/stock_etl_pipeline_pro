@@ -118,6 +118,37 @@ def extract_stock_prices(
         if not raw_new.empty:
             all_frames.append(("new", new_tickers, raw_new))
 
+    # ── PASS 2: SURGICAL RECOVERY FOR FAILED TICKERS ─────────────────────────
+    # Identify tickers that were requested but are missing from the batch results
+    received_tickers = set()
+    for _, _, _df in all_frames:
+        if isinstance(_df.columns, pd.MultiIndex):
+            received_tickers.update(_df.columns.get_level_values(1).unique())
+        else:
+            # Single ticker case
+            received_tickers.add(all_ticker_list[0]) if len(all_ticker_list) == 1 else None
+
+    failed_tickers = [t for t in all_ticker_list if t not in received_tickers]
+    
+    if failed_tickers:
+        logger.info(f"🔄 PASS 2: Surgical Recovery for {len(failed_tickers)} failed price downloads: {failed_tickers}")
+        for ticker in failed_tickers:
+            try:
+                # Use single-ticker history call which is often more resilient than batch download
+                t_obj = yf.Ticker(ticker)
+                # Determine correct start date for this ticker
+                t_start = start_date if ticker in existing_tickers else (full_start if full_start else start_date)
+                
+                s_df = t_obj.history(start=t_start, end=end_date, auto_adjust=True)
+                if not s_df.empty:
+                    # Format to match batch download structure for downstream processing
+                    all_frames.append(("recovered", [ticker], s_df))
+                    logger.info(f"   ✅ Recovered price data for: {ticker}")
+                else:
+                    logger.warning(f"   ❌ Recovery failed for {ticker}: No data returned.")
+            except Exception as e:
+                logger.warning(f"   ❌ Recovery error for {ticker}: {e}")
+
     if not all_frames and not watermarks:
         raise ValueError("❌ No price data returned from Yahoo Finance.")
 

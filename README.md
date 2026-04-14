@@ -20,7 +20,11 @@ The backbone of Honest Quant is a robust, production-ready Data Engineering pipe
 ### Intelligent Loading Strategy
 - **Incremental Load (Watermarking)**: The system automatically detects the last available data point for each ticker. In daily runs, it strictly fetches only the missing "gap" (incremental window), reducing bandwidth consumption and avoiding IP blocks.
 - **New Ticker Bootstrapping**: When a new ticker is added to `config/tickers.yaml`, the ETL engine automatically identifies its absence in the warehouse and triggers a **Full 5-Year History Download** specifically for that ticker, while keeping all other tickers on an incremental path.
-- **Smart Fundamental Refresh**: Financial data is expensive and sensitive. The system implements a **7-day freshness cache** (168h) and a **95% coverage threshold**. It only triggers a deep fundamental crawl (using `yahooquery` batching) if the last update was > 7 days ago OR if total warehouse coverage drops below 95%. Users can also force-skip this via `--fast` mode.
+- **Multi-tier Smart Refresh**: To maximize speed and avoid API throttling, the system implements a tiered caching strategy:
+    - **Tier 1 (Daily)**: Stock Prices & Technicals. Always updated.
+    - **Tier 2 (Weekly - 168h)**: Quarterly Financials, Cashflow, and Earnings.
+    - **Tier 3 (Monthly - 720h)**: Company Metadata (Sector, Industry), Historical Annual Financials.
+- **Coverage Guard**: Regardless of the timers, a deep refresh is automatically triggered if total warehouse coverage drops below **95%** (Metadata) or **90%** (Quarterly data).
 
 ### Data Transformation & Warehousing (`etl/transform.py` & `etl/load.py`)
 - **Storage Layer**: Uses **DuckDB** (`stock_dw.duckdb`) as an embedded, highly optimized columnar database. This allows the Streamlit dashboard to execute complex aggregations with millisecond latency.
