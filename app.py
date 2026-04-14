@@ -891,14 +891,17 @@ def load_data():
         try:
             quarterly_f = conn.execute("SELECT * FROM marts.dim_quarterly_financials").df()
         except Exception:
-            quarterly_f = pd.DataFrame()
+            quarterly_f = pd.DataFrame(columns=["ticker", "year", "quarter", "report_date", "revenue", "eps"])
             
         try:
             earnings_calendar = conn.execute("SELECT * FROM raw.earnings_calendar").df()
             if not earnings_calendar.empty:
                 earnings_calendar["earnings_date"] = pd.to_datetime(earnings_calendar["earnings_date"])
+            else:
+                # Ensure columns exist even if empty
+                earnings_calendar = pd.DataFrame(columns=["ticker", "earnings_date", "eps_avg", "rev_avg"])
         except Exception:
-            earnings_calendar = pd.DataFrame()
+            earnings_calendar = pd.DataFrame(columns=["ticker", "earnings_date", "eps_avg", "rev_avg"])
 
         try:
             dq_warnings_f = conn.execute("SELECT * FROM marts.dq_warnings ORDER BY is_critical DESC, violations DESC").df()
@@ -930,7 +933,6 @@ def load_data():
             total_tickers_f = conn.execute("SELECT COUNT(*) FROM marts.dim_companies").fetchone()[0]
         except:
             total_tickers_f = 0
-
     # ── PRE-PROCESSING INSIDE CACHE ──
     prices_f["date"] = pd.to_datetime(prices_f["date"])
     monthly_f["month"] = pd.to_datetime(monthly_f["month"])
@@ -2625,18 +2627,105 @@ if active_tab == "3. Qualitative Audit (AI)":
 
 
 
-            # ── AI RISK OVERLAY (Full-Width) ──────────────────────────────────
-            _unified_key = f"unified_verdict_{deep_ticker}"
-            if _unified_key in st.session_state:
-                _uv_data = st.session_state[_unified_key]
-                if isinstance(_uv_data, dict):
-                    _uv_text       = _uv_data.get("report", "")
-                    _nlp_insights  = _uv_data.get("nlp_insights", [])
-                    _nlp_score     = _uv_data.get("nlp_score", 0)
-                    _nlp_sent      = _uv_data.get("nlp_sentiment", "Neutral")
-                    _audit_time    = _uv_data.get("extracted_at", "")
-                    _is_conflict   = _uv_data.get("is_conflict", False)
-                    _ai_score_snap = _uv_data.get("ai_score_snap", 0)
+                with kcol5:
+                    st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Price & Context</div>", unsafe_allow_html=True)
+                    render_metric_row("Target",       f"€{target_p:.2f}", delta=upside, is_pct=True)
+                    
+                    pe_5y_avg    = meta.get('pe_5y_avg', 0)
+                    pe_cur       = meta.get('pe_ratio', 0)
+                    pe_delta     = ((pe_cur / pe_5y_avg) - 1) * 100 if pe_5y_avg > 0 and pe_cur > 0 else 0
+                    
+                    render_metric_row("5Y Avg P/E",    f"{pe_5y_avg:.1f}" if pe_5y_avg > 0 else "N/A", delta=pe_delta, is_pct=True, color_invert=True)
+                    render_metric_row("Z-Score (5Y)",  f"{z_score:.2f}",  delta=z_status)
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+                with kcol6:
+                    # ── EARNINGS CALENDAR (v13.0) ──
+                    if not earnings_cal.empty and 'ticker' in earnings_cal.columns:
+                        e_row = earnings_cal[earnings_cal['ticker'] == deep_ticker]
+                    else:
+                        e_row = pd.DataFrame()
+                    e_header = _header_style
+                    if not e_row.empty:
+                        e_date = e_row.iloc[0]['earnings_date']
+                        if pd.notnull(e_date):
+                            # Handle both Timestamp and date objects safely
+                            e_date_obj = e_date.date() if hasattr(e_date, 'date') else e_date
+                            days_to_e = (e_date_obj - date.today()).days
+                            if 0 <= days_to_e <= 7:
+                                e_header = e_header.replace("#aabbcc", "#f39c12") # Highlight upcoming
+                                e_date_str = f"⚠️ {e_date_obj.strftime('%b %d')}"
+                            else:
+                                e_date_str = e_date_obj.strftime('%b %d, %y')
+                        else:
+                            e_date_str = "TBD"
+                        
+                        eps_est = e_row.iloc[0]['eps_avg']
+                        rev_est = e_row.iloc[0]['rev_avg']
+                    else:
+                        e_date_str = "N/A"
+                        eps_est = None
+                        rev_est = None
+
+                    st.markdown(f"<div style='{_card_style}'><div style='{e_header}'>Earnings & Events</div>", unsafe_allow_html=True)
+                    render_metric_row("Report Date", e_date_str)
+                    render_metric_row("EPS Est",     f"{eps_est:.2f}" if pd.notnull(eps_est) else "N/A")
+                    
+                    if pd.notnull(rev_est) and rev_est > 0:
+                        if rev_est >= 1e9: rev_txt = f"€{rev_est/1e9:.1f}B"
+                        else: rev_txt = f"€{rev_est/1e6:.0f}M"
+                    else:
+                        rev_txt = "N/A"
+                    render_metric_row("Revenue Est", rev_txt)
+                    st.markdown("</div>", unsafe_allow_html=True)
+
+            st.markdown("---")
+            
+            # ── QUAL vs QUANT: Full-Width 50/50 Split View ───────────────────
+            render_header("zap", "Qualitative vs. Quantitative Risk Analysis", level="####")
+            st.caption("Left: NLP-powered real-time sentiment from news headlines (Cohere AI). Right: Quantitative pillar breakdown from fundamental data.")
+            
+            qual_col, quant_col = st.columns([1, 1])
+            
+            # ── LEFT: NLP Qualitative Audit ──────────────────────────────────
+            with qual_col:
+                st.markdown("<div style='color:#3498db; font-size:0.85rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; border-bottom:1px solid rgba(52,152,219,0.3); padding-bottom:6px;'>Qualitative NLP Audit</div>", unsafe_allow_html=True)
+                
+                if st.button("Run Real-Time AI Risk Audit", type="primary", use_container_width=True):
+                    with st.spinner(f"Scanning news for {meta['company']}..."):
+                        llm_res = analyze_risk_with_llm(deep_ticker, meta['company'])
+                        
+                        if llm_res.get("error"):
+                            st.error(f"NLP Error: {llm_res['error'][:80]}")
+                        else:
+                            nlp_score     = llm_res.get("red_flag_score", 0)
+                            nlp_sentiment = llm_res.get("sentiment", "Neutral")
+                            nlp_reco      = llm_res.get("recommendation", "N/A")
+                            nlp_insights  = llm_res.get("key_insights", [])
+                            nlp_category  = llm_res.get("risk_category", "None")
+                            
+                            if nlp_score <= 25:   nlp_border, nlp_badge = "#2ecc71", "LOW RISK"
+                            elif nlp_score <= 50: nlp_border, nlp_badge = "#f1c40f", "MODERATE"
+                            elif nlp_score <= 75: nlp_border, nlp_badge = "#e67e22", "ELEVATED"
+                            else:                 nlp_border, nlp_badge = "#e74c3c", "HIGH RISK"
+                            
+                            st.markdown(f"""
+                            <div style='display:flex; align-items:center; gap:12px; margin-bottom:12px; padding:10px; background:rgba(255,255,255,0.03); border-radius:8px; border-left:3px solid {nlp_border};'>
+                                <div style='text-align:center; min-width:55px;'>
+                                    <div style='font-size:1.8rem; font-weight:900; color:{nlp_border}; line-height:1;'>{nlp_score}</div>
+                                    <div style='font-size:0.6rem; color:#888;'>/100</div>
+                                </div>
+                                <div>
+                                    <div style='font-size:0.75rem; font-weight:700; color:{nlp_border};'>{nlp_badge}</div>
+                                    <div style='font-size:0.72rem; color:#aaa;'>Sentiment: <b>{nlp_sentiment}</b> · Category: <b>{nlp_category}</b></div>
+                                </div>
+                            </div>
+                            <div style='font-size:0.8rem; font-style:italic; color:#ddd; border-left:2px solid #3498db; padding-left:8px; margin-bottom:10px;'>"{nlp_reco}"</div>
+                            <div style='color:#999; font-size:0.72rem; font-weight:700; margin-bottom:5px;'>KEY INSIGHTS ({llm_res.get("headlines_analyzed", 0)} sources):</div>
+                            <ul style='color:#bbb; font-size:0.78rem; line-height:1.5; padding-left:14px; margin:0;'>
+                                {"".join([f"<li>{item}</li>" for item in nlp_insights])}
+                            </ul>
+                            """, unsafe_allow_html=True)
                 else:
                     _uv_text, _nlp_insights, _nlp_score = _uv_data, [], 0
                     _nlp_sent, _audit_time, _is_conflict, _ai_score_snap = "N/A", "", False, 0
