@@ -6,7 +6,9 @@ import logging
 def get_supabase_client():
     """Initialize and cache the Supabase client."""
     url = st.secrets.get("SUPABASE_URL")
-    key = st.secrets.get("SUPABASE_KEY")
+    # Fallback search for the key
+    key = st.secrets.get("SUPABASE_KEY") or st.secrets.get("SUPABASE_SERVICE_KEY")
+    
     if not url or not key:
         return None
     return create_client(url, key)
