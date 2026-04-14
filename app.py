@@ -862,6 +862,22 @@ def load_data():
         except Exception:
             hist_fcf_q_f = pd.DataFrame()
 
+        # ── Pipeline Health Data ──
+        try:
+            etl_audit_f = conn.execute("""
+                SELECT status, start_time, rows_processed
+                FROM marts.etl_audit 
+                ORDER BY start_time DESC 
+                LIMIT 1
+            """).df()
+        except:
+            etl_audit_f = pd.DataFrame()
+
+        try:
+            total_tickers_f = conn.execute("SELECT COUNT(*) FROM marts.dim_companies").fetchone()[0]
+        except:
+            total_tickers_f = 0
+
     # ── PRE-PROCESSING INSIDE CACHE ──
     prices_f["date"] = pd.to_datetime(prices_f["date"])
     monthly_f["month"] = pd.to_datetime(monthly_f["month"])
@@ -870,7 +886,12 @@ def load_data():
     # Vectorized RSI (only for those missing it or to ensure consistency)
     prices_f['rsi'] = prices_f.groupby('ticker', group_keys=False).apply(lambda x: get_rsi_vectorized(x), include_groups=False)
     
-    return prices_f, companies_f, monthly_f, annual_f, quarterly_f, earnings_calendar, dq_warnings_f, hist_fcf_f, hist_fcf_q_f
+
+
+    return (
+        prices_f, companies_f, monthly_f, annual_f, quarterly_f, earnings_calendar, 
+        dq_warnings_f, hist_fcf_f, hist_fcf_q_f, etl_audit_f, total_tickers_f
+    )
 
 
 # ── ANALYTICS ENGINE: Global Screener Data ──────────────────────────────────
@@ -1276,7 +1297,7 @@ def render_sector_health_matrix(m_df: pd.DataFrame):
 
 
 # Primary Data Load (Cached)
-prices_full, companies_full, monthly_full, annual_fin, quarterly_fin, earnings_cal, dq_warnings, hist_fcf_full, hist_fcf_q_full = load_data()
+prices_full, companies_full, monthly_full, annual_fin, quarterly_fin, earnings_cal, dq_warnings, hist_fcf_full, hist_fcf_q_full, etl_audit, total_universe_size = load_data()
 m_df = get_master_screener_data(companies_full, prices_full, quarterly_fin, annual_fin)
 
 
@@ -1358,17 +1379,39 @@ if not prices_full.empty:
     min_db_date = prices_full["date"].min().date()
     max_db_date = prices_full["date"].max().date()
 
-    # ── Phase 2: Data Quality Transparency (Sidebar) ──
-    if not dq_warnings.empty:
-        critical_count = len(dq_warnings[dq_warnings['is_critical']])
-        warn_count = len(dq_warnings[~dq_warnings['is_critical']])
+    # ── Integrated Infrastructure & DQ Pulse (Unified Sidebar) ──
+    if not etl_audit.empty:
+        last_run = etl_audit.iloc[0]
+        st.sidebar.markdown("<div class='sb-section-label'>Infrastructure Engine</div>", unsafe_allow_html=True)
+        h_color = "#2ecc71" if last_run['status'] == 'SUCCESS' else "#e74c3c"
+        try:
+            ls_time = pd.to_datetime(last_run['start_time']).strftime('%b %d, %H:%M')
+        except: ls_time = "N/A"
         
-        with st.sidebar.expander(f"🔍 Data Quality: {critical_count} Crit, {warn_count} Warn", expanded=False):
-            for _, row in dq_warnings.iterrows():
-                icon = "❌" if row['is_critical'] else "⚠️"
-                st.write(f"{icon} **{row['check_name']}**")
-                st.write(f"&nbsp;&nbsp;&nbsp;&nbsp;Violations: {row['violations']} ({row['status']})")
-            st.info("Pipeline auto-skips minor gaps to ensure trading continuity.")
+        # DQ Summary and detail preparation
+        crit_dq = len(dq_warnings[dq_warnings['is_critical']]) if not dq_warnings.empty else 0
+        warn_dq = len(dq_warnings[~dq_warnings['is_critical']]) if not dq_warnings.empty else 0
+        dq_color = "#2ecc71" if (crit_dq == 0 and warn_dq == 0) else ("#e74c3c" if crit_dq > 0 else "#f1c40f")
+        dq_text = "CLEAN" if (crit_dq == 0 and warn_dq == 0) else (f"{crit_dq} CRIT" if crit_dq > 0 else f"{warn_dq} WARN")
+
+        # UI rendering is simplified below
+
+        rows_in = last_run['rows_processed'] if 'rows_processed' in last_run else 0
+        pulse_html = f"""
+<div style='padding:12px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:8px; margin-bottom:10px;'>
+<div style='display:flex; align-items:center; gap:10px;'>
+<div style='width:10px; height:10px; border-radius:50%; background:{h_color}; box-shadow:0 0 10px {h_color};'></div>
+<div style='flex-grow:1;'>
+<div style='font-size:0.75rem; color:#e8eaf6; font-weight:700; line-height:1.1;'>{last_run['status']}</div>
+<div style='font-size:0.6rem; color:#8899aa; margin-top:2px;'>Sync: {ls_time}</div>
+</div>
+<div style='text-align:right;'>
+<div style='font-size:0.65rem; color:{dq_color}; font-weight:700; line-height:1.1;'>{dq_text}</div>
+<div style='font-size:0.5rem; color:#667788; text-transform:uppercase; letter-spacing:0.04em;'>Integrity</div>
+</div>
+</div>
+</div>""".strip()
+        st.sidebar.markdown(pulse_html, unsafe_allow_html=True)
     
     indices = ["^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"]
 
