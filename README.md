@@ -11,14 +11,16 @@ Honest Quant is not just a stock screener. It is a comprehensive **Hybrid Intell
 The backbone of Honest Quant is a robust, production-ready Data Engineering pipeline running on a modern data stack.
 
 ### Data Ingestion & Extraction (`etl/extract.py`)
-- **Data Provider**: Utilizes the `yfinance` & `yahooquery` APIs to extract daily granular data for US, EU, and Asian equities.
-- **Concurrency**: Integrates `ThreadPoolExecutor` to handle parallel data fetching across hundreds of tickers, reducing total extraction time significantly.
-- **Resilience**: Implements automatic retry logic and exponential backoff to handle API rate limits and connection drops.
+- **Data Providers**: Utilizes a dual-source strategy combining `yahooquery` (for sensitive Financials/Earnings) and `yfinance` (for high-velocity Price/FX data).
+- **Concurrency**: Integrates `ThreadPoolExecutor` and `yahooquery` batch modes to handle parallel data fetching across 600+ tickers.
+- **Resilience (Multi-Pass)**: Implements a two-pass surgical strategy:
+    - **Pass 1**: Batch concurrent extraction for speed.
+    - **Pass 2 (Surgical)**: Sequential, throttled retry for failed tickers with randomized jitter to bypass API blocks and reach 100% coverage.
 
 ### Intelligent Loading Strategy
 - **Incremental Load (Watermarking)**: The system automatically detects the last available data point for each ticker. In daily runs, it strictly fetches only the missing "gap" (incremental window), reducing bandwidth consumption and avoiding IP blocks.
 - **New Ticker Bootstrapping**: When a new ticker is added to `config/tickers.yaml`, the ETL engine automatically identifies its absence in the warehouse and triggers a **Full 5-Year History Download** specifically for that ticker, while keeping all other tickers on an incremental path.
-- **Smart Earnings Refresh**: Earnings calendar data is expensive and sensitive. The system implements a **24-hour freshness cache**. It will only trigger an earnings crawl (using `yahooquery` micro-batching) if the last update was > 24 hours ago, preventing unnecessary API pressure.
+- **Smart Fundamental Refresh**: Financial data is expensive and sensitive. The system implements a **7-day freshness cache** (168h) and a **95% coverage threshold**. It only triggers a deep fundamental crawl (using `yahooquery` batching) if the last update was > 7 days ago OR if total warehouse coverage drops below 95%. Users can also force-skip this via `--fast` mode.
 
 ### Data Transformation & Warehousing (`etl/transform.py` & `etl/load.py`)
 - **Storage Layer**: Uses **DuckDB** (`stock_dw.duckdb`) as an embedded, highly optimized columnar database. This allows the Streamlit dashboard to execute complex aggregations with millisecond latency.
@@ -128,10 +130,25 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### Step 2. Master ETL Run
-Before launching the UI, you must compile the data warehouse (DuckDB) by explicitly pulling the latest end-of-day metrics:
+### Step 2. Run ETL Pipeline
+You have two main ways to run the pipeline depending on your needs:
+
+**Daily Update (Fast & Safe)**
+Updates only stock prices and runs technical indicators. Skips heavy fundamental API calls. Recommended for weekdays.
 ```bash
-python run.py
+python etl/pipeline.py --fast
+```
+
+**Weekly/Full Update (Deep Dive)**
+Refreshes everything including Financials, Cashflows, and Earnings (if last update > 7 days).
+```bash
+python etl/pipeline.py
+```
+
+**Force Rebuild**
+Ignore all caches and download 5 years of full history for everything.
+```bash
+python etl/pipeline.py --full
 ```
 
 ### Step 3. Spin Up The Control Room

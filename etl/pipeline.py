@@ -1,12 +1,13 @@
 # etl/pipeline.py
 import logging, time, shutil, os, duckdb
+import pandas as pd
 from pathlib import Path
 from etl.extract   import extract_stock_prices, extract_company_info, extract_historical_financials, extract_quarterly_financials, extract_cashflows, extract_historical_fcf, extract_quarterly_fcf, extract_earnings_calendar
 from etl.load      import get_connection, create_raw_schema, \
                           load_stock_prices, load_company_info, load_historical_financials, load_quarterly_financials, load_cashflows, load_historical_fcf, load_quarterly_fcf, load_earnings_calendar, \
                           perform_atomic_swap, DB_PATH, SHADOW_DB_PATH
 from etl.transform import run_transforms
-from etl.utils     import get_last_price_dates, needs_full_refresh, needs_earnings_refresh
+from etl.utils     import get_last_price_dates, needs_full_refresh, needs_earnings_refresh, needs_fundamentals_refresh
 
 logging.basicConfig(
     level=logging.INFO,
@@ -71,7 +72,7 @@ def validate_shadow_integrity(conn: duckdb.DuckDBPyConnection) -> bool:
         return False
 
 
-def run_pipeline(lookback_days: int = 1825, force_full: bool = False):
+def run_pipeline(lookback_days: int = 1825, force_full: bool = False, fast_mode: bool = False):
 
     """
     Intelligent ETL Orchestrator with Incremental Load Support.
@@ -126,16 +127,38 @@ def run_pipeline(lookback_days: int = 1825, force_full: bool = False):
             lookback_days=lookback_days,
             watermarks=watermarks if is_incremental else None
         )
-        company_df   = extract_company_info()             # Always refresh fundamentals
-        financials_df = extract_historical_financials()   # Always refresh financials
-        quarterly_df = extract_quarterly_financials()     # Always refresh quarterly
-        cashflow_df  = extract_cashflows()                # v3.0: Buyback & Dividend data
-        fcf_df       = extract_historical_fcf()           # v3.2: Historical FCF (yahooquery)
-        fcf_q_df     = extract_quarterly_fcf()            # v3.3: Quarterly FCF (yahooquery)
         
-        # 🧪 SMART REFRESH: Earnings only if stale (>24h) or in FULL REFRESH mode
-        if is_incremental and not needs_earnings_refresh(conn):
-            logger.info("   🕒 Earnings data is fresh (< 24h) — skipping extraction.")
+        # 🧪 SMART REFRESH: Fundamentals only if stale (> 7 days) or in FULL REFRESH mode
+        if fast_mode:
+            logger.info("   🚀 FAST MODE: Skipping all fundamentals extraction.")
+            company_df    = pd.DataFrame()
+            financials_df = pd.DataFrame()
+            quarterly_df  = pd.DataFrame()
+            cashflow_df   = pd.DataFrame()
+            fcf_df        = pd.DataFrame()
+            fcf_q_df      = pd.DataFrame()
+        elif is_incremental and not needs_fundamentals_refresh(conn):
+            logger.info("   🕒 Fundamentals data is fresh (< 7 days) — skipping extraction.")
+            company_df    = pd.DataFrame()
+            financials_df = pd.DataFrame()
+            quarterly_df  = pd.DataFrame()
+            cashflow_df   = pd.DataFrame()
+            fcf_df        = pd.DataFrame()
+            fcf_q_df      = pd.DataFrame()
+        else:
+            company_df   = extract_company_info()
+            financials_df = extract_historical_financials()
+            quarterly_df = extract_quarterly_financials()
+            cashflow_df  = extract_cashflows()
+            fcf_df       = extract_historical_fcf()
+            fcf_q_df     = extract_quarterly_fcf()
+        
+        # 🧪 SMART REFRESH: Earnings only if stale (> 7 days) or in FULL REFRESH mode
+        if fast_mode:
+            logger.info("   🚀 FAST MODE: Skipping earnings calendar extraction.")
+            earnings_df = pd.DataFrame()
+        elif is_incremental and not needs_earnings_refresh(conn):
+            logger.info("   🕒 Earnings data is fresh (< 7 days) — skipping extraction.")
             earnings_df = pd.DataFrame()
         else:
             earnings_df = extract_earnings_calendar()
@@ -232,6 +255,7 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Stock ETL Pipeline")
     parser.add_argument("--full", action="store_true", help="Force a full historical refresh")
+    parser.add_argument("--fast", action="store_true", help="Skip fundamentals (Price only)")
     parser.add_argument("--lookback", type=int, default=1825, help="Days of history for full refresh")
     args = parser.parse_args()
-    run_pipeline(lookback_days=args.lookback, force_full=args.full)
+    run_pipeline(lookback_days=args.lookback, force_full=args.full, fast_mode=args.fast)

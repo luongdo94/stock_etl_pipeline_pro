@@ -37,10 +37,25 @@ Thực hiện ngay trong **Airflow Task `validate`**, trước khi dữ liệu t
 | `dim_no_null_revenue` | Doanh thu công ty phải có giá trị và không tính bằng 0 | Layer 2 |
 | `dim_no_null_market_cap` | Phải có giá trị Vốn hóa thị trường | Layer 2 |
 | `fct_no_zero_volume` | Cảnh báo nếu khối lượng giao dịch bằng 0 | Layer 2 |
+| `coverage_gt_95` | Mức độ bao phủ dữ liệu phải đạt trên 95% | Layer 0 (Extra) |
 
 ---
 
-## 3. Cơ chế Xử lý Lỗi (Failure Handling)
+## 3. Chiến lược Trích xuất Bền bỉ (Resilient Extraction)
+
+Điểm khác biệt của hệ thống này là khả năng tự phục hồi dữ liệu khi đối mặt với các rào cản từ API (Rate limit, IP Block):
+
+### 🛡️ Cơ chế Multi-Pass (Trình trích xuất đa lượt)
+- **Cơ chế:** Nếu một mã cổ phiếu bị lỗi ở Pass 1 (Batch), hệ thống không bỏ qua mà sẽ đưa vào Pass 2. Tại đây, mã sẽ được truy vấn đơn lẻ với các khoảng nghỉ ngẫu nhiên từ 2-4 giây để "lách" qua các bộ lọc bảo mật của Yahoo.
+- **Mục tiêu:** Đảm bảo độ bao phủ dữ liệu tài chính tiệm cận con số **100%**.
+
+### 🛡️ Smart Fundamental Refresh (Làm mới thông minh)
+- **Quy tắc:** Hệ thống chỉ tải lại dữ liệu tài chính (Thanh khoản, Doanh thu...) nếu dữ liệu hiện tại cũ hơn 72 giờ **HOẶC** mức độ bao phủ của kho dữ liệu thấp hơn **95%**.
+- **Lợi ích:** Tiết kiệm tối đa tài nguyên API và giảm nguy cơ bị khóa tài khoản/IP.
+
+---
+
+## 4. Cơ chế Xử lý Lỗi (Failure Handling)
 
 Khi một bài kiểm tra chất lượng dữ liệu thất bại:
 1.  **Stop Pipeline:** Lệnh `ValueError` được ném ra, khiến Task Airflow hiện tại dừng ngay lập tức (Status: `FAILED`).

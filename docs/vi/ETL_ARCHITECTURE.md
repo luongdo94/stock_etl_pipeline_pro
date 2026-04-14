@@ -18,11 +18,13 @@ Hệ thống vận hành thông qua hàm `run_pipeline()` trong `etl/pipeline.py
 Hệ thống tạo một bản sao "bóng" của cơ sở dữ liệu sản xuất. Mọi thao tác ghi dữ liệu mới đều thực hiện trên bản sao này để không ảnh hưởng đến người dùng đang truy cập Dashboard.
 
 ### Bước 1: Extract (Trích xuất & Quy chuẩn hóa)
-- **Nguồn:** Yahoo Finance (yfinance) & Google News RSS.
-- **Chế độ:** 
-    - `INCREMENTAL`: Chỉ tải dữ liệu mới từ ngày cuối cùng có trong DB (tốc độ nhanh ~3-5s).
-    - `FULL REFRESH`: Tải lại toàn bộ lịch sử (5 năm).
-- **Normalize:** Tự động lấy tỷ giá FX (ví dụ: `USDEUR=X`) để nhân trực tiếp vào giá và các thông số tài chính.
+- **Nguồn:** Kết hợp đa nguồn để tối ưu độ bền bỉ:
+    - `yahooquery`: Nguồn chính cho dữ liệu tài chính (Financials), Dòng tiền (Cashflow), và Lịch lợi nhuận (Earnings) để tránh bị block.
+    - `yfinance`: Nguồn chính cho Dữ liệu giá (Prices) và Tỷ giá (FX).
+- **Chiến lược Multi-Pass (Trích xuất đa lượt):** 
+    - **Pass 1 (Batch):** Tải dữ liệu theo cụm lớn để tối ưu tốc độ.
+    - **Pass 2 (Surgical Retry):** Tự động nhận diện các mã bị lỗi và thực hiện truy quét đơn lẻ với độ trễ ngẫu nhiên (Stealth mode) để đạt bao phủ 100%.
+- **Normalize:** Tự động lấy tỷ giá FX (ví dụ: `USDEUR=X`) để quy đổi mọi giá trị về đồng Euro.
 
 ### Bước 2: Validate (Kiểm tra dữ liệu thô)
 Kiểm tra sơ bộ tính toàn vẹn của dữ liệu vừa tải (Không có giá âm, không để trống cột quan trọng). Nếu thất bại, toàn bộ quá trình sẽ dừng lại (Fail-fast).

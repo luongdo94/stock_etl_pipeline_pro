@@ -18,11 +18,13 @@ The system operates via the `run_pipeline()` function in `etl/pipeline.py` throu
 The system creates a "shadow" copy of the production database. All new write operations are performed on this copy to prevent any impact on end-users currently accessing the Dashboard.
 
 ### Step 1: Extract & Currency Normalization
-- **Sources:** Yahoo Finance (yfinance) & Google News RSS.
-- **Modes:** 
-    - `INCREMENTAL`: Only downloads data since the last watermark (fast, ~3-5s).
-    - `FULL REFRESH`: Re-downloads the entire historical window (default 5 years).
-- **Normalize:** Automatically fetches live FX rates (e.g., `USDEUR=X`) to multiply into prices and fundamentals during ingestion.
+- **Sources:** Utilizes a dual-source strategy for maximum resilience:
+    - `yahooquery`: Primary source for sensitive Financials, Cashflows, and Earnings to bypass blocks.
+    - `yfinance`: Primary source for high-velocity Price and FX data.
+- **Multi-Pass Strategy (Resilient Extraction):** 
+    - **Pass 1 (Batch):** Fetches most tickers in parallel batch mode for speed.
+    - **Pass 2 (Surgical Retry):** Automatically identifies failed tickers and retries them sequentially with randomized jitter (Stealth mode) to reach 100% coverage.
+- **Normalize:** Automatically fetches live FX rates (e.g., `USDEUR=X`) to normalize all values to Euro at ingestion.
 
 ### Step 2: Validate
 Performs initial integrity checks on the extracted data (no negative prices, no null critical columns). If validation fails, the process is aborted (Fail-fast).

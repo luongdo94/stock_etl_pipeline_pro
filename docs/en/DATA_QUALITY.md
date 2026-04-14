@@ -37,10 +37,25 @@ Ensures that the DQ checking code itself is functioning correctly.
 | `dim_no_null_revenue` | Company revenue must be present and non-negative | Layer 2 |
 | `dim_no_null_market_cap` | Market capitalization must be present | Layer 2 |
 | `fct_no_zero_volume` | Alerts if trading volume is zero (source data error) | Layer 2 |
+| `coverage_gt_95` | Data coverage must be above 95% | Layer 0 (Extra) |
 
 ---
 
-## 3. Failure Handling
+## 3. Resilient Extraction Strategy
+
+What sets this system apart is its ability to self-recover data when facing API hurdles (Rate limits, IP Blocks):
+
+### 🛡️ Multi-Pass Mechanism
+- **Mechanism:** If a ticker fails in Pass 1 (Batch), the system doesn't skip it. Instead, it moves to Pass 2, where it is queried sequentially with random delays (2-4 seconds) to "stealth" through Yahoo's security filters.
+- **Goal:** Ensures financial data coverage stays close to **100%**.
+
+### 🛡️ Smart Fundamental Refresh
+- **Rule:** The system only re-downloads fundamental data (Cashflows, Revenue, etc.) if the current cache is older than 72 hours **OR** if the total warehouse coverage drops below **95%**.
+- **Benefit:** Maximizes API quota efficiency and significantly reduces the risk of IP blocks.
+
+---
+
+## 4. Failure Handling
 
 When a data quality check fails:
 1.  **Stop Pipeline:** A `ValueError` is raised, causing the current Airflow task to fail (Status: `FAILED`).

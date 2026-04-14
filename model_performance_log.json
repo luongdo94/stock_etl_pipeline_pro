@@ -1199,6 +1199,31 @@
           "weight": 0.34700000000000003
         }
       }
+    },
+    {
+      "ts": "2026-04-13T22:50:29",
+      "ticker": "MC.PA",
+      "horizon": 7,
+      "vix": 20.0,
+      "regime": "BULLISH",
+      "anchor": "Transformer",
+      "models": {
+        "LSTM": {
+          "rmse": 104.0,
+          "mape": 21.65,
+          "weight": 0.32799999999999996
+        },
+        "Transformer": {
+          "rmse": 100.96,
+          "mape": 20.95,
+          "weight": 0.337
+        },
+        "PatchTST": {
+          "rmse": 101.58,
+          "mape": 21.04,
+          "weight": 0.335
+        }
+      }
     }
   ]
 }
