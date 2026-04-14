@@ -179,7 +179,7 @@ def load_cashflows(
     """Load cashflow (buyback + dividend) data. Full replace each run."""
     if df.empty:
         logger.info("  ⚠️ No cashflow data to load — skipping")
-        return
+        return 0
     conn.execute("DELETE FROM raw.cashflows")
     conn.register("df_tmp", df)
     conn.execute("""
@@ -188,6 +188,7 @@ def load_cashflows(
     """)
     conn.unregister("df_tmp")
     logger.info(f"✅ Loaded {len(df)} cashflow records → raw.cashflows")
+    return len(df)
 
 
 def load_earnings_calendar(
@@ -197,7 +198,7 @@ def load_earnings_calendar(
     """Load upcoming earnings calendar data (upsert)."""
     if df.empty:
         logger.info("  ⚠️ No earnings calendar data to load")
-        return
+        return 0
         
     tickers = df["ticker"].unique().tolist()
     conn.execute("DELETE FROM raw.earnings_calendar WHERE ticker = ANY(?)", [tickers])
@@ -215,6 +216,7 @@ def load_earnings_calendar(
     """)
     conn.unregister("df_tmp")
     logger.info(f"✅ Loaded {len(df)} earnings calendar records → raw.earnings_calendar")
+    return len(df)
 
 
 def load_historical_fcf(
@@ -227,7 +229,7 @@ def load_historical_fcf(
     """
     if df.empty:
         logger.info("  ⚠️ No historical FCF data to load — skipping")
-        return
+        return 0
 
     # Ensure table exists
     conn.execute("""
@@ -259,6 +261,7 @@ def load_historical_fcf(
     """)
     conn.unregister("df_tmp")
     logger.info(f"✅ Loaded {len(df)} FCF records → raw.hist_fcf ({df['ticker'].nunique()} tickers)")
+    return len(df)
 
 
 def load_quarterly_fcf(
@@ -271,7 +274,7 @@ def load_quarterly_fcf(
     """
     if df.empty:
         logger.info("  ⚠️ No quarterly FCF data to load — skipping")
-        return
+        return 0
 
     # Ensure table exists
     conn.execute("""
@@ -305,6 +308,7 @@ def load_quarterly_fcf(
     """)
     conn.unregister("df_tmp")
     logger.info(f"✅ Loaded {len(df)} Quarterly FCF records → raw.hist_fcf_quarterly ({df['ticker'].nunique()} tickers)")
+    return len(df)
 
 
 
@@ -343,6 +347,7 @@ def load_stock_prices(
     row_count = result[0] if result else 0
     logger.info(f"✅ Loaded {len(df):,} rows → raw.stock_prices "
                 f"(total: {row_count:,})")
+    return len(df)
 
 
 def load_company_info(
@@ -356,7 +361,7 @@ def load_company_info(
     """
     if df.empty:
         logger.warning("  ⚠️ No company info data to load — skipping metadata update")
-        return
+        return 0
 
     # 1. Ensure the table exists with the rigid schema
     conn.execute("""
@@ -417,6 +422,7 @@ def load_company_info(
             
         conn.execute("COMMIT")
         logger.info(f"✅ Upserted {len(df)} companies → raw.company_info (data safety enabled)")
+        return len(df)
     except Exception as e:
         if conn: conn.execute("ROLLBACK")
         logger.error(f"❌ Failed to load company info: {e}")
@@ -430,7 +436,7 @@ def load_historical_financials(
     """Load historical annual financials (upsert)."""
     if df.empty:
         logger.info("  ⚠️ No historical financials to load")
-        return
+        return 0
         
     # Upsert: Delete existing dates for these tickers
     tickers = df["ticker"].unique().tolist()
@@ -450,6 +456,7 @@ def load_historical_financials(
     """)
     conn.unregister("df_tmp")
     logger.info(f"✅ Loaded {len(df)} financial records → raw.historical_financials")
+    return len(df)
 
 def load_quarterly_financials(
     conn: duckdb.DuckDBPyConnection,
@@ -458,7 +465,7 @@ def load_quarterly_financials(
     """Load historical quarterly financials (upsert)."""
     if df.empty:
         logger.info("  ⚠️ No quarterly financials to load")
-        return
+        return 0
         
     # Upsert: Delete existing dates for these tickers
     tickers = df["ticker"].unique().tolist()
@@ -478,6 +485,7 @@ def load_quarterly_financials(
     """)
     conn.unregister("df_tmp")
     logger.info(f"✅ Loaded {len(df)} quarterly financial records → raw.quarterly_financials")
+    return len(df)
 
 def perform_atomic_swap():
     """

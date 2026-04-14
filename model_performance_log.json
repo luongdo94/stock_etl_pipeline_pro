@@ -1224,6 +1224,131 @@
           "weight": 0.335
         }
       }
+    },
+    {
+      "ts": "2026-04-14T03:45:53",
+      "ticker": "MSFT",
+      "horizon": 7,
+      "vix": 20.0,
+      "regime": "STRONG BULLISH",
+      "anchor": "PatchTST",
+      "models": {
+        "LSTM": {
+          "rmse": 66.77,
+          "mape": 20.68,
+          "weight": 0.315
+        },
+        "Transformer": {
+          "rmse": 63.86,
+          "mape": 19.8,
+          "weight": 0.33
+        },
+        "PatchTST": {
+          "rmse": 59.3,
+          "mape": 18.35,
+          "weight": 0.355
+        }
+      }
+    },
+    {
+      "ts": "2026-04-14T03:51:35",
+      "ticker": "ANET",
+      "horizon": 7,
+      "vix": 20.0,
+      "regime": "STRONG BULLISH",
+      "anchor": "Transformer",
+      "models": {
+        "LSTM": {
+          "rmse": 22.43,
+          "mape": 17.23,
+          "weight": 0.324
+        },
+        "Transformer": {
+          "rmse": 21.2,
+          "mape": 16.43,
+          "weight": 0.34299999999999997
+        },
+        "PatchTST": {
+          "rmse": 21.79,
+          "mape": 16.8,
+          "weight": 0.33299999999999996
+        }
+      }
+    },
+    {
+      "ts": "2026-04-14T04:31:21",
+      "ticker": "SHOP",
+      "horizon": 7,
+      "vix": 20.0,
+      "regime": "STRONG BULLISH",
+      "anchor": "PatchTST",
+      "models": {
+        "LSTM": {
+          "rmse": 10.46,
+          "mape": 10.04,
+          "weight": 0.321
+        },
+        "Transformer": {
+          "rmse": 12.03,
+          "mape": 11.78,
+          "weight": 0.27899999999999997
+        },
+        "PatchTST": {
+          "rmse": 8.37,
+          "mape": 7.72,
+          "weight": 0.401
+        }
+      }
+    },
+    {
+      "ts": "2026-04-14T04:40:22",
+      "ticker": "CRM",
+      "horizon": 7,
+      "vix": 20.0,
+      "regime": "STRONG BULLISH",
+      "anchor": "PatchTST",
+      "models": {
+        "LSTM": {
+          "rmse": 89.91,
+          "mape": 59.19,
+          "weight": 0.331
+        },
+        "Transformer": {
+          "rmse": 90.06,
+          "mape": 59.3,
+          "weight": 0.331
+        },
+        "PatchTST": {
+          "rmse": 87.94,
+          "mape": 57.87,
+          "weight": 0.33899999999999997
+        }
+      }
+    },
+    {
+      "ts": "2026-04-14T04:43:41",
+      "ticker": "SAP.DE",
+      "horizon": 7,
+      "vix": 20.0,
+      "regime": "STRONG BULLISH",
+      "anchor": "PatchTST",
+      "models": {
+        "LSTM": {
+          "rmse": 60.35,
+          "mape": 41.45,
+          "weight": 0.32899999999999996
+        },
+        "Transformer": {
+          "rmse": 60.4,
+          "mape": 41.5,
+          "weight": 0.32799999999999996
+        },
+        "PatchTST": {
+          "rmse": 57.76,
+          "mape": 39.7,
+          "weight": 0.34299999999999997
+        }
+      }
     }
   ]
 }

@@ -556,10 +556,25 @@ def _run_data_quality_checks(conn):
         "fct_unique_date_ticker"
     ]
     
-    # ── Phase 2: Professional DQ Persistence ──────────────────────────────────
+    # ── Phase 2: Professional DQ Persistence & Auditing ────────────────────────
     conn.execute("CREATE SCHEMA IF NOT EXISTS marts")
+    
+    # Execution Audit Log
     conn.execute("""
-        CREATE OR REPLACE TABLE marts.dq_warnings (
+        CREATE TABLE IF NOT EXISTS marts.etl_audit (
+            run_id          UUID PRIMARY KEY,
+            start_time      TIMESTAMP,
+            end_time        TIMESTAMP,
+            status          VARCHAR, -- STARTED, SUCCESS, FAILED
+            mode            VARCHAR, -- INCREMENTAL, FULL
+            rows_processed  INTEGER,
+            error_message   TEXT
+        )
+    """)
+
+    # DQ Warnings History
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS marts.dq_warnings (
             check_name      VARCHAR,
             violations      INTEGER,
             status          VARCHAR,

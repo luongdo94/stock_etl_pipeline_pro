@@ -1,5 +1,5 @@
-# etl/pipeline.py
-import logging, time, shutil, os, duckdb
+import logging, time, shutil, os, duckdb, traceback, uuid
+from logging.handlers import RotatingFileHandler
 import pandas as pd
 from pathlib import Path
 from etl.extract   import extract_stock_prices, extract_company_info, extract_historical_financials, extract_quarterly_financials, extract_cashflows, extract_historical_fcf, extract_quarterly_fcf, extract_earnings_calendar
@@ -9,12 +9,90 @@ from etl.load      import get_connection, create_raw_schema, \
 from etl.transform import run_transforms
 from etl.utils     import get_last_price_dates, needs_full_refresh, needs_earnings_refresh, needs_fundamentals_refresh, needs_metadata_refresh
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s",
-    datefmt="%H:%M:%S"
-)
+# --- LOGGING SETUP ---
+LOG_DIR = Path("logs")
+LOG_DIR.mkdir(exist_ok=True)
+LOG_FILE = LOG_DIR / "stock_etl.log"
+
+# Setup root logger for multi-handler support
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+
+# Avoid adding multiple handlers if the module is re-imported
+if not root_logger.handlers:
+    # 1. Console Handler (Standard Output)
+    c_handler = logging.StreamHandler()
+    c_handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | %(message)s", datefmt="%H:%M:%S"))
+    root_logger.addHandler(c_handler)
+
+    # 2. Rotating File Handler (Persistence)
+    f_handler = RotatingFileHandler(LOG_FILE, maxBytes=10*1024*1024, backupCount=5)
+    f_handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | [%(name)s] %(message)s"))
+    root_logger.addHandler(f_handler)
+
 logger = logging.getLogger(__name__)
+
+class AuditManager:
+    """
+    Context manager to track ETL execution lifecycle in the database.
+    Ensures that start, end, and error states are persisted regardless of swap status.
+    """
+    def __init__(self, mode: str):
+        self.run_id = str(uuid.uuid4())
+        self.mode = mode
+        self.start_time = pd.Timestamp.now()
+        self.rows_processed = 0
+        self.status = "STARTED"
+
+    def __enter__(self):
+        logger.info(f"🆔 Run ID: {self.run_id} ({self.mode} mode)")
+        self._log_to_db()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        end_time = pd.Timestamp.now()
+        error_msg = None
+        
+        if exc_type:
+            self.status = "FAILED"
+            error_msg = "".join(traceback.format_exception(exc_type, exc_val, exc_tb))
+            logger.error(f"❌ Pipeline failed: {exc_val}")
+        else:
+            self.status = "SUCCESS"
+            logger.info(f"✅ Pipeline completed: {self.rows_processed:,} rows processed.")
+
+        self._log_to_db(end_time, error_msg)
+
+    def _log_to_db(self, end_time=None, error_msg=None):
+        """Persistent logging to the primary warehouse (not shadow)."""
+        try:
+            # We connect directly to the PROD path to ensure the log survives swaps/failures
+            with duckdb.connect(DB_PATH) as conn:
+                # Ensure schema/table exist (safe even if already there)
+                conn.execute("CREATE SCHEMA IF NOT EXISTS marts")
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS marts.etl_audit (
+                        run_id UUID PRIMARY KEY, start_time TIMESTAMP, end_time TIMESTAMP,
+                        status VARCHAR, mode VARCHAR, rows_processed INTEGER, error_message TEXT
+                    )
+                """)
+                
+                # Check if record exists (Update vs Insert)
+                exists = conn.execute("SELECT 1 FROM marts.etl_audit WHERE run_id = ?", [self.run_id]).fetchone()
+                
+                if not exists:
+                    conn.execute("""
+                        INSERT INTO marts.etl_audit (run_id, start_time, status, mode, rows_processed)
+                        VALUES (?, ?, ?, ?, ?)
+                    """, [self.run_id, self.start_time, self.status, self.mode, self.rows_processed])
+                else:
+                    conn.execute("""
+                        UPDATE marts.etl_audit SET 
+                            end_time = ?, status = ?, rows_processed = ?, error_message = ?
+                        WHERE run_id = ?
+                    """, [end_time, self.status, self.rows_processed, error_msg, self.run_id])
+        except Exception as e:
+            logger.warning(f"⚠️ Could not write to audit log: {e}")
 
 def _prepare_shadow_db(is_incremental: bool):
     """
@@ -117,145 +195,147 @@ def run_pipeline(lookback_days: int = 1825, force_full: bool = False, fast_mode:
     logger.info("\n📁 STEP 0/5 — SHADOW DB PREP")
     _prepare_shadow_db(is_incremental)
 
-    conn = get_connection(use_shadow=True)
-    try:
-        # ── STEP 1: EXTRACT ──────────────────────────────────────────────────
-        logger.info(f"\n📥 STEP 1/5 — EXTRACT ({mode_label})")
-        t0 = time.time()
+    with AuditManager(mode=mode_label) as audit:
+        conn = get_connection(use_shadow=True)
+        try:
+            # ── STEP 1: EXTRACT ──────────────────────────────────────────────────
+            logger.info(f"\n📥 STEP 1/5 — EXTRACT ({mode_label})")
+            t0 = time.time()
 
-        prices_df    = extract_stock_prices(
-            lookback_days=lookback_days,
-            watermarks=watermarks if is_incremental else None
-        )
-        
-        # 🧪 SMART REFRESH: Tiered logic (Metadata 30d vs Fundamentals 7d)
-        if fast_mode:
-            logger.info("   🚀 FAST MODE: Skipping all fundamentals extraction.")
-            company_df    = pd.DataFrame()
-            financials_df = pd.DataFrame()
-            quarterly_df  = pd.DataFrame()
-            cashflow_df   = pd.DataFrame()
-            fcf_df        = pd.DataFrame()
-            fcf_q_df      = pd.DataFrame()
-        else:
-            # Tier 1: Metadata & Annuals (30-day cycle)
-            if is_incremental and not needs_metadata_refresh(conn):
-                logger.info("   🕒 Metadata (Info/Annuals) is fresh (< 30 days) — skipping.")
+            prices_df    = extract_stock_prices(
+                lookback_days=lookback_days,
+                watermarks=watermarks if is_incremental else None
+            )
+            
+            # 🧪 SMART REFRESH: Tiered logic (Metadata 30d vs Fundamentals 7d)
+            if fast_mode:
+                logger.info("   🚀 FAST MODE: Skipping all fundamentals extraction.")
                 company_df    = pd.DataFrame()
                 financials_df = pd.DataFrame()
-            else:
-                company_df    = extract_company_info()
-                financials_df = extract_historical_financials()
-
-            # Tier 2: Quarterly Fundamentals & FCF (7-day cycle)
-            if is_incremental and not needs_fundamentals_refresh(conn):
-                logger.info("   🕒 Quarterly data (Q/FCF/Cashflow) is fresh (< 7 days) — skipping.")
                 quarterly_df  = pd.DataFrame()
                 cashflow_df   = pd.DataFrame()
                 fcf_df        = pd.DataFrame()
                 fcf_q_df      = pd.DataFrame()
             else:
-                quarterly_df  = extract_quarterly_financials()
-                cashflow_df   = extract_cashflows()
-                fcf_df        = extract_historical_fcf()
-                fcf_q_df      = extract_quarterly_fcf()
-        
-        # 🧪 SMART REFRESH: Earnings only if stale (> 7 days) or in FULL REFRESH mode
-        if fast_mode:
-            logger.info("   🚀 FAST MODE: Skipping earnings calendar extraction.")
-            earnings_df = pd.DataFrame()
-        elif is_incremental and not needs_earnings_refresh(conn):
-            logger.info("   🕒 Earnings data is fresh (< 7 days) — skipping extraction.")
-            earnings_df = pd.DataFrame()
-        else:
-            earnings_df = extract_earnings_calendar()
+                # Tier 1: Metadata & Annuals (30-day cycle)
+                if is_incremental and not needs_metadata_refresh(conn):
+                    logger.info("   🕒 Metadata (Info/Annuals) is fresh (< 30 days) — skipping.")
+                    company_df    = pd.DataFrame()
+                    financials_df = pd.DataFrame()
+                else:
+                    company_df    = extract_company_info()
+                    financials_df = extract_historical_financials()
 
-        extract_time = time.time() - t0
-        logger.info(f"   ⏱  Extract: {extract_time:.1f}s | Prices: {len(prices_df):,} rows")
-
-        # ── STEP 2: VALIDATE ─────────────────────────────────────────────────
-        logger.info("\n🔍 STEP 2/5 — VALIDATE")
-        if prices_df.empty:
-            # For incremental: empty is OK (market closed, weekend, etc.)
-            if is_incremental:
-                logger.info("   ℹ️  No new price data — market may be closed. Pipeline complete.")
-                return True
+                # Tier 2: Quarterly Fundamentals & FCF (7-day cycle)
+                if is_incremental and not needs_fundamentals_refresh(conn):
+                    logger.info("   🕒 Quarterly data (Q/FCF/Cashflow) is fresh (< 7 days) — skipping.")
+                    quarterly_df  = pd.DataFrame()
+                    cashflow_df   = pd.DataFrame()
+                    fcf_df        = pd.DataFrame()
+                    fcf_q_df      = pd.DataFrame()
+                else:
+                    quarterly_df  = extract_quarterly_financials()
+                    cashflow_df   = extract_cashflows()
+                    fcf_df        = extract_historical_fcf()
+                    fcf_q_df      = extract_quarterly_fcf()
+            
+            # 🧪 SMART REFRESH: Earnings only if stale (> 7 days) or in FULL REFRESH mode
+            if fast_mode:
+                logger.info("   🚀 FAST MODE: Skipping earnings calendar extraction.")
+                earnings_df = pd.DataFrame()
+            elif is_incremental and not needs_earnings_refresh(conn):
+                logger.info("   🕒 Earnings data is fresh (< 7 days) — skipping extraction.")
+                earnings_df = pd.DataFrame()
             else:
-                raise AssertionError("No price data extracted in full refresh mode!")
-        assert "close" in prices_df.columns, "Missing 'close' column!"
-        assert prices_df["close"].gt(0).all(), "Negative prices found!"
-        logger.info(f"   ✅ Validation passed — {len(prices_df):,} rows clean")
+                earnings_df = extract_earnings_calendar()
 
-        # ── STEP 3: LOAD ─────────────────────────────────────────────────────
-        logger.info("\n📤 STEP 3/5 — LOAD")
-        t0 = time.time()
-        create_raw_schema(conn)
-        load_stock_prices(conn, prices_df, mode="upsert")  # Upsert prevents duplicates
-        load_company_info(conn, company_df)
-        load_historical_financials(conn, financials_df)
-        load_quarterly_financials(conn, quarterly_df)
-        load_cashflows(conn, cashflow_df)                  # v3.0: Net Payout data
-        load_historical_fcf(conn, fcf_df)                 # v3.2: Historical FCF
-        load_quarterly_fcf(conn, fcf_q_df)                # v3.3: Quarterly FCF
-        load_earnings_calendar(conn, earnings_df)          # v3.1: Upcoming Report dates
-        logger.info(f"   ⏱  Load: {time.time()-t0:.1f}s")
+            extract_time = time.time() - t0
+            logger.info(f"   ⏱  Extract: {extract_time:.1f}s | Prices: {len(prices_df):,} rows")
 
-        # ── STEP 4: TRANSFORM ────────────────────────────────────────────────
-        logger.info("\n🔧 STEP 4/5 — TRANSFORM")
-        t0 = time.time()
-        run_transforms(conn)
-        transform_time = time.time() - t0
-        logger.info(f"   ⏱  Transform: {transform_time:.1f}s")
+            # ── STEP 2: VALIDATE ─────────────────────────────────────────────────
+            logger.info("\n🔍 STEP 2/5 — VALIDATE")
+            if prices_df.empty:
+                # For incremental: empty is OK (market closed, weekend, etc.)
+                if is_incremental:
+                    logger.info("   ℹ️  No new price data — market may be closed. Pipeline complete.")
+                    return True
+                else:
+                    raise AssertionError("No price data extracted in full refresh mode!")
+            assert "close" in prices_df.columns, "Missing 'close' column!"
+            assert prices_df["close"].gt(0).all(), "Negative prices found!"
+            logger.info(f"   ✅ Validation passed — {len(prices_df):,} rows clean")
 
-        total_time = time.time() - start_time
+            # ── STEP 3: LOAD ─────────────────────────────────────────────────────
+            logger.info("\n📤 STEP 3/5 — LOAD")
+            t0 = time.time()
+            create_raw_schema(conn)
+            
+            # Accumulate rows processed for audit
+            audit.rows_processed += load_stock_prices(conn, prices_df, mode="upsert")
+            audit.rows_processed += load_company_info(conn, company_df)
+            audit.rows_processed += load_historical_financials(conn, financials_df)
+            audit.rows_processed += load_quarterly_financials(conn, quarterly_df)
+            audit.rows_processed += load_cashflows(conn, cashflow_df)
+            audit.rows_processed += load_historical_fcf(conn, fcf_df)
+            audit.rows_processed += load_quarterly_fcf(conn, fcf_q_df)
+            audit.rows_processed += load_earnings_calendar(conn, earnings_df)
+            
+            logger.info(f"   ⏱  Load: {time.time()-t0:.1f}s")
 
-        # ── STEP 5: ATOMIC SWAP ───────────────────────────────────────────────
-        logger.info("\n📡 STEP 5/5 — ATOMIC SWAP")
-        t0 = time.time()
-        
-        # 🔗 SHADOW INTEGRITY GUARD
-        # We verify that the shadow database isn't "suspiciously empty" before swapping
-        if not validate_shadow_integrity(conn):
-            logger.error("❌ SHADOW INTEGRITY CHECK FAILED: Aborting swap to protect production data.")
+            # ── STEP 4: TRANSFORM ────────────────────────────────────────────────
+            logger.info("\n🔧 STEP 4/5 — TRANSFORM")
+            t0 = time.time()
+            run_transforms(conn)
+            transform_time = time.time() - t0
+            logger.info(f"   ⏱  Transform: {transform_time:.1f}s")
+
+            total_time = time.time() - start_time
+
+            # ── STEP 5: ATOMIC SWAP ───────────────────────────────────────────────
+            logger.info("\n📡 STEP 5/5 — ATOMIC SWAP")
+            t0 = time.time()
+            
+            # 🔗 SHADOW INTEGRITY GUARD
+            # We verify that the shadow database isn't "suspiciously empty" before swapping
+            if not validate_shadow_integrity(conn):
+                logger.error("❌ SHADOW INTEGRITY CHECK FAILED: Aborting swap to protect production data.")
+                conn.close()
+                return False
+
             conn.close()
-            return False
-
-        conn.close()
-        perform_atomic_swap()
-        logger.info(f"   ⏱  Swap: {time.time()-t0:.1f}s")
+            perform_atomic_swap()
+            logger.info(f"   ⏱  Swap: {time.time()-t0:.1f}s")
 
 
-        logger.info("\n" + "=" * 55)
-        logger.info(f"✅ PIPELINE COMPLETED SUCCESSFULLY [{mode_label}]")
-        logger.info(f"   Total time : {total_time:.1f}s")
-        if is_incremental:
-            logger.info(f"   💡 Tip: Run with force_full=True to rebuild full history")
+            logger.info("\n" + "=" * 55)
+            logger.info(f"✅ PIPELINE COMPLETED SUCCESSFULLY [{mode_label}]")
+            logger.info(f"   Total time : {total_time:.1f}s")
+            if is_incremental:
+                logger.info(f"   💡 Tip: Run with force_full=True to rebuild full history")
 
-        # Final verification: row counts
-        conn = get_connection(use_shadow=False)
-        for schema, table in [
-            ("raw",          "stock_prices"),
-            ("staging",      "stg_stock_prices"),
-            ("intermediate", "int_stock_metrics"),
-            ("marts",        "fct_daily_returns"),
-            ("marts",        "dim_companies"),
-            ("marts",        "agg_monthly_performance"),
-            ("marts",        "dim_annual_financials"),
-            ("marts",        "dim_quarterly_financials"),
-        ]:
-            try:
-                n = conn.execute(f"SELECT COUNT(*) FROM {schema}.{table}").fetchone()[0]
-                logger.info(f"   {schema:15s}.{table:30s} → {n:,} rows")
-            except:
-                pass
+            # Final verification: row counts
+            conn = get_connection(use_shadow=False)
+            for schema, table in [
+                ("raw",          "stock_prices"),
+                ("staging",      "stg_stock_prices"),
+                ("intermediate", "int_stock_metrics"),
+                ("marts",        "fct_daily_returns"),
+                ("marts",        "dim_companies"),
+                ("marts",        "agg_monthly_performance"),
+                ("marts",        "dim_annual_financials"),
+                ("marts",        "dim_quarterly_financials"),
+            ]:
+                try:
+                    n = conn.execute(f"SELECT COUNT(*) FROM {schema}.{table}").fetchone()[0]
+                    logger.info(f"   {schema:15s}.{table:30s} → {n:,} rows")
+                except:
+                    pass
 
-        return True
+            return True
 
-    except Exception as e:
-        logger.error(f"\n❌ PIPELINE FAILED: {e}")
-        raise
-    finally:
-        conn.close()
+        finally:
+            if conn:
+                conn.close()
 
 
 if __name__ == "__main__":
