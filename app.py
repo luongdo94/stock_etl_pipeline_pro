@@ -2631,7 +2631,7 @@ if active_tab == "3. Qualitative Audit (AI)":
                                 "is_conflict":   _conflict,
                                 "ai_score_snap": _qs,
                             }
-                            st.success("Audit complete — see AI Risk Overlay below.", icon="✅")
+                            st.rerun()
 
 
 
@@ -2686,74 +2686,75 @@ if active_tab == "3. Qualitative Audit (AI)":
                     """, unsafe_allow_html=True)
 
             # ── AI Risk Cockpit: 3-Column Premium Scorecard (Full-Width) ──
-            _pulse_style = "border: 1px solid rgba(230,126,34,0.6); box-shadow: 0 0 15px rgba(230,126,34,0.15); border-left: 4px solid #e67e22;" if _is_conflict else "border: 1px solid rgba(255,255,255,0.08); border-left: 4px solid #444;"
-            _q_color = "#00ffcc" if _ai_score_snap >= 70 else "#f1c40f" if _ai_score_snap >= 45 else "#e74c3c"
-            _r_color = "#e74c3c" if _nlp_score >= 60 else "#f39c12" if _nlp_score >= 30 else "#2ecc71"
-            _s_color = "#00ffcc" if _nlp_sent == "Positive" else "#e74c3c" if _nlp_sent in ["Negative", "Critical"] else "#8899aa"
-
-            st.markdown(f"""
-    <div style='
-        display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-        gap:12px; margin:16px 0 10px 0;
-        background: rgba(255,255,255,0.02);
-        backdrop-filter: blur(8px);
-        padding: 1px; border-radius: 12px;
-        {_pulse_style}
-    '>
-        <!-- Card 1: Quant Health -->
-        <div style='padding:15px; background:rgba(255,255,255,0.01); border-radius:10px;'>
-            <div style='font-size:0.65rem; color:#8899aa; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;'>{SVG_ICONS["chart"]} Quant Health</div>
-            <div style='display:flex; align-items:baseline; gap:6px;'>
-                <span style='font-size:1.4rem; font-weight:700; color:white;'>{_ai_score_snap}</span>
-                <span style='font-size:0.75rem; color:#666;'>/100</span>
+            if _uv_data:
+                _pulse_style = "border: 1px solid rgba(230,126,34,0.6); box-shadow: 0 0 15px rgba(230,126,34,0.15); border-left: 4px solid #e67e22;" if _is_conflict else "border: 1px solid rgba(255,255,255,0.08); border-left: 4px solid #444;"
+                _q_color = "#00ffcc" if _ai_score_snap >= 70 else "#f1c40f" if _ai_score_snap >= 45 else "#e74c3c"
+                _r_color = "#e74c3c" if _nlp_score >= 60 else "#f39c12" if _nlp_score >= 30 else "#2ecc71"
+                _s_color = "#00ffcc" if _nlp_sent == "Positive" else "#e74c3c" if _nlp_sent in ["Negative", "Critical"] else "#8899aa"
+    
+                st.markdown(f"""
+        <div style='
+            display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap:12px; margin:16px 0 10px 0;
+            background: rgba(255,255,255,0.02);
+            backdrop-filter: blur(8px);
+            padding: 1px; border-radius: 12px;
+            {_pulse_style}
+        '>
+            <!-- Card 1: Quant Health -->
+            <div style='padding:15px; background:rgba(255,255,255,0.01); border-radius:10px;'>
+                <div style='font-size:0.65rem; color:#8899aa; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;'>{SVG_ICONS["chart"]} Quant Health</div>
+                <div style='display:flex; align-items:baseline; gap:6px;'>
+                    <span style='font-size:1.4rem; font-weight:700; color:white;'>{_ai_score_snap}</span>
+                    <span style='font-size:0.75rem; color:#666;'>/100</span>
+                </div>
+                <div style='width:100%; height:3px; background:rgba(255,255,255,0.05); border-radius:2px; margin-top:8px;'>
+                    <div style='width:{_ai_score_snap}%; height:100%; background:{_q_color}; border-radius:2px;'></div>
+                </div>
             </div>
-            <div style='width:100%; height:3px; background:rgba(255,255,255,0.05); border-radius:2px; margin-top:8px;'>
-                <div style='width:{_ai_score_snap}%; height:100%; background:{_q_color}; border-radius:2px;'></div>
+            <!-- Card 2: News Sentiment -->
+            <div style='padding:15px; background:rgba(255,255,255,0.01); border-radius:10px;'>
+                <div style='font-size:0.65rem; color:#8899aa; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;'>{SVG_ICONS["globe"]} News Tone</div>
+                <div style='display:flex; align-items:center; gap:8px;'>
+                    <span style='font-size:1.2rem; font-weight:600; color:{_s_color};'>{_nlp_sent}</span>
+                </div>
+                <div style='margin-top:8px; font-size:0.7rem; color:#666;'>Extracting sentiment from latest financial headlines</div>
+            </div>
+            <!-- Card 3: Risk Exposure -->
+            <div style='padding:15px; background:rgba(255,255,255,0.01); border-radius:10px;'>
+                <div style='font-size:0.65rem; color:#8899aa; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;'>{SVG_ICONS["risk"]} Risk Exposure</div>
+                <div style='display:flex; align-items:baseline; gap:6px;'>
+                    <span style='font-size:1.4rem; font-weight:700; color:{_r_color};'>{_nlp_score}</span>
+                    <span style='font-size:0.75rem; color:#666;'>/100</span>
+                </div>
+                <div style='width:100%; height:3px; background:rgba(255,255,255,0.05); border-radius:2px; margin-top:8px;'>
+                    <div style='width:{_nlp_score}%; height:100%; background:{_r_color}; border-radius:2px;'></div>
+                </div>
             </div>
         </div>
-        <!-- Card 2: News Sentiment -->
-        <div style='padding:15px; background:rgba(255,255,255,0.01); border-radius:10px;'>
-            <div style='font-size:0.65rem; color:#8899aa; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;'>{SVG_ICONS["globe"]} News Tone</div>
-            <div style='display:flex; align-items:center; gap:8px;'>
-                <span style='font-size:1.2rem; font-weight:600; color:{_s_color};'>{_nlp_sent}</span>
-            </div>
-            <div style='margin-top:8px; font-size:0.7rem; color:#666;'>Extracting sentiment from latest financial headlines</div>
+        <div style='font-size:0.62rem; color:#556677; text-align:right; margin-bottom:12px; letter-spacing:0.5px;'>
+            SYNCHRONIZED AUDIT TIMESTAMP: {_audit_time} &nbsp;&middot;&nbsp; <b>DYNAMIC OVERLAY V12.1</b>
         </div>
-        <!-- Card 3: Risk Exposure -->
-        <div style='padding:15px; background:rgba(255,255,255,0.01); border-radius:10px;'>
-            <div style='font-size:0.65rem; color:#8899aa; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;'>{SVG_ICONS["risk"]} Risk Exposure</div>
-            <div style='display:flex; align-items:baseline; gap:6px;'>
-                <span style='font-size:1.4rem; font-weight:700; color:{_r_color};'>{_nlp_score}</span>
-                <span style='font-size:0.75rem; color:#666;'>/100</span>
-            </div>
-            <div style='width:100%; height:3px; background:rgba(255,255,255,0.05); border-radius:2px; margin-top:8px;'>
-                <div style='width:{_nlp_score}%; height:100%; background:{_r_color}; border-radius:2px;'></div>
-            </div>
+        """, unsafe_allow_html=True)
+    
+                # ── Signal Conflict Banner (full-width, only when diverging) ──
+                if _is_conflict:
+                    if _ai_score_snap >= 65:
+                        if _nlp_sent in ["Negative", "Critical"]:
+                            _conf_dir = f"Strong Quant Health ({_ai_score_snap}/100), but News Tone is distinctly <b>{_nlp_sent.upper()}</b>. The market may penalize the stock soon."
+                        else:
+                            _conf_dir = f"Strong Quant Health ({_ai_score_snap}/100), but Risk Exposure is elevated (<b>Red Flag: {_nlp_score}/100</b>). Monitor for potential headline shocks."
+                    else:
+                        _conf_dir = f"Weak Quant Health ({_ai_score_snap}/100), but News Tone is <b>POSITIVE</b>. Beware of a temporary, sentiment-driven rally."
+                    st.markdown(f"""
+    <div style='display:flex; align-items:flex-start; gap:14px; margin:8px 0; padding:14px 18px; background:linear-gradient(90deg,rgba(230,126,34,0.14),rgba(231,76,60,0.08)); border:1px solid rgba(230,126,34,0.55); border-left:4px solid #e67e22; border-radius:10px;'>
+        <span style='font-size:1.4rem; line-height:1; padding-top:2px;'>⚠️</span>
+        <div>
+            <div style='color:#e67e22; font-weight:900; font-size:0.75rem; text-transform:uppercase; letter-spacing:2px; margin-bottom:4px;'>⚡ Signal Conflict Detected</div>
+            <div style='color:#ddd; font-size:0.85rem; line-height:1.5;'>{_conf_dir}</div>
         </div>
-    </div>
-    <div style='font-size:0.62rem; color:#556677; text-align:right; margin-bottom:12px; letter-spacing:0.5px;'>
-        SYNCHRONIZED AUDIT TIMESTAMP: {_audit_time} &nbsp;&middot;&nbsp; <b>DYNAMIC OVERLAY V12.1</b>
     </div>
     """, unsafe_allow_html=True)
-
-            # ── Signal Conflict Banner (full-width, only when diverging) ──
-            if _is_conflict:
-                if _ai_score_snap >= 65:
-                    if _nlp_sent in ["Negative", "Critical"]:
-                        _conf_dir = f"Strong Quant Health ({_ai_score_snap}/100), but News Tone is distinctly <b>{_nlp_sent.upper()}</b>. The market may penalize the stock soon."
-                    else:
-                        _conf_dir = f"Strong Quant Health ({_ai_score_snap}/100), but Risk Exposure is elevated (<b>Red Flag: {_nlp_score}/100</b>). Monitor for potential headline shocks."
-                else:
-                    _conf_dir = f"Weak Quant Health ({_ai_score_snap}/100), but News Tone is <b>POSITIVE</b>. Beware of a temporary, sentiment-driven rally."
-                st.markdown(f"""
-<div style='display:flex; align-items:flex-start; gap:14px; margin:8px 0; padding:14px 18px; background:linear-gradient(90deg,rgba(230,126,34,0.14),rgba(231,76,60,0.08)); border:1px solid rgba(230,126,34,0.55); border-left:4px solid #e67e22; border-radius:10px;'>
-    <span style='font-size:1.4rem; line-height:1; padding-top:2px;'>⚠️</span>
-    <div>
-        <div style='color:#e67e22; font-weight:900; font-size:0.75rem; text-transform:uppercase; letter-spacing:2px; margin-bottom:4px;'>⚡ Signal Conflict Detected</div>
-        <div style='color:#ddd; font-size:0.85rem; line-height:1.5;'>{_conf_dir}</div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
 
             # ── PART B: 50/50 Split — Narrative (left) | Radar (right) ──────
             st.markdown("<hr style='border:0; height:1px; background:rgba(255,255,255,0.08); margin:24px 0;'>", unsafe_allow_html=True)
