@@ -26,3 +26,6 @@ model_performance_log.json
 # Streamlit (Ignore secrets, allow config)
 .streamlit/secrets.toml
 # .streamlit/ # Commented out to allow config.toml
+
+# Local temporary cache
+.cache/

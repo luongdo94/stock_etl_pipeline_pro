@@ -930,6 +930,13 @@ def clear_local_cache():
 def get_db_connection(read_only=False):
     """Database connection context manager with fallback and Hybrid Remote support."""
     is_remote = os.environ.get("SUPABASE_REMOTE_MODE", "false").lower() == "true"
+    
+    # Auto-detection: If not in remote mode but local DB file is missing,
+    # we must be on Cloud environment. Force remote mode.
+    if not is_remote:
+        if not os.path.exists(DB_PATH):
+            is_remote = True
+
 
     if is_remote:
         # ── HYBRID REMOTE MODE: Local Shadow Cache (fast) → S3 direct (fallback) ──
@@ -1027,7 +1034,7 @@ def get_db_connection(read_only=False):
     finally:
         conn.close()
 
-@st.cache_data(ttl=3600, show_spinner="📉 Loading Institutional Data Warehouse...")
+@st.cache_data(ttl=600, show_spinner="📉 Loading Institutional Data Warehouse...")
 def load_data():
     """Load all required data, normalize currencies, and pre-compute técnicos inside cache."""
     with get_db_connection(read_only=True) as conn:

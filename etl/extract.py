@@ -439,6 +439,9 @@ def extract_historical_financials(tickers: dict = TICKERS) -> pd.DataFrame:
     logger.info(f"🚀 TURBO FINANCIALS: Fetching history for {len(tickers)} companies via yahooquery...")
     all_data = []
     ticker_keys = list(tickers.keys())
+    # AG PRO: Filter out Indices and ETFs from fundamental extraction
+    ticker_keys = sorted([t for t in ticker_keys if not t.startswith('^') and t not in ['SPY']])
+
     
     # 1. Pre-fetch FX rates globally (yf still works well for price/FX data)
     unique_currencies = {"EUR"}
@@ -539,6 +542,9 @@ def extract_quarterly_financials(tickers: dict = TICKERS) -> pd.DataFrame:
     logger.info(f"🚀 TURBO QUARTERLY FINANCIALS: Fetching history for {len(tickers)} companies via yahooquery...")
     all_data = []
     ticker_keys = list(tickers.keys())
+    # AG PRO: Filter out Indices and ETFs from fundamental extraction
+    ticker_keys = sorted([t for t in ticker_keys if not t.startswith('^') and t not in ['SPY']])
+
     
     # 1. Pre-fetch FX rates globally
     unique_currencies = {"EUR"}
@@ -639,6 +645,9 @@ def extract_cashflows(tickers: dict = TICKERS) -> pd.DataFrame:
     logger.info(f"🚀 TURBO CASHFLOWS: Fetching buybacks/dividends for {len(tickers)} companies via yahooquery...")
     records = []
     ticker_keys = list(tickers.keys())
+    # AG PRO: Filter out Indices and ETFs from fundamental extraction 
+    ticker_keys = sorted([t for t in ticker_keys if not t.startswith('^') and t not in ['SPY']])
+
 
     # 1. Pre-fetch FX rates globally
     unique_currencies = {"EUR", "DKK", "USD"}
@@ -756,6 +765,9 @@ def extract_historical_fcf(tickers: dict = TICKERS) -> pd.DataFrame:
     logger.info(f"🚀 HISTORICAL FCF: Fetching {len(tickers)} tickers via yahooquery...")
     records = []
     ticker_keys = list(tickers.keys())
+    # AG PRO: Filter out Indices and ETFs from fundamental extraction
+    ticker_keys = sorted([t for t in ticker_keys if not t.startswith('^') and t not in ['SPY']])
+
 
     if not YQTicker:
         logger.warning("⚠️ yahooquery not installed — skipping historical FCF extraction.")
@@ -829,6 +841,9 @@ def extract_quarterly_fcf(tickers: dict = TICKERS) -> pd.DataFrame:
     logger.info(f"🚀 QUARTERLY FCF: Fetching {len(tickers)} tickers via yahooquery...")
     records = []
     ticker_keys = list(tickers.keys())
+    # AG PRO: Filter out Indices and ETFs from fundamental extraction
+    ticker_keys = sorted([t for t in ticker_keys if not t.startswith('^') and t not in ['SPY']])
+
 
     if not YQTicker:
         logger.warning("⚠️ yahooquery not installed — skipping quarterly FCF extraction.")

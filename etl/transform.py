@@ -537,17 +537,17 @@ def _run_data_quality_checks(conn):
         "dim_no_null_revenue": """
             SELECT COUNT(*) FROM marts.dim_companies 
             WHERE (revenue_ttm IS NULL OR revenue_ttm < 0)
-              AND ticker NOT LIKE '^%' -- Indices naturally lack revenue
+              AND ticker NOT LIKE '^%' AND ticker NOT IN ('SPY')
         """,
         "dim_no_null_market_cap": """
             SELECT COUNT(*) FROM marts.dim_companies 
             WHERE (market_cap IS NULL OR market_cap <= 0)
-              AND ticker NOT LIKE '^%' -- Indices naturally lack market cap
+              AND ticker NOT LIKE '^%' AND ticker NOT IN ('SPY')
         """,
         "dim_no_null_fundamental_data": """
             SELECT COUNT(*) FROM marts.dim_companies 
             WHERE (roe IS NULL OR fcf_margin IS NULL)
-              AND ticker NOT LIKE '^%'
+              AND ticker NOT LIKE '^%' AND ticker NOT IN ('SPY')
         """,
     }
     
