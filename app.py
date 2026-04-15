@@ -487,6 +487,12 @@ if "active_tab" not in st.session_state:
 # ── PREMIUM GLASSMORPHISM CSS ───────────────────────────────────────────────
 st.markdown("""
 <style>
+    /* HIDE DEFAULT STREAMLIT ARTIFACTS */
+    #MainMenu {visibility: hidden;}
+    header {visibility: hidden;}
+    footer {visibility: hidden;}
+    [data-testid="stSidebarNav"] {display: none !important;}
+
     /* Global Background */
     .stApp {
         background: radial-gradient(circle at top right, #1a1c2c, #0d0e14);
