@@ -1639,6 +1639,30 @@ if not prices_full.empty:
 </div>""".strip()
         st.sidebar.markdown(pulse_html, unsafe_allow_html=True)
     
+    # ── SYSTEM AUDIT & REFRESH ────────────────────────────────────────────────
+    with st.sidebar.expander("🛠️ System Audit & Refresh"):
+        _is_rem = os.environ.get("SUPABASE_REMOTE_MODE", "false").lower() == "true"
+        if not _is_rem and not os.path.exists(DB_PATH):
+            _mode_lbl = "🌐 REMOTE (Auto)"
+        elif _is_rem:
+            _mode_lbl = "🌐 REMOTE (Config)"
+        else:
+            _mode_lbl = "🏠 LOCAL"
+        
+        st.write(f"**Mode:** {_mode_lbl}")
+        if not prices_full.empty:
+            st.write(f"**Dataset:** {len(prices_full):,} rows")
+            spy_rows = len(prices_full[prices_full['ticker'] == 'SPY'])
+            st.write(f"**Index (SPY):** {spy_rows} days")
+        
+        if st.button("⚡ Clear App Cache", use_container_width=True):
+            st.cache_data.clear()
+            st.cache_resource.clear()
+            st.success("Cache cleared!")
+            st.rerun()
+
+    st.sidebar.markdown("---")
+    
     indices = ["^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"]
 
     # ── STICKY CONTEXT: Unified Asset Selection across Tabs ───────────────────
