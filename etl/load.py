@@ -91,6 +91,7 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
     conn.execute("""
         CREATE TABLE IF NOT EXISTS raw.company_info (
             ticker          VARCHAR PRIMARY KEY,
+            quote_type      VARCHAR DEFAULT 'EQUITY',
             company         VARCHAR,
             sector          VARCHAR,
             region          VARCHAR,
@@ -130,6 +131,11 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
             _loaded_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    # Migrate existing tables that predate the quote_type column
+    try:
+        conn.execute("ALTER TABLE raw.company_info ADD COLUMN IF NOT EXISTS quote_type VARCHAR DEFAULT 'EQUITY'")
+    except Exception:
+        pass  # Column already exists or not supported — safe to ignore
     conn.execute("""
         CREATE TABLE IF NOT EXISTS raw.historical_financials (
             ticker          VARCHAR,
@@ -367,6 +373,7 @@ def load_company_info(
     conn.execute("""
         CREATE TABLE IF NOT EXISTS raw.company_info (
             ticker          VARCHAR PRIMARY KEY,
+            quote_type      VARCHAR DEFAULT 'EQUITY',
             company         VARCHAR,
             sector          VARCHAR,
             region          VARCHAR,
@@ -406,6 +413,10 @@ def load_company_info(
             _loaded_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    try:
+        conn.execute("ALTER TABLE raw.company_info ADD COLUMN IF NOT EXISTS quote_type VARCHAR DEFAULT 'EQUITY'")
+    except Exception:
+        pass
 
     conn.execute("BEGIN TRANSACTION")
     try:

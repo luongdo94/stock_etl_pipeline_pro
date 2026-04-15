@@ -157,6 +157,76 @@ def needs_metadata_refresh(conn: duckdb.DuckDBPyConnection, threshold_hours: int
         return hours_since > threshold_hours
     except Exception:
         return True
+def get_config_tickers() -> dict:
+    """Loads the full ticker dictionary from config/tickers.yaml."""
+    try:
+        import yaml
+        config_path = Path(__file__).parent.parent / "config" / "tickers.yaml"
+        if config_path.exists():
+            config = yaml.safe_load(config_path.read_text())
+            return config.get("tickers", {})
+    except Exception:
+        pass
+    return {}
+
+def get_missing_tickers_for_table(conn: duckdb.DuckDBPyConnection, table_name: str) -> dict:
+    """
+    Identifies which tickers from config are missing from a specific raw table.
+    Returns: dict of {ticker: meta} for missing tickers.
+    """
+    all_tickers = get_config_tickers()
+    if not all_tickers:
+        return {}
+    
+    try:
+        # Check if table exists first to avoid loud errors
+        table_exists = conn.execute(f"SELECT COUNT(*) FROM information_schema.tables WHERE table_name = '{table_name.split('.')[-1]}'").fetchone()[0] > 0
+        if not table_exists:
+            return all_tickers
+            
+        existing = conn.execute(f"SELECT DISTINCT ticker FROM {table_name}").fetchall()
+        existing_set = {row[0] for row in existing}
+        
+        missing_keys = [t for t in all_tickers.keys() if t not in existing_set]
+        return {k: all_tickers[k] for k in missing_keys}
+    except Exception:
+        # Table might not exist or be empty, treat all as missing
+        return all_tickers
+
+def get_smart_recovery_targets(conn: duckdb.DuckDBPyConnection) -> dict:
+    """
+    Consolidates tickers missing from various critical fundamental tables.
+    - metadata: tickers missing from company_info (all types).
+    - fundamentals: tickers missing from quarterly_financials,
+                    restricted to EQUITY tickers only (excludes ETF, INDEX).
+    Returns: {
+        'metadata': {ticker: meta},    # Missing from company_info
+        'fundamentals': {ticker: meta} # Missing from quarterly_financials (EQUITY only)
+    }
+    """
+    missing_meta = get_missing_tickers_for_table(conn, "raw.company_info")
+
+    # Identify tickers already classified as non-equity in the DB
+    try:
+        non_equity = conn.execute(
+            "SELECT DISTINCT ticker FROM raw.company_info WHERE UPPER(quote_type) != 'EQUITY'"
+        ).fetchall()
+        non_equity_set = {row[0] for row in non_equity}
+    except Exception:
+        non_equity_set = set()
+
+    # For fundamentals, only process equity tickers from config
+    all_tickers = get_config_tickers()
+    equity_tickers = {k: v for k, v in all_tickers.items() if k not in non_equity_set}
+
+    missing_fundamentals = get_missing_tickers_for_table(conn, "raw.quarterly_financials")
+    # Keep only equity tickers in the fundamentals missing set
+    missing_fundamentals = {k: v for k, v in missing_fundamentals.items() if k in equity_tickers}
+
+    return {
+        "metadata": missing_meta,
+        "fundamentals": missing_fundamentals,
+    }
 
 
 # ── CANONICAL SCORING ENGINE (Single Source of Truth) ───────────────────────

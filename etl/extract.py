@@ -323,6 +323,7 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
 
         record = {
             "ticker":          ticker,
+            "quote_type":      price_mod.get('quoteType', 'EQUITY'),
             "company":         meta.get("name") or price_mod.get("shortName") or ticker,
             "sector":          meta.get("sector") or profile.get("sector", "N/A"),
             "region":          meta.get("region") or "N/A",

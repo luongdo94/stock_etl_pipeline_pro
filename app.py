@@ -333,13 +333,57 @@ def fetch_macro_data():
         return results
     except Exception as e:
         print("Macro fetch error:", e)
-        # Fail-safe static data if Yahoo is 404/Blocked
-        return {
-            "SPY": {"val": 450.0, "chg": 0.5, "pct": 0.11},
-            "DXY": {"val": 103.5, "chg": -0.2, "pct": -0.19},
-            "US10Y": {"val": 4.25, "chg": 0.02, "pct": 0.47},
-            "VIX": {"val": 14.5, "chg": -0.5, "pct": -3.33}
-        }
+        # Fail-safe: read latest values from local DB instead of stale hardcoded numbers
+        return _get_macro_fallback_from_db()
+
+
+def _get_macro_fallback_from_db() -> dict:
+    """
+    Fallback for fetch_macro_data when Yahoo Finance is unavailable (e.g. Cloud deploy).
+    Reads the two most-recent closes for SPY and ^VIX from the DuckDB warehouse so
+    the dashboard always shows real data instead of hard-coded placeholder values.
+    """
+    defaults = {
+        "SPY":   {"val": 0.0, "chg": 0.0, "pct": 0.0},
+        "DXY":   {"val": 0.0, "chg": 0.0, "pct": 0.0},
+        "US10Y": {"val": 0.0, "chg": 0.0, "pct": 0.0},
+        "VIX":   {"val": 0.0, "chg": 0.0, "pct": 0.0},
+    }
+    try:
+        import duckdb as _ddb
+        from collections import defaultdict
+        conn = _ddb.connect(DB_PATH, read_only=True)
+        rows = conn.execute("""
+            SELECT ticker, date, close
+            FROM raw.stock_prices
+            WHERE ticker IN ('SPY', '^VIX')
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) <= 2
+            ORDER BY ticker, date DESC
+        """).fetchall()
+        conn.close()
+
+        by_ticker = defaultdict(list)
+        for ticker, _date, close in rows:
+            by_ticker[ticker].append(float(close))
+
+        # SPY is already stored in EUR in raw.stock_prices (converted during ETL)
+        spy = by_ticker.get("SPY", [])
+        if spy:
+            v_now, v_prev = spy[0], (spy[1] if len(spy) > 1 else spy[0])
+            chg = v_now - v_prev
+            defaults["SPY"] = {"val": v_now, "chg": chg, "pct": (chg / v_prev * 100) if v_prev else 0.0}
+
+        # VIX is unitless, no FX conversion needed
+        vix = by_ticker.get("^VIX", [])
+        if vix:
+            v_now, v_prev = vix[0], (vix[1] if len(vix) > 1 else vix[0])
+            chg = v_now - v_prev
+            defaults["VIX"] = {"val": v_now, "chg": chg, "pct": (chg / v_prev * 100) if v_prev else 0.0}
+
+    except Exception as db_err:
+        print(f"Macro DB fallback error: {db_err}")
+
+    return defaults
 
 @st.cache_resource(show_spinner="📥 Loading Institutional NLP Engine (FinBERT ~440MB)...")
 def get_finbert_pipeline():
