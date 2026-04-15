@@ -341,8 +341,7 @@ def fetch_macro_data():
 def _get_macro_fallback_from_db() -> dict:
     """
     Fallback for fetch_macro_data when Yahoo Finance is unavailable (e.g. Cloud deploy).
-    Reads the two most-recent closes for SPY and ^VIX from the DuckDB warehouse so
-    the dashboard always shows real data instead of hard-coded placeholder values.
+    Reads the two most-recent closes for all macro tickers from the DuckDB warehouse.
     """
     defaults = {
         "SPY":   {"val": 0.0, "chg": 0.0, "pct": 0.0},
@@ -354,10 +353,11 @@ def _get_macro_fallback_from_db() -> dict:
         import duckdb as _ddb
         from collections import defaultdict
         conn = _ddb.connect(DB_PATH, read_only=True)
+        # Fetch latest 2 rows for all 4 macro tickers
         rows = conn.execute("""
             SELECT ticker, date, close
             FROM raw.stock_prices
-            WHERE ticker IN ('SPY', '^VIX')
+            WHERE ticker IN ('SPY', '^VIX', '^TNX', 'DX-Y.NYB')
             QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) <= 2
             ORDER BY ticker, date DESC
         """).fetchall()
@@ -367,19 +367,22 @@ def _get_macro_fallback_from_db() -> dict:
         for ticker, _date, close in rows:
             by_ticker[ticker].append(float(close))
 
-        # SPY is already stored in EUR in raw.stock_prices (converted during ETL)
-        spy = by_ticker.get("SPY", [])
-        if spy:
-            v_now, v_prev = spy[0], (spy[1] if len(spy) > 1 else spy[0])
-            chg = v_now - v_prev
-            defaults["SPY"] = {"val": v_now, "chg": chg, "pct": (chg / v_prev * 100) if v_prev else 0.0}
+        # Helper to process values
+        def _process(tkr_code, fallback_key):
+            prices = by_ticker.get(tkr_code, [])
+            if prices:
+                v_now, v_prev = prices[0], (prices[1] if len(prices) > 1 else prices[0])
+                chg = v_now - v_prev
+                defaults[fallback_key] = {
+                    "val": v_now, 
+                    "chg": chg, 
+                    "pct": (chg / v_prev * 100) if v_prev != 0 else 0.0
+                }
 
-        # VIX is unitless, no FX conversion needed
-        vix = by_ticker.get("^VIX", [])
-        if vix:
-            v_now, v_prev = vix[0], (vix[1] if len(vix) > 1 else vix[0])
-            chg = v_now - v_prev
-            defaults["VIX"] = {"val": v_now, "chg": chg, "pct": (chg / v_prev * 100) if v_prev else 0.0}
+        _process("SPY", "SPY")
+        _process("^VIX", "VIX")
+        _process("^TNX", "US10Y")
+        _process("DX-Y.NYB", "DXY")
 
     except Exception as db_err:
         print(f"Macro DB fallback error: {db_err}")
