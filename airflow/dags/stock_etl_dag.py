@@ -49,29 +49,46 @@ loads into DuckDB, and runs dbt-style transformations.
         conn = get_connection()
         prices_df = extract_stock_prices(lookback_days=2)  # Daily: only last 2 days
         
-        # 🔗 SYNC: Tier 1 - Metadata & Annuals (720h/30d)
+        # 🧪 SMART RECOVERY: Always search for gaps first
+        recovery = utils.get_smart_recovery_targets(conn)
+
+        # 🔗 SYNC: Tier 1 - Metadata & Annuals (30d cycle + Recovery)
         if utils.needs_metadata_refresh(conn):
-            company_df    = extract_company_info()
-            annual_df     = extract_historical_financials()
+            meta_tickers = None # Full refresh
         else:
-            print("   🕒 Metadata (Info/Annuals) is fresh (< 30 days) — skipping.")
+            meta_tickers = recovery["metadata"]
+            if meta_tickers:
+                print(f"   🩹 SMART RECOVERY: Patching {len(meta_tickers)} missing metadata records.")
+
+        if meta_tickers is None or meta_tickers:
+            company_df    = extract_company_info(tickers=meta_tickers) if meta_tickers else extract_company_info()
+            annual_df     = extract_historical_financials(tickers=meta_tickers) if meta_tickers else extract_historical_financials()
+        else:
+            print("   🕒 Metadata is fresh (< 30 days).")
             company_df = annual_df = pd.DataFrame()
 
-        # 🔗 SYNC: Tier 2 - Quarterly Fundamentals & FCF (168h/7d)
+        # 🔗 SYNC: Tier 2 - Quarterly Fundamentals & FCF (7d cycle + Recovery)
         if utils.needs_fundamentals_refresh(conn):
-            quarterly_df  = extract_quarterly_financials()
-            cashflow_df   = extract_cashflows()
-            fcf_df        = extract_historical_fcf()
-            fcf_q_df      = extract_quarterly_fcf()
+            fund_tickers = None # Full refresh
         else:
-            print("   🕒 Quarterly data (Q/FCF/Cashflow) is fresh (< 7 days) — skipping.")
+            fund_tickers = recovery["fundamentals"]
+            if fund_tickers:
+                print(f"   🩹 SMART RECOVERY: Patching {len(fund_tickers)} missing fundamental records.")
+
+        if fund_tickers is None or fund_tickers:
+            quarterly_df  = extract_quarterly_financials(tickers=fund_tickers) if fund_tickers else extract_quarterly_financials()
+            cashflow_df   = extract_cashflows(tickers=fund_tickers) if fund_tickers else extract_cashflows()
+            fcf_df        = extract_historical_fcf(tickers=fund_tickers) if fund_tickers else extract_historical_fcf()
+            fcf_q_df      = extract_quarterly_fcf(tickers=fund_tickers) if fund_tickers else extract_quarterly_fcf()
+        else:
+            print("   🕒 Quarterly data is fresh (< 7 days).")
             quarterly_df = cashflow_df = fcf_df = fcf_q_df = pd.DataFrame()
 
-        # 🔗 SYNC: Tier 3 - Earnings Refresh (168h/7d)
+        # 🔗 SYNC: Tier 3 - Earnings Refresh (7d cycle)
         if utils.needs_earnings_refresh(conn):
             earnings_df = extract_earnings_calendar()
         else:
-            print("   🕒 Earnings data is fresh (< 7 days) — skipping.")
+            print("   🕒 Earnings data is fresh (< 7 days).")
             earnings_df = pd.DataFrame()
             
         conn.close()
@@ -134,6 +151,14 @@ loads into DuckDB, and runs dbt-style transformations.
         load_quarterly_fcf(conn, fcf_q_df)
         load_earnings_calendar(conn, earnings_df)
         conn.close()
+
+        # 🔗 CLOUD SYNC: Automatically sync to Supabase after successful load
+        try:
+            from etl.supabase_manager import sync_to_supabase
+            print("📤 Starting automated Cloud Sync to Supabase...")
+            sync_to_supabase()
+        except Exception as e:
+            print(f"⚠️ Cloud Sync failed, but local ETL succeeded: {e}")
 
     def _transform(**context):
         conn = get_connection()
