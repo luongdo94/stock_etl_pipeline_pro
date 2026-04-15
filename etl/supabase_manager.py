@@ -50,7 +50,8 @@ def sync_to_supabase():
         "raw.historical_financials",
         "raw.quarterly_financials",
         "raw.earnings_calendar",
-        "raw.company_info"
+        "raw.company_info",
+        "raw.stock_prices" # Will be filtered for macro only below
     ]
     
     try:
@@ -68,6 +69,9 @@ def sync_to_supabase():
                     ("fct_daily_returns_p1.parquet", f"SELECT * FROM {table} LIMIT 400000"),
                     ("fct_daily_returns_p2.parquet", f"SELECT * FROM {table} OFFSET 400000")
                 ]
+            elif table == "raw.stock_prices":
+                # Only sync macro tickers to keep the file small (Dashboard fallback)
+                parts = [("macro_prices.parquet", f"SELECT * FROM {table} WHERE ticker IN ('SPY', '^VIX', '^TNX', 'DX-Y.NYB')")]
             else:
                 parts = [(f"{table.split('.')[-1]}.parquet", f"SELECT * FROM {table}")]
 

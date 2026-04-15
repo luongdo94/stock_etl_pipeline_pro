@@ -852,6 +852,7 @@ _PARQUET_TABLE_MAP = {
     "raw.historical_financials":    ["historical_financials.parquet"],
     "raw.quarterly_financials":     ["quarterly_financials.parquet"],
     "raw.company_info":             ["company_info.parquet"],
+    "raw.stock_prices":             ["macro_prices.parquet"],
 }
 
 
