@@ -33,6 +33,7 @@ except ImportError:
     pass  # python-dotenv not installed; rely on system env vars
 
 import contextlib
+from pathlib import Path
 from plotly.subplots import make_subplots
 import numpy as np
 import yfinance as yf
@@ -291,7 +292,7 @@ def get_forex_rates(target="EUR"):
 
 
 
-@st.cache_data(ttl=1800, show_spinner="Fetching Live Macro Data...")
+@st.cache_data(ttl=1799, show_spinner="Fetching Live Macro Data...")
 def fetch_macro_data():
     """Fetches real-time SPY, DXY, US10Y and VIX from Yahoo Finance."""
     import logging
@@ -816,58 +817,165 @@ def save_portfolio_to_db(shares_dict, cost_dict):
             supabase.table("stock_portfolio").insert(records).execute()
     except Exception as e:
         st.sidebar.error(f"⚠️ Failed to save Portfolio to Cloud: {e}")
+
+# ── LOCAL SHADOW CACHE (Remote Mode Optimization) ───────────────────────────
+_CACHE_DIR = Path(os.path.join(ROOT, ".cache", "parquet"))
+_CACHE_TTL_MINUTES = 30  # Refresh cache from Supabase every 30 minutes
+
+# Map Supabase Storage filenames → DuckDB view names
+_PARQUET_TABLE_MAP = {
+    "marts.fct_daily_returns": ["fct_daily_returns_p1.parquet", "fct_daily_returns_p2.parquet"],
+    "marts.dim_companies":          ["dim_companies.parquet"],
+    "marts.dq_warnings":            ["dq_warnings.parquet"],
+    "marts.etl_audit":              ["etl_audit.parquet"],
+    "marts.agg_monthly_performance":["agg_monthly_performance.parquet"],
+    "marts.dim_annual_financials":  ["dim_annual_financials.parquet"],
+    "marts.dim_quarterly_financials":["dim_quarterly_financials.parquet"],
+    "raw.hist_fcf":                 ["hist_fcf.parquet"],
+    "raw.hist_fcf_quarterly":       ["hist_fcf_quarterly.parquet"],
+    "raw.earnings_calendar":        ["earnings_calendar.parquet"],
+    "raw.historical_financials":    ["historical_financials.parquet"],
+    "raw.quarterly_financials":     ["quarterly_financials.parquet"],
+    "raw.company_info":             ["company_info.parquet"],
+}
+
+
+def _ensure_local_cache() -> bool:
+    """
+    Downloads Parquet files from Supabase Storage to a local .cache/ directory
+    if they are missing or older than _CACHE_TTL_MINUTES.
+    Downloads all files in parallel using ThreadPoolExecutor.
+    Returns True if cache is ready, False on unrecoverable error.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import time
+
+    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Collect all unique filenames to download
+    all_files = set()
+    for files in _PARQUET_TABLE_MAP.values():
+        all_files.update(files)
+
+    # Determine which files need refreshing
+    now = time.time()
+    ttl_seconds = _CACHE_TTL_MINUTES * 60
+    stale_files = [
+        f for f in all_files
+        if not (_CACHE_DIR / f).exists()
+        or (now - (_CACHE_DIR / f).stat().st_mtime) > ttl_seconds
+    ]
+
+    if not stale_files:
+        return True  # All files are fresh — nothing to do
+
+    # Build Supabase client for storage download
+    try:
+        import supabase as _sb
+        from dotenv import load_dotenv as _lde
+        _lde()
+        _url = os.environ.get("SUPABASE_URL")
+        _key = os.environ.get("SUPABASE_SERVICE_KEY") or os.environ.get("SUPABASE_KEY")
+        _bucket = os.environ.get("S3_BUCKET_NAME", "warehouse")
+        if not _url or not _key:
+            return False
+        _client = _sb.create_client(_url, _key)
+    except Exception:
+        return False
+
+    def _download_one(filename: str) -> tuple:
+        local_path = _CACHE_DIR / filename
+        try:
+            data = _client.storage.from_(_bucket).download(filename)
+            local_path.write_bytes(data)
+            return filename, True
+        except Exception as err:
+            return filename, False
+
+    # Parallel download
+    errors = []
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        futures = {executor.submit(_download_one, f): f for f in stale_files}
+        for future in as_completed(futures):
+            fname, ok = future.result()
+            if not ok:
+                errors.append(fname)
+
+    if errors:
+        print(f"[Cache] Failed to download: {errors}")
+
+    return len(errors) == 0
+
+
+def clear_local_cache():
+    """Removes all locally cached Parquet files so the next Dashboard load pulls fresh data."""
+    if _CACHE_DIR.exists():
+        for f in _CACHE_DIR.glob("*.parquet"):
+            f.unlink(missing_ok=True)
+
+
 @contextlib.contextmanager
 def get_db_connection(read_only=False):
     """Database connection context manager with fallback and Hybrid Remote support."""
     is_remote = os.environ.get("SUPABASE_REMOTE_MODE", "false").lower() == "true"
-    
+
     if is_remote:
-        # ── HYBRID REMOTE MODE (Parquet over S3/HTTP) ──
+        # ── HYBRID REMOTE MODE: Local Shadow Cache (fast) → S3 direct (fallback) ──
+        cache_ready = _ensure_local_cache()
+
+        if cache_ready:
+            # Fast path: read from local .cache/ — near-instant DuckDB queries
+            try:
+                conn = duckdb.connect(":memory:")
+                conn.execute("CREATE SCHEMA IF NOT EXISTS marts; CREATE SCHEMA IF NOT EXISTS raw;")
+                for table, files in _PARQUET_TABLE_MAP.items():
+                    local_paths = [str(_CACHE_DIR / f) for f in files if (_CACHE_DIR / f).exists()]
+                    if not local_paths:
+                        continue
+                    if len(local_paths) == 1:
+                        conn.execute(f"CREATE VIEW {table} AS SELECT * FROM read_parquet('{local_paths[0]}')")
+                    else:
+                        paths_str = ", ".join(f"'{p}'" for p in local_paths)
+                        conn.execute(f"CREATE VIEW {table} AS SELECT * FROM read_parquet([{paths_str}])")
+                yield conn
+                return
+            except Exception as e:
+                st.warning(f"⚠️ Local cache read failed, falling back to S3: {e}")
+            finally:
+                if 'conn' in locals():
+                    conn.close()
+
+        # Slow fallback: read directly from S3 when local cache is unavailable
         try:
             conn = duckdb.connect(":memory:")
             conn.execute("INSTALL httpfs; LOAD httpfs;")
-            
-            # S3 Secrets from environment
-            s3_key = os.environ.get("S3_ACCESS_KEY_ID")
-            s3_secret = os.environ.get("S3_SECRET_ACCESS_KEY")
+
+            s3_key      = os.environ.get("S3_ACCESS_KEY_ID")
+            s3_secret   = os.environ.get("S3_SECRET_ACCESS_KEY")
             s3_endpoint = os.environ.get("S3_ENDPOINT", "").replace("https://", "")
-            s3_region = os.environ.get("S3_REGION", "us-east-1")
-            bucket = os.environ.get("S3_BUCKET_NAME", "warehouse")
-            
+            s3_region   = os.environ.get("S3_REGION", "us-east-1")
+            bucket      = os.environ.get("S3_BUCKET_NAME", "warehouse")
+
             if not all([s3_key, s3_secret, s3_endpoint]):
                 st.error("Missing S3 credentials for Remote Mode.")
                 raise ValueError("Incomplete S3 configuration.")
-            
+
             conn.execute(f"SET s3_region='{s3_region}';")
             conn.execute(f"SET s3_endpoint='{s3_endpoint}';")
             conn.execute(f"SET s3_access_key_id='{s3_key}';")
             conn.execute(f"SET s3_secret_access_key='{s3_secret}';")
             conn.execute("SET s3_use_ssl=true;")
             conn.execute("SET s3_url_style='path';")
-            
-            # Create Views to map remote Parquet to local table names
-            # Tables to map (synced via etl/supabase_manager.py)
-            table_map = {
-                "marts.fct_daily_returns": "fct_daily_returns_p*.parquet", # Support sharding
-                "marts.dim_companies": "dim_companies.parquet",
-                "marts.dq_warnings": "dq_warnings.parquet",
-                "marts.etl_audit": "etl_audit.parquet",
-                "marts.agg_monthly_performance": "agg_monthly_performance.parquet", # Need to add this to sync
-                "marts.dim_annual_financials": "dim_annual_financials.parquet", # Need to add this to sync
-                "marts.dim_quarterly_financials": "dim_quarterly_financials.parquet", # Need to add this to sync
-                "raw.hist_fcf": "hist_fcf.parquet",
-                "raw.hist_fcf_quarterly": "hist_fcf_quarterly.parquet",
-                "raw.earnings_calendar": "earnings_calendar.parquet",
-                "raw.historical_financials": "historical_financials.parquet",
-                "raw.quarterly_financials": "quarterly_financials.parquet",
-                "raw.company_info": "company_info.parquet", # Need to add this to sync
-            }
-            
+
             conn.execute("CREATE SCHEMA IF NOT EXISTS marts; CREATE SCHEMA IF NOT EXISTS raw;")
-            for table, file in table_map.items():
-                s3_path = f"s3://{bucket}/{file}"
-                conn.execute(f"CREATE VIEW {table} AS SELECT * FROM read_parquet('{s3_path}')")
-                
+            for table, files in _PARQUET_TABLE_MAP.items():
+                if len(files) == 1:
+                    s3_path = f"s3://{bucket}/{files[0]}"
+                    conn.execute(f"CREATE VIEW {table} AS SELECT * FROM read_parquet('{s3_path}')")
+                else:
+                    paths_str = ", ".join(f"'s3://{bucket}/{f}'" for f in files)
+                    conn.execute(f"CREATE VIEW {table} AS SELECT * FROM read_parquet([{paths_str}])")
+
             yield conn
             return
         except Exception as e:

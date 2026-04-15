@@ -26,6 +26,16 @@ if __name__ == "__main__":
         print("📡 ONLY SYNC MODE: Skipping ETL, starting Supabase Cloud Sync...")
         from etl.supabase_manager import sync_to_supabase
         sync_to_supabase()
+        # Clear local Parquet cache so next Dashboard load picks up fresh data
+        try:
+            from pathlib import Path
+            cache_dir = Path(ROOT) / ".cache" / "parquet"
+            if cache_dir.exists():
+                for f in cache_dir.glob("*.parquet"):
+                    f.unlink(missing_ok=True)
+                print("🗑️  Local Parquet cache cleared — Dashboard will refresh on next load.")
+        except Exception:
+            pass
         sys.exit(0)
 
     # Normal ETL Flow
@@ -35,3 +45,13 @@ if __name__ == "__main__":
     if args.sync:
         from etl.supabase_manager import sync_to_supabase
         sync_to_supabase()
+        # Clear local Parquet cache so next Dashboard load picks up fresh data
+        try:
+            from pathlib import Path
+            cache_dir = Path(ROOT) / ".cache" / "parquet"
+            if cache_dir.exists():
+                for f in cache_dir.glob("*.parquet"):
+                    f.unlink(missing_ok=True)
+                print("🗑️  Local Parquet cache cleared — Dashboard will refresh on next load.")
+        except Exception:
+            pass
