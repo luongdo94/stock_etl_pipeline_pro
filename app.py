@@ -832,7 +832,7 @@ def save_portfolio_to_db(shares_dict, cost_dict):
 
 # ── LOCAL SHADOW CACHE (Remote Mode Optimization) ───────────────────────────
 _CACHE_DIR = Path(os.path.join(ROOT, ".cache", "parquet"))
-_CACHE_TTL_MINUTES = 30  # Refresh cache from Supabase every 30 minutes
+_CACHE_TTL_MINUTES = 10  # Refresh cache from Supabase every 10 minutes
 
 # Map Supabase Storage filenames → DuckDB view names
 _PARQUET_TABLE_MAP = {
@@ -1656,9 +1656,20 @@ if not prices_full.empty:
             st.write(f"**Index (SPY):** {spy_rows} days")
         
         if st.button("⚡ Clear App Cache", use_container_width=True):
+            clear_local_cache()  # PHisically delete .parquet files
             st.cache_data.clear()
             st.cache_resource.clear()
-            st.success("Cache cleared!")
+            st.success("Cache cleared! Re-downloading from S3...")
+            st.rerun()
+
+    # ── AUTO-REPAIR STALE CLOUD DATA ──────────────────────────────────────────
+    # If on cloud (Remote Auto) and SPY data is suspiciously low, force a refresh
+    if not prices_full.empty:
+        spy_rows = len(prices_full[prices_full['ticker'] == 'SPY'])
+        if spy_rows < 10 and _mode_lbl == "🌐 REMOTE (Auto)":
+            st.toast("⚠️ Data seems incomplete, forcing fresh download...", icon="🔄")
+            clear_local_cache()
+            st.cache_data.clear()
             st.rerun()
 
     st.sidebar.markdown("---")
