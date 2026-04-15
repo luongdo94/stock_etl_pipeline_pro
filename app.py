@@ -485,14 +485,20 @@ if "active_tab" not in st.session_state:
     st.session_state.active_tab = 0  # Default to Strategic Overview
 
 # ── PREMIUM GLASSMORPHISM CSS ───────────────────────────────────────────────
+# Hide Streamlit navigation ONLY on Cloud deployments
+if os.environ.get("SUPABASE_REMOTE_MODE", "false").lower() == "true":
+    st.markdown("""
+    <style>
+        /* HIDE DEFAULT STREAMLIT ARTIFACTS ON CLOUD */
+        #MainMenu {visibility: hidden;}
+        header {visibility: hidden;}
+        footer {visibility: hidden;}
+        [data-testid="stSidebarNav"] {display: none !important;}
+    </style>
+    """, unsafe_allow_html=True)
+
 st.markdown("""
 <style>
-    /* HIDE DEFAULT STREAMLIT ARTIFACTS */
-    #MainMenu {visibility: hidden;}
-    header {visibility: hidden;}
-    footer {visibility: hidden;}
-    [data-testid="stSidebarNav"] {display: none !important;}
-
     /* Global Background */
     .stApp {
         background: radial-gradient(circle at top right, #1a1c2c, #0d0e14);
