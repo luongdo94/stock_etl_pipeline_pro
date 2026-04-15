@@ -334,14 +334,18 @@ def fetch_macro_data():
         return results
     except Exception as e:
         print("Macro fetch error:", e)
-        # Fail-safe: read latest values from local DB instead of stale hardcoded numbers
-        return _get_macro_fallback_from_db()
+        # Fail-safe: read latest values from database context
+        try:
+            with get_db_connection(read_only=True) as conn:
+                return _get_macro_fallback_from_db(conn)
+        except:
+            return _get_macro_fallback_from_db(None)
 
 
-def _get_macro_fallback_from_db() -> dict:
+def _get_macro_fallback_from_db(conn=None) -> dict:
     """
     Fallback for fetch_macro_data when Yahoo Finance is unavailable (e.g. Cloud deploy).
-    Reads the two most-recent closes for all macro tickers from the DuckDB warehouse.
+    Reads the two most-recent closes for all macro tickers from the provided connection.
     """
     defaults = {
         "SPY":   {"val": 0.0, "chg": 0.0, "pct": 0.0},
@@ -349,10 +353,12 @@ def _get_macro_fallback_from_db() -> dict:
         "US10Y": {"val": 0.0, "chg": 0.0, "pct": 0.0},
         "VIX":   {"val": 0.0, "chg": 0.0, "pct": 0.0},
     }
+    
+    if conn is None:
+        return defaults
+
     try:
-        import duckdb as _ddb
         from collections import defaultdict
-        conn = _ddb.connect(DB_PATH, read_only=True)
         # Fetch latest 2 rows for all 4 macro tickers
         rows = conn.execute("""
             SELECT ticker, date, close
@@ -361,7 +367,6 @@ def _get_macro_fallback_from_db() -> dict:
             QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) <= 2
             ORDER BY ticker, date DESC
         """).fetchall()
-        conn.close()
 
         by_ticker = defaultdict(list)
         for ticker, _date, close in rows:
