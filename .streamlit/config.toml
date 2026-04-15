@@ -5,11 +5,6 @@ secondaryBackgroundColor = "#1a1c2c"
 textColor = "#e0e0e0"
 font = "sans serif"
 
-[client]
-# Cấu hình chuẩn để ẩn toolbar và navigation menu trong phiên bản Streamlit mới
-showSidebarNavigation = false
-toolbarMode = "minimal"
-
 [browser]
 gatherUsageStats = false
 
