@@ -37,6 +37,16 @@ def _login_form(cm):
 
     st.markdown("""
     <style>
+    /* HIDE DEFAULT STREAMLIT ARTIFACTS - AGGRESSIVE MODE (Active on Login) */
+    .stAppDeployButton, [data-testid="stAppDeployButton"] { visibility: hidden !important; display: none !important; }
+    header[data-testid="stHeader"], [data-testid="stHeader"], header { visibility: hidden !important; display: none !important; }
+    [data-testid="stToolbar"] { visibility: hidden !important; display: none !important; }
+    [data-testid="stSidebarNav"] { visibility: hidden !important; display: none !important; }
+    #stDecoration { visibility: hidden !important; display: none !important; }
+    footer { visibility: hidden !important; display: none !important; }
+    /* Push the UI up */
+    .block-container { padding-top: 1rem !important; }
+
     .stApp {
         background: radial-gradient(circle at top right, #1a1c2c, #0d0e14);
         color: #e0e0e0;
