@@ -485,13 +485,16 @@ st.set_page_config(
 )
 
 # Activate Authentication Gateway (Multi-tenant)
-auth.require_auth()
+cm = auth.get_cookie_manager()
+auth.require_auth(cm)
 
 # Guard: if require_auth() returned without authenticating (async cookie pass 1),
 # stop here so the rest of the app doesn't render unauthenticated.
 if not st.session_state.get("authenticated"):
     st.stop()
 
+# ── RENDER SIDEBAR USER PROFILE EARLY ───────────────────────────────────────
+auth.render_user_profile(cm)
 
 # ── SESSION STATE INITIALIZATION ───────────────────────────────────────────
 if "active_tab" not in st.session_state:
@@ -6721,5 +6724,3 @@ st.sidebar.markdown("---")
 # 
 # csv_prices = prices.to_csv(index=False).encode('utf-8')
 # st.sidebar.download_button("🔽 Download Price History", data=csv_prices, file_name="price_history.csv", mime="text/csv")
-
-auth.render_user_profile()

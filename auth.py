@@ -163,11 +163,12 @@ def _login_form(cm):
                             st.error(f"Initialization Error: {e}")
 
 
-def require_auth():
+def require_auth(cm=None):
     """
     Authentication gateway.
     """
-    cm = get_cookie_manager()
+    if cm is None:
+        cm = get_cookie_manager()
     
     if "authenticated" not in st.session_state:
         st.session_state["authenticated"] = False
@@ -206,11 +207,12 @@ def require_auth():
     st.stop()
 
 
-def render_user_profile():
+def render_user_profile(cm=None):
     if not st.session_state.get("authenticated"):
         return
 
-    cm = get_cookie_manager()
+    if cm is None:
+        cm = get_cookie_manager()
     st.sidebar.markdown(f"👤 **{st.session_state.get('user_email', 'User')}**")
 
     if st.sidebar.button("🚪 Logout", use_container_width=True):
