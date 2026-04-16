@@ -2265,7 +2265,7 @@ if active_tab == "1. Market Regime":
                 line=dict(color="#e67e22", width=1.5)
             ))
             fig_spy.update_layout(
-                template="plotly_dark", height=350,
+                template="plotly_dark", height=500,
                 margin=dict(l=0, r=0, t=10, b=0),
                 yaxis_title="Price (USD)",
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
@@ -2273,6 +2273,7 @@ if active_tab == "1. Market Regime":
             st.plotly_chart(fig_spy, use_container_width=True)
         else:
             st.info("SPY data not available for the selected period.")
+
 
     with c2:
         render_header("dna", "Market Breadth (% Stocks > MA 50)")
@@ -2295,7 +2296,7 @@ if active_tab == "1. Market Regime":
                              annotation_text="30% Oversold", annotation_position="top left",
                              annotation_font=dict(size=10, color="#e74c3c"))
             fig_br.update_layout(
-                template="plotly_dark", height=350,
+                template="plotly_dark", height=500,
                 margin=dict(l=0, r=0, t=10, b=0),
                 yaxis=dict(title="% Above MA50", range=[0, 100], ticksuffix="%"),
                 xaxis_title="", showlegend=False
@@ -2345,7 +2346,7 @@ if active_tab == "1. Market Regime":
                 </div>
                 """, unsafe_allow_html=True)
 
-        sec_tabs = st.tabs(["Heatmap", "Top Sectors", "Top Movers", "Health Matrix"])
+        sec_tabs = st.tabs(["Heatmap", "Top Sectors", "Top Movers"])
         
         with sec_tabs[0]:
             # ... (Heatmap code)
@@ -2387,9 +2388,6 @@ if active_tab == "1. Market Regime":
                 fig_movers.update_layout(margin=dict(r=40, b=0), yaxis={'categoryorder':'total ascending', 'title': None, 'tickmode': 'linear', 'dtick': 1})
                 st.plotly_chart(fig_movers, use_container_width=True)
 
-        with sec_tabs[3]:
-            # Call the new Sector Health Matrix
-            render_sector_health_matrix(m_df)
 
     with b2:
         render_header("package", "Portfolio Stance & Tactical Guide")
