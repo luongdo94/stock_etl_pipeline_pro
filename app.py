@@ -507,6 +507,9 @@ if os.environ.get("SUPABASE_REMOTE_MODE", "false").lower() == "true":
         header {visibility: hidden;}
         footer {visibility: hidden;}
         [data-testid="stSidebarNav"] {display: none !important;}
+        [data-testid="stHeader"] {display: none !important;}
+        [data-testid="stToolbar"] {display: none !important;}
+        [data-testid="stAppDeployButton"] {display: none !important;}
     </style>
     """, unsafe_allow_html=True)
 

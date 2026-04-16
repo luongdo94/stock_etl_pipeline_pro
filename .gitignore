@@ -12,22 +12,21 @@ airflow/*.db
 dbt
 legacy
 airflow
+scratch
+scripts
+*.sh
+dashboard.py
+.agents/
 
-# Databases & Storage
-warehouse/*
+# Databases (Data Warehouse)
+warehouse/*.duckdb
 !warehouse/stock_demo.duckdb
-!warehouse/.gitkeep
 *.db
 *.duckdb
 
 # Logs & Meta
 *.log
 model_performance_log.json
-
-# Local scripts & drafts
-scratch/
-scripts/
-*.sh
 
 # Streamlit (Ignore secrets, allow config)
 .streamlit/secrets.toml
