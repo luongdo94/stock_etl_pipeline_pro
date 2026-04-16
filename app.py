@@ -5007,6 +5007,7 @@ if active_tab == "2. Opportunity Radar":
         "🏆 Institutional Pulse (Quality > 75 & Bullish)",
         "📈 Trend Following (MA20 > MA50)",
         "📉 RSI Mean Reversion (Oversold < 30)",
+        "💎 Deep Value (Z-Score < -2.0)",
         "🚀 Buy on Dip (Bullish + Oversold)",
         "⚡ Multi-Indicator Breakout (Bullish + RSI > 50)",
         "──────────────────────────────",
