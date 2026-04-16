@@ -1349,6 +1349,31 @@
           "weight": 0.34299999999999997
         }
       }
+    },
+    {
+      "ts": "2026-04-16T10:52:18",
+      "ticker": "NXPI",
+      "horizon": 7,
+      "vix": 20.0,
+      "regime": "BULLISH",
+      "anchor": "LSTM",
+      "models": {
+        "LSTM": {
+          "rmse": 8.32,
+          "mape": 4.26,
+          "weight": 0.381
+        },
+        "Transformer": {
+          "rmse": 11.13,
+          "mape": 6.22,
+          "weight": 0.285
+        },
+        "PatchTST": {
+          "rmse": 9.48,
+          "mape": 4.92,
+          "weight": 0.33399999999999996
+        }
+      }
     }
   ]
 }

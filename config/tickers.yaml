@@ -479,6 +479,22 @@ tickers:
     name: Chevron Corporation
     sector: Energy
     region: US
+  CL:
+    name: Colgate-Palmolive Company
+    sector: Consumer Retail
+    region: US
+  KMB:
+    name: Kimberly-Clark Corporation
+    sector: Consumer Retail
+    region: US
+  GIS:
+    name: General Mills, Inc.
+    sector: Consumer Retail
+    region: US
+  KHC:
+    name: The Kraft Heinz Company
+    sector: Consumer Retail
+    region: US
   OXY:
     name: Occidental Petroleum Corporation
     sector: Energy
@@ -798,6 +814,26 @@ tickers:
   HEI.DE:
     name: Heidelberg Materials AG
     sector: Industrials
+    region: EU
+  UNA.AS:
+    name: Unilever PLC
+    sector: Consumer Retail
+    region: EU
+  NOVN.SW:
+    name: Novartis AG
+    sector: Healthcare
+    region: EU
+  NESN.SW:
+    name: Nestlé S.A.
+    sector: Consumer Retail
+    region: EU
+  HEN3.DE:
+    name: Henkel AG & Co. KGaA
+    sector: Consumer Retail
+    region: EU
+  FRE.DE:
+    name: Fresenius SE & Co. KGaA
+    sector: Healthcare
     region: EU
   G1A.DE:
     name: GEA Group Aktiengesellschaft

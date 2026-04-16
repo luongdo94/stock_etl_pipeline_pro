@@ -328,16 +328,24 @@ def load_stock_prices(
     mode='upsert': deletes existing rows with the same date+ticker before inserting
     """
     if mode == "upsert":
+        # Safety check: Get count before delete
+        pre_count = conn.execute("SELECT COUNT(*) FROM raw.stock_prices").fetchone()[0]
+        
         dates = df["date"].dt.date.unique().tolist()
         tickers = df["ticker"].unique().tolist()
         
-        conn.execute("DELETE FROM raw.stock_prices WHERE date = ANY(?) AND ticker = ANY(?)", 
-                     [dates, tickers])
+        # Incremental safety: only delete if we actually have data to replace
+        if dates and tickers:
+            conn.execute("DELETE FROM raw.stock_prices WHERE date = ANY(?) AND ticker = ANY(?)", 
+                         [dates, tickers])
+        
+        post_count = conn.execute("SELECT COUNT(*) FROM raw.stock_prices").fetchone()[0]
+        logger.info(f"  🧹 Upsert: Deleted {pre_count - post_count:,} existing rows to prevent duplicates.")
     
     # Explicitly register DataFrame to avoid fragile scope-based lookup in DuckDB
     conn.register("df_tmp", df)
     conn.execute("""
-        INSERT INTO raw.stock_prices
+        INSERT INTO raw.stock_prices (date, open, high, low, close, volume, ticker, company, sector, region, _extracted_at, _loaded_at)
         SELECT
             CAST(date AS DATE),
             open, high, low, close,
@@ -349,10 +357,8 @@ def load_stock_prices(
     """)
     conn.unregister("df_tmp")
     
-    result = conn.execute("SELECT COUNT(*) FROM raw.stock_prices").fetchone()
-    row_count = result[0] if result else 0
-    logger.info(f"✅ Loaded {len(df):,} rows → raw.stock_prices "
-                f"(total: {row_count:,})")
+    total_count = conn.execute("SELECT COUNT(*) FROM raw.stock_prices").fetchone()[0]
+    logger.info(f"✅ Loaded {len(df):,} rows → raw.stock_prices (total: {total_count:,})")
     return len(df)
 
 

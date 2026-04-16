@@ -487,6 +487,11 @@ st.set_page_config(
 # Activate Authentication Gateway (Multi-tenant)
 auth.require_auth()
 
+# Guard: if require_auth() returned without authenticating (async cookie pass 1),
+# stop here so the rest of the app doesn't render unauthenticated.
+if not st.session_state.get("authenticated"):
+    st.stop()
+
 
 # ── SESSION STATE INITIALIZATION ───────────────────────────────────────────
 if "active_tab" not in st.session_state:

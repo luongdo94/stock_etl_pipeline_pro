@@ -37,6 +37,7 @@ def _guess_currency(ticker: str) -> str:
     if any(ticker.endswith(s) for s in [".L", ".IL"]): return "GBP"
     if any(ticker.endswith(s) for s in [".TO", ".V"]): return "CAD"
     if ".AX" in ticker: return "AUD"
+    if ".SW" in ticker: return "CHF"
     if ".ST" in ticker: return "SEK"
     if ".HE" in ticker: return "EUR" # Finland
     if ".OL" in ticker: return "NOK"
