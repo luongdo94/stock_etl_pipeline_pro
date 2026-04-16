@@ -13,15 +13,21 @@ dbt
 legacy
 airflow
 
-# Databases (Data Warehouse)
-warehouse/*.duckdb
+# Databases & Storage
+warehouse/*
 !warehouse/stock_demo.duckdb
+!warehouse/.gitkeep
 *.db
 *.duckdb
 
 # Logs & Meta
 *.log
 model_performance_log.json
+
+# Local scripts & drafts
+scratch/
+scripts/
+*.sh
 
 # Streamlit (Ignore secrets, allow config)
 .streamlit/secrets.toml
