@@ -635,6 +635,10 @@ tickers:
     name: Infineon Technologies
     sector: Semiconductors
     region: EU
+  IOS.DE:
+    name: IONOS Group SE
+    sector: Cloud/Hosting
+    region: EU
   INGA.AS:
     name: ING Group
     sector: Financials

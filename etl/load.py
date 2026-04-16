@@ -251,23 +251,18 @@ def load_historical_fcf(
         )
     """)
 
-    # Delete existing rows for these (ticker, year) pairs before inserting
-    tickers = df["ticker"].unique().tolist()
-    years   = df["year"].unique().tolist()
-    conn.execute(
-        "DELETE FROM raw.hist_fcf WHERE ticker = ANY(?) AND year = ANY(?)",
-        [tickers, years]
-    )
-
+    # ✅ SAFE UPSERT via Primary Key (ticker, year) — no Cartesian DELETE
     conn.register("df_tmp", df)
     conn.execute("""
-        INSERT INTO raw.hist_fcf (ticker, year, free_cash_flow, operating_cash_flow, capex, _extracted_at)
+        INSERT OR REPLACE INTO raw.hist_fcf (ticker, year, free_cash_flow, operating_cash_flow, capex, _extracted_at)
         SELECT ticker, year, free_cash_flow, operating_cash_flow, capex, _extracted_at
         FROM df_tmp
     """)
     conn.unregister("df_tmp")
     logger.info(f"✅ Loaded {len(df)} FCF records → raw.hist_fcf ({df['ticker'].nunique()} tickers)")
     return len(df)
+
+
 
 
 def load_quarterly_fcf(
@@ -297,18 +292,10 @@ def load_quarterly_fcf(
         )
     """)
 
-    # Delete existing rows
-    tickers  = df["ticker"].unique().tolist()
-    years    = df["year"].unique().tolist()
-    quarters = df["quarter"].unique().tolist()
-    conn.execute(
-        "DELETE FROM raw.hist_fcf_quarterly WHERE ticker = ANY(?) AND year = ANY(?) AND quarter = ANY(?)",
-        [tickers, years, quarters]
-    )
-
+    # ✅ SAFE UPSERT via Primary Key (ticker, year, quarter) — no Cartesian DELETE
     conn.register("df_tmp", df)
     conn.execute("""
-        INSERT INTO raw.hist_fcf_quarterly (ticker, year, quarter, free_cash_flow, operating_cash_flow, capex, _extracted_at)
+        INSERT OR REPLACE INTO raw.hist_fcf_quarterly (ticker, year, quarter, free_cash_flow, operating_cash_flow, capex, _extracted_at)
         SELECT ticker, year, quarter, free_cash_flow, operating_cash_flow, capex, _extracted_at
         FROM df_tmp
     """)
@@ -330,17 +317,25 @@ def load_stock_prices(
     if mode == "upsert":
         # Safety check: Get count before delete
         pre_count = conn.execute("SELECT COUNT(*) FROM raw.stock_prices").fetchone()[0]
-        
-        dates = df["date"].dt.date.unique().tolist()
-        tickers = df["ticker"].unique().tolist()
-        
-        # Incremental safety: only delete if we actually have data to replace
-        if dates and tickers:
-            conn.execute("DELETE FROM raw.stock_prices WHERE date = ANY(?) AND ticker = ANY(?)", 
-                         [dates, tickers])
-        
+
+        if not df.empty:
+            # ✅ SAFE UPSERT: Only delete the exact (date, ticker) pairs we are
+            # about to replace. The old Cartesian DELETE (date IN [...] AND ticker IN [...])
+            # was wiping 5 years of history for existing tickers whenever a new ticker
+            # with a long history (e.g. IONOS 5Y) was added in the same batch.
+            conn.register("df_upsert_keys", df[["date", "ticker"]])
+            conn.execute("""
+                DELETE FROM raw.stock_prices
+                WHERE EXISTS (
+                    SELECT 1 FROM df_upsert_keys
+                    WHERE CAST(df_upsert_keys.date AS DATE) = raw.stock_prices.date
+                      AND df_upsert_keys.ticker = raw.stock_prices.ticker
+                )
+            """)
+            conn.unregister("df_upsert_keys")
+
         post_count = conn.execute("SELECT COUNT(*) FROM raw.stock_prices").fetchone()[0]
-        logger.info(f"  🧹 Upsert: Deleted {pre_count - post_count:,} existing rows to prevent duplicates.")
+        logger.info(f"  🧹 Safe Upsert: Deleted {pre_count - post_count:,} rows (exact date+ticker match only).")
     
     # Explicitly register DataFrame to avoid fragile scope-based lookup in DuckDB
     conn.register("df_tmp", df)

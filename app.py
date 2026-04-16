@@ -1122,9 +1122,10 @@ def load_data():
                    f.is_volume_spike, f.cap_category
             FROM marts.fct_daily_returns f
             LEFT JOIN marts.dim_companies d USING (ticker)
-            WHERE f.date >= CURRENT_DATE - INTERVAL 15 MONTH
+            WHERE f.date >= CURRENT_DATE - INTERVAL 10 YEAR
             ORDER BY f.date
         """).df()
+
 
         companies_f = conn.execute("""
             SELECT d.*, r.free_cashflow 
@@ -1777,6 +1778,7 @@ if not prices_full.empty:
     elif selected_horizon == "3M": start_date = max_db_date - timedelta(days=90)
     elif selected_horizon == "6M": start_date = max_db_date - timedelta(days=180)
     elif selected_horizon == "YTD": start_date = date(max_db_date.year, 1, 1)
+    elif selected_horizon == "1Y": start_date = max_db_date - timedelta(days=365)
     elif selected_horizon == "3Y": start_date = max_db_date - timedelta(days=1095)
     elif selected_horizon == "5Y": start_date = max_db_date - timedelta(days=1825)
     elif selected_horizon == "ALL": start_date = min_db_date
@@ -1795,6 +1797,7 @@ if not prices_full.empty:
             end_date   = max_db_date
     else:
         start_date = max_db_date - timedelta(days=365)
+
 
     # Clamp to DB boundaries
     start_date = max(start_date, min_db_date)
