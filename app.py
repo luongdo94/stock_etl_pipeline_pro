@@ -298,8 +298,8 @@ def fetch_macro_data():
     import logging
     yf.set_tz_cache_location("/tmp/yfinance_tz") # Mute warnings in streamlit
     try:
-        # DX-Y.NYB is dollar index, ^TNX is 10 yr treasury yield, ^VIX is volatility
-        tickers = "SPY DX-Y.NYB ^TNX ^VIX"
+        # DX-Y.NYB: Dollar, ^TNX: 10Y Yield, ^IRX: 13W T-Bill, ^VIX: Vol, CL=F: Oil, GC=F: Gold
+        tickers = "SPY DX-Y.NYB ^TNX ^IRX ^VIX CL=F GC=F"
         data = yf.download(tickers, period="5d", interval="1d", progress=False)
         
         # Handling multi-index columns from yfinance 0.2.x+
@@ -315,15 +315,25 @@ def fetch_macro_data():
         prev = closes.iloc[-2]
         
         results = {}
-        for t, col in zip(["SPY", "DXY", "US10Y", "VIX"], ["SPY", "DX-Y.NYB", "^TNX", "^VIX"]):
-            if col in closes.columns:
-                v_now = float(latest[col])
-                v_prev = float(prev[col])
+        mapping = {
+            "SPY": "SPY",
+            "DXY": "DX-Y.NYB",
+            "US10Y": "^TNX",
+            "US2Y": "^IRX",
+            "VIX": "^VIX",
+            "Oil": "CL=F",
+            "Gold": "GC=F"
+        }
+        
+        for name, ticker in mapping.items():
+            if ticker in closes.columns:
+                v_now = float(latest[ticker])
+                v_prev = float(prev[ticker])
                 chg = v_now - v_prev
                 pct = (chg / v_prev) * 100 if v_prev != 0 else 0
-                results[t] = {"val": v_now, "chg": chg, "pct": pct}
+                results[name] = {"val": v_now, "chg": chg, "pct": pct}
             else:
-                results[t] = {"val": 0, "chg": 0, "pct": 0}
+                results[name] = {"val": 0, "chg": 0, "pct": 0}
         # Apply Forex transformation selectively to SPY (USD -> EUR)
         usdeur_rate = get_forex_rates(target="EUR")
         results["SPY"]["val"] *= usdeur_rate
@@ -339,7 +349,45 @@ def fetch_macro_data():
             with get_db_connection(read_only=True) as conn:
                 return _get_macro_fallback_from_db(conn)
         except:
-            return _get_macro_fallback_from_db(None)
+            return {}
+
+@st.cache_data(ttl=86400, show_spinner="Fetching Economic Fundamentals (FRED)...")
+def fetch_fred_macro():
+    """
+    Fetches Monthly Economic Indicators from FRED Public CSV export (no API key required).
+    Returns CPI (YoY), Unemployment, and Fed Funds Rate.
+    """
+    try:
+        urls = {
+            "CPI": "https://fred.stlouisfed.org/graph/fredgraph.csv?id=CPIAUCSL",
+            "UNRATE": "https://fred.stlouisfed.org/graph/fredgraph.csv?id=UNRATE",
+            "FEDFUNDS": "https://fred.stlouisfed.org/graph/fredgraph.csv?id=FEDFUNDS"
+        }
+        
+        results = {}
+        
+        # 1. CPI YoY Calculation
+        cpi_df = pd.read_csv(urls["CPI"])
+        if len(cpi_df) > 12:
+            latest_cpi = cpi_df.iloc[-1]["CPIAUCSL"]
+            prev_y_cpi = cpi_df.iloc[-13]["CPIAUCSL"]
+            yoy_cpi = ((latest_cpi / prev_y_cpi) - 1) * 100
+            results["CPI"] = {"val": yoy_cpi, "date": cpi_df.iloc[-1]["observation_date"]}
+            
+        # 2. Unemployment Rate
+        un_df = pd.read_csv(urls["UNRATE"])
+        if not un_df.empty:
+            results["UNRATE"] = {"val": un_df.iloc[-1]["UNRATE"], "date": un_df.iloc[-1]["observation_date"]}
+            
+        # 3. Fed Funds Rate
+        ff_df = pd.read_csv(urls["FEDFUNDS"])
+        if not ff_df.empty:
+            results["FEDFUNDS"] = {"val": ff_df.iloc[-1]["FEDFUNDS"], "date": ff_df.iloc[-1]["observation_date"]}
+            
+        return results
+    except Exception as e:
+        print(f"FRED fetch error: {e}")
+        return {}
 
 
 def _get_macro_fallback_from_db(conn=None) -> dict:
@@ -493,10 +541,8 @@ auth.require_auth(cm)
 if not st.session_state.get("authenticated"):
     st.stop()
 
-# ── RENDER SIDEBAR USER PROFILE EARLY ───────────────────────────────────────
-auth.render_user_profile(cm)
-
 # ── SESSION STATE INITIALIZATION ───────────────────────────────────────────
+
 if "active_tab" not in st.session_state:
     st.session_state.active_tab = 0  # Default to Strategic Overview
 
@@ -1623,42 +1669,14 @@ else:
 
 # ── Sidebar: Institutional Mission Control ───────────────────────────────────
 if not prices_full.empty:
+    # ── LIVE MACRO PULSE (Sticky Top) ──
+    _macro_sidebar_placeholder = st.sidebar.empty()
+
     min_db_date = prices_full["date"].min().date()
     max_db_date = prices_full["date"].max().date()
 
     # ── Integrated Infrastructure & DQ Pulse (Unified Sidebar) ──
-    if not etl_audit.empty:
-        last_run = etl_audit.iloc[0]
-        st.sidebar.markdown("<div class='sb-section-label'>Infrastructure Engine</div>", unsafe_allow_html=True)
-        h_color = "#2ecc71" if last_run['status'] == 'SUCCESS' else "#e74c3c"
-        try:
-            ls_time = pd.to_datetime(last_run['start_time']).strftime('%b %d, %H:%M')
-        except: ls_time = "N/A"
-        
-        # DQ Summary and detail preparation
-        crit_dq = len(dq_warnings[dq_warnings['is_critical']]) if not dq_warnings.empty else 0
-        warn_dq = len(dq_warnings[~dq_warnings['is_critical']]) if not dq_warnings.empty else 0
-        dq_color = "#2ecc71" if (crit_dq == 0 and warn_dq == 0) else ("#e74c3c" if crit_dq > 0 else "#f1c40f")
-        dq_text = "CLEAN" if (crit_dq == 0 and warn_dq == 0) else (f"{crit_dq} CRIT" if crit_dq > 0 else f"{warn_dq} WARN")
-
-        # UI rendering is simplified below
-
-        rows_in = last_run['rows_processed'] if 'rows_processed' in last_run else 0
-        pulse_html = f"""
-<div style='padding:12px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:8px; margin-bottom:10px;'>
-<div style='display:flex; align-items:center; gap:10px;'>
-<div style='width:10px; height:10px; border-radius:50%; background:{h_color}; box-shadow:0 0 10px {h_color};'></div>
-<div style='flex-grow:1;'>
-<div style='font-size:0.75rem; color:#e8eaf6; font-weight:700; line-height:1.1;'>{last_run['status']}</div>
-<div style='font-size:0.6rem; color:#8899aa; margin-top:2px;'>Sync: {ls_time}</div>
-</div>
-<div style='text-align:right;'>
-<div style='font-size:0.65rem; color:{dq_color}; font-weight:700; line-height:1.1;'>{dq_text}</div>
-<div style='font-size:0.5rem; color:#667788; text-transform:uppercase; letter-spacing:0.04em;'>Integrity</div>
-</div>
-</div>
-</div>""".strip()
-        st.sidebar.markdown(pulse_html, unsafe_allow_html=True)
+    # [Moved below Temporal Control per user request]
     
     # ── SILENT AUTO-REPAIR FOR CLOUD DATA ─────────────────────────────────────
     # If on cloud and SPY data is suspiciously low, force a silent refresh of the physical cache
@@ -1687,28 +1705,29 @@ if not prices_full.empty:
     [data-testid="stSidebar"] { background: #0a0e1a; }
     .sb-section-label {
         font-family: 'Courier New', monospace;
-        font-size: 0.6rem;
-        letter-spacing: 0.15em;
+        font-size: 0.55rem;
+        letter-spacing: 0.1em;
         color: #445566;
         text-transform: uppercase;
-        margin: 14px 0 6px 0;
+        margin: 8px 0 4px 0;
         border-bottom: 1px solid #1a2233;
-        padding-bottom: 4px;
+        padding-bottom: 2px;
     }
     .sb-macro-row {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 6px 10px;
-        border-radius: 5px;
-        margin-bottom: 4px;
+        padding: 4px 8px;
+        border-radius: 4px;
+        margin-bottom: 2px;
         background: rgba(255,255,255,0.025);
         border: 1px solid rgba(255,255,255,0.05);
         font-family: 'Courier New', monospace;
     }
-    .sb-macro-label { font-size: 0.68rem; color: #667788; }
-    .sb-macro-val   { font-size: 0.85rem; font-weight: 700; color: #dde4ee; }
-    .sb-macro-delta { font-size: 0.68rem; font-weight: 700; }
+    .sb-macro-label { font-size: 0.65rem; color: #667788; }
+    .sb-macro-val   { font-size: 0.8rem; font-weight: 700; color: #dde4ee; }
+    .sb-macro-delta { font-size: 0.65rem; font-weight: 700; }
+
     .sb-regime-badge {
         display: inline-block;
         padding: 3px 10px;
@@ -1722,10 +1741,8 @@ if not prices_full.empty:
     </style>
     """, unsafe_allow_html=True)
 
-    # ── LIVE MACRO PULSE (computed later but rendered immediately via placeholder) ─
-    _macro_sidebar_placeholder = st.sidebar.empty()
-
     # ── TIME HORIZON ──────────────────────────────────────────────────────────
+
     st.sidebar.markdown("<div class='sb-section-label'>Temporal Control</div>", unsafe_allow_html=True)
     horizon_options = ["1D", "1W", "1M", "3M", "6M", "1Y", "YTD", "3Y", "5Y", "ALL", "Custom"]
     selected_horizon = st.sidebar.segmented_control(
@@ -1777,6 +1794,37 @@ if not prices_full.empty:
 
     st.sidebar.caption(f"Range: {start_date:%b %d, %Y}  →  {end_date:%b %d, %Y}")
 
+    # ── Integrated Infrastructure & DQ Pulse (Moved Here) ──
+    if not etl_audit.empty:
+        last_run = etl_audit.iloc[0]
+        st.sidebar.markdown("<div class='sb-section-label'>Infrastructure Engine</div>", unsafe_allow_html=True)
+        h_color = "#2ecc71" if last_run['status'] == 'SUCCESS' else "#e74c3c"
+        try:
+            ls_time = pd.to_datetime(last_run['start_time']).strftime('%b %d, %H:%M')
+        except: ls_time = "N/A"
+        
+        crit_dq = len(dq_warnings[dq_warnings['is_critical']]) if not dq_warnings.empty else 0
+        warn_dq = len(dq_warnings[~dq_warnings['is_critical']]) if not dq_warnings.empty else 0
+        dq_color = "#2ecc71" if (crit_dq == 0 and warn_dq == 0) else ("#e74c3c" if crit_dq > 0 else "#f1c40f")
+        dq_text = "CLEAN" if (crit_dq == 0 and warn_dq == 0) else (f"{crit_dq} CRIT" if crit_dq > 0 else f"{warn_dq} WARN")
+
+        pulse_html = f"""
+<div style='padding:8px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:6px; margin-bottom:6px;'>
+<div style='display:flex; align-items:center; gap:8px;'>
+<div style='width:8px; height:8px; border-radius:50%; background:{h_color}; box-shadow:0 0 8px {h_color};'></div>
+<div style='flex-grow:1;'>
+<div style='font-size:0.7rem; color:#e8eaf6; font-weight:700; line-height:1;'>{last_run['status']}</div>
+<div style='font-size:0.55rem; color:#8899aa; margin-top:1px;'>Sync: {ls_time}</div>
+</div>
+<div style='text-align:right;'>
+<div style='font-size:0.6rem; color:{dq_color}; font-weight:700; line-height:1;'>{dq_text}</div>
+<div style='font-size:0.45rem; color:#667788; text-transform:uppercase; letter-spacing:0.04em;'>Integrity</div>
+</div>
+</div>
+</div>""".strip()
+
+        st.sidebar.markdown(pulse_html, unsafe_allow_html=True)
+
     # Apply time filters
     t_start = pd.Timestamp(start_date)
     t_end   = pd.Timestamp(end_date)
@@ -1800,6 +1848,11 @@ st.sidebar.markdown("<div class='sb-section-label'>System Controls</div>", unsaf
 if st.sidebar.button("🔄 Clear Data Cache", use_container_width=True, help="Force reload all data from DuckDB. Use after running the ETL pipeline."):
     st.cache_data.clear()
     st.rerun()
+
+# ── USER PROFILE & SESSION ──
+st.sidebar.markdown("---")
+auth.render_user_profile(cm)
+
 
 # ── ANALYTICS PRE-COMPUTATION (Scores, Alerts, KPIs) ──────────────────────────
 # This section computes all metrics needed for both the Header and the Tabs
@@ -2004,12 +2057,27 @@ if macro:
     spy_sign = "+" if spy_chg >= 0 else ""
     spy_hud_color = "#2ecc71" if spy_chg >= 0 else "#e74c3c"
     spy_delta_html = f'<div class="kpi-delta" style="color:{spy_hud_color}">{spy_sign}{spy_chg:.2f}%</div>'
-    # ── RENDER SIDEBAR MACRO PULSE (via placeholder created earlier) ──────────
+    # ── Master Macro Component (Live Pulse + Fundamentals) ───────────────────────
+    fred_macro = fetch_fred_macro()
     if macro:
         _spy_v   = macro["SPY"]["val"];  _spy_p   = macro["SPY"]["pct"]
         _vix_v   = macro["VIX"]["val"];  _vix_p   = macro["VIX"]["pct"]
         _tnx_v   = macro["US10Y"]["val"];_tnx_p   = macro["US10Y"]["pct"]
         _dxy_v   = macro["DXY"]["val"];  _dxy_p   = macro["DXY"]["pct"]
+        
+        # New Macro Indicators
+        _irx_v   = macro["US2Y"]["val"];  _irx_p   = macro["US2Y"]["pct"]
+        _oil_v   = macro["Oil"]["val"];   _oil_p   = macro["Oil"]["pct"]
+        _gold_v  = macro["Gold"]["val"];  _gold_p  = macro["Gold"]["pct"]
+        
+        # Yield Spread (10Y - 3M Proxy)
+        _spread_v = _tnx_v - _irx_v
+
+        # Fundamentals Integration
+        _cpi_v = fred_macro.get("CPI", {}).get("val", 0) if fred_macro else 0
+        _un_v  = fred_macro.get("UNRATE", {}).get("val", 0) if fred_macro else 0
+        _ff_v  = fred_macro.get("FEDFUNDS", {}).get("val", 0) if fred_macro else 0
+        _month = (fred_macro.get("CPI", {}).get("date", "")[:7]) if fred_macro else "N/A"
 
         def _sb_delta(pct, invert=False):
             good = "#2ecc71"; bad = "#e74c3c"
@@ -2021,12 +2089,13 @@ if macro:
         vix_sema = "🚨 High Panic" if _vix_v >= 25 else ("⚠️ Volatility Elevated" if _vix_v >= 18 else ("🔵 Normal Volatility" if _vix_v > 13 else "😴 Complacent"))
         tnx_sema = "📈 Yields Spiking" if _tnx_p >= 2 else ("↗️ Yields Rising" if _tnx_p > 0 else ("📉 Yields Dropping" if _tnx_p <= -2 else "↘️ Yields Falling"))
         dxy_sema = "🦅 Strong Dollar" if _dxy_p >= 0.5 else ("↗️ Dollar Strengthening" if _dxy_p > 0 else ("🕊️ Weak Dollar" if _dxy_p <= -0.5 else "↘️ Dollar Weakening"))
-
-        _regime_colors = {"🚨 DEFENSIVE (High Risk)": "#e74c3c", "🔥 INFLATIONARY": "#e67e22", "🚀 GROWTH MODE": "#2ecc71", "⚖️ BALANCED": "#f39c12"}
-        _rc = _regime_colors.get(regime, "#f39c12")
+        oil_sema = "⛽ Inflation Pressure" if _oil_p >= 1.5 else ("↗️ Rising Energy" if _oil_p > 0 else ("↘️ Energy Easing" if _oil_p > -1.5 else "📉 Supply Glut"))
+        gold_sema = "🛡️ Safe Haven Flow" if _gold_p >= 0.5 else ("↗️ Gold Rising" if _gold_p > 0 else ("↘️ Gold Falling" if _gold_p > -0.5 else "📉 Liquidation"))
 
         _macro_sidebar_placeholder.markdown(f"""
         <div class='sb-section-label'>Live Macro Pulse</div>
+        
+        <!-- Market Indicators -->
         <div class='sb-macro-row' style='display:block;'>
             <div style='display:flex; justify-content:space-between; align-items:center;'>
                 <span class='sb-macro-label'>SPY</span>
@@ -2045,20 +2114,68 @@ if macro:
         </div>
         <div class='sb-macro-row' style='display:block;'>
             <div style='display:flex; justify-content:space-between; align-items:center;'>
-                <span class='sb-macro-label'>US10Y</span>
-                <span class='sb-macro-val'>{_tnx_v:.2f}%</span>
-                {_sb_delta(_tnx_p, invert=True)}
-            </div>
-            <div style='font-size:0.55rem; color:#8899aa; text-align:right; margin-top:2px; text-transform:uppercase;'>{tnx_sema}</div>
-        </div>
-        <div class='sb-macro-row' style='display:block;'>
-            <div style='display:flex; justify-content:space-between; align-items:center;'>
                 <span class='sb-macro-label'>DXY</span>
                 <span class='sb-macro-val'>{_dxy_v:.2f}</span>
-                {_sb_delta(_dxy_p)}
+                {_sb_delta(_dxy_p, invert=True)}
             </div>
             <div style='font-size:0.55rem; color:#8899aa; text-align:right; margin-top:2px; text-transform:uppercase;'>{dxy_sema}</div>
         </div>
+        <div style='display:flex; gap:6px; margin-bottom:6px;'>
+            <div class='sb-macro-row' style='flex:1; margin-bottom:0;'>
+                <div class='sb-macro-label' style='font-size:0.55rem;'>US10Y</div>
+                <div style='display:flex; justify-content:space-between; align-items:center;'>
+                    <span class='sb-macro-val' style='font-size:0.7rem;'>{_tnx_v:.2f}%</span>
+                    {_sb_delta(_tnx_p, invert=True)}
+                </div>
+            </div>
+            <div class='sb-macro-row' style='flex:1; margin-bottom:0;'>
+                <div class='sb-macro-label' style='font-size:0.55rem;'>SPREAD</div>
+                <div style='display:flex; justify-content:space-between; align-items:center;'>
+                    <span class='sb-macro-val' style='font-size:0.7rem; color:{"#2ecc71" if _spread_v > 0 else "#e74c3c"}'>{_spread_v:.2f}%</span>
+                </div>
+            </div>
+        </div>
+
+        <div class='sb-macro-row' style='display:block;'>
+            <div style='display:flex; justify-content:space-between; align-items:center;'>
+                <span class='sb-macro-label'>CRUDE OIL</span>
+                <span class='sb-macro-val'>${_oil_v:.2f}</span>
+                {_sb_delta(_oil_p, invert=True)}
+            </div>
+            <div style='font-size:0.55rem; color:#8899aa; text-align:right; margin-top:2px; text-transform:uppercase;'>{oil_sema}</div>
+        </div>
+        <div class='sb-macro-row' style='display:block;'>
+            <div style='display:flex; justify-content:space-between; align-items:center;'>
+                <span class='sb-macro-label'>GOLD</span>
+                <span class='sb-macro-val'>${_gold_v:.2f}</span>
+                {_sb_delta(_gold_p)}
+            </div>
+            <div style='font-size:0.55rem; color:#8899aa; text-align:right; margin-top:2px; text-transform:uppercase;'>{gold_sema}</div>
+        </div>
+        
+        <!-- Economic Fundamentals (Unified Style) -->
+        <div class='sb-macro-row' style='display:block; border-left: 2px solid #3498db; padding: 3px 8px;'>
+            <div style='display:flex; justify-content:space-between; align-items:center;'>
+                <span class='sb-macro-label' style='color:#3498db; font-size:0.6rem;'>CPI YOY</span>
+                <span class='sb-macro-val' style='font-size:0.75rem;'>{_cpi_v:.2f}%</span>
+                <span style='color:{"#e74c3c" if _cpi_v > 2.5 else "#2ecc71"}; font-size:0.55rem; font-weight:700;'>{"⚠️" if _cpi_v > 2.5 else "✅"}</span>
+            </div>
+            <div style='font-size:0.5rem; color:#8899aa; text-align:right; margin-top:1px; text-transform:uppercase;'>Last: {(_month if _month else "N/A")}</div>
+        </div>
+        <div class='sb-macro-row' style='display:block; border-left: 2px solid #9b59b6; padding: 3px 8px;'>
+            <div style='display:flex; justify-content:space-between; align-items:center;'>
+                <span class='sb-macro-label' style='color:#9b59b6; font-size:0.6rem;'>UNEMPLOY</span>
+                <span class='sb-macro-val' style='font-size:0.75rem;'>{_un_v:.1f}%</span>
+                <span style='color:{"#e74c3c" if _un_v > 4.5 else "#2ecc71"}; font-size:0.55rem; font-weight:700;'>{"⚠️" if _un_v > 4.5 else "✅"}</span>
+            </div>
+        </div>
+        <div class='sb-macro-row' style='display:block; padding: 3px 8px;'>
+            <div style='display:flex; justify-content:space-between; align-items:center;'>
+                <span class='sb-macro-label' style='font-size:0.6rem;'>FED FUNDS</span>
+                <span class='sb-macro-val' style='font-size:0.75rem;'>{_ff_v:.2f}%</span>
+            </div>
+        </div>
+
         """, unsafe_allow_html=True)
 
 mqi_val = f"{market_quality_idx:.1f}"
