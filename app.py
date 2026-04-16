@@ -400,6 +400,9 @@ def _get_macro_fallback_from_db(conn=None) -> dict:
         "DXY":   {"val": 0.0, "chg": 0.0, "pct": 0.0},
         "US10Y": {"val": 0.0, "chg": 0.0, "pct": 0.0},
         "VIX":   {"val": 0.0, "chg": 0.0, "pct": 0.0},
+        "US2Y":  {"val": 0.0, "chg": 0.0, "pct": 0.0},
+        "Oil":   {"val": 0.0, "chg": 0.0, "pct": 0.0},
+        "Gold":  {"val": 0.0, "chg": 0.0, "pct": 0.0},
     }
     
     if conn is None:
@@ -407,14 +410,15 @@ def _get_macro_fallback_from_db(conn=None) -> dict:
 
     try:
         from collections import defaultdict
-        # Fetch latest 2 rows for all 4 macro tickers
+        # Fetch latest 2 rows for all macro tickers
         rows = conn.execute("""
             SELECT ticker, date, close
             FROM raw.stock_prices
-            WHERE ticker IN ('SPY', '^VIX', '^TNX', 'DX-Y.NYB')
+            WHERE ticker IN ('SPY', '^VIX', '^TNX', 'DX-Y.NYB', '^IRX', 'CL=F', 'GC=F')
             QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) <= 2
             ORDER BY ticker, date DESC
         """).fetchall()
+
 
         by_ticker = defaultdict(list)
         for ticker, _date, close in rows:
@@ -436,11 +440,15 @@ def _get_macro_fallback_from_db(conn=None) -> dict:
         _process("^VIX", "VIX")
         _process("^TNX", "US10Y")
         _process("DX-Y.NYB", "DXY")
+        _process("^IRX", "US2Y")
+        _process("CL=F", "Oil")
+        _process("GC=F", "Gold")
 
     except Exception as db_err:
         print(f"Macro DB fallback error: {db_err}")
 
     return defaults
+
 
 @st.cache_resource(show_spinner="📥 Loading Institutional NLP Engine (FinBERT ~440MB)...")
 def get_finbert_pipeline():
@@ -2060,15 +2068,18 @@ if macro:
     # ── Master Macro Component (Live Pulse + Fundamentals) ───────────────────────
     fred_macro = fetch_fred_macro()
     if macro:
-        _spy_v   = macro["SPY"]["val"];  _spy_p   = macro["SPY"]["pct"]
-        _vix_v   = macro["VIX"]["val"];  _vix_p   = macro["VIX"]["pct"]
-        _tnx_v   = macro["US10Y"]["val"];_tnx_p   = macro["US10Y"]["pct"]
-        _dxy_v   = macro["DXY"]["val"];  _dxy_p   = macro["DXY"]["pct"]
+        def _get_m(k): return macro.get(k, {"val": 0, "chg": 0, "pct": 0})
+        
+        _spy_v   = _get_m("SPY")["val"];  _spy_p   = _get_m("SPY")["pct"]
+        _vix_v   = _get_m("VIX")["val"];  _vix_p   = _get_m("VIX")["pct"]
+        _tnx_v   = _get_m("US10Y")["val"];_tnx_p   = _get_m("US10Y")["pct"]
+        _dxy_v   = _get_m("DXY")["val"];  _dxy_p   = _get_m("DXY")["pct"]
         
         # New Macro Indicators
-        _irx_v   = macro["US2Y"]["val"];  _irx_p   = macro["US2Y"]["pct"]
-        _oil_v   = macro["Oil"]["val"];   _oil_p   = macro["Oil"]["pct"]
-        _gold_v  = macro["Gold"]["val"];  _gold_p  = macro["Gold"]["pct"]
+        _irx_v   = _get_m("US2Y")["val"];  _irx_p   = _get_m("US2Y")["pct"]
+        _oil_v   = _get_m("Oil")["val"];   _oil_p   = _get_m("Oil")["pct"]
+        _gold_v  = _get_m("Gold")["val"];  _gold_p  = _get_m("Gold")["pct"]
+
         
         # Yield Spread (10Y - 3M Proxy)
         _spread_v = _tnx_v - _irx_v
