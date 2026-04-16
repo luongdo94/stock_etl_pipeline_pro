@@ -502,14 +502,15 @@ if "active_tab" not in st.session_state:
 if os.environ.get("SUPABASE_REMOTE_MODE", "false").lower() == "true":
     st.markdown("""
     <style>
-        /* HIDE DEFAULT STREAMLIT ARTIFACTS ON CLOUD */
-        #MainMenu {visibility: hidden;}
-        header {visibility: hidden;}
-        footer {visibility: hidden;}
-        [data-testid="stSidebarNav"] {display: none !important;}
-        [data-testid="stHeader"] {display: none !important;}
-        [data-testid="stToolbar"] {display: none !important;}
-        [data-testid="stAppDeployButton"] {display: none !important;}
+        /* HIDE DEFAULT STREAMLIT ARTIFACTS ON CLOUD - AGGRESSIVE MODE */
+        .stAppDeployButton, [data-testid="stAppDeployButton"] { visibility: hidden !important; display: none !important; }
+        header[data-testid="stHeader"], [data-testid="stHeader"], header { visibility: hidden !important; display: none !important; }
+        [data-testid="stToolbar"] { visibility: hidden !important; display: none !important; }
+        [data-testid="stSidebarNav"] { visibility: hidden !important; display: none !important; }
+        #stDecoration { visibility: hidden !important; display: none !important; }
+        footer { visibility: hidden !important; display: none !important; }
+        /* Push the UI up to remove the blank gap left by the hidden header */
+        .block-container { padding-top: 1rem !important; }
     </style>
     """, unsafe_allow_html=True)
 
