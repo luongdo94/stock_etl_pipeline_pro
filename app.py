@@ -410,21 +410,7 @@ def _get_macro_fallback_from_db(conn=None) -> dict:
 
     try:
         from collections import defaultdict
-        # Fetch latest 2 rows for all macro tickers
-        rows = conn.execute("""
-            SELECT ticker, date, close
-            FROM raw.stock_prices
-            WHERE ticker IN ('SPY', '^VIX', '^TNX', 'DX-Y.NYB', '^IRX', 'CL=F', 'GC=F')
-            QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) <= 2
-            ORDER BY ticker, date DESC
-        """).fetchall()
-
-
-        by_ticker = defaultdict(list)
-        for ticker, _date, close in rows:
-            by_ticker[ticker].append(float(close))
-
-        # Helper to process values
+        
         def _process(tkr_code, fallback_key):
             prices = by_ticker.get(tkr_code, [])
             if prices:
@@ -435,6 +421,27 @@ def _get_macro_fallback_from_db(conn=None) -> dict:
                     "chg": chg, 
                     "pct": (chg / v_prev * 100) if v_prev != 0 else 0.0
                 }
+
+        # First, try to fetch with 'close' column (standard Raw table)
+        try:
+            rows = conn.execute("""
+                SELECT ticker, date, close
+                FROM raw.stock_prices
+                WHERE ticker IN ('SPY', '^VIX', '^TNX', 'DX-Y.NYB', '^IRX', 'CL=F', 'GC=F')
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) <= 2
+            """).fetchall()
+        except Exception:
+            # Fallback for Cloud/Parquet views where 'close' has been renamed to 'price_close' for marts
+            rows = conn.execute("""
+                SELECT ticker, date, price_close as close
+                FROM raw.stock_prices
+                WHERE ticker IN ('SPY', '^VIX', '^TNX', 'DX-Y.NYB', '^IRX', 'CL=F', 'GC=F')
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) <= 2
+            """).fetchall()
+
+        by_ticker = defaultdict(list)
+        for ticker, _date, close in rows:
+            by_ticker[ticker].append(float(close))
 
         _process("SPY", "SPY")
         _process("^VIX", "VIX")
