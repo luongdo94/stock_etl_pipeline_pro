@@ -28,16 +28,64 @@ def run_dq_validations(db_path: str = None):
         # 1. Define Tests (Unified from legacy transform.py)
         tests = [
             # --- CRITICAL (Gatekeepers) ---
-            {"id": "fct_no_nulls_ticker", "name": "FCT: No Null Tickers", "query": "SELECT COUNT(*) FROM marts.fct_daily_returns WHERE ticker IS NULL", "critical": True},
-            {"id": "fct_no_nulls_date", "name": "FCT: No Null Dates", "query": "SELECT COUNT(*) FROM marts.fct_daily_returns WHERE date IS NULL", "critical": True},
-            {"id": "fct_no_negative_price", "name": "FCT: Stable Prices (> 0.01)", "query": "SELECT COUNT(*) FROM marts.fct_daily_returns WHERE price_close <= 0.01", "critical": True},
-            {"id": "fct_unique_date_ticker", "name": "FCT: Unique History (Ticker + Date)", "query": "SELECT COUNT(*) FROM (SELECT ticker, date FROM marts.fct_daily_returns GROUP BY 1, 2 HAVING COUNT(*) > 1)", "critical": True},
-            {"id": "dim_unique_tickers", "name": "DIM: Unique Tickers", "query": "SELECT COUNT(*) FROM (SELECT ticker FROM marts.dim_companies GROUP BY 1 HAVING COUNT(*) > 1)", "critical": True},
+            {
+                "id": "fct_no_nulls_ticker", 
+                "name": "FCT: No Null Tickers", 
+                "query": "SELECT COUNT(*) FROM marts.fct_daily_returns WHERE ticker IS NULL",
+                "ticker_query": "SELECT 'Unknown' FROM marts.fct_daily_returns WHERE ticker IS NULL LIMIT 50",
+                "critical": True
+            },
+            {
+                "id": "fct_no_nulls_date", 
+                "name": "FCT: No Null Dates", 
+                "query": "SELECT COUNT(*) FROM marts.fct_daily_returns WHERE date IS NULL",
+                "ticker_query": "SELECT ticker FROM marts.fct_daily_returns WHERE date IS NULL LIMIT 50",
+                "critical": True
+            },
+            {
+                "id": "fct_no_negative_price", 
+                "name": "FCT: Stable Prices (> 0.01)", 
+                "query": "SELECT COUNT(*) FROM marts.fct_daily_returns WHERE price_close <= 0.01",
+                "ticker_query": "SELECT ticker FROM marts.fct_daily_returns WHERE price_close <= 0.01 LIMIT 50",
+                "critical": True
+            },
+            {
+                "id": "fct_unique_date_ticker", 
+                "name": "FCT: Unique History (Ticker + Date)", 
+                "query": "SELECT COUNT(*) FROM (SELECT ticker, date FROM marts.fct_daily_returns GROUP BY 1, 2 HAVING COUNT(*) > 1)",
+                "ticker_query": "SELECT ticker FROM (SELECT ticker, date FROM marts.fct_daily_returns GROUP BY 1, 2 HAVING COUNT(*) > 1) LIMIT 50",
+                "critical": True
+            },
+            {
+                "id": "dim_unique_tickers", 
+                "name": "DIM: Unique Tickers", 
+                "query": "SELECT COUNT(*) FROM (SELECT ticker FROM marts.dim_companies GROUP BY 1 HAVING COUNT(*) > 1)",
+                "ticker_query": "SELECT ticker FROM (SELECT ticker FROM marts.dim_companies GROUP BY 1 HAVING COUNT(*) > 1) LIMIT 50",
+                "critical": True
+            },
             
             # --- SOFT (Dashboard Telemetry) ---
-            {"id": "dim_no_null_revenue", "name": "DIM: Revenue Visibility", "query": "SELECT COUNT(*) FROM marts.dim_companies WHERE (revenue_ttm IS NULL OR revenue_ttm < 0) AND ticker NOT LIKE '^%' AND ticker NOT IN ('SPY')", "critical": False},
-            {"id": "dim_market_cap_check", "name": "DIM: Market Cap Visibility", "query": "SELECT COUNT(*) FROM marts.dim_companies WHERE (market_cap IS NULL OR market_cap <= 0) AND ticker NOT LIKE '^%' AND ticker NOT IN ('SPY')", "critical": False},
-            {"id": "dim_fundamental_check", "name": "DIM: Fundamental Data (ROE/FCF)", "query": "SELECT COUNT(*) FROM marts.dim_companies WHERE (roe IS NULL OR fcf_margin IS NULL) AND ticker NOT LIKE '^%' AND ticker NOT IN ('SPY')", "critical": False},
+            {
+                "id": "dim_no_null_revenue", 
+                "name": "DIM: Revenue Visibility", 
+                "query": "SELECT COUNT(*) FROM marts.dim_companies WHERE (revenue_ttm IS NULL OR revenue_ttm <= 0) AND ticker NOT LIKE '^%' AND ticker NOT IN ('SPY')",
+                "ticker_query": "SELECT ticker FROM marts.dim_companies WHERE (revenue_ttm IS NULL OR revenue_ttm <= 0) AND ticker NOT LIKE '^%' AND ticker NOT IN ('SPY') LIMIT 50",
+                "critical": False
+            },
+            {
+                "id": "dim_market_cap_check", 
+                "name": "DIM: Market Cap Visibility", 
+                "query": "SELECT COUNT(*) FROM marts.dim_companies WHERE (market_cap IS NULL OR market_cap <= 0) AND ticker NOT LIKE '^%' AND ticker NOT IN ('SPY')",
+                "ticker_query": "SELECT ticker FROM marts.dim_companies WHERE (market_cap IS NULL OR market_cap <= 0) AND ticker NOT LIKE '^%' AND ticker NOT IN ('SPY') LIMIT 50",
+                "critical": False
+            },
+            {
+                "id": "dim_fundamental_check", 
+                "name": "DIM: Fundamental Data (ROE/FCF)", 
+                "query": "SELECT COUNT(*) FROM marts.dim_companies WHERE (roe IS NULL OR fcf_margin IS NULL) AND ticker NOT LIKE '^%' AND ticker NOT IN ('SPY')",
+                "ticker_query": "SELECT ticker FROM marts.dim_companies WHERE (roe IS NULL OR fcf_margin IS NULL) AND ticker NOT LIKE '^%' AND ticker NOT IN ('SPY') LIMIT 50",
+                "critical": False
+            },
         ]
         
         results = []
@@ -72,11 +120,16 @@ def run_dq_validations(db_path: str = None):
                 VALUES (?, ?, ?, ?)
             """, [t["id"], val, status_db, t["critical"]])
 
+            failed_tickers = []
+            if failed and "ticker_query" in t:
+                failed_tickers = [row[0] for row in conn.execute(t["ticker_query"]).fetchall()]
+
             results.append({
                 "name": t["name"],
                 "status": "FAIL" if failed else "PASS",
                 "value": f"{val} violations",
-                "color": "#ef4444" if failed else "#22c55e"
+                "color": "#ef4444" if failed else "#22c55e",
+                "tickers": failed_tickers
             })
             
         conn.close()
@@ -100,6 +153,24 @@ def run_dq_validations(db_path: str = None):
                 .success-bg {{ background: #065f46; color: #34d399; }}
                 .fail-bg {{ background: #7f1d1d; color: #f87171; }}
                 .summary {{ margin-top: 30px; padding: 15px; border-radius: 8px; font-weight: 600; text-align: center; }}
+                .ticker-list {{ 
+                    font-size: 0.85em; 
+                    color: #94a3b8; 
+                    margin-top: 8px; 
+                    display: flex; 
+                    flex-wrap: wrap; 
+                    gap: 6px; 
+                    max-height: 80px; 
+                    overflow-y: auto; 
+                    background: #0f172a;
+                    padding: 8px;
+                    border-radius: 4px;
+                }}
+                .ticker-badge {{
+                    background: #334155;
+                    padding: 2px 6px;
+                    border-radius: 3px;
+                }}
             </style>
         </head>
         <body>
@@ -115,9 +186,17 @@ def run_dq_validations(db_path: str = None):
         """
         for r in results:
             badge_class = "success-bg" if r["status"] == "PASS" else "fail-bg"
+            ticker_html = ""
+            if r["tickers"]:
+                tickers_str = "".join([f'<span class="ticker-badge">{t}</span>' for t in r["tickers"]])
+                ticker_html = f'<div class="ticker-list">{tickers_str}</div>'
+
             html_content += f"""
                 <tr>
-                    <td>{r['name']}</td>
+                    <td>
+                        <div style="font-weight: 600;">{r['name']}</div>
+                        {ticker_html}
+                    </td>
                     <td><span class="status-badge {badge_class}">{r['status']}</span></td>
                     <td style="color: {r['color']}">{r['value']}</td>
                 </tr>

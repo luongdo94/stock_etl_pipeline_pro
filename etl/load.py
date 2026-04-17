@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 _WAREHOUSE_DIR = Path(__file__).parent.parent / "warehouse"
 DB_PATH = str(_WAREHOUSE_DIR / "stock_dw.duckdb")
 SHADOW_DB_PATH = str(_WAREHOUSE_DIR / "stock_dw_shadow.duckdb")
+AUDIT_DB_PATH = str(_WAREHOUSE_DIR / "etl_audit.duckdb")
 
 def _table_exists(conn: duckdb.DuckDBPyConnection, schema: str, table: str) -> bool:
     """Check if a table/view exists in the given schema."""

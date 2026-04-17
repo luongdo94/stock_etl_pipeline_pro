@@ -5,9 +5,10 @@ from pathlib import Path
 from etl.extract   import extract_stock_prices, extract_company_info, extract_historical_financials, extract_quarterly_financials, extract_cashflows, extract_historical_fcf, extract_quarterly_fcf, extract_earnings_calendar
 from etl.load      import get_connection, create_raw_schema, \
                           load_stock_prices, load_company_info, load_historical_financials, load_quarterly_financials, load_cashflows, load_historical_fcf, load_quarterly_fcf, load_earnings_calendar, \
-                          perform_atomic_swap, DB_PATH, SHADOW_DB_PATH
+                          perform_atomic_swap, DB_PATH, SHADOW_DB_PATH, AUDIT_DB_PATH
 from etl.transform import run_transforms
 from etl.utils     import get_last_price_dates, needs_full_refresh, needs_earnings_refresh, needs_fundamentals_refresh, needs_metadata_refresh, get_smart_recovery_targets
+
 
 # --- LOGGING SETUP ---
 LOG_DIR = Path("logs")
@@ -26,9 +27,13 @@ if not root_logger.handlers:
     root_logger.addHandler(c_handler)
 
     # 2. Rotating File Handler (Persistence)
-    f_handler = RotatingFileHandler(LOG_FILE, maxBytes=10*1024*1024, backupCount=5)
+    f_handler = RotatingFileHandler(LOG_FILE, maxBytes=2*1024*1024, backupCount=5)
     f_handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | [%(name)s] %(message)s"))
     root_logger.addHandler(f_handler)
+
+# Silence noisy external libraries
+logging.getLogger("yfinance").setLevel(logging.CRITICAL)
+logging.getLogger("urllib3").setLevel(logging.WARNING)
 
 logger = logging.getLogger(__name__)
 
@@ -64,30 +69,32 @@ class AuditManager:
         self._log_to_db(end_time, error_msg)
 
     def _log_to_db(self, end_time=None, error_msg=None):
-        """Persistent logging to the primary warehouse (not shadow)."""
+        """Persistent logging to an isolated audit database (to avoid locking production)."""
         try:
-            # We connect directly to the PROD path to ensure the log survives swaps/failures
-            with duckdb.connect(DB_PATH) as conn:
+            # We connect to a dedicated audit DB file
+            # Ensure folder exists
+            Path(AUDIT_DB_PATH).parent.mkdir(exist_ok=True)
+            with duckdb.connect(AUDIT_DB_PATH) as conn:
                 # Ensure schema/table exist (safe even if already there)
-                conn.execute("CREATE SCHEMA IF NOT EXISTS marts")
+                conn.execute("CREATE SCHEMA IF NOT EXISTS etl")
                 conn.execute("""
-                    CREATE TABLE IF NOT EXISTS marts.etl_audit (
+                    CREATE TABLE IF NOT EXISTS etl.audit_log (
                         run_id UUID PRIMARY KEY, start_time TIMESTAMP, end_time TIMESTAMP,
                         status VARCHAR, mode VARCHAR, rows_processed INTEGER, error_message TEXT
                     )
                 """)
                 
                 # Check if record exists (Update vs Insert)
-                exists = conn.execute("SELECT 1 FROM marts.etl_audit WHERE run_id = ?", [self.run_id]).fetchone()
+                exists = conn.execute("SELECT 1 FROM etl.audit_log WHERE run_id = ?", [self.run_id]).fetchone()
                 
                 if not exists:
                     conn.execute("""
-                        INSERT INTO marts.etl_audit (run_id, start_time, status, mode, rows_processed)
+                        INSERT INTO etl.audit_log (run_id, start_time, status, mode, rows_processed)
                         VALUES (?, ?, ?, ?, ?)
                     """, [self.run_id, self.start_time, self.status, self.mode, self.rows_processed])
                 else:
                     conn.execute("""
-                        UPDATE marts.etl_audit SET 
+                        UPDATE etl.audit_log SET 
                             end_time = ?, status = ?, rows_processed = ?, error_message = ?
                         WHERE run_id = ?
                     """, [end_time, self.status, self.rows_processed, error_msg, self.run_id])

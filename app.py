@@ -2595,7 +2595,7 @@ if active_tab == "3. Qualitative Audit (AI)":
             placeholder="Search and Select an Asset...",
             format_func=format_ticker,
             key="deep_ticker_selector"
-            # Loại bỏ tham số index vì Streamlit tự động dùng Session State cho widget có key
+            # Removed index parameter because Streamlit automatically uses Session State for widgets with a key
         )
         # Sync back so active_ticker stays aligned
         if deep_ticker:

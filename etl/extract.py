@@ -14,6 +14,26 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# --- EVASION & STEALTH CONFIGURATION ---
+USER_AGENTS = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/118.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+]
+
+def _get_evasion_headers():
+    import random
+    return {
+        "User-Agent": random.choice(USER_AGENTS),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+        "DNT": "1",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1"
+    }
+
 def load_tickers_config():
     """Load tickers from config file."""
     config_path = Path(__file__).parent.parent / "config" / "tickers.yaml"
@@ -413,8 +433,9 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
         logger.info(f"🔄 PASS 2: Surgical Retry for {len(failed_tickers)} failed tickers...")
         for ticker in failed_tickers:
             import time, random
-            time.sleep(random.uniform(2, 4)) # Human-like delay
+            time.sleep(random.uniform(2, 4)) # Normal surgical delay
             try:
+                # Still using standard headers for Pass 2 to preserve "stealth" for Pass 3
                 yq = YQTicker(ticker, asynchronous=False)
                 data = yq.all_modules.get(ticker)
                 meta = tickers.get(ticker, {"name": ticker, "sector": "N/A", "region": "N/A"})
@@ -422,11 +443,36 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
                 record = process_data_modules(ticker, data, None, meta)
                 if record:
                     records.append(record)
-                    logger.info(f"   ✅ Recovered: {ticker}")
+                    logger.info(f"   ✅ Recovered (Pass 2): {ticker}")
+            except Exception: pass
+
+    # ── 4. PASS 3: ROBUST EVASION RESCUE (THE FINAL GATEKEEPER) ───────────────
+    successful_so_far = {r["ticker"] for r in records}
+    failed_after_p2 = [t for t in ticker_keys if t not in successful_so_far]
+    
+    if failed_after_p2:
+        logger.info(f"🛡️ PASS 3: Robust Evasion Rescue for {len(failed_after_p2)} stubborn tickers...")
+        for ticker in failed_after_p2:
+            import time, random
+            # High jitter and randomized identity to bypass hard blocks
+            time.sleep(random.uniform(5, 12)) 
+            try:
+                # AG PRO: Inject randomized browser headers
+                headers = _get_evasion_headers()
+                yq = YQTicker(ticker, asynchronous=False, requests_kwargs={"headers": headers})
+                
+                # Fetch only critical modules to reduce footprint
+                data = yq.all_modules.get(ticker)
+                meta = tickers.get(ticker, {"name": ticker, "sector": "N/A", "region": "N/A"})
+                
+                record = process_data_modules(ticker, data, None, meta)
+                if record:
+                    records.append(record)
+                    logger.info(f"   🔥 RECOVERED (Pass 3): {ticker} using {headers['User-Agent'][:30]}...")
                 else:
-                    logger.warning(f"   ❌ Recovery failed for {ticker}: Still blocked.")
+                    logger.warning(f"   ❌ Final Failure for {ticker}: Still blocked after 3 passes.")
             except Exception as e:
-                logger.debug(f"   ❌ Recovery error for {ticker}: {e}")
+                logger.debug(f"   ❌ Pass 3 Error for {ticker}: {e}")
 
     logger.info(f"✅ Metadata Extraction: {len(records)}/{len(ticker_keys)} successful.")
     return pd.DataFrame(records)
@@ -513,7 +559,7 @@ def extract_historical_financials(tickers: dict = TICKERS) -> pd.DataFrame:
         import time, random
         time.sleep(1.0 + random.random())
 
-    # ── PASS 2: SURGICAL RETRY ────────────────────────────────────────────────
+    # ── 2. PASS 2: SURGICAL RETRY (Simple) ───────────────────────────────────
     failed_tickers = [t for t in ticker_keys if t not in successful_tickers]
     if failed_tickers:
         logger.info(f"🔄 PASS 2: Surgical Retry for {len(failed_tickers)} failed financials...")
@@ -525,7 +571,23 @@ def extract_historical_financials(tickers: dict = TICKERS) -> pd.DataFrame:
                 fin_df = yq.income_statement(frequency='a', trailing=False)
                 process_yq_fin(fin_df, successful_tickers)
                 if ticker in successful_tickers:
-                    logger.info(f"   ✅ Recovered: {ticker}")
+                    logger.info(f"   ✅ Recovered (Pass 2): {ticker}")
+            except Exception: pass
+
+    # ── 3. PASS 3: ROBUST EVASION RESCUE (THE FINAL GATEKEEPER) ───────────────
+    failed_after_p2 = [t for t in ticker_keys if t not in successful_tickers]
+    if failed_after_p2:
+        logger.info(f"🛡️ PASS 3: Robust Evasion Rescue for {len(failed_after_p2)} stubbon financials...")
+        for ticker in failed_after_p2:
+            import time, random
+            time.sleep(random.uniform(5, 12))
+            try:
+                headers = _get_evasion_headers()
+                yq = YQTicker(ticker, asynchronous=False, requests_kwargs={"headers": headers})
+                fin_df = yq.income_statement(frequency='a', trailing=False)
+                process_yq_fin(fin_df, successful_tickers)
+                if ticker in successful_tickers:
+                    logger.info(f"   🔥 RECOVERED (Pass 3): {ticker} using {headers['User-Agent'][:30]}...")
             except Exception: pass
             
     if not all_data: return pd.DataFrame()
@@ -614,7 +676,7 @@ def extract_quarterly_financials(tickers: dict = TICKERS) -> pd.DataFrame:
         import time, random
         time.sleep(1.0 + random.random())
 
-    # ── PASS 2: SURGICAL RETRY ────────────────────────────────────────────────
+    # ── 2. PASS 2: SURGICAL RETRY (Simple) ───────────────────────────────────
     failed_tickers = [t for t in ticker_keys if t not in successful_tickers]
     if failed_tickers:
         logger.info(f"🔄 PASS 2: Surgical Retry for {len(failed_tickers)} failed quarterly financials...")
@@ -626,7 +688,23 @@ def extract_quarterly_financials(tickers: dict = TICKERS) -> pd.DataFrame:
                 fin_df = yq.income_statement(frequency='q', trailing=False)
                 process_yq_q_fin(fin_df, successful_tickers)
                 if ticker in successful_tickers:
-                    logger.info(f"   ✅ Recovered: {ticker}")
+                    logger.info(f"   ✅ Recovered (Pass 2): {ticker}")
+            except Exception: pass
+
+    # ── 3. PASS 3: ROBUST EVASION RESCUE (THE FINAL GATEKEEPER) ───────────────
+    failed_after_p2 = [t for t in ticker_keys if t not in successful_tickers]
+    if failed_after_p2:
+        logger.info(f"🛡️ PASS 3: Robust Evasion Rescue for {len(failed_after_p2)} stubborn quarterly financials...")
+        for ticker in failed_after_p2:
+            import time, random
+            time.sleep(random.uniform(5, 12))
+            try:
+                headers = _get_evasion_headers()
+                yq = YQTicker(ticker, asynchronous=False, requests_kwargs={"headers": headers})
+                fin_df = yq.income_statement(frequency='q', trailing=False)
+                process_yq_q_fin(fin_df, successful_tickers)
+                if ticker in successful_tickers:
+                    logger.info(f"   🔥 RECOVERED (Pass 3): {ticker} using {headers['User-Agent'][:30]}...")
             except Exception: pass
             
     if not all_data: return pd.DataFrame()
@@ -670,9 +748,12 @@ def extract_cashflows(tickers: dict = TICKERS) -> pd.DataFrame:
         except Exception as e:
             logger.warning(f"  ⚠️ Global FX fetch failed for cashflows: {e}")
 
-    def fetch_single(ticker):
+    def fetch_single(ticker, headers=None):
         try:
-            yq = YQTicker(ticker)
+            if headers:
+                yq = YQTicker(ticker, requests_kwargs={"headers": headers})
+            else:
+                yq = YQTicker(ticker)
             cf_df = yq.cash_flow(frequency='a', trailing=False)
             if cf_df is None or (isinstance(cf_df, pd.DataFrame) and cf_df.empty):
                 return None
@@ -743,7 +824,7 @@ def extract_cashflows(tickers: dict = TICKERS) -> pd.DataFrame:
             import time
             time.sleep(1.5)
 
-    # ── PASS 2: SURGICAL RETRY ────────────────────────────────────────────────
+    # ── 2. PASS 2: SURGICAL RETRY (Simple) ───────────────────────────────────
     failed_tickers = [t for t in ticker_keys if t not in successful_tickers]
     if failed_tickers:
         logger.info(f"🔄 PASS 2: Surgical Retry for {len(failed_tickers)} failed cashflows...")
@@ -753,7 +834,22 @@ def extract_cashflows(tickers: dict = TICKERS) -> pd.DataFrame:
             res = fetch_single(ticker)
             if res:
                 records.append(res)
-                logger.info(f"   ✅ Recovered: {ticker}")
+                successful_tickers.add(ticker)
+                logger.info(f"   ✅ Recovered (Pass 2): {ticker}")
+
+    # ── 3. PASS 3: ROBUST EVASION RESCUE (THE FINAL GATEKEEPER) ───────────────
+    failed_after_p2 = [t for t in ticker_keys if t not in successful_tickers]
+    if failed_after_p2:
+        logger.info(f"🛡️ PASS 3: Robust Evasion Rescue for {len(failed_after_p2)} stubborn cashflows...")
+        for ticker in failed_after_p2:
+            import time, random
+            time.sleep(random.uniform(5, 12))
+            headers = _get_evasion_headers()
+            res = fetch_single(ticker, headers=headers)
+            if res:
+                records.append(res)
+                successful_tickers.add(ticker)
+                logger.info(f"   🔥 RECOVERED Cashflow (Pass 3): {ticker} using {headers['User-Agent'][:30]}...")
 
     logger.info(f"✅ Cashflow extracted for {len(records)}/{len(tickers)} tickers")
     return pd.DataFrame(records) if records else pd.DataFrame(columns=["ticker", "buyback_ttm", "dividends_paid_ttm"])
@@ -816,7 +912,7 @@ def extract_historical_fcf(tickers: dict = TICKERS) -> pd.DataFrame:
         import time, random
         time.sleep(1.0 + random.random())
 
-    # ── PASS 2: SURGICAL RETRY ────────────────────────────────────────────────
+    # ── 2. PASS 2: SURGICAL RETRY (Simple) ───────────────────────────────────
     failed_tickers = [t for t in ticker_keys if t not in successful_tickers]
     if failed_tickers:
         logger.info(f"🔄 PASS 2: Surgical Retry for {len(failed_tickers)} failed FCF tickers...")
@@ -828,7 +924,23 @@ def extract_historical_fcf(tickers: dict = TICKERS) -> pd.DataFrame:
                 cf_df = yq.cash_flow(frequency='a', trailing=False)
                 process_fcf_df(cf_df, records, successful_tickers)
                 if ticker in successful_tickers:
-                    logger.info(f"   ✅ Recovered FCF: {ticker}")
+                    logger.info(f"   ✅ Recovered FCF (Pass 2): {ticker}")
+            except Exception: pass
+
+    # ── 3. PASS 3: ROBUST EVASION RESCUE (THE FINAL GATEKEEPER) ───────────────
+    failed_after_p2 = [t for t in ticker_keys if t not in successful_tickers]
+    if failed_after_p2:
+        logger.info(f"🛡️ PASS 3: Robust Evasion Rescue for {len(failed_after_p2)} stubborn FCF tickers...")
+        for ticker in failed_after_p2:
+            import time, random
+            time.sleep(random.uniform(5, 12))
+            try:
+                headers = _get_evasion_headers()
+                yq = YQTicker(ticker, asynchronous=False, requests_kwargs={"headers": headers})
+                cf_df = yq.cash_flow(frequency='a', trailing=False)
+                process_fcf_df(cf_df, records, successful_tickers)
+                if ticker in successful_tickers:
+                    logger.info(f"   🔥 RECOVERED FCF (Pass 3): {ticker} using {headers['User-Agent'][:30]}...")
             except Exception: pass
 
     logger.info(f"✅ Historical FCF: {len(successful_tickers)} tickers successful.")
@@ -894,7 +1006,7 @@ def extract_quarterly_fcf(tickers: dict = TICKERS) -> pd.DataFrame:
         import time, random
         time.sleep(1.0 + random.random())
 
-    # ── PASS 2: SURGICAL RETRY ────────────────────────────────────────────────
+    # ── 2. PASS 2: SURGICAL RETRY (Simple) ───────────────────────────────────
     failed_tickers = [t for t in ticker_keys if t not in successful_tickers]
     if failed_tickers:
         logger.info(f"🔄 PASS 2: Surgical Retry for {len(failed_tickers)} failed Quarterly FCF tickers...")
@@ -906,7 +1018,23 @@ def extract_quarterly_fcf(tickers: dict = TICKERS) -> pd.DataFrame:
                 cf_df = yq.cash_flow(frequency='q', trailing=False)
                 process_q_fcf_df(cf_df, records, successful_tickers)
                 if ticker in successful_tickers:
-                    logger.info(f"   ✅ Recovered Quarterly FCF: {ticker}")
+                    logger.info(f"   ✅ Recovered Quarterly FCF (Pass 2): {ticker}")
+            except Exception: pass
+
+    # ── 3. PASS 3: ROBUST EVASION RESCUE (THE FINAL GATEKEEPER) ───────────────
+    failed_after_p2 = [t for t in ticker_keys if t not in successful_tickers]
+    if failed_after_p2:
+        logger.info(f"🛡️ PASS 3: Robust Evasion Rescue for {len(failed_after_p2)} stubborn Quarterly FCF tickers...")
+        for ticker in failed_after_p2:
+            import time, random
+            time.sleep(random.uniform(5, 12))
+            try:
+                headers = _get_evasion_headers()
+                yq = YQTicker(ticker, asynchronous=False, requests_kwargs={"headers": headers})
+                cf_df = yq.cash_flow(frequency='q', trailing=False)
+                process_q_fcf_df(cf_df, records, successful_tickers)
+                if ticker in successful_tickers:
+                    logger.info(f"   🔥 RECOVERED Quarterly FCF (Pass 3): {ticker} using {headers['User-Agent'][:30]}...")
             except Exception: pass
 
     logger.info(f"✅ Quarterly FCF: {len(successful_tickers)} tickers successful.")
@@ -961,7 +1089,7 @@ def extract_earnings_calendar(tickers: dict = TICKERS) -> pd.DataFrame:
     # ── PASS 2: yahooquery Surgical Retry ──────────────────────────────────
     failed_tickers = [t for t in ticker_keys if t not in successful_tickers]
     if failed_tickers:
-        logger.info(f"🔄 Pass 2: yahooquery Surgical Retry for {len(failed_tickers)} missing tickers...")
+        logger.info(f"🔄 Pass 2: Surgical Retry for {len(failed_tickers)} missing earnings...")
         
         for ticker in failed_tickers:
             import time, random
@@ -988,7 +1116,41 @@ def extract_earnings_calendar(tickers: dict = TICKERS) -> pd.DataFrame:
                                     "rev_avg": earn.get('revenueAverage')
                                 })
                                 successful_tickers.add(ticker)
-                                logger.info(f"   ✅ Recovered Earnings: {ticker}")
+                                logger.info(f"   ✅ Recovered Earnings (Pass 2): {ticker}")
+            except Exception: pass
+
+    # ── PASS 3: Robust Evasion Rescue ──────────────────────────────────────
+    failed_after_p2 = [t for t in ticker_keys if t not in successful_tickers]
+    if failed_after_p2:
+        logger.info(f"🛡️ Pass 3: Robust Evasion Rescue for {len(failed_after_p2)} missing earnings...")
+        for ticker in failed_after_p2:
+            import time, random
+            time.sleep(random.uniform(5, 12)) 
+            try:
+                headers = _get_evasion_headers()
+                yq = YQTicker(ticker, asynchronous=False, requests_kwargs={"headers": headers})
+                events = yq.calendar_events
+                
+                if isinstance(events, dict) and ticker in events:
+                    data = events[ticker]
+                    if isinstance(data, dict) and 'earnings' in data:
+                        earn = data['earnings']
+                        e_date = earn.get('earningsDate')
+                        if isinstance(e_date, list) and len(e_date) > 0:
+                            # ... parsing logic (truncated for brevity but same as Pass 2) ...
+                            d_obj = e_date[0]
+                            if isinstance(d_obj, str):
+                                try: d_obj = datetime.strptime(d_obj.split(' ')[0], '%Y-%m-%d').date()
+                                except: d_obj = None
+                            
+                            if d_obj:
+                                records.append({
+                                    "ticker": ticker, "earnings_date": d_obj,
+                                    "eps_avg": earn.get('earningsAverage'),
+                                    "rev_avg": earn.get('revenueAverage')
+                                })
+                                successful_tickers.add(ticker)
+                                logger.info(f"   🔥 RECOVERED Earnings (Pass 3): {ticker}")
             except Exception: pass
     
     logger.info(f"✅ Earnings Calendar: {len(successful_tickers)} tickers successful.")
