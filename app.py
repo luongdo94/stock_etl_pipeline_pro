@@ -1821,8 +1821,9 @@ if not prices_full.empty:
             ls_time = pd.to_datetime(last_run['start_time']).strftime('%b %d, %H:%M')
         except: ls_time = "N/A"
         
-        crit_dq = len(dq_warnings[dq_warnings['is_critical']]) if not dq_warnings.empty else 0
-        warn_dq = len(dq_warnings[~dq_warnings['is_critical']]) if not dq_warnings.empty else 0
+        # Only count rows where violations > 0
+        crit_dq = len(dq_warnings[(dq_warnings['is_critical']) & (dq_warnings['violations'] > 0)]) if not dq_warnings.empty else 0
+        warn_dq = len(dq_warnings[(~dq_warnings['is_critical']) & (dq_warnings['violations'] > 0)]) if not dq_warnings.empty else 0
         dq_color = "#2ecc71" if (crit_dq == 0 and warn_dq == 0) else ("#e74c3c" if crit_dq > 0 else "#f1c40f")
         dq_text = "CLEAN" if (crit_dq == 0 and warn_dq == 0) else (f"{crit_dq} CRIT" if crit_dq > 0 else f"{warn_dq} WARN")
 
@@ -1861,10 +1862,10 @@ if not prices_full.empty:
         current_universe = sorted([t for t in all_tickers if t not in indices])
 
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("<div class='sb-section-label'>System Controls</div>", unsafe_allow_html=True)
-if st.sidebar.button("🔄 Clear Data Cache", use_container_width=True, help="Force reload all data from DuckDB. Use after running the ETL pipeline."):
+st.sidebar.markdown("<br>", unsafe_allow_html=True)
+if st.sidebar.button("🔄 Refresh Data", use_container_width=True, type="secondary", help="Clear cache & reload from warehouse"):
     st.cache_data.clear()
+    st.toast("🚀 Refreshing Intelligence...", icon="✅")
     st.rerun()
 
 # ── USER PROFILE & SESSION ──
