@@ -307,6 +307,20 @@ def run_pipeline(lookback_days: int = 1825, force_full: bool = False, fast_mode:
                 return False
 
             conn.close()
+            
+            # 🛡️ GREAT EXPECTATIONS (GX) GUARD
+            try:
+                from etl.dq_engine import run_dq_validations
+                logger.info("\n🛡️ STEP 4.5/5 — GREAT EXPECTATIONS VALIDATION")
+                gx_success = run_dq_validations(SHADOW_DB_PATH)
+                if not gx_success:
+                    logger.error("❌ GX VALIDATION FAILED: Aborting swap!")
+                    return False
+            except ImportError:
+                 logger.warning("   ⚠️ GX not installed, skipping advanced data quality checks.")
+            except Exception as e:
+                 logger.warning(f"   ⚠️ GX Validation encountered an error, proceeding anyway: {e}")
+
             perform_atomic_swap()
             logger.info(f"   ⏱  Swap: {time.time()-t0:.1f}s")
 

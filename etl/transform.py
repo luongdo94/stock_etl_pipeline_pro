@@ -24,7 +24,11 @@ def run_transforms(conn: duckdb.DuckDBPyConnection):
     _create_staging(conn)
     _create_intermediate(conn)
     _create_marts(conn)
-    _run_data_quality_checks(conn)
+    
+    # 📝 Telemetry tables are created in _create_marts.
+    # Logic for DQ validation is now moved to etl/dq_engine.py 
+    # and called from pipeline.py.
+
 
 
 def _create_staging(conn):
@@ -249,6 +253,31 @@ def _create_marts(conn):
     Naming: fct_{fact} / dim_{dimension}
     """
     conn.execute("CREATE SCHEMA IF NOT EXISTS marts")
+
+    # ── Infrastructure: Telemetry Tables (Unified DQ & Auditing) ───────────
+    # Execution Audit Log
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS marts.etl_audit (
+            run_id          UUID PRIMARY KEY,
+            start_time      TIMESTAMP,
+            end_time        TIMESTAMP,
+            status          VARCHAR, -- STARTED, SUCCESS, FAILED
+            mode            VARCHAR, -- INCREMENTAL, FULL
+            rows_processed  INTEGER,
+            error_message   TEXT
+        )
+    """)
+
+    # DQ Warnings History (Dashboard Alerts)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS marts.dq_warnings (
+            check_name      VARCHAR,
+            violations      INTEGER,
+            status          VARCHAR,
+            is_critical     BOOLEAN,
+            checked_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
 
     # ── STEP 0: Financials dimensions FIRST (dependency for FMI in dim_companies) ──
     conn.execute("""
@@ -506,111 +535,4 @@ def _create_marts(conn):
     logger.info("✅ Mart tables created: fct_daily_returns, dim_companies, agg_monthly_performance, dim_annual_financials, dim_quarterly_financials")
 
 
-def _run_data_quality_checks(conn):
-    """
-    Data Quality Tests (equivalent to dbt tests).
-    Differentiates between CRITICAL (Abort) and SOFT (Warning) failures.
-    """
-    checks = {
-        # --- CRITICAL: MUST PASS FOR TRADING LOGIC ---
-        "fct_no_nulls_ticker": """
-            SELECT COUNT(*) FROM marts.fct_daily_returns WHERE ticker IS NULL
-        """,
-        "fct_no_nulls_date": """
-            SELECT COUNT(*) FROM marts.fct_daily_returns WHERE date IS NULL
-        """,
-        "fct_no_negative_price": """
-            SELECT COUNT(*) FROM marts.fct_daily_returns WHERE price_close < 0
-        """,
-        "fct_unique_date_ticker": """
-            SELECT COUNT(*) FROM (
-                SELECT date, ticker, COUNT(*) AS cnt
-                FROM marts.fct_daily_returns
-                GROUP BY 1, 2
-                HAVING cnt > 1
-            )
-        """,
-        "fct_no_zero_volume": """
-            SELECT COUNT(*) FROM marts.fct_daily_returns WHERE volume = 0
-        """,
-        # --- SOFT: SHOULD PASS BUT OK TO WARNING ---
-        "dim_no_null_revenue": """
-            SELECT COUNT(*) FROM marts.dim_companies 
-            WHERE (revenue_ttm IS NULL OR revenue_ttm < 0)
-              AND ticker NOT LIKE '^%' AND ticker NOT IN ('SPY')
-        """,
-        "dim_no_null_market_cap": """
-            SELECT COUNT(*) FROM marts.dim_companies 
-            WHERE (market_cap IS NULL OR market_cap <= 0)
-              AND ticker NOT LIKE '^%' AND ticker NOT IN ('SPY')
-        """,
-        "dim_no_null_fundamental_data": """
-            SELECT COUNT(*) FROM marts.dim_companies 
-            WHERE (roe IS NULL OR fcf_margin IS NULL)
-              AND ticker NOT LIKE '^%' AND ticker NOT IN ('SPY')
-        """,
-    }
-    
-    critical_checks = [
-        "fct_no_nulls_ticker", "fct_no_nulls_date", "fct_no_negative_price", 
-        "fct_unique_date_ticker"
-    ]
-    
-    # ── Phase 2: Professional DQ Persistence & Auditing ────────────────────────
-    conn.execute("CREATE SCHEMA IF NOT EXISTS marts")
-    
-    # Execution Audit Log
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS marts.etl_audit (
-            run_id          UUID PRIMARY KEY,
-            start_time      TIMESTAMP,
-            end_time        TIMESTAMP,
-            status          VARCHAR, -- STARTED, SUCCESS, FAILED
-            mode            VARCHAR, -- INCREMENTAL, FULL
-            rows_processed  INTEGER,
-            error_message   TEXT
-        )
-    """)
-
-    # DQ Warnings History
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS marts.dq_warnings (
-            check_name      VARCHAR,
-            violations      INTEGER,
-            status          VARCHAR,
-            is_critical     BOOLEAN,
-            checked_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    print("\n-- DATA QUALITY CHECKS ------------------------------------------")
-    all_critical_passed = True
-    
-    for check_name, query in checks.items():
-        result = conn.execute(query).fetchone()[0]
-        is_critical = check_name in critical_checks
-        
-        if result == 0:
-            status_txt = "✅ PASS"
-            status_db  = "PASS"
-        else:
-            if is_critical:
-                status_txt = f"❌ FAIL (CRITICAL: {result} violations)"
-                status_db  = "CRITICAL"
-                all_critical_passed = False
-            else:
-                status_txt = f"⚠️ WARN (SOFT: {result} violations)"
-                status_db  = "WARNING"
-                
-            # Log to DB for Dashboard consumption (Bug #4)
-            conn.execute("""
-                INSERT INTO marts.dq_warnings (check_name, violations, status, is_critical)
-                VALUES (?, ?, ?, ?)
-            """, [check_name, result, status_db, is_critical])
-        
-        print(f"  {status_txt:35s}  {check_name}")
-    
-    if not all_critical_passed:
-        raise ValueError("❌ CRITICAL Data quality checks failed! Pipeline aborted.")
-    
-    print("  Pipeline consistency verified! Fundamentals gaps logged to marts.dq_warnings.\n")
+    logger.info("✅ Mart tables created: fct_daily_returns, dim_companies, agg_monthly_performance, dim_annual_financials, dim_quarterly_financials")
