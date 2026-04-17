@@ -245,9 +245,12 @@ def get_smart_recovery_targets(conn: duckdb.DuckDBPyConnection) -> dict:
     q_gaps = """
         SELECT ticker 
         FROM marts.dim_companies 
-        WHERE (roe IS NULL OR free_cashflow IS NULL)
-          AND quote_type = 'EQUITY'
-          AND sector != 'Financials'
+        WHERE quote_type = 'EQUITY'
+          AND (
+            (roe IS NULL) -- Always target missing ROE for any Equity
+            OR 
+            (free_cashflow IS NULL AND sector != 'Financials') -- Only target FCF if not a Bank/Insurance
+          )
     """
     try:
         gap_tickers = [r[0] for r in conn.execute(q_gaps).fetchall()]

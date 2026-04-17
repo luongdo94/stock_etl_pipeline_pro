@@ -395,8 +395,12 @@ def _create_marts(conn):
             c.operating_margin,
             c.trailing_eps,
             c.forward_eps,
-            -- ✅ ROE Fallback: Use manual calculation if Yahoo summary is NULL
-            COALESCE(c.roe, ROUND(fb.ttm_net_income / NULLIF(fb.latest_equity, 0), 4)) AS roe,
+            -- ✅ ROE Fallback: 1. Priority Yahoo, 2. TTM Manual, 3. Latest Annual Manual
+            COALESCE(
+                c.roe, 
+                ROUND(fb.ttm_net_income / NULLIF(fb.latest_equity, 0), 4),
+                ROUND(ann.net_income / NULLIF(ann.total_equity, 0), 4)
+            ) AS roe,
             ROUND(c.dividend_yield * 100, 2) AS dividend_yield_pct,
             c.price_to_book,
             c.beta,
@@ -415,11 +419,12 @@ def _create_marts(conn):
             c.inst_ownership,
             c.insider_ownership,
             c.free_cashflow,
-            -- ✅ FCF Margin Fallback: Use manual calculation if Yahoo summary is NULL
+            -- ✅ FCF Margin Fallback: 1. Yahoo, 2. TTM Manual, 3. Annual Manual
             ROUND(
                 COALESCE(
                     (c.free_cashflow / NULLIF(c.revenue_ttm, 0)) * 100,
-                    (fb.ttm_fcf / NULLIF(fb.ttm_revenue, 0)) * 100
+                    (fb.ttm_fcf / NULLIF(fb.ttm_revenue, 0)) * 100,
+                    (h.free_cash_flow / NULLIF(ann.revenue, 0)) * 100
                 ), 2
             ) AS fcf_margin,
             -- 🏆 EXPERT: Historical Baselines
@@ -438,6 +443,16 @@ def _create_marts(conn):
             fmi.fmi_quarters_of_growth
         FROM staging.stg_company_info c
         LEFT JOIN fallback_metrics fb USING (ticker)
+        LEFT JOIN (
+            -- Secondary Fallback: Latest Annual reports
+            SELECT * FROM marts.dim_annual_financials
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY report_date DESC) = 1
+        ) ann USING (ticker)
+        LEFT JOIN (
+            -- Join fixed annual capex/fcf from hist_fcf
+            SELECT * FROM raw.hist_fcf
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY _loaded_at DESC) = 1
+        ) h USING (ticker)
         LEFT JOIN (
             SELECT 
                 ticker, 

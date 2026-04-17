@@ -16,6 +16,7 @@ The backbone of Honest Quant is a robust, production-ready Data Engineering pipe
 - **Resilience (Multi-Pass)**: Implements a two-pass surgical strategy:
     - **Pass 1**: Batch concurrent extraction for speed.
     - **Pass 2 (Surgical)**: Sequential, throttled retry for failed tickers with randomized jitter to bypass API blocks and reach 100% coverage.
+- **Fundamental Recovery Engine**: A proprietary logic designed to bypass 'Data Gaps' in free APIs. If a stock's summary metrics (ROE/FCF) are missing, the pipeline automatically extracts raw **Income Statements** and **Balance Sheets** to manually reconstruct accurate TTM (Trailing Twelve Months) metrics.
 
 ### Intelligent Loading Strategy
 - **Incremental Load (Watermarking)**: The system automatically detects the last available data point for each ticker. In daily runs, it strictly fetches only the missing "gap" (incremental window), reducing bandwidth consumption and avoiding IP blocks.
