@@ -63,27 +63,34 @@ def run_dq_validations(db_path: str = None):
                 "ticker_query": "SELECT ticker FROM (SELECT ticker FROM marts.dim_companies GROUP BY 1 HAVING COUNT(*) > 1) LIMIT 50",
                 "critical": True
             },
+            {
+                "id": "fct_completeness_prices", 
+                "name": "FCT: Data Completeness (No Null Prices)", 
+                "query": "SELECT COUNT(*) FROM marts.fct_daily_returns WHERE price_close IS NULL OR price_open IS NULL",
+                "ticker_query": "SELECT DISTINCT ticker FROM marts.fct_daily_returns WHERE price_close IS NULL OR price_open IS NULL LIMIT 50",
+                "critical": True
+            },
             
             # --- SOFT (Dashboard Telemetry) ---
             {
                 "id": "dim_no_null_revenue", 
                 "name": "DIM: Revenue Visibility", 
-                "query": "SELECT COUNT(*) FROM marts.dim_companies WHERE (revenue_ttm IS NULL OR revenue_ttm <= 0) AND ticker NOT LIKE '^%' AND ticker NOT IN ('SPY')",
-                "ticker_query": "SELECT ticker FROM marts.dim_companies WHERE (revenue_ttm IS NULL OR revenue_ttm <= 0) AND ticker NOT LIKE '^%' AND ticker NOT IN ('SPY') LIMIT 50",
+                "query": "SELECT COUNT(*) FROM marts.dim_companies WHERE (revenue_ttm IS NULL OR revenue_ttm <= 0) AND quote_type = 'EQUITY'",
+                "ticker_query": "SELECT ticker FROM marts.dim_companies WHERE (revenue_ttm IS NULL OR revenue_ttm <= 0) AND quote_type = 'EQUITY' LIMIT 50",
                 "critical": False
             },
             {
                 "id": "dim_market_cap_check", 
                 "name": "DIM: Market Cap Visibility", 
-                "query": "SELECT COUNT(*) FROM marts.dim_companies WHERE (market_cap IS NULL OR market_cap <= 0) AND ticker NOT LIKE '^%' AND ticker NOT IN ('SPY')",
-                "ticker_query": "SELECT ticker FROM marts.dim_companies WHERE (market_cap IS NULL OR market_cap <= 0) AND ticker NOT LIKE '^%' AND ticker NOT IN ('SPY') LIMIT 50",
+                "query": "SELECT COUNT(*) FROM marts.dim_companies WHERE (market_cap IS NULL OR market_cap <= 0) AND quote_type = 'EQUITY'",
+                "ticker_query": "SELECT ticker FROM marts.dim_companies WHERE (market_cap IS NULL OR market_cap <= 0) AND quote_type = 'EQUITY' LIMIT 50",
                 "critical": False
             },
             {
                 "id": "dim_fundamental_check", 
                 "name": "DIM: Fundamental Data (ROE/FCF)", 
-                "query": "SELECT COUNT(*) FROM marts.dim_companies WHERE (roe IS NULL OR fcf_margin IS NULL) AND ticker NOT LIKE '^%' AND ticker NOT IN ('SPY')",
-                "ticker_query": "SELECT ticker FROM marts.dim_companies WHERE (roe IS NULL OR fcf_margin IS NULL) AND ticker NOT LIKE '^%' AND ticker NOT IN ('SPY') LIMIT 50",
+                "query": "SELECT COUNT(*) FROM marts.dim_companies WHERE (roe IS NULL OR (fcf_margin IS NULL AND sector != 'Financials')) AND quote_type = 'EQUITY'",
+                "ticker_query": "SELECT ticker FROM marts.dim_companies WHERE (roe IS NULL OR (fcf_margin IS NULL AND sector != 'Financials')) AND quote_type = 'EQUITY' LIMIT 50",
                 "critical": False
             },
         ]

@@ -142,6 +142,8 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
             ticker          VARCHAR,
             date            DATE,
             revenue         DOUBLE,
+            net_income      DOUBLE,
+            total_equity    DOUBLE,
             eps             DOUBLE,
             eps_diluted     DOUBLE,
             _loaded_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -153,12 +155,22 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
             ticker          VARCHAR,
             date            DATE,
             revenue         DOUBLE,
+            net_income      DOUBLE,
+            total_equity    DOUBLE,
             eps             DOUBLE,
             eps_diluted     DOUBLE,
             _loaded_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             PRIMARY KEY (ticker, date)
         )
     """)
+    # Migration: Add new financial columns to existing tables
+    for table in ["raw.historical_financials", "raw.quarterly_financials"]:
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS net_income DOUBLE")
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS total_equity DOUBLE")
+        except Exception as e:
+            logger.debug(f"Migration for {table} skipped or failed: {e}")
+
     conn.execute("""
         CREATE TABLE IF NOT EXISTS raw.cashflows (
             ticker               VARCHAR PRIMARY KEY,
@@ -456,12 +468,16 @@ def load_historical_financials(
     conn.execute("DELETE FROM raw.historical_financials WHERE ticker = ANY(?)", [tickers])
     
     conn.register("df_tmp", df)
+    
+    # Bug Fix: Ensure columns are explicitly selected for stability
     conn.execute("""
-        INSERT INTO raw.historical_financials
+        INSERT INTO raw.historical_financials (ticker, date, revenue, net_income, total_equity, eps, eps_diluted, _loaded_at)
         SELECT 
             ticker, 
             CAST(date AS DATE), 
             revenue, 
+            net_income,
+            total_equity,
             eps, 
             eps_diluted, 
             CURRENT_TIMESTAMP 
@@ -485,12 +501,15 @@ def load_quarterly_financials(
     conn.execute("DELETE FROM raw.quarterly_financials WHERE ticker = ANY(?)", [tickers])
     
     conn.register("df_tmp", df)
+    
     conn.execute("""
-        INSERT INTO raw.quarterly_financials
+        INSERT INTO raw.quarterly_financials (ticker, date, revenue, net_income, total_equity, eps, eps_diluted, _loaded_at)
         SELECT 
             ticker, 
             CAST(date AS DATE), 
             revenue, 
+            net_income,
+            total_equity,
             eps, 
             eps_diluted, 
             CURRENT_TIMESTAMP 

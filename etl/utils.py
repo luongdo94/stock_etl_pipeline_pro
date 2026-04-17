@@ -3,8 +3,11 @@ import pandas as pd
 import numpy as np
 import duckdb
 import os
+import logging
 from datetime import date, timedelta
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 _WAREHOUSE_DIR = Path(__file__).parent.parent / "warehouse"
 DB_PATH = str(_WAREHOUSE_DIR / "stock_dw.duckdb")
@@ -236,6 +239,25 @@ def get_smart_recovery_targets(conn: duckdb.DuckDBPyConnection) -> dict:
     missing_fundamentals = get_missing_tickers_for_table(conn, "raw.quarterly_financials")
     # Keep only eligible equity tickers in the fundamentals missing set
     missing_fundamentals = {k: v for k, v in missing_fundamentals.items() if k in equity_tickers}
+
+    # Proactive Gap Detection: Also target tickers that exist but have NULL fundamentals
+    # This repairs tickers like JNJ/DELL where summary was null but statements might be fetchable.
+    q_gaps = """
+        SELECT ticker 
+        FROM marts.dim_companies 
+        WHERE (roe IS NULL OR free_cashflow IS NULL)
+          AND quote_type = 'EQUITY'
+          AND sector != 'Financials'
+    """
+    try:
+        gap_tickers = [r[0] for r in conn.execute(q_gaps).fetchall()]
+        for t in gap_tickers:
+            if t in equity_tickers:
+                missing_fundamentals[t] = {}
+        if gap_tickers:
+            logger.info(f"   🔍 Smart Recovery identified {len(gap_tickers)} tickers with fundamental gaps (e.g., {gap_tickers[:3]})")
+    except Exception as e:
+        logger.debug(f"Fundamental gap check skipped: {e}")
 
     return {
         "metadata": missing_meta,

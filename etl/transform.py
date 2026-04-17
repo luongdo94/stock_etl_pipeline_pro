@@ -75,6 +75,7 @@ def _create_staging(conn):
             region,
             country,
             currency,
+            quote_type,
             total_debt,
             ebitda,
             gross_margin,
@@ -288,6 +289,8 @@ def _create_marts(conn):
             EXTRACT(QUARTER FROM date) AS quarter,
             date AS report_date,
             revenue,
+            net_income,
+            total_equity,
             eps,
             eps_diluted,
             -- Calculate Growth
@@ -307,7 +310,7 @@ def _create_marts(conn):
             ticker,
             EXTRACT(YEAR FROM date) AS year,
             date AS report_date,
-            revenue, eps, eps_diluted,
+            revenue, net_income, total_equity, eps, eps_diluted,
             ROUND((revenue - LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS revenue_growth_pct,
             ROUND((eps - LAG(eps) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(eps) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS eps_growth_pct
         FROM raw.historical_financials
@@ -351,64 +354,90 @@ def _create_marts(conn):
     # DIMENSION: Companies
     conn.execute("""
         CREATE OR REPLACE TABLE marts.dim_companies AS
+        WITH fallback_metrics AS (
+            -- Calculate TTM ROE and FCF from raw statements for missing tickers (e.g. JNJ, DELL spin-offs)
+            SELECT
+                q.ticker,
+                SUM(q.revenue) AS ttm_revenue,
+                SUM(q.net_income) AS ttm_net_income,
+                -- Use latest known equity for ROE denominator
+                ARG_MAX(q.total_equity, q.date) AS latest_equity,
+                -- Get FCF from quarterly history table
+                SUM(fcf.free_cash_flow) AS ttm_fcf
+            FROM (
+                SELECT *, ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) as rn 
+                FROM raw.quarterly_financials
+            ) q
+            LEFT JOIN raw.hist_fcf_quarterly fcf 
+                ON q.ticker = fcf.ticker 
+                AND EXTRACT(YEAR FROM q.date) = fcf.year 
+                AND EXTRACT(QUARTER FROM q.date) = fcf.quarter
+            WHERE q.rn <= 4 -- TTM = Last 4 quarters
+            GROUP BY q.ticker
+        )
         SELECT
-            ticker,
-            company,
-            sector,
-            region,
-            country,
-            currency,
-            cap_category,
-            market_cap,
-            pe_ratio,
-            forward_pe,
-            revenue_ttm,
-            employees,
-            total_debt,
-            ebitda,
-            gross_margin,
-            operating_margin,
-            trailing_eps,
-            forward_eps,
-            roe,
-            ROUND(dividend_yield * 100, 2) AS dividend_yield_pct,
-            price_to_book,
-            beta,
-            target_mean_price,
-            recommendation_key,
-            peg_ratio,
-            price_to_sales,
-            ev_to_ebitda,
-            revenue_growth,
-            earnings_growth,
-            current_ratio,
-            quick_ratio,
-            debt_to_equity,
-            short_ratio,
-            short_percent_of_float,
-            inst_ownership,
-            insider_ownership,
-            free_cashflow,
-            -- 🏆 v3.0 Profitability: Self-calculated FCF Margin
-            ROUND((free_cashflow / NULLIF(revenue_ttm, 0)) * 100, 2) AS fcf_margin,
-            -- 🏆 EXPERT: Historical Baselines (Joined from aggregates)
+            c.ticker,
+            c.company,
+            c.sector,
+            c.region,
+            c.country,
+            c.currency,
+            c.quote_type,
+            c.cap_category,
+            c.market_cap,
+            c.pe_ratio,
+            c.forward_pe,
+            c.revenue_ttm,
+            c.employees,
+            c.total_debt,
+            c.ebitda,
+            c.gross_margin,
+            c.operating_margin,
+            c.trailing_eps,
+            c.forward_eps,
+            -- ✅ ROE Fallback: Use manual calculation if Yahoo summary is NULL
+            COALESCE(c.roe, ROUND(fb.ttm_net_income / NULLIF(fb.latest_equity, 0), 4)) AS roe,
+            ROUND(c.dividend_yield * 100, 2) AS dividend_yield_pct,
+            c.price_to_book,
+            c.beta,
+            c.target_mean_price,
+            c.recommendation_key,
+            c.peg_ratio,
+            c.price_to_sales,
+            c.ev_to_ebitda,
+            c.revenue_growth,
+            c.earnings_growth,
+            c.current_ratio,
+            c.quick_ratio,
+            c.debt_to_equity,
+            c.short_ratio,
+            c.short_percent_of_float,
+            c.inst_ownership,
+            c.insider_ownership,
+            c.free_cashflow,
+            -- ✅ FCF Margin Fallback: Use manual calculation if Yahoo summary is NULL
+            ROUND(
+                COALESCE(
+                    (c.free_cashflow / NULLIF(c.revenue_ttm, 0)) * 100,
+                    (fb.ttm_fcf / NULLIF(fb.ttm_revenue, 0)) * 100
+                ), 2
+            ) AS fcf_margin,
+            -- 🏆 EXPERT: Historical Baselines
             b.avg_5y_price,
             b.std_dev_5y_price,
             b.high_5y_price,
             b.low_5y_price,
-            -- 🏆 EXPERT: 5-Year Average P/E ratio
             hpe.pe_5y_avg,
-            -- v3.0 Quantitative Metrics
             vol.volatility_30d,
             payout.buyback_yield_pct,
             payout.dividends_paid_yield_pct,
             payout.net_payout_yield_pct,
-            -- v4.0 Fundamental Momentum Index (FMI) components
             fmi.fmi_rev_acceleration,
             fmi.fmi_eps_acceleration,
             fmi.fmi_margin_trend,
             fmi.fmi_quarters_of_growth
         FROM staging.stg_company_info c
+        LEFT JOIN fallback_metrics fb USING (ticker)
         LEFT JOIN (
             SELECT 
                 ticker, 
@@ -420,7 +449,6 @@ def _create_marts(conn):
             GROUP BY 1
         ) b USING (ticker)
         LEFT JOIN (
-            -- 5-Year Average P/E
             SELECT 
                 p.ticker, 
                 ROUND(AVG(p.close / NULLIF(a.eps, 0)), 2) AS pe_5y_avg
@@ -433,7 +461,6 @@ def _create_marts(conn):
             GROUP BY 1
         ) hpe USING (ticker)
         LEFT JOIN (
-            -- Rolling 30-day annualised volatility from daily returns
             SELECT
                 ticker,
                 ROUND(STDDEV(daily_return_pct) OVER (
@@ -445,7 +472,6 @@ def _create_marts(conn):
             QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) = 1
         ) vol USING (ticker)
         LEFT JOIN (
-            -- Buyback & Dividend Yield (Net Payout)
             SELECT
                 cf.ticker,
                 ROUND(cf.buyback_ttm         / NULLIF(dc.market_cap, 0) * 100, 4) AS buyback_yield_pct,
@@ -455,8 +481,6 @@ def _create_marts(conn):
             JOIN staging.stg_company_info dc USING (ticker)
         ) payout USING (ticker)
         LEFT JOIN (
-            -- v4.0: Fundamental Momentum Index (FMI) pre-computation
-            -- Uses last 4 quarters of data (TTM) vs the prior 4 quarters to measure acceleration.
             WITH ranked AS (
                 SELECT
                     ticker,
@@ -475,13 +499,10 @@ def _create_marts(conn):
             recent_agg AS (
                 SELECT
                     ticker,
-                    -- Revenue: avg QoQ growth rate over latest 4 quarters
                     ROUND(AVG(revenue_growth_qoq_pct), 2)       AS rev_qoq_recent,
                     ROUND(AVG(revenue_growth_yoy_pct), 2)       AS rev_yoy_recent,
-                    -- EPS: avg QoQ growth rate over latest 4 quarters
                     ROUND(AVG(eps_growth_qoq_pct), 2)           AS eps_qoq_recent,
                     ROUND(AVG(eps_growth_yoy_pct), 2)           AS eps_yoy_recent,
-                    -- Consistency: how many of the 4 quarters had positive EPS growth YoY
                     SUM(CASE WHEN eps_growth_yoy_pct > 0 THEN 1 ELSE 0 END) AS quarters_of_growth
                 FROM recent
                 GROUP BY ticker
@@ -496,14 +517,9 @@ def _create_marts(conn):
             )
             SELECT
                 r.ticker,
-                -- Revenue Acceleration = recent QoQ avg - prior QoQ avg  (positive = speeding up)
                 ROUND(r.rev_qoq_recent - COALESCE(p.rev_qoq_prior, r.rev_qoq_recent), 2) AS fmi_rev_acceleration,
-                -- EPS Acceleration    = recent QoQ avg - prior QoQ avg
                 ROUND(r.eps_qoq_recent - COALESCE(p.eps_qoq_prior, r.eps_qoq_recent), 2) AS fmi_eps_acceleration,
-                -- Margin Trend proxy: if most-recent revenue_yoy > eps_yoy then margins compressing, else expanding
-                -- Positive number indicates EPS growing faster than revenue = margin expansion
                 ROUND(r.eps_yoy_recent - r.rev_yoy_recent, 2) AS fmi_margin_trend,
-                -- Streak: 0-4 quarters with positive EPS YoY
                 r.quarters_of_growth                          AS fmi_quarters_of_growth
             FROM recent_agg r
             LEFT JOIN prior_agg p USING (ticker)

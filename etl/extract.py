@@ -47,6 +47,16 @@ def load_tickers_config():
 
 TICKERS = load_tickers_config()
 
+def get_equity_tickers(tickers_pool: dict = TICKERS) -> dict:
+    """
+    Filter a pool of tickers to include only corporate equities.
+    Excludes Indices (starting with ^) and ETFs/Benchmarks (sector: Benchmark).
+    """
+    return {
+        t: meta for t, meta in tickers_pool.items() 
+        if not t.startswith('^') and meta.get('sector') != 'Benchmark'
+    }
+
 def _guess_currency(ticker: str) -> str:
     """Heuristic to guess currency for fast FX pre-fetching."""
     if ticker.endswith(".T"): return "JPY"
@@ -234,7 +244,9 @@ def extract_stock_prices(
                 else:
                     df = _raw_prices.copy()
 
-                df = df.dropna(subset=['Close'])
+                # 🏆 DEFENSIVE SHIELD: Ensure we have full OHLC data. 
+                # Dropping rows with NaN in any price column to prevent "garbage-in" corruption.
+                df = df.dropna(subset=['Open', 'High', 'Low', 'Close'])
                 if df.empty: continue
 
                 df = df.reset_index()
@@ -479,11 +491,15 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
 
 
 
-def extract_historical_financials(tickers: dict = TICKERS) -> pd.DataFrame:
+def extract_historical_financials(tickers: dict = None) -> pd.DataFrame:
     """
-    Parallelized extraction of historical financials via yahooquery with surgical retry.
+    Parallelized extraction of annual financials (Revenue, EPS).
+    Defaults to equity-only tickers to skip ETFs and Indices.
     """
-    logger.info(f"🚀 TURBO FINANCIALS: Fetching history for {len(tickers)} companies via yahooquery...")
+    if tickers is None:
+        tickers = get_equity_tickers()
+    
+    logger.info(f"🚀 TURBO FINANCIALS: Fetching reports for {len(tickers)} equities...")
     all_data = []
     ticker_keys = list(tickers.keys())
     # AG PRO: Filter out Indices and ETFs from fundamental extraction
@@ -521,7 +537,9 @@ def extract_historical_financials(tickers: dict = TICKERS) -> pd.DataFrame:
         row_map = {
             "TotalRevenue": "revenue", 
             "BasicEPS": "eps", 
-            "DilutedEPS": "eps_diluted"
+            "DilutedEPS": "eps_diluted",
+            "NetIncome": "net_income",
+            "StockholdersEquity": "total_equity"
         }
         
         for ticker in df['symbol'].unique():
@@ -534,8 +552,12 @@ def extract_historical_financials(tickers: dict = TICKERS) -> pd.DataFrame:
             if not found_cols: continue
             
             t_filtered = t_data[["asOfDate"] + found_cols].rename(columns={"asOfDate": "date"}).rename(columns=row_map)
-            for col in ["revenue", "eps", "eps_diluted"]:
-                if col in t_filtered.columns:
+            
+            # Ensure all target columns exist even if missing from source
+            for col in ["revenue", "net_income", "total_equity", "eps", "eps_diluted"]:
+                if col not in t_filtered.columns:
+                    t_filtered[col] = pd.NA
+                else:
                     t_filtered[col] = t_filtered[col] * fx_rate
             
             t_filtered["ticker"] = ticker
@@ -551,7 +573,19 @@ def extract_historical_financials(tickers: dict = TICKERS) -> pd.DataFrame:
         logger.info(f"   📊 Fetching financials batch {i//batch_size + 1}/{len(ticker_keys)//batch_size + 1}...")
         try:
             yq = YQTicker(batch, asynchronous=True)
-            fin_df = yq.income_statement(frequency='a', trailing=False)
+            inc_df = yq.income_statement(frequency='a', trailing=False)
+            bal_df = yq.balance_sheet(frequency='a')
+            
+            # Merge Income Statement and Balance Sheet
+            if isinstance(inc_df, pd.DataFrame) and not inc_df.empty and isinstance(bal_df, pd.DataFrame) and not bal_df.empty:
+                # Standardize index to columns if needed
+                if 'symbol' in inc_df.index.names: inc_df = inc_df.reset_index()
+                if 'symbol' in bal_df.index.names: bal_df = bal_df.reset_index()
+                
+                fin_df = pd.merge(inc_df, bal_df, on=['symbol', 'asOfDate'], how='outer', suffixes=('', '_bal'))
+            else:
+                fin_df = inc_df if (isinstance(inc_df, pd.DataFrame) and not inc_df.empty) else bal_df
+                
             process_yq_fin(fin_df, successful_tickers)
         except Exception as e:
             logger.warning(f"   ⚠️ Batch financials failed: {e}")
@@ -568,7 +602,16 @@ def extract_historical_financials(tickers: dict = TICKERS) -> pd.DataFrame:
             time.sleep(random.uniform(2, 4))
             try:
                 yq = YQTicker(ticker, asynchronous=False)
-                fin_df = yq.income_statement(frequency='a', trailing=False)
+                inc_df = yq.income_statement(frequency='a', trailing=False)
+                bal_df = yq.balance_sheet(frequency='a', trailing=False)
+                
+                if isinstance(inc_df, pd.DataFrame) and not inc_df.empty and isinstance(bal_df, pd.DataFrame) and not bal_df.empty:
+                    if 'symbol' in inc_df.index.names: inc_df = inc_df.reset_index()
+                    if 'symbol' in bal_df.index.names: bal_df = bal_df.reset_index()
+                    fin_df = pd.merge(inc_df, bal_df, on=['symbol', 'asOfDate'], how='outer', suffixes=('', '_bal'))
+                else:
+                    fin_df = inc_df if (isinstance(inc_df, pd.DataFrame) and not inc_df.empty) else bal_df
+                    
                 process_yq_fin(fin_df, successful_tickers)
                 if ticker in successful_tickers:
                     logger.info(f"   ✅ Recovered (Pass 2): {ticker}")
@@ -598,11 +641,15 @@ def extract_historical_financials(tickers: dict = TICKERS) -> pd.DataFrame:
     return final_df
 
 
-def extract_quarterly_financials(tickers: dict = TICKERS) -> pd.DataFrame:
+def extract_quarterly_financials(tickers: dict = None) -> pd.DataFrame:
     """
-    Parallelized extraction of historical quarterly financials via yahooquery with surgical retry.
+    Parallelized extraction of quarterly financials.
+    Defaults to equity-only tickers to skip ETFs and Indices.
     """
-    logger.info(f"🚀 TURBO QUARTERLY FINANCIALS: Fetching history for {len(tickers)} companies via yahooquery...")
+    if tickers is None:
+        tickers = get_equity_tickers()
+    
+    logger.info(f"🚀 TURBO QUARTERLY: Fetching reports for {len(tickers)} equities...")
     all_data = []
     ticker_keys = list(tickers.keys())
     # AG PRO: Filter out Indices and ETFs from fundamental extraction
@@ -639,7 +686,9 @@ def extract_quarterly_financials(tickers: dict = TICKERS) -> pd.DataFrame:
         row_map = {
             "TotalRevenue": "revenue", 
             "BasicEPS": "eps", 
-            "DilutedEPS": "eps_diluted"
+            "DilutedEPS": "eps_diluted",
+            "NetIncome": "net_income",
+            "StockholdersEquity": "total_equity"
         }
         
         for ticker in df['symbol'].unique():
@@ -651,8 +700,12 @@ def extract_quarterly_financials(tickers: dict = TICKERS) -> pd.DataFrame:
             if not found_cols: continue
             
             t_filtered = t_data[["asOfDate"] + found_cols].rename(columns={"asOfDate": "date"}).rename(columns=row_map)
-            for col in ["revenue", "eps", "eps_diluted"]:
-                if col in t_filtered.columns:
+            
+            # Ensure all target columns exist even if missing from source
+            for col in ["revenue", "net_income", "total_equity", "eps", "eps_diluted"]:
+                if col not in t_filtered.columns:
+                    t_filtered[col] = pd.NA
+                else:
                     t_filtered[col] = t_filtered[col] * fx_rate
             
             t_filtered["ticker"] = ticker
@@ -668,7 +721,16 @@ def extract_quarterly_financials(tickers: dict = TICKERS) -> pd.DataFrame:
         logger.info(f"   🕒 Fetching quarterly batch {i//batch_size + 1}/{len(ticker_keys)//batch_size + 1}...")
         try:
             yq = YQTicker(batch, asynchronous=True)
-            fin_df = yq.income_statement(frequency='q', trailing=False)
+            inc_df = yq.income_statement(frequency='q', trailing=False)
+            bal_df = yq.balance_sheet(frequency='q')
+            
+            if isinstance(inc_df, pd.DataFrame) and not inc_df.empty and isinstance(bal_df, pd.DataFrame) and not bal_df.empty:
+                if 'symbol' in inc_df.index.names: inc_df = inc_df.reset_index()
+                if 'symbol' in bal_df.index.names: bal_df = bal_df.reset_index()
+                fin_df = pd.merge(inc_df, bal_df, on=['symbol', 'asOfDate'], how='outer', suffixes=('', '_bal'))
+            else:
+                fin_df = inc_df if (isinstance(inc_df, pd.DataFrame) and not inc_df.empty) else bal_df
+                
             process_yq_q_fin(fin_df, successful_tickers)
         except Exception as e:
             logger.warning(f"   ⚠️ Batch quarterly financials failed: {e}")
@@ -685,7 +747,16 @@ def extract_quarterly_financials(tickers: dict = TICKERS) -> pd.DataFrame:
             time.sleep(random.uniform(2, 4))
             try:
                 yq = YQTicker(ticker, asynchronous=False)
-                fin_df = yq.income_statement(frequency='q', trailing=False)
+                inc_df = yq.income_statement(frequency='q', trailing=False)
+                bal_df = yq.balance_sheet(frequency='q', trailing=False)
+                
+                if isinstance(inc_df, pd.DataFrame) and not inc_df.empty and isinstance(bal_df, pd.DataFrame) and not bal_df.empty:
+                    if 'symbol' in inc_df.index.names: inc_df = inc_df.reset_index()
+                    if 'symbol' in bal_df.index.names: bal_df = bal_df.reset_index()
+                    fin_df = pd.merge(inc_df, bal_df, on=['symbol', 'asOfDate'], how='outer', suffixes=('', '_bal'))
+                else:
+                    fin_df = inc_df if (isinstance(inc_df, pd.DataFrame) and not inc_df.empty) else bal_df
+                    
                 process_yq_q_fin(fin_df, successful_tickers)
                 if ticker in successful_tickers:
                     logger.info(f"   ✅ Recovered (Pass 2): {ticker}")
@@ -855,10 +926,17 @@ def extract_cashflows(tickers: dict = TICKERS) -> pd.DataFrame:
     return pd.DataFrame(records) if records else pd.DataFrame(columns=["ticker", "buyback_ttm", "dividends_paid_ttm"])
 
 
-def extract_historical_fcf(tickers: dict = TICKERS) -> pd.DataFrame:
+def extract_historical_fcf(tickers: dict = None) -> pd.DataFrame:
     """
     Extract historical annual Free Cash Flow (FCF) with surgical retry.
+    Defaults to equity-only tickers to skip ETFs and Indices.
     """
+    if tickers is None:
+        tickers = get_equity_tickers()
+        
+    if not tickers:
+        return pd.DataFrame()
+        
     logger.info(f"🚀 HISTORICAL FCF: Fetching {len(tickers)} tickers via yahooquery...")
     records = []
     ticker_keys = list(tickers.keys())
@@ -947,10 +1025,17 @@ def extract_historical_fcf(tickers: dict = TICKERS) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
-def extract_quarterly_fcf(tickers: dict = TICKERS) -> pd.DataFrame:
+def extract_quarterly_fcf(tickers: dict = None) -> pd.DataFrame:
     """
     Extract historical quarterly Free Cash Flow (FCF) with surgical retry.
+    Defaults to equity-only tickers to skip ETFs and Indices.
     """
+    if tickers is None:
+        tickers = get_equity_tickers()
+        
+    if not tickers:
+        return pd.DataFrame()
+        
     logger.info(f"🚀 QUARTERLY FCF: Fetching {len(tickers)} tickers via yahooquery...")
     records = []
     ticker_keys = list(tickers.keys())
@@ -1041,12 +1126,18 @@ def extract_quarterly_fcf(tickers: dict = TICKERS) -> pd.DataFrame:
     return pd.DataFrame(records)
 
     
-def extract_earnings_calendar(tickers: dict = TICKERS) -> pd.DataFrame:
+def extract_earnings_calendar(tickers: dict = None) -> pd.DataFrame:
     """
-    Parallelized extraction of upcoming earnings dates with surgical retry.
-    Uses yahooquery as Pass 1 (Batch) and yfinance as Pass 2 (Surgical).
+    Fetch upcoming earnings dates and estimates.
+    Defaults to equity-only tickers to skip ETFs and Indices.
     """
-    logger.info(f"🚀 EARNINGS CALENDAR: Fetching upcoming dates for {len(tickers)} tickers...")
+    if tickers is None:
+        tickers = get_equity_tickers()
+        
+    if not tickers:
+        return pd.DataFrame()
+        
+    logger.info(f"📅 Fetching earnings calendar for {len(tickers)} equities...")
     records = []
     ticker_keys = [t for t in tickers.keys() if not t.startswith("^")]
     successful_tickers = set()
