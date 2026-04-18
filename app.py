@@ -962,7 +962,7 @@ def _ensure_local_cache() -> bool:
         from dotenv import load_dotenv as _lde
         _lde()
         _url = os.environ.get("SUPABASE_URL")
-        _key = os.environ.get("SUPABASE_SERVICE_KEY") or os.environ.get("SUPABASE_KEY")
+        _key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_SERVICE_KEY") or os.environ.get("SUPABASE_KEY")
         _bucket = os.environ.get("S3_BUCKET_NAME", "warehouse")
         if not _url or not _key:
             return False
