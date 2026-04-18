@@ -1122,8 +1122,7 @@ def load_data():
     with get_db_connection(read_only=True) as conn:
         prices_f = conn.execute("""
             SELECT f.date, f.ticker, d.company, d.sector, d.region,
-                   f.price_open, f.price_high, f.price_low, f.price_close, 
-                   f.daily_return_pct, f.volume,
+                   f.price_close, f.daily_return_pct, f.volume,
                    f.ma_20, f.ma_50, f.ma_200, f.ma_signal, 
                    f.price_z_score, f.pct_from_ma200, f.pct_from_52w_high,
                    f.is_volume_spike, f.cap_category
@@ -1697,11 +1696,12 @@ if not prices_full.empty:
     # ── SILENT AUTO-REPAIR FOR CLOUD DATA ─────────────────────────────────────
     # If on cloud and SPY data is suspiciously low, force a silent refresh of the physical cache
     if not prices_full.empty:
-        spy_rows = len(prices_full[prices_full['ticker'] == 'SPY'])
+        ticker_count = prices_full['ticker'].nunique()
         _is_rem = os.environ.get("SUPABASE_REMOTE_MODE", "false").lower() == "true"
         _on_cloud = not _is_rem and not os.path.exists(DB_PATH)
         
-        if spy_rows < 10 and (_is_rem or _on_cloud):
+        # Ticker_count < 50 is a much more robust health check than SPY presence
+        if ticker_count < 50 and (_is_rem or _on_cloud):
             # Silent purge and reload
             clear_local_cache()
             st.cache_data.clear()
