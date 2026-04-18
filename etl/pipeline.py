@@ -245,11 +245,14 @@ def run_pipeline(lookback_days: int = 1825, force_full: bool = False, fast_mode:
                 if fund_targets:
                     logger.info(f"   🩹 SMART RECOVERY: Patching {len(fund_targets)} tickers with missing fundamentals.")
                 quarterly_df  = extract_quarterly_financials(tickers=fund_targets) if fund_targets else extract_quarterly_financials()
-                cashflow_df   = extract_cashflows(tickers=fund_targets) if fund_targets else extract_cashflows()
                 fcf_df        = extract_historical_fcf(tickers=fund_targets) if fund_targets else extract_historical_fcf()
                 fcf_q_df      = extract_quarterly_fcf(tickers=fund_targets) if fund_targets else extract_quarterly_fcf()
             else:
-                quarterly_df, cashflow_df, fcf_df, fcf_q_df = pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+                quarterly_df, fcf_df, fcf_q_df = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+
+            # 🏆 Cashflows (buyback/dividends) always run — annual data, independent of quarterly cycle
+            cashflow_df = extract_cashflows()
+
             
             # Earnings Section (7d cycle)
             if fast_mode:

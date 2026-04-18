@@ -847,10 +847,14 @@ def extract_cashflows(tickers: dict = TICKERS) -> pd.DataFrame:
             fx_rate  = fx_rates.get(currency, 1.0)
             
             # Sanity check via market cap (ADR detection)
+            # IMPORTANT: Use a large fallback (1T) to prevent false-zeroing when API call fails
             try:
                 summary = yq.summary_detail.get(ticker, {})
-                mktcap = summary.get("marketCap", 1)
-            except: mktcap = 1
+                mktcap = summary.get("marketCap", None)
+                if not mktcap or mktcap < 1_000_000:
+                    mktcap = 1_000_000_000_000  # 1T sentinel — skip ADR check if no valid mktcap
+            except:
+                mktcap = 1_000_000_000_000  # Safe fallback
 
             buyback_usd = raw_buyback * fx_rate
             div_usd     = raw_div     * fx_rate
@@ -864,6 +868,7 @@ def extract_cashflows(tickers: dict = TICKERS) -> pd.DataFrame:
                     if (buyback_usd + div_usd) / max(float(mktcap), 1) > 0.20:
                         buyback_usd, div_usd = 0.0, 0.0
                 else: buyback_usd, div_usd = 0.0, 0.0
+
 
             return {
                 "ticker": ticker,
