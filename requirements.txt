@@ -25,3 +25,4 @@ pytest
 pytest-mock
 supabase
 extra-streamlit-components
+streamlit==1.50.0
