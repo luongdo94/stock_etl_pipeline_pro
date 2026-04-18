@@ -247,11 +247,9 @@ def run_pipeline(lookback_days: int = 1825, force_full: bool = False, fast_mode:
                 quarterly_df  = extract_quarterly_financials(tickers=fund_targets) if fund_targets else extract_quarterly_financials()
                 fcf_df        = extract_historical_fcf(tickers=fund_targets) if fund_targets else extract_historical_fcf()
                 fcf_q_df      = extract_quarterly_fcf(tickers=fund_targets) if fund_targets else extract_quarterly_fcf()
+                cashflow_df   = extract_cashflows(tickers=fund_targets) if fund_targets else extract_cashflows()
             else:
-                quarterly_df, fcf_df, fcf_q_df = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-
-            # 🏆 Cashflows (buyback/dividends) always run — annual data, independent of quarterly cycle
-            cashflow_df = extract_cashflows()
+                quarterly_df, fcf_df, fcf_q_df, cashflow_df = pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
             
             # Earnings Section (7d cycle)
