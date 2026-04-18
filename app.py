@@ -1122,13 +1122,14 @@ def load_data():
     with get_db_connection(read_only=True) as conn:
         prices_f = conn.execute("""
             SELECT f.date, f.ticker, d.company, d.sector, d.region,
-                   f.price_close, f.daily_return_pct, f.volume,
+                   f.price_open, f.price_high, f.price_low, f.price_close, 
+                   f.daily_return_pct, f.volume,
                    f.ma_20, f.ma_50, f.ma_200, f.ma_signal, 
                    f.price_z_score, f.pct_from_ma200, f.pct_from_52w_high,
                    f.is_volume_spike, f.cap_category
             FROM marts.fct_daily_returns f
             LEFT JOIN marts.dim_companies d USING (ticker)
-            WHERE f.date >= CURRENT_DATE - INTERVAL 2 YEAR
+            WHERE f.date >= CURRENT_DATE - INTERVAL 3 YEAR
             ORDER BY f.date
         """).df()
 
@@ -1700,12 +1701,10 @@ if not prices_full.empty:
         _is_rem = os.environ.get("SUPABASE_REMOTE_MODE", "false").lower() == "true"
         _on_cloud = not _is_rem and not os.path.exists(DB_PATH)
         
-        # Ticker_count < 50 is a much more robust health check than SPY presence
+        # We removed st.rerun here to prevent any chance of App crashing via Infinite Loop.
+        # If there's missing data, it will be handled gracefully by UI fallbacks.
         if ticker_count < 50 and (_is_rem or _on_cloud):
-            # Silent purge and reload
-            clear_local_cache()
-            st.cache_data.clear()
-            st.rerun()
+            st.toast("⚠️ Warning: Data load seems incomplete. You might need to manually clear cache.")
 
     st.sidebar.markdown("---")
     
