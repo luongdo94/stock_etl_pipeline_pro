@@ -25,4 +25,7 @@ pytest
 pytest-mock
 supabase
 extra-streamlit-components
+great_expectations
+duckdb-engine
 streamlit==1.50.0
+openpyxl

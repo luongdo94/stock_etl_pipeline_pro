@@ -410,21 +410,7 @@ def _get_macro_fallback_from_db(conn=None) -> dict:
 
     try:
         from collections import defaultdict
-        # Fetch latest 2 rows for all macro tickers
-        rows = conn.execute("""
-            SELECT ticker, date, close
-            FROM raw.stock_prices
-            WHERE ticker IN ('SPY', '^VIX', '^TNX', 'DX-Y.NYB', '^IRX', 'CL=F', 'GC=F')
-            QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) <= 2
-            ORDER BY ticker, date DESC
-        """).fetchall()
-
-
-        by_ticker = defaultdict(list)
-        for ticker, _date, close in rows:
-            by_ticker[ticker].append(float(close))
-
-        # Helper to process values
+        
         def _process(tkr_code, fallback_key):
             prices = by_ticker.get(tkr_code, [])
             if prices:
@@ -435,6 +421,27 @@ def _get_macro_fallback_from_db(conn=None) -> dict:
                     "chg": chg, 
                     "pct": (chg / v_prev * 100) if v_prev != 0 else 0.0
                 }
+
+        # First, try to fetch with 'close' column (standard Raw table)
+        try:
+            rows = conn.execute("""
+                SELECT ticker, date, close
+                FROM raw.stock_prices
+                WHERE ticker IN ('SPY', '^VIX', '^TNX', 'DX-Y.NYB', '^IRX', 'CL=F', 'GC=F')
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) <= 2
+            """).fetchall()
+        except Exception:
+            # Fallback for Cloud/Parquet views where 'close' has been renamed to 'price_close' for marts
+            rows = conn.execute("""
+                SELECT ticker, date, price_close as close
+                FROM raw.stock_prices
+                WHERE ticker IN ('SPY', '^VIX', '^TNX', 'DX-Y.NYB', '^IRX', 'CL=F', 'GC=F')
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) <= 2
+            """).fetchall()
+
+        by_ticker = defaultdict(list)
+        for ticker, _date, close in rows:
+            by_ticker[ticker].append(float(close))
 
         _process("SPY", "SPY")
         _process("^VIX", "VIX")
@@ -1109,6 +1116,48 @@ def get_db_connection(read_only=False):
     finally:
         conn.close()
 
+@st.cache_data(ttl=86400, show_spinner="📅 Fetching Dividend Calendar...")
+def fetch_dividend_calendar(tickers_tuple: tuple) -> dict:
+    """
+    Fetch ex-dividend date and payout date for a list of tickers on-demand.
+    Uses yf.Ticker.calendar (returns datetime.date objects, most reliable source).
+    Cached for 24 hours. Returns dict: {ticker: {'ex_date': str, 'pay_date': str}}
+    """
+    import yfinance as yf
+    import datetime
+    import pandas as pd
+    result = {}
+    with open('/tmp/div_debug.log', 'a') as f:
+        f.write(f"\n--- FETCHING CALENDAR FOR {tickers_tuple} ---\n")
+        for t in tickers_tuple:
+            try:
+                # Fallback chains for robustness
+                cal = yf.Ticker(t).calendar
+                ex_d, pay_d = None, None
+                
+                if isinstance(cal, dict):
+                    ex_d  = cal.get("Ex-Dividend Date")
+                    pay_d = cal.get("Dividend Date")
+                elif isinstance(cal, pd.DataFrame): # Older yfinance handling just in case
+                    if "Ex-Dividend Date" in cal.index: ex_d = cal.loc["Ex-Dividend Date"].iloc[0]
+                    if "Dividend Date" in cal.index:    pay_d = cal.loc["Dividend Date"].iloc[0]
+                
+                f.write(f"Raw cal for {t}: {type(cal)} {cal}\n")
+                
+                ex_str  = ex_d.strftime("%d %b %Y")  if hasattr(ex_d, "strftime")  else (str(ex_d)  if pd.notna(ex_d)  else "—")
+                pay_str = pay_d.strftime("%d %b %Y") if hasattr(pay_d, "strftime") else (str(pay_d) if pd.notna(pay_d) else "—")
+                
+                result[t] = {
+                    "ex_date":  ex_str if ex_str not in ("NaT", "None", "") else "—",
+                    "pay_date": pay_str if pay_str not in ("NaT", "None", "") else "—",
+                }
+                f.write(f"Mapped {t} -> Ex: {result[t]['ex_date']}, Pay: {result[t]['pay_date']}\n")
+            except Exception as e:
+                f.write(f"Error for {t} -> {e}\n")
+                result[t] = {"ex_date": "—", "pay_date": "—"}
+    return result
+
+
 @st.cache_data(ttl=600, show_spinner="📉 Loading Institutional Data Warehouse...")
 def load_data():
     """Load all required data, normalize currencies, and pre-compute técnicos inside cache."""
@@ -1122,7 +1171,7 @@ def load_data():
                    f.is_volume_spike, f.cap_category
             FROM marts.fct_daily_returns f
             LEFT JOIN marts.dim_companies d USING (ticker)
-            WHERE f.date >= CURRENT_DATE - INTERVAL 10 YEAR
+            WHERE f.date >= CURRENT_DATE - INTERVAL 3 YEAR
             ORDER BY f.date
         """).df()
 
@@ -1690,15 +1739,14 @@ if not prices_full.empty:
     # ── SILENT AUTO-REPAIR FOR CLOUD DATA ─────────────────────────────────────
     # If on cloud and SPY data is suspiciously low, force a silent refresh of the physical cache
     if not prices_full.empty:
-        spy_rows = len(prices_full[prices_full['ticker'] == 'SPY'])
+        ticker_count = prices_full['ticker'].nunique()
         _is_rem = os.environ.get("SUPABASE_REMOTE_MODE", "false").lower() == "true"
         _on_cloud = not _is_rem and not os.path.exists(DB_PATH)
         
-        if spy_rows < 10 and (_is_rem or _on_cloud):
-            # Silent purge and reload
-            clear_local_cache()
-            st.cache_data.clear()
-            st.rerun()
+        # We removed st.rerun here to prevent any chance of App crashing via Infinite Loop.
+        # If there's missing data, it will be handled gracefully by UI fallbacks.
+        if ticker_count < 50 and (_is_rem or _on_cloud):
+            st.toast("⚠️ Warning: Data load seems incomplete. You might need to manually clear cache.")
 
     st.sidebar.markdown("---")
     
@@ -1814,8 +1862,9 @@ if not prices_full.empty:
             ls_time = pd.to_datetime(last_run['start_time']).strftime('%b %d, %H:%M')
         except: ls_time = "N/A"
         
-        crit_dq = len(dq_warnings[dq_warnings['is_critical']]) if not dq_warnings.empty else 0
-        warn_dq = len(dq_warnings[~dq_warnings['is_critical']]) if not dq_warnings.empty else 0
+        # Only count rows where violations > 0
+        crit_dq = len(dq_warnings[(dq_warnings['is_critical']) & (dq_warnings['violations'] > 0)]) if not dq_warnings.empty else 0
+        warn_dq = len(dq_warnings[(~dq_warnings['is_critical']) & (dq_warnings['violations'] > 0)]) if not dq_warnings.empty else 0
         dq_color = "#2ecc71" if (crit_dq == 0 and warn_dq == 0) else ("#e74c3c" if crit_dq > 0 else "#f1c40f")
         dq_text = "CLEAN" if (crit_dq == 0 and warn_dq == 0) else (f"{crit_dq} CRIT" if crit_dq > 0 else f"{warn_dq} WARN")
 
@@ -1854,10 +1903,10 @@ if not prices_full.empty:
         current_universe = sorted([t for t in all_tickers if t not in indices])
 
 
-st.sidebar.markdown("---")
-st.sidebar.markdown("<div class='sb-section-label'>System Controls</div>", unsafe_allow_html=True)
-if st.sidebar.button("🔄 Clear Data Cache", use_container_width=True, help="Force reload all data from DuckDB. Use after running the ETL pipeline."):
+st.sidebar.markdown("<br>", unsafe_allow_html=True)
+if st.sidebar.button("🔄 Refresh Data", use_container_width=True, type="secondary", help="Clear cache & reload from warehouse"):
     st.cache_data.clear()
+    st.toast("🚀 Refreshing Intelligence...", icon="✅")
     st.rerun()
 
 # ── USER PROFILE & SESSION ──
@@ -2588,7 +2637,7 @@ if active_tab == "3. Qualitative Audit (AI)":
             placeholder="Search and Select an Asset...",
             format_func=format_ticker,
             key="deep_ticker_selector"
-            # Loại bỏ tham số index vì Streamlit tự động dùng Session State cho widget có key
+            # Removed index parameter because Streamlit automatically uses Session State for widgets with a key
         )
         # Sync back so active_ticker stays aligned
         if deep_ticker:
@@ -4142,12 +4191,10 @@ if active_tab == "7. Portfolio Builder":
 
     # 1. LOCAL TICKER SELECTION
     all_available_tickers = sorted(prices["ticker"].unique().tolist())
-    # Exclude indices for portfolio building
     indices = ["^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"]
     stock_tickers = [t for t in all_available_tickers if t not in indices]
     
-    # ── 1. PORTFOLIO PERSISTENCE (SUPABASE SYNC) ─────────────────────────────
-    # Initial Load from Cloud DB
+    # --- 1. PORTFOLIO PERSISTENCE (SUPABASE SYNC) ---
     if 'portfolio_db_synced' not in st.session_state:
         db_portfolio = load_portfolio_from_db()
         if db_portfolio:
@@ -4155,19 +4202,172 @@ if active_tab == "7. Portfolio Builder":
             st.session_state.portfolio_shares = {t: db_portfolio[t]["shares"] for t in db_portfolio}
             st.session_state.portfolio_cost = {t: db_portfolio[t]["cost"] for t in db_portfolio}
         else:
-            defaults = ["AAPL", "NVDA", "META"] # Safe defaults for new users
+            defaults = ["AAPL", "NVDA", "META"] # Safe defaults
             st.session_state.portfolio_tickers = defaults
             st.session_state.portfolio_shares = {t: 10.0 for t in defaults}
-            st.session_state.portfolio_cost = {t: 150.0 for t in defaults} # Placeholder defaults
-            
+            st.session_state.portfolio_cost = {t: 150.0 for t in defaults}
         st.session_state.portfolio_db_synced = True
 
+    # Always ensure _portfolio_version is initialized (may be missing on first run or after cache clear)
+    if '_portfolio_version' not in st.session_state:
+        st.session_state['_portfolio_version'] = 0
+
+    _sel_version = st.session_state.get('_portfolio_version', 0)
     p_tickers = st.multiselect(
         "Select Tickers for Portfolio Construction", 
         stock_tickers, 
         default=st.session_state.portfolio_tickers, 
-        key="p_ticker_select"
+        key=f"p_ticker_select_{_sel_version}"
     )
+
+    # --- 2. Portfolio Management Tools (New Layout) ---
+    tc1, tc2 = st.columns(2)
+    
+    with tc1:
+        # --- CSV / Excel Portfolio Importer ---
+        with st.popover("📂 Import Portfolio", use_container_width=True):
+            st.markdown("**Format:** `ticker` (Required), `shares`, `cost` (Optional)")
+            uploaded_file = st.file_uploader("Select file", type=["csv", "xlsx"], label_visibility="collapsed")
+            import_mode = st.radio("Mode", ["Overwrite", "Merge (Accumulate)"], horizontal=True, label_visibility="collapsed")
+            
+            if uploaded_file is not None:
+                if st.button("▶ Start Import", key="do_import_btn", type="primary", use_container_width=True):
+                    try:
+                        import pandas as pd, io
+                        if uploaded_file.name.endswith('.csv'):
+                            raw_bytes = uploaded_file.read()
+                            decoded = raw_bytes.decode('utf-8-sig', errors='replace')
+                            first_line = next((l for l in decoded.splitlines() if l.strip()), "")
+                            counts = {sep: first_line.count(sep) for sep in [',', ';', '\t']}
+                            best_sep = max(counts, key=counts.get)
+                            idf = pd.read_csv(io.StringIO(decoded), sep=best_sep)
+                            if len(idf.columns) == 1 and best_sep in str(idf.columns[0]):
+                                stripped = '\n'.join(line.strip().strip('"') for line in decoded.splitlines() if line.strip())
+                                idf = pd.read_csv(io.StringIO(stripped), sep=best_sep)
+                        else:
+                            idf = pd.read_excel(uploaded_file)
+                        
+                        idf.columns = [str(c).lower().replace('\ufeff', '').strip() for c in idf.columns]
+                        if 'symbol' in idf.columns and 'ticker' not in idf.columns:
+                            idf.rename(columns={'symbol': 'ticker'}, inplace=True)
+                            
+                        if 'ticker' in idf.columns:
+                            s_col = 'shares' if 'shares' in idf.columns else None
+                            c_col = 'cost' if 'cost' in idf.columns else ('cost_basis' if 'cost_basis' in idf.columns else None)
+                            mapped_success, missing_tickers = [], []
+
+                            # ── OVERWRITE: wipe existing portfolio first ──────
+                            if import_mode == "Overwrite":
+                                st.session_state.portfolio_shares = {}
+                                st.session_state.portfolio_cost   = {}
+                            
+                            for _, r in idf.iterrows():
+                                raw_t = str(r['ticker']).upper().strip()
+                                final_t = next((target for target in stock_tickers if target == raw_t or target.startswith(f"{raw_t}.")), None)
+                                if raw_t == "NOVO B": final_t = "NVO" if "NVO" in stock_tickers else None
+                                
+                                if final_t:
+                                    mapped_success.append(final_t)
+                                    new_sh   = float(r[s_col])   if s_col and pd.notna(r[s_col])   else 0.0
+                                    new_cost = float(r[c_col])   if c_col and pd.notna(r[c_col])   else 0.0
+                                    
+                                    if import_mode == "Merge (Accumulate)" and final_t in st.session_state.portfolio_shares:
+                                        old_sh = st.session_state.portfolio_shares[final_t]
+                                        old_c  = st.session_state.portfolio_cost.get(final_t, 0.0)
+                                        total_sh = old_sh + new_sh
+                                        if total_sh > 0:
+                                            avg_c = ((old_sh * old_c) + (new_sh * new_cost)) / total_sh
+                                            st.session_state.portfolio_shares[final_t] = total_sh
+                                            st.session_state.portfolio_cost[final_t]   = avg_c
+                                    else:
+                                        if new_sh   > 0: st.session_state.portfolio_shares[final_t] = new_sh
+                                        if new_cost > 0: st.session_state.portfolio_cost[final_t]   = new_cost
+                                elif raw_t not in ("NAN", "") and raw_t:
+                                    missing_tickers.append(raw_t)
+                                    
+                            if mapped_success:
+                                valid = [t for t in mapped_success if t in stock_tickers]
+                                if import_mode == "Overwrite":
+                                    # Replace entirely — no legacy tickers retained
+                                    st.session_state.portfolio_tickers = list(dict.fromkeys(valid))
+                                else:
+                                    # Merge — keep existing tickers, append new ones
+                                    st.session_state.portfolio_tickers = list(dict.fromkeys(st.session_state.portfolio_tickers + valid))
+                                st.session_state['_portfolio_version'] += 1
+                                st.session_state['_import_toast'] = f"✅ Imported {len(valid)} assets!"
+                                if missing_tickers:
+                                    st.session_state['_import_warnings'] = f"Skipped {len(missing_tickers)} unsupported: {', '.join(missing_tickers[:5])}"
+                                st.rerun()
+                    except Exception as e:
+                        st.error(f"Import failed: {e}")
+    
+    with tc2:
+        # --- Manual Transaction Tool ---
+        with st.popover("➕ Add Trade", use_container_width=True):
+            st.caption("Register a manual transaction")
+            mt_ticker = st.selectbox("Select Asset", stock_tickers, key="mt_tick_sel")
+            mt_type   = st.radio("Transaction Type", ["🟢 Buy", "🔴 Sell"], horizontal=True, key="mt_type_radio")
+            mt_shares = st.number_input("Shares", min_value=0.0001, value=1.0, step=1.0, key="mt_shares_input")
+            
+            # Only show price input for Buy
+            mt_price = 0.0
+            if "Buy" in mt_type:
+                mt_price = st.number_input("Purchase Price", min_value=0.0001, value=1.0, step=0.01, key="mt_price_input")
+            
+            if st.button("Confirm Transaction", type="primary", use_container_width=True):
+                if "Buy" in mt_type:
+                    # ── BUY: Add shares, recalculate WAC ──────────────────────
+                    if mt_price <= 0:
+                        st.warning("Purchase price must be greater than 0.")
+                    else:
+                        if mt_ticker not in st.session_state.portfolio_tickers:
+                            st.session_state.portfolio_tickers.append(mt_ticker)
+                            st.session_state.portfolio_shares[mt_ticker] = mt_shares
+                            st.session_state.portfolio_cost[mt_ticker] = mt_price
+                        else:
+                            old_sh = st.session_state.portfolio_shares.get(mt_ticker, 0.0)
+                            old_c  = st.session_state.portfolio_cost.get(mt_ticker, 0.0)
+                            total_sh = old_sh + mt_shares
+                            if total_sh > 0:
+                                avg_c = ((old_sh * old_c) + (mt_shares * mt_price)) / total_sh
+                                st.session_state.portfolio_shares[mt_ticker] = total_sh
+                                st.session_state.portfolio_cost[mt_ticker] = avg_c
+                        # Persist to DB
+                        save_portfolio_to_db(
+                            st.session_state.portfolio_shares,
+                            st.session_state.portfolio_cost
+                        )
+                        st.session_state['_portfolio_version'] += 1
+                        st.toast(f"✅ Bought {mt_shares:.4g} shares of {mt_ticker}")
+                        st.rerun()
+                else:
+                    # ── SELL: Reduce shares, WAC stays the same ───────────────
+                    if mt_ticker not in st.session_state.portfolio_tickers:
+                        st.warning(f"⚠️ {mt_ticker} is not in your portfolio.")
+                    else:
+                        owned = st.session_state.portfolio_shares.get(mt_ticker, 0.0)
+                        if mt_shares > owned:
+                            st.warning(f"⚠️ You only own {owned:.4g} shares of {mt_ticker}. Cannot sell {mt_shares:.4g}.")
+                        else:
+                            remaining = owned - mt_shares
+                            if remaining <= 0.0001:
+                                # Close the position entirely
+                                st.session_state.portfolio_tickers.remove(mt_ticker)
+                                st.session_state.portfolio_shares.pop(mt_ticker, None)
+                                st.session_state.portfolio_cost.pop(mt_ticker, None)
+                                toast_msg = f"🔴 Closed position: {mt_ticker} removed from portfolio"
+                            else:
+                                # Partial sell — WAC unchanged
+                                st.session_state.portfolio_shares[mt_ticker] = remaining
+                                toast_msg = f"🔴 Sold {mt_shares:.4g} shares of {mt_ticker} · Remaining: {remaining:.4g}"
+                            # Persist to DB
+                            save_portfolio_to_db(
+                                st.session_state.portfolio_shares,
+                                st.session_state.portfolio_cost
+                            )
+                            st.session_state['_portfolio_version'] += 1
+                            st.toast(toast_msg)
+                            st.rerun()
 
     # Detect UI Selection Changes
     if p_tickers != st.session_state.portfolio_tickers:
@@ -4210,7 +4410,7 @@ if active_tab == "7. Portfolio Builder":
         # 2. BULK DATA EDITOR
         render_header("layers", "Capital Allocation Grid", level="#####")
         
-        with st.form("portfolio_editor_form"):
+        with st.form("portfolio_builder_main_form"):
             # KEY FIX: The data_editor should be the ONLY way to change weights for the current tickers
             edited_df = st.data_editor(
                 st.session_state.portfolio_df,
@@ -4246,687 +4446,859 @@ if active_tab == "7. Portfolio Builder":
         # 3. WEIGHT & VALUE CALCULATION
         edited_df["Market Value"] = edited_df["Price (€)"] * edited_df["Shares"]
         total_p_val = edited_df["Market Value"].sum()
-        
-
-
     
-    # 3. WEIGHT & VALUE CALCULATION
-    edited_df["Market Value"] = edited_df["Price (€)"] * edited_df["Shares"]
-    total_p_val = edited_df["Market Value"].sum()
+        if total_p_val > 0:
+            edited_df["Weight (%)"] = (edited_df["Market Value"] / total_p_val) * 100
+            weights = (edited_df["Market Value"] / total_p_val).values
+            current_tickers = edited_df["Ticker"].tolist()
+            weights = (edited_df["Market Value"] / total_p_val).values
+            n_assets = len(current_tickers)
     
-    if total_p_val > 0:
-        edited_df["Weight (%)"] = (edited_df["Market Value"] / total_p_val) * 100
-        weights = (edited_df["Market Value"] / total_p_val).values
-        current_tickers = edited_df["Ticker"].tolist()
-        weights = (edited_df["Market Value"] / total_p_val).values
-        n_assets = len(current_tickers)
-
-        # ── 4. PERFORMANCE ENGINE (Weighted) ──
-        # Use filtered 'prices' to follow the global date filter
-        p_prices = prices[prices["ticker"].isin(current_tickers)]
-        ret_matrix = p_prices.pivot(index="date", columns="ticker", values="daily_return_pct").fillna(0) / 100
-        # Ensure column order matches current_tickers for correct weighting
-        ret_matrix = ret_matrix[current_tickers]
-        
-        # ── Pre-compute matrices for Optimizer & Analytics ──
-        cov_matrix = ret_matrix.cov() * 252
-        hist_rets  = ret_matrix.mean() * 252
-
-        # Show Total Summary
-        total_cost_basis = (edited_df["Cost Basis (€)"] * edited_df["Shares"]).sum()
-        total_pnl = total_p_val - total_cost_basis
-        pnl_pct = (total_pnl / total_cost_basis * 100) if total_cost_basis > 0 else 0
-
-        port_daily = (ret_matrix * weights).sum(axis=1)
-        cum_returns = (1 + port_daily).cumprod()
-
-        # Risk Metrics
-        risk_free = 0.04 / 252
-        excess_returns = port_daily - risk_free
-        sharpe = (excess_returns.mean() / excess_returns.std()) * np.sqrt(252) if excess_returns.std() > 0 else 0
-        running_max = cum_returns.cummax()
-        drawdown = (cum_returns / running_max) - 1
-        max_dd = drawdown.min() * 100
-        vol = port_daily.std() * np.sqrt(252) * 100
-        confidence_level = 0.05
-        var_95 = np.percentile(port_daily, confidence_level * 100) * 100
-        cvar_95 = port_daily[port_daily <= np.percentile(port_daily, confidence_level * 100)].mean() * 100
-
-        # ═══════════════════════════════════════════════════════════════════
-        # LAYER 1 · PORTFOLIO HEALTH DASHBOARD
-        # ═══════════════════════════════════════════════════════════════════
-        render_header("activity", "Portfolio Health Dashboard")
-        l1_left, l1_right = st.columns([1, 2])
-        with l1_left:
-            st.metric("Total Market Value", f"€{total_p_val:,.2f}")
-            st.metric("Total Cost Basis",   f"€{total_cost_basis:,.2f}")
-            st.metric("Overall PnL",         f"€{total_pnl:,.2f}", delta=f"{pnl_pct:.2f}%")
-            st.markdown("<br>", unsafe_allow_html=True)
-
-            # Risk tiles stacked vertically
-            render_metric_tile("Weighted Return", f"{(cum_returns.iloc[-1]-1)*100:.1f}%", delta=(cum_returns.iloc[-1]-1)*100)
-            st.caption(f"Timeframe: {selected_horizon}")
-            if sharpe > 2.0: s_label, s_color = "💎 ELITE", "#00ffcc"
-            elif sharpe > 1.5: s_label, s_color = "🟢 STRONG", "#2ecc71"
-            elif sharpe > 1.0: s_label, s_color = "🟡 OK", "#f1c40f"
-            else: s_label, s_color = "🔴 POOR", "#e74c3c"
-            render_metric_tile("Sharpe Ratio", f"{sharpe:.2f} · {s_label}", help_text="< 1.0 Poor | 1.0–1.5 Acceptable | 1.5–2.0 Strong | > 2.0 Elite")
-            render_metric_tile("Max Drawdown",  f"{max_dd:.1f}%")
-            render_metric_tile("Annual Vol",    f"{vol:.1f}%")
-            render_metric_tile("VaR (95%)",     f"{var_95:.2f}%")
-            render_metric_tile("CVaR (95%)",    f"{cvar_95:.2f}%")
-
-        with l1_right:
-            # ── Benchmark Growth Simulation ──────────────────────────────
-            render_header("chart", "Growth Simulation vs Benchmark", level="#####")
-            bench_options = {
-                "S&P 500 (SPY)": "SPY",
-                "Nasdaq 100 (QQQ)": "QQQ",
-                "DAX 40 (^GDAXI)": "^GDAXI",
-                "MSCI World (IWDA.AS)": "IWDA.AS"
-            }
-            sel_bench_label = st.selectbox("Select Performance Benchmark", options=list(bench_options.keys()), index=0, key="bench_l1")
-            sel_bench_ticker = bench_options[sel_bench_label]
-
-            initial_investment = 10000
-            backtest_df = pd.DataFrame({'date': cum_returns.index, 'cum_return': cum_returns.values})
-            backtest_df["portfolio_value"] = backtest_df["cum_return"] * initial_investment
-
-            fig_bt = go.Figure()
-            fig_bt.add_trace(go.Scatter(
-                x=backtest_df["date"], y=backtest_df["portfolio_value"],
-                name="Your Portfolio", line=dict(color="#00ffcc", width=3)
-            ))
-
-            bench_prices = prices_full[
-                (prices_full["ticker"] == sel_bench_ticker) &
-                (prices_full["date"] >= t_start) &
-                (prices_full["date"] <= t_end)
-            ].sort_values("date")
-            if not bench_prices.empty:
-                bench_prices = bench_prices[bench_prices["date"].isin(cum_returns.index)]
-                if not bench_prices.empty and bench_prices["daily_return_pct"].notna().any():
-                    bench_daily = bench_prices["daily_return_pct"].fillna(0) / 100
-                    bench_cum   = (1 + bench_daily).cumprod()
-                    bench_cum   = bench_cum / bench_cum.iloc[0]
-                    bench_prices = bench_prices.copy()
-                    bench_prices["bench_value"] = bench_cum.values * initial_investment
-                    fig_bt.add_trace(go.Scatter(
-                        x=bench_prices["date"], y=bench_prices["bench_value"],
-                        name=sel_bench_label, line=dict(color="#f1c40f", width=2, dash="dot")
-                    ))
-            fig_bt.update_layout(
-                template="plotly_dark", height=500,
-                yaxis_title="Value (€)", margin=dict(t=10, l=10, r=10, b=10)
-            )
-            st.plotly_chart(fig_bt, use_container_width=True)
-
-        st.markdown("---")
-
-        # ═══════════════════════════════════════════════════════════════════
-        # LAYER 2 · STRUCTURAL DIAGNOSIS
-        # ═══════════════════════════════════════════════════════════════════
-        render_header("globe", "Structural Diagnosis — Exposure & Correlation")
-        l2c1, l2c2, l2c3 = st.columns(3)
-        with l2c1:
-            render_header("globe", "Geographic Exposure", level="#####")
-            reg_dist = edited_df.groupby("Region")["Market Value"].sum().reset_index()
-            fig_reg = px.pie(reg_dist, values='Market Value', names='Region', hole=0.4,
-                             color_discrete_sequence=px.colors.qualitative.Pastel)
-            fig_reg.update_layout(template="plotly_dark", height=300, margin=dict(l=10,r=10,t=10,b=10),
-                                  legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5))
-            st.plotly_chart(fig_reg, use_container_width=True)
-
-        with l2c2:
-            render_header("layers", "Thematic Exposure (Sector)", level="#####")
-            sec_dist = edited_df.groupby("Sector")["Market Value"].sum().reset_index()
-            fig_sec = px.pie(sec_dist, values='Market Value', names='Sector', hole=0.4,
-                             color_discrete_sequence=px.colors.qualitative.Safe)
-            fig_sec.update_layout(template="plotly_dark", height=300, margin=dict(l=10,r=10,t=10,b=10),
-                                  legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5))
-            st.plotly_chart(fig_sec, use_container_width=True)
-
-        with l2c3:
-            render_header("activity", "Asset Correlation Matrix", level="#####")
-            corr_matrix = ret_matrix.corr()
-            mean_corr = (corr_matrix.values.sum() - n_assets) / (n_assets**2 - n_assets) if n_assets > 1 else 0
-            if mean_corr > 0.45:
-                st.warning(f"⚠️ High Correlation ({mean_corr:.2f}) — risk concentration!")
-            fig_corr = px.imshow(
-                corr_matrix, text_auto=".2f",
-                color_continuous_scale="RdBu_r", zmin=-1, zmax=1,
-                template="plotly_dark", aspect="auto"
-            )
-            fig_corr.update_layout(height=300, margin=dict(l=0,r=0,t=10,b=0))
-            st.plotly_chart(fig_corr, use_container_width=True)
-
-        st.markdown("---")
-        
-        # ═══════════════════════════════════════════════════════════════════
-        # LAYER 3 · STRATEGIC REBALANCING & OPTIMIZATION
-        # ═══════════════════════════════════════════════════════════════════
-        # ── 4.6. AI REBALANCING COMMAND CENTER (PREMIUM CARD GRID) ──────────────
-        render_header("ai", "Institutional Rebalancing Command Center")
-        
-        # Use chunks for grid layout (ULTRA-DENSE: 6 per row)
-        n_cols = 6
-        tickers_list = edited_df.to_dict('records')
-        
-        for i in range(0, len(tickers_list), n_cols):
-            cols = st.columns(n_cols)
-            chunk = tickers_list[i : i + n_cols]
+            # ── 4. PERFORMANCE ENGINE (Weighted) ──
+            # Use filtered 'prices' to follow the global date filter
+            p_prices = prices[prices["ticker"].isin(current_tickers)]
+            ret_matrix = p_prices.pivot(index="date", columns="ticker", values="daily_return_pct").fillna(0) / 100
+            # Ensure column order matches current_tickers for correct weighting
+            ret_matrix = ret_matrix[current_tickers]
             
-            for idx, row in enumerate(chunk):
-                t = row["Ticker"]
-                w = row["Weight (%)"]
-                
-                # Fetch AI target from reco_df
-                ai_meta = reco_df[reco_df["ticker"] == t].iloc[0] if not reco_df[reco_df["ticker"] == t].empty else None
-                
-                if ai_meta is not None:
-                    ai_score = ai_meta["score"]
-                    upside = ai_meta["upside_pct"]
-
-                    # ── Read action from the shared m_df source ──────────────
-                    status = _action_map.get(t, "HOLD / NEUTRAL")
-
-                    # Derive display color from canonical action label
-                    if status == "STRONG BUY":          color = "#00ffcc"; border = "2px solid #00ffcc"
-                    elif "BUY" in status:               color = "#2ecc71"; border = "1px solid #2ecc71"
-                    elif "SELL" in status:              color = "#ff4b4b"; border = "2px solid #ff4b4b"
-                    elif "REDUCE" in status:            color = "#e67e22"; border = "1px solid #e67e22"
-                    else:                               color = "#3498db"; border = "1px solid rgba(255,255,255,0.1)"
-
-                    reason = f"Quality score {ai_score}"
-                    if upside > 10: reason = f"Upside potential (+{upside:.1f}%)"
-                    if w > 20: reason = "Risk concentration limit exceeded"
-
-                    with cols[idx]:
-                        st.markdown(f"""
-                        <div style='background:rgba(255,255,255,0.02); border:{border}; border-radius:5px; padding:6px; margin-bottom:4px;'>
-                            <div style='display:flex; justify-content:space-between; margin-bottom:4px;'>
-                                <span style='font-size:0.8rem; font-weight:800; color:{color};'>{t}</span>
-                                <span style='background:{color}22; color:{color}; padding:1px 4px; border-radius:2px; font-size:0.45rem; font-weight:700;'>{status}</span>
-                            </div>
-                            <div style='display:grid; grid-template-columns: 1fr 1fr; gap:4px; margin-bottom:4px;'>
-                                <div><div style='color:#777; font-size:0.45rem; text-transform:uppercase;'>WGT</div><div style='font-size:0.75rem; font-weight:700;'>{w:.1f}%</div></div>
-                                <div><div style='color:#777; font-size:0.45rem; text-transform:uppercase;'>SCORE</div><div style='font-size:0.75rem; font-weight:700;'>{ai_score}</div></div>
-                            </div>
-                            <div style='color:#666; font-size:0.55rem; border-top:1px solid rgba(255,255,255,0.05); padding-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;'>
-                                {reason}
-                            </div>
-                        </div>
-                        """, unsafe_allow_html=True)
-                else:
-                    with cols[idx]:
-                        st.markdown(f"""
-                        <div style='background:rgba(255,255,255,0.01); border:1px dashed rgba(255,255,255,0.08); border-radius:5px; padding:6px; text-align:center;'>
-                            <div style='color:#555; font-size:0.5rem;'>{t}</div>
-                        </div>
-                        """, unsafe_allow_html=True)
-
-        # ── 4.7. REBALANCING OPTIMIZER ───────────────────────────────────────────
-        st.markdown("### 📊 Portfolio Rebalancing Hub")
-        
-        with st.expander("Institutional Rebalancing Protocol & Rulebook", expanded=False):
-            st.markdown("""
-            **1. Security Assessment Construct (5-Pillar Matrix)**  
-            The analytical engine issues tactical recommendations based on a composite score derived from 5 independent pillars: Technical Trend, AI Quality, Sector-weighted Valuation, Volatility Risk, and Support/Resistance R/R.
-            * **STRONG BUY:** The security achieves optimal alignment across all quantitative pillars. It exhibits elite fundamental quality coupled with highly favorable Risk/Reward metrics. Represents an ideal entry zone.
-            * **BUY / ACCUMULATE:** Strong underlying fundamentals and robust long-term signals, though potentially undergoing short-term consolidation. Suitable for progressive accumulation.
-            * **HOLD / NEUTRAL:** Mixed signals or lack of clear directional advantage. This also applies to elite assets currently trading at premium multiples (overbought). Capital allocation should be deferred pending a structural pullback.
-            * **REDUCE / UNDERPERFORM:** Asset is technically overextended (RSI > 70) yielding elevated tactical risk. Recommends partial profit-taking to mitigate impending mean reversion.
-            * **SELL / AVOID:** Significant deterioration in technical trends and poor profitability metrics. High probability of capital depreciation. Focus shifts to capital preservation.
-
-            **2. Portfolio Strategy Optimization (Modern Portfolio Theory)**  
-            * **Minimum Volatility:** Prioritizes capital preservation by overwriting cap-weights with a mathematical minimization of portfolio variance. It actively strips out high-beta components. **Application:** Systemic risk spikes, macroeconomic distress, or defensive posturing.
-            * **Risk Parity:** Discards market capitalization entirely. Allocates capital such that the *marginal risk contribution* of each asset forms an equal slice of the total portfolio risk. **Application:** Core long-term portfolio structuring (e.g., All-Weather framework), ensuring no single asset dictates volatility.
-            * **Equal Weight:** A disciplined 1/N allocation scaling. Functionally enforces buying low and selling high during rebalancing cycles. **Application:** Mitigating concentration risk in cap-weighted indices (e.g., extreme mega-cap tech dominance) and maximizing broad diversification.
-            * **Max Sharpe (Optimal MPT):** Implements Markowitz Mean-Variance Optimization. Locates the exact tangency portfolio on the Efficient Frontier, mathematically yielding the maximum return per unit of volatility. **Application:** Standard bullish to neutral market environments demanding optimal risk-adjusted growth.
-            * **Maximum Return:** Agnostic to portfolio variance. Hyper-concentrates capital into the assets demonstrating the highest historical momentum and largest expected returns. **Application:** Aggressive short-term tactical plays during high-conviction momentum rallies.
-            """)
-
-        if 'pending_optimization' not in st.session_state:
-            st.session_state.pending_optimization = None
-        if 'pending_opt_strategy' not in st.session_state:
-            st.session_state.pending_opt_strategy = None
-
-        # ── Strategy Controls ──────────────────────────────────────────────
-        strat_col, min_w_col, _ = st.columns([2, 1, 1])
-        with strat_col:
-            strategy_options = {
-                "🛡️ Minimum Volatility (Lowest Risk)":   "min_vol",
-                "⚖️ Risk Parity (Strategic Balance)":   "risk_parity",
-                "🌐 Equal Weight (Max Diversification)": "equal_weight",
-                "🚀 Max Sharpe (Risk-Adjusted Growth)":  "max_sharpe",
-                "🎯 Maximum Return (Highest Growth)":    "max_return",
-            }
-            sel_strategy_label = st.selectbox(
-                "Optimization Strategy",
-                options=list(strategy_options.keys()), index=2,
-                help="Choose how to distribute capital: from lowest risk (Min Vol) to highest growth (Max Return)."
-            )
-            sel_strategy = strategy_options[sel_strategy_label]
-
-        with min_w_col:
-            min_weight_pct = st.slider(
-                "Min Weight / Ticker (%)",
-                min_value=0, max_value=10, value=2, step=1,
-                help="Floor constraint: no ticker will be weighted below this level. Prevents the optimizer from fully selling out a position."
-            )
-            min_w = min_weight_pct / 100.0
-
-        # ── Strategy Descriptions ──────────────────────────────────────────
-        _strategy_descriptions = {
-            "min_vol": (
-                "**🛡️ Minimum Volatility** — Finds the allocation with the **lowest possible portfolio variance**, "
-                "regardless of expected returns. Ideal for capital preservation and bear market defense. "
-                "Widely used by pension funds and the MSCI Minimum Volatility Index family."
-            ),
-            "risk_parity": (
-                "**⚖️ Risk Parity** — Allocates capital so each asset contributes **equally** to total portfolio risk. "
-                "Pioneer strategy used by Ray Dalio (Bridgewater) for the 'All Weather' portfolio. "
-                "High-volatility assets receive less capital; stable assets receive more."
-            ),
-            "equal_weight": (
-                "**🌐 Equal Weight (1/N)** — Splits capital evenly across all holdings. Simple yet powerful "
-                "diversification popularized by the S&P 500 Equal Weight Index (RSP). "
-                "Avoids the estimation errors often found in complex mathematical models."
-            ),
-            "max_sharpe": (
-                "**🚀 Max Sharpe (Markowitz MVO)** — Finds the allocation that maximizes return per unit of risk "
-                "(Sharpe Ratio). Based on Harry Markowitz's Nobel Prize-winning theory. Best for risk-adjusted "
-                "growth but results tend to be concentrated in top-performing assets."
-            ),
-            "max_return": (
-                "**🎯 Maximum Return** — Maximizes expected annual return with no regard for volatility. "
-                "A high-conviction, aggressive strategy favored by George Soros and Stanley Druckenmiller: "
-                "'To make superior returns, concentrate on what you are most right about.' **Use with caution.**"
-            ),
-        }
-        st.markdown(
-            f"<div style='background:rgba(255,255,255,0.03); padding:10px 14px; border-radius:8px; "
-            f"border-left:3px solid #00d4ff; margin-bottom:12px; font-size:0.83rem;'>"
-            f"{_strategy_descriptions[sel_strategy]}</div>",
-            unsafe_allow_html=True
-        )
-
-        # ── Core Optimization Functions ────────────────────────────────────
-        def _run_max_sharpe(hist_rets, cov_matrix, n_assets, min_w):
-            """Maximize Sharpe Ratio (Markowitz MVO) with per-asset floor constraint."""
-            def portfolio_stats(w):
-                p_ret = np.sum(hist_rets.values * w)
-                p_vol = np.sqrt(np.dot(w.T, np.dot(cov_matrix, w)))
-                p_sharpe = (p_ret - 0.04) / p_vol if p_vol > 0 else 0
-                return p_ret, p_vol, p_sharpe
-
-            # Ensure floor doesn't exceed 1/n (prevent infeasibility)
-            floor = min(min_w, 0.9 / n_assets)
-            cap = min(0.40, 1.0 - floor * (n_assets - 1))
-            bounds = tuple((floor, cap) for _ in range(n_assets))
-            constraints = [
-                {'type': 'eq', 'fun': lambda x: np.sum(x) - 1},
-            ]
-            init_w = np.array([1.0 / n_assets] * n_assets)
-            result = minimize(lambda w: -portfolio_stats(w)[2], init_w,
-                              method='SLSQP', bounds=bounds, constraints=constraints)
-            return result.x if result.success else init_w
-
-        def _run_risk_parity(cov_matrix, n_assets, min_w):
-            """Risk Parity: equalize marginal risk contribution of each asset."""
-            def risk_contributions(w, cov):
-                port_vol = np.sqrt(np.dot(w.T, np.dot(cov, w)))
-                marginal  = np.dot(cov, w) / port_vol
-                contrib   = w * marginal
-                return contrib
-
-            def rp_objective(w):
-                rc = risk_contributions(w, cov_matrix.values)
-                target = 1.0 / n_assets
-                return np.sum((rc / rc.sum() - target) ** 2)
-
-            floor = min(min_w, 0.9 / n_assets)
-            bounds = tuple((floor, 1.0) for _ in range(n_assets))
-            constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - 1}]
-            init_w = np.array([1.0 / n_assets] * n_assets)
-            result = minimize(rp_objective, init_w, method='SLSQP',
-                              bounds=bounds, constraints=constraints,
-                              options={'ftol': 1e-10, 'maxiter': 1000})
-            return result.x if result.success else init_w
-
-        def _run_equal_weight(n_assets):
-            """Equal Weight (1/N): simple uniform allocation."""
-            return np.array([1.0 / n_assets] * n_assets)
-
-        def _run_min_vol(cov_matrix, n_assets, min_w):
-            """Minimum Volatility: minimize portfolio standard deviation."""
-            floor = min(min_w, 0.9 / n_assets)
-            cap = min(0.40, 1.0 - floor * (n_assets - 1))
-            bounds = tuple((floor, cap) for _ in range(n_assets))
-            constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - 1}]
-            init_w = np.array([1.0 / n_assets] * n_assets)
-
-            def port_vol(w):
-                return np.sqrt(np.dot(w.T, np.dot(cov_matrix, w)))
-
-            result = minimize(port_vol, init_w, method='SLSQP',
-                              bounds=bounds, constraints=constraints,
-                              options={'ftol': 1e-12, 'maxiter': 1000})
-            return result.x if result.success else init_w
-
-        def _run_max_return(hist_rets, n_assets, min_w):
-            """Maximum Return: maximize expected annual return (ignores volatility)."""
-            # Simple analytical solution: concentrate on highest-return assets
-            floor = min(min_w, 0.9 / n_assets)
-            cap   = min(0.40, 1.0 - floor * (n_assets - 1))
-            # Sort assets by expected return descending
-            sorted_idx = np.argsort(hist_rets.values)[::-1]
-            w = np.full(n_assets, floor)
-            remaining = 1.0 - floor * n_assets
-            for i in sorted_idx:
-                alloc = min(cap - floor, remaining)
-                w[i] += alloc
-                remaining -= alloc
-                if remaining <= 1e-9:
-                    break
-            return w
-
-        # ── Action Buttons ─────────────────────────────────────────────────
-        act_col1, act_col2 = st.columns([1, 1])
-        with act_col1:
-            if st.button("🚀 GENERATE OPTIMAL REBALANCE", use_container_width=True, type="primary"):
-                try:
-                    if sel_strategy == "min_vol":
-                        opt_weights = _run_min_vol(cov_matrix, n_assets, min_w)
-                    elif sel_strategy == "risk_parity":
-                        opt_weights = _run_risk_parity(cov_matrix, n_assets, min_w)
-                    elif sel_strategy == "equal_weight":
-                        opt_weights = _run_equal_weight(n_assets)
-                    elif sel_strategy == "max_sharpe":
-                        opt_weights = _run_max_sharpe(hist_rets, cov_matrix, n_assets, min_w)
-                    else:  # max_return
-                        opt_weights = _run_max_return(hist_rets, n_assets, min_w)
-
-                    # Build comparison table
-                    comparison_data = []
-                    for idx, ticker in enumerate(current_tickers):
-                        price   = latest_prices.get(ticker, 1)
-                        curr_w  = weights[idx] * 100
-                        rec_w   = opt_weights[idx] * 100
-                        curr_s  = st.session_state.portfolio_shares.get(ticker, 0)
-                        rec_s   = (opt_weights[idx] * total_p_val) / price
-                        delta_s = rec_s - curr_s
-                        action  = "HOLD"
-                        if delta_s >  0.1: action = "BUY"
-                        elif delta_s < -0.1: action = "SELL"
-                        comparison_data.append({
-                            "Ticker":            ticker,
-                            "Current Weight %":  curr_w,
-                            "Optimal Weight %":  rec_w,
-                            "Current Shares":    curr_s,
-                            "Optimal Shares":    rec_s,
-                            "Action":            action,
-                            "Delta Shares":      delta_s,
-                            "Est. Value (€)":    delta_s * price,
-                        })
-
-                    st.session_state.pending_optimization = pd.DataFrame(comparison_data)
-                    st.session_state.pending_opt_strategy = sel_strategy_label
-                    st.rerun()
-
-                except Exception as e:
-                    st.error(f"Optimization failed: {e}")
-
-        with act_col2:
-            pass
-            # csv = edited_df.to_csv(index=False).encode('utf-8')
-            # st.download_button(
-            #     label="📥 DOWNLOAD PORTFOLIO (CSV)",
-            #     data=csv,
-            #     file_name=f"portfolio_{datetime.now().strftime('%Y%m%d')}.csv",
-            #     mime="text/csv",
-            #     use_container_width=True
-            # )
-
-        # ── Display Suggestions ────────────────────────────────────────────
-        if st.session_state.pending_optimization is not None:
-            st.markdown("---")
-            _used_strategy = st.session_state.pending_opt_strategy or "Unknown Strategy"
-            st.info(f"🎯 **Suggested Rebalancing · Strategy: {_used_strategy}**")
-
-            # ── Expected metrics after rebalancing ──────────────────────
-            _opt_w_arr = np.array(st.session_state.pending_optimization["Optimal Weight %"].values) / 100
-            try:
-                _exp_ret  = np.sum(hist_rets.values * _opt_w_arr) * 100
-                _exp_vol  = np.sqrt(np.dot(_opt_w_arr.T, np.dot(cov_matrix, _opt_w_arr))) * 100
-                _exp_srp  = (_exp_ret/100 - 0.04) / (_exp_vol/100) if _exp_vol > 0 else 0
-                _curr_ret = np.sum(hist_rets.values * weights) * 100
-                _curr_vol = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights))) * 100
-                _curr_srp = (_curr_ret/100 - 0.04) / (_curr_vol/100) if _curr_vol > 0 else 0
-
-                _m1, _m2, _m3, _m4 = st.columns(4)
-                with _m1: render_metric_tile("Expected Annual Return", f"{_exp_ret:.1f}%", delta=_exp_ret - _curr_ret)
-                with _m2: render_metric_tile("Expected Annual Vol",    f"{_exp_vol:.1f}%")
-                with _m3: render_metric_tile("Expected Sharpe",        f"{_exp_srp:.2f}", delta=_exp_srp - _curr_srp)
-                with _m4: render_metric_tile("Min Weight Floor",       f"{min_weight_pct}%")
+            # ── Pre-compute matrices for Optimizer & Analytics ──
+            cov_matrix = ret_matrix.cov() * 252
+            hist_rets  = ret_matrix.mean() * 252
+    
+            # Show Total Summary
+            total_cost_basis = (edited_df["Cost Basis (€)"] * edited_df["Shares"]).sum()
+            total_pnl = total_p_val - total_cost_basis
+            pnl_pct = (total_pnl / total_cost_basis * 100) if total_cost_basis > 0 else 0
+    
+            port_daily = (ret_matrix * weights).sum(axis=1)
+            cum_returns = (1 + port_daily).cumprod()
+    
+            # Risk Metrics
+            risk_free = 0.04 / 252
+            excess_returns = port_daily - risk_free
+            sharpe = (excess_returns.mean() / excess_returns.std()) * np.sqrt(252) if excess_returns.std() > 0 else 0
+            running_max = cum_returns.cummax()
+            drawdown = (cum_returns / running_max) - 1
+            max_dd = drawdown.min() * 100
+            vol = port_daily.std() * np.sqrt(252) * 100
+            confidence_level = 0.05
+            var_95 = np.percentile(port_daily, confidence_level * 100) * 100
+            cvar_95 = port_daily[port_daily <= np.percentile(port_daily, confidence_level * 100)].mean() * 100
+    
+            # ═══════════════════════════════════════════════════════════════════
+            # LAYER 1 · PORTFOLIO HEALTH DASHBOARD
+            # ═══════════════════════════════════════════════════════════════════
+            render_header("activity", "Portfolio Health Dashboard")
+            l1_left, l1_right = st.columns([1, 2])
+            with l1_left:
+                st.metric("Total Market Value", f"€{total_p_val:,.2f}")
+                st.metric("Total Cost Basis",   f"€{total_cost_basis:,.2f}")
+                st.metric("Overall PnL",         f"€{total_pnl:,.2f}", delta=f"{pnl_pct:.2f}%")
                 st.markdown("<br>", unsafe_allow_html=True)
-            except Exception:
-                pass  # metrics are optional - skip on error
+    
+                # Risk tiles stacked vertically
+                render_metric_tile("Weighted Return", f"{(cum_returns.iloc[-1]-1)*100:.1f}%", delta=(cum_returns.iloc[-1]-1)*100)
+                st.caption(f"Timeframe: {selected_horizon}")
+                if sharpe > 2.0: s_label, s_color = "💎 ELITE", "#00ffcc"
+                elif sharpe > 1.5: s_label, s_color = "🟢 STRONG", "#2ecc71"
+                elif sharpe > 1.0: s_label, s_color = "🟡 OK", "#f1c40f"
+                else: s_label, s_color = "🔴 POOR", "#e74c3c"
+                render_metric_tile("Sharpe Ratio", f"{sharpe:.2f} · {s_label}", help_text="< 1.0 Poor | 1.0–1.5 Acceptable | 1.5–2.0 Strong | > 2.0 Elite")
+                render_metric_tile("Max Drawdown",  f"{max_dd:.1f}%")
+                render_metric_tile("Annual Vol",    f"{vol:.1f}%")
+                render_metric_tile("VaR (95%)",     f"{var_95:.2f}%")
+                render_metric_tile("CVaR (95%)",    f"{cvar_95:.2f}%")
+    
+            with l1_right:
+                # ── Benchmark Growth Simulation ──────────────────────────────
+                render_header("chart", "Growth Simulation vs Benchmark", level="#####")
+                bench_options = {
+                    "S&P 500 (SPY)": "SPY",
+                    "Nasdaq 100 (QQQ)": "QQQ",
+                    "DAX 40 (^GDAXI)": "^GDAXI",
+                    "MSCI World (IWDA.AS)": "IWDA.AS"
+                }
+                sel_bench_label = st.selectbox("Select Performance Benchmark", options=list(bench_options.keys()), index=0, key="bench_l1")
+                sel_bench_ticker = bench_options[sel_bench_label]
+    
+                # Dynamically set initial investment so the simulation ENDS exactly at the current total market value.
+                # (since 'cum_return' is normalized to 1.0 at start, we calculate backwards from the endpoint)
+                current_cum_return = cum_returns.iloc[-1]
+                initial_investment = total_p_val / current_cum_return if current_cum_return > 0 else total_p_val
+                
+                backtest_df = pd.DataFrame({'date': cum_returns.index, 'cum_return': cum_returns.values})
+                backtest_df["portfolio_value"] = backtest_df["cum_return"] * initial_investment
+    
+                fig_bt = go.Figure()
+                fig_bt.add_trace(go.Scatter(
+                    x=backtest_df["date"], y=backtest_df["portfolio_value"],
+                    name="Your Portfolio", line=dict(color="#00ffcc", width=3)
+                ))
+    
+                bench_prices = prices_full[
+                    (prices_full["ticker"] == sel_bench_ticker) &
+                    (prices_full["date"] >= t_start) &
+                    (prices_full["date"] <= t_end)
+                ].sort_values("date")
+                if not bench_prices.empty:
+                    bench_prices = bench_prices[bench_prices["date"].isin(cum_returns.index)]
+                    if not bench_prices.empty and bench_prices["daily_return_pct"].notna().any():
+                        bench_daily = bench_prices["daily_return_pct"].fillna(0) / 100
+                        bench_cum   = (1 + bench_daily).cumprod()
+                        bench_cum   = bench_cum / bench_cum.iloc[0]
+                        bench_prices = bench_prices.copy()
+                        bench_prices["bench_value"] = bench_cum.values * initial_investment
+                        fig_bt.add_trace(go.Scatter(
+                            x=bench_prices["date"], y=bench_prices["bench_value"],
+                            name=sel_bench_label, line=dict(color="#f1c40f", width=2, dash="dot")
+                        ))
+                fig_bt.update_layout(
+                    template="plotly_dark", height=500,
+                    yaxis_title="Value (€)", margin=dict(t=10, l=10, r=10, b=10)
+                )
+                st.plotly_chart(fig_bt, use_container_width=True)
+    
+            st.markdown("---")
+    
+            # ═══════════════════════════════════════════════════════════════════
+            # LAYER 2 · STRUCTURAL DIAGNOSIS
+            # ═══════════════════════════════════════════════════════════════════
+            render_header("globe", "Structural Diagnosis — Exposure & Correlation")
+            l2c1, l2c2 = st.columns([1, 1])
 
-            # ── Action summary bar ──────────────────────────────────────
-            _sell_count = (st.session_state.pending_optimization["Action"] == "SELL").sum()
-            _buy_count  = (st.session_state.pending_optimization["Action"] == "BUY").sum()
-            _hold_count = (st.session_state.pending_optimization["Action"] == "HOLD").sum()
-            st.markdown(
-                f"<div style='font-size:0.82rem; margin-bottom:8px;'>Summary: "
-                f"<span style='color:#2ecc71; font-weight:700;'>▲ {_buy_count} BUY</span> &nbsp;|&nbsp; "
-                f"<span style='color:#3498db; font-weight:700;'>— {_hold_count} HOLD</span> &nbsp;|&nbsp; "
-                f"<span style='color:#e74c3c; font-weight:700;'>▼ {_sell_count} SELL</span></div>",
-                unsafe_allow_html=True
-            )
+            with l2c1:
+                render_header("globe", "Portfolio Exposure — Region × Sector", level="#####")
+                # Sunburst: inner ring = Region, outer ring = Sector
+                fig_sun = px.sunburst(
+                    edited_df,
+                    path=["Region", "Sector"],
+                    values="Market Value",
+                    color="Sector",
+                    color_discrete_sequence=px.colors.qualitative.Pastel,
+                )
+                fig_sun.update_traces(
+                    textinfo="label+percent parent",
+                    insidetextorientation="radial",
+                    hovertemplate="<b>%{label}</b><br>Value: €%{value:,.0f}<br>Share: %{percentParent:.1%}<extra></extra>",
+                )
+                fig_sun.update_layout(
+                    template="plotly_dark",
+                    height=360,
+                    margin=dict(l=0, r=0, t=10, b=0),
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                )
+                st.plotly_chart(fig_sun, use_container_width=True)
+                st.caption("Inner ring = Region · Outer ring = Sector")
 
-            # ── Rebalancing table ───────────────────────────────────────
-            st.dataframe(
-                st.session_state.pending_optimization,
-                column_config={
-                    "Current Weight %": st.column_config.NumberColumn(format="%.2f%%"),
-                    "Optimal Weight %": st.column_config.NumberColumn(format="%.2f%%"),
-                    "Current Shares":   st.column_config.NumberColumn(format="%.2f"),
-                    "Optimal Shares":   st.column_config.NumberColumn(format="%.2f"),
-                    "Delta Shares":     st.column_config.NumberColumn(format="%+.2f"),
-                    "Est. Value (€)":   st.column_config.NumberColumn(format="€%+.2f"),
-                    "Action":           st.column_config.TextColumn("Action"),
-                },
-                hide_index=True, use_container_width=True
-            )
+            with l2c2:
+                render_header("activity", "Asset Correlation Matrix", level="#####")
+                corr_matrix = ret_matrix.corr()
+                mean_corr = (corr_matrix.values.sum() - n_assets) / (n_assets**2 - n_assets) if n_assets > 1 else 0
+                if mean_corr > 0.45:
+                    st.warning(f"⚠️ High Correlation ({mean_corr:.2f}) — risk concentration!")
+                fig_corr = px.imshow(
+                    corr_matrix, text_auto=".2f",
+                    color_continuous_scale="RdBu_r", zmin=-1, zmax=1,
+                    template="plotly_dark", aspect="auto"
+                )
+                fig_corr.update_layout(height=360, margin=dict(l=0, r=0, t=10, b=0))
+                st.plotly_chart(fig_corr, use_container_width=True)
+    
+            st.markdown("---")
 
-            # ── DISCARD / APPLY buttons ────────────────────────────────
-            sc1, sc2, sc3 = st.columns([2, 1, 1])
-            with sc2:
-                if st.button("❌ DISCARD", use_container_width=True):
-                    st.session_state.pending_optimization = None
-                    st.session_state.pending_opt_strategy = None
-                    st.rerun()
-            with sc3:
-                if st.button("✅ APPLY REBALANCE", use_container_width=True, type="primary"):
-                    new_shares_dict = st.session_state.pending_optimization.set_index("Ticker")["Optimal Shares"].to_dict()
-                    st.session_state.portfolio_shares = new_shares_dict
-                    for idx, row in st.session_state.portfolio_df.iterrows():
-                        st.session_state.portfolio_df.at[idx, "Shares"] = new_shares_dict.get(row["Ticker"], 0)
-                    st.session_state.pending_optimization = None
-                    st.session_state.pending_opt_strategy = None
-                    st.toast("✅ Portfolio updated to suggested optimal weights!", icon="🎯")
-                    st.rerun()
+            # ═══════════════════════════════════════════════════════════════════
+            # LAYER 2.5 · DIVIDEND & INCOME TRACKER
+            # ═══════════════════════════════════════════════════════════════════
+            render_header("trending-up", "Dividend & Income Tracker")
 
-        st.markdown("---")
+            
+            # Build dividend data per portfolio ticker
+            SPECIAL_DIV_THRESHOLD = 8.0  # Yield% > 8 → likely special/one-time, not recurring
+            div_rows = []
+            for t in current_tickers:
+                meta_row = m_df[m_df["Ticker"] == t]
+                if meta_row.empty:
+                    continue
+                meta = meta_row.iloc[0]
 
-        # ── 5. ADVANCED ANALYTICS (Efficient Frontier & Risk) ──────────
-        if len(current_tickers) > 1:
-            render_header("activity", "Markowitz Efficient Frontier — Strategy Tactical Map")
+                cur_price = latest_prices.get(t, 0.0)
+                yield_pct = float(meta.get("Yield (%)", 0) or 0)
+                shares    = st.session_state.portfolio_shares.get(t, 0.0)
+                cost      = st.session_state.portfolio_cost.get(t, 0.0)
 
-            curr_r = np.sum(hist_rets.values * weights)
-            curr_v = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
-            curr_sharpe = (curr_r - 0.04) / curr_v if curr_v > 0 else 0
+                if yield_pct <= 0 or cur_price <= 0:
+                    continue
 
-            # ── Efficient Frontier (Monte Carlo simulation background) ────
-            st.info(
-                "ℹ️ Each dot represents a randomly weighted portfolio. "
-                "The **5 labeled markers** show where each optimization strategy lands on the risk/return map. "
-                "Your current portfolio ★ reveals which strategy style you are closest to."
-            )
-            n_sims  = 2000
-            sim_res = np.zeros((3, n_sims))
-            for i in range(n_sims):
-                w_rnd  = np.random.dirichlet(np.ones(n_assets))
-                r_rnd  = np.sum(hist_rets.values * w_rnd)
-                v_rnd  = np.sqrt(np.dot(w_rnd.T, np.dot(cov_matrix, w_rnd)))
-                sim_res[0, i] = v_rnd
-                sim_res[1, i] = r_rnd
-                sim_res[2, i] = (r_rnd - 0.04) / v_rnd if v_rnd > 0 else 0
+                dps         = cur_price * yield_pct / 100
+                proj_income = dps * shares
+                yoc         = (dps / cost * 100) if cost > 0 else 0
+                is_special  = yield_pct > SPECIAL_DIV_THRESHOLD
 
-            fig_mpt = go.Figure()
+                div_rows.append({
+                    "Ticker":           t,
+                    "Company":          meta.get("Company", t),
+                    "Sector":           meta.get("Sector", "N/A"),
+                    "Shares":           shares,
+                    "Price (€)":        cur_price,
+                    "DPS (€)":          round(dps, 4),
+                    "Cost Basis (€)":   cost,
+                    "Cur. Yield (%)":   round(yield_pct, 2),
+                    "YOC (%)":          round(yoc, 2),
+                    "Proj. Income (€)": round(proj_income, 2),
+                    "Special":          is_special,
+                    "Type":             "⚠️ Special?" if is_special else "✅ Regular",
+                })
 
-            # ── Background: Monte Carlo cloud ─────────────────────────────
-            fig_mpt.add_trace(go.Scatter(
-                x=sim_res[0, :], y=sim_res[1, :], mode="markers",
-                marker=dict(
-                    color=sim_res[2, :], colorscale="Viridis",
-                    showscale=True, size=4, opacity=0.25,
-                    colorbar=dict(title="Sharpe", x=1.02)
-                ),
-                name="Simulated Portfolios",
-                hovertemplate="Vol: %{x:.1%}<br>Return: %{y:.1%}<extra></extra>"
-            ))
+            div_df = pd.DataFrame(div_rows).sort_values("Cur. Yield (%)", ascending=False) if div_rows else pd.DataFrame()
+            has_special = (not div_df.empty) and div_df["Special"].any()
 
-            # ── Compute & plot The Big 5 strategies ───────────────────────
-            _default_min_w = max(0.02, 1.0 / (n_assets * 5))  # sensible floor for EF display
-            _big5 = []
-            try:
-                _big5 = [
-                    {
-                        "name":   "🛡️ Min Volatility",
-                        "color":  "#3498db",
-                        "symbol": "diamond",
-                        "w":      _run_min_vol(cov_matrix, n_assets, _default_min_w),
-                        "desc":   "Markowitz / MSCI Min Vol Index",
-                    },
-                    {
-                        "name":   "🚀 Max Sharpe",
-                        "color":  "#2ecc71",
-                        "symbol": "square",
-                        "w":      _run_max_sharpe(hist_rets, cov_matrix, n_assets, _default_min_w),
-                        "desc":   "Harry Markowitz — Nobel Prize MVO",
-                    },
-                    {
-                        "name":   "🎯 Max Return",
-                        "color":  "#e67e22",
-                        "symbol": "triangle-up",
-                        "w":      _run_max_return(hist_rets, n_assets, _default_min_w),
-                        "desc":   "Soros / Druckenmiller — Aggressive Growth",
-                    },
-                    {
-                        "name":   "⚖️ Risk Parity",
-                        "color":  "#9b59b6",
-                        "symbol": "cross",
-                        "w":      _run_risk_parity(cov_matrix, n_assets, _default_min_w),
-                        "desc":   "Ray Dalio — Bridgewater All Weather",
-                    },
-                    {
-                        "name":   "🌐 Equal Weight",
-                        "color":  "#bdc3c7",
-                        "symbol": "circle",
-                        "w":      _run_equal_weight(n_assets),
-                        "desc":   "S&P 500 Equal Weight (RSP) — 1/N Rule",
-                    },
-                ]
-            except Exception:
-                pass  # skip if optimizer fails (e.g. single asset)
+            # Fetch ex-dividend / payout dates on-demand (cached 24h, no DB write)
+            if not div_df.empty:
+                cal_tickers = tuple(sorted(div_df["Ticker"].tolist()))
+                cal_data = fetch_dividend_calendar(cal_tickers)
+                div_df["Ex-Date"]  = div_df["Ticker"].map(lambda t: cal_data.get(t, {}).get("ex_date", "—"))
+                div_df["Pay Date"] = div_df["Ticker"].map(lambda t: cal_data.get(t, {}).get("pay_date", "—"))
+            
+            if div_df.empty:
+                st.info("ℹ️ No dividend-paying assets found. Add assets like UNH, UPS, JNJ, or MSFT to track income.")
+            else:
+                # KPI tiles use ONLY regular dividends to avoid inflating projections
+                reg_df = div_df[~div_df["Special"]]
+                total_annual_income  = reg_df["Proj. Income (€)"].sum()
+                total_cost_basis_div = (reg_df["Cost Basis (€)"] * reg_df["Shares"]).sum()
+                portfolio_yoc        = (total_annual_income / total_cost_basis_div * 100) if total_cost_basis_div > 0 else 0
+                monthly_income       = total_annual_income / 12
+                div_pct_of_portfolio = (total_annual_income / total_p_val * 100) if total_p_val > 0 else 0
 
-            for strat in _big5:
-                w_s = strat["w"]
-                r_s = np.sum(hist_rets.values * w_s)
-                v_s = np.sqrt(np.dot(w_s.T, np.dot(cov_matrix, w_s)))
-                sh_s = (r_s - 0.04) / v_s if v_s > 0 else 0
-                fig_mpt.add_trace(go.Scatter(
-                    x=[v_s], y=[r_s],
-                    mode="markers+text",
+                if has_special:
+                    special_tickers = ", ".join(div_df[div_df["Special"]]["Ticker"].tolist())
+                    st.warning(
+                        f"⚠️ **Special Dividend Detected** · {special_tickers} — Yield >8% likely includes a **one-time special dividend** "
+                        f"(e.g. spin-off payout, extraordinary distribution). These are **excluded from income projections** below "
+                        f"to avoid overstating recurring income. Data source: yfinance trailing 12-month yield."
+                    )
+                
+                # ── Summary KPI Tiles ──
+                d1, d2, d3, d4, d5 = st.columns(5)
+                with d1:
+                    render_metric_tile("Proj. Annual Income", f"€{total_annual_income:,.2f}",
+                                       help_text="Sum of (DPS × Shares) for regular dividend payers only")
+                with d2:
+                    render_metric_tile("Monthly Income", f"€{monthly_income:,.2f}",
+                                       help_text="Annual income ÷ 12")
+                with d3:
+                    render_metric_tile("Portfolio YOC", f"{portfolio_yoc:.2f}%",
+                                       help_text="Total projected income ÷ Total cost basis of dividend payers")
+                with d4:
+                    render_metric_tile("Dividend Payers", f"{len(div_df)} / {n_assets}",
+                                       help_text="Stocks with a positive forward dividend yield")
+                with d5:
+                    # Show upcoming payout date if available
+                    today_dt = pd.Timestamp.today().normalize()
+                    upcoming_list = []
+                    for _, row in div_df.iterrows():
+                        if row.get("Pay Date", "—") != "—" and not row["Special"]:
+                            try:
+                                p_date = pd.to_datetime(row["Pay Date"])
+                                if p_date >= today_dt:
+                                    upcoming_list.append((p_date, f"{row['Ticker']}: {row['Pay Date']}"))
+                            except Exception:
+                                pass
+                    upcoming_list.sort(key=lambda x: x[0])
+                    next_pay_str = upcoming_list[0][1] if upcoming_list else "—"
+                    
+                    render_metric_tile("Next Pay Date", next_pay_str,
+                                       help_text="Nearest upcoming dividend payout date among regular payers (future dates only)")
+                
+                st.markdown("<br>", unsafe_allow_html=True)
+                
+                # ── Chart (Full Width) ──
+                render_header("bar-chart-2", "Dividend Yield by Asset", level="#####")
+                fig_div = go.Figure(go.Bar(
+                    x=div_df["Ticker"],
+                    y=div_df["Cur. Yield (%)"],
                     marker=dict(
-                        color=strat["color"], size=16,
-                        symbol=strat["symbol"],
-                        line=dict(color="white", width=1.5)
+                        color=div_df["Cur. Yield (%)"],
+                        colorscale="Teal",
+                        showscale=False,
                     ),
-                    text=[strat["name"]],
-                    textposition="top center",
-                    textfont=dict(size=10, color=strat["color"]),
-                    name=strat["name"],
+                    text=div_df["Cur. Yield (%)"].apply(lambda v: f"{v:.2f}%"),
+                    textposition="outside",
                     hovertemplate=(
-                        f"<b>{strat['name']}</b><br>"
-                        f"{strat['desc']}<br>"
-                        "Vol:    %{x:.1%}<br>"
-                        "Return: %{y:.1%}<br>"
-                        f"Sharpe: {sh_s:.2f}"
+                        "<b>%{x}</b><br>"
+                        "Cur. Yield: %{y:.2f}%<br>"
                         "<extra></extra>"
                     ),
                 ))
-
-            # ── Current portfolio star ─────────────────────────────────────
-            fig_mpt.add_trace(go.Scatter(
-                x=[curr_v], y=[curr_r], mode="markers+text",
-                marker=dict(color="#e74c3c", size=20, symbol="star",
-                            line=dict(color="white", width=2)),
-                text=[f"YOUR PORTFOLIO<br>Sharpe {curr_sharpe:.2f}"],
-                textposition="top center",
-                textfont=dict(size=10, color="#e74c3c"),
-                name="★ Current Portfolio"
-            ))
-            fig_mpt.update_layout(
-                template="plotly_dark", height=580,
-                xaxis_title="Annual Volatility (Risk)",
-                yaxis_title="Annual Historical Return",
-                xaxis=dict(tickformat=".0%"),
-                yaxis=dict(tickformat=".0%"),
-                margin=dict(t=40, b=120, l=10, r=60),
-                legend=dict(
-                    orientation="h",
-                    yanchor="bottom", y=-0.28,
-                    xanchor="center", x=0.45,
-                    font=dict(size=11),
-                    itemsizing="constant",
-                    bgcolor="rgba(0,0,0,0.3)",
-                    bordercolor="rgba(255,255,255,0.1)",
-                    borderwidth=1,
-                ),
-                annotations=[dict(
-                    text="← Lower Risk          Higher Return →",
-                    xref="paper", yref="paper",
-                    x=0.0, y=1.03, showarrow=False,
-                    font=dict(size=10, color="#666"),
-                    align="left"
-                )],
-            )
-            st.plotly_chart(fig_mpt, use_container_width=True)
-
+                fig_div.update_layout(
+                    template="plotly_dark",
+                    height=300,
+                    margin=dict(l=0, r=0, t=10, b=0),
+                    yaxis_title="Yield (%)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                )
+                st.plotly_chart(fig_div, use_container_width=True)
+                
+                st.markdown("<br>", unsafe_allow_html=True)
+                
+                # ── Table (Full Width) ──
+                render_header("list", "Income Breakdown", level="#####")
+                display_div = div_df[[
+                    "Ticker", "Type", "Shares", "DPS (€)", "Cur. Yield (%)", "YOC (%)", "Proj. Income (€)", "Ex-Date", "Pay Date"
+                ]].copy()
+                st.dataframe(
+                    display_div,
+                    column_config={
+                        "Ticker":           st.column_config.TextColumn("Ticker"),
+                        "Type":             st.column_config.TextColumn("Type",
+                                                help="Regular = recurring dividend · Special? = likely one-time, excluded from KPIs"),
+                        "Shares":           st.column_config.NumberColumn("Shares", format="%.2f"),
+                        "DPS (€)":          st.column_config.NumberColumn("DPS", format="€%.4f"),
+                        "Cur. Yield (%)":   st.column_config.NumberColumn("Cur. Yield", format="%.2f%%"),
+                        "YOC (%)":          st.column_config.NumberColumn("YOC", format="%.2f%%",
+                                                help="Yield on Cost = DPS ÷ Your Avg. Cost Basis"),
+                        "Proj. Income (€)": st.column_config.NumberColumn("Annual Income", format="€%.2f"),
+                        "Ex-Date":          st.column_config.TextColumn("Ex-Div Date",
+                                                help="Last ex-dividend date (from yfinance, refreshed every 24h)"),
+                        "Pay Date":         st.column_config.TextColumn("Pay Date",
+                                                help="Last dividend payout date (from yfinance, refreshed every 24h)"),
+                    },
+                    hide_index=True,
+                    use_container_width=True,
+                    height=min(320, 40 + len(div_df) * 35),
+                )
+                st.caption("ℹ️ YOC = DPS ÷ Avg. cost basis · Dates fetched on-demand from yfinance, cached 24h · KPI tiles exclude ⚠️ Special?")
+            
             st.markdown("---")
-            # ── Risk Contribution ─────────────────────────────────────────
-            render_header("risk", "Global Risk Contribution", level="#####")
-            mctr         = np.dot(cov_matrix, weights) / (curr_v if curr_v > 0 else 1)
-            risk_contrib = weights * mctr
-            risk_pct     = risk_contrib / np.sum(np.abs(risk_contrib)) * 100
+            
+            # ═══════════════════════════════════════════════════════════════════
+            # LAYER 3 · STRATEGIC REBALANCING & OPTIMIZATION
+            # ═══════════════════════════════════════════════════════════════════
 
-            fig_risk_b = px.bar(
-                x=current_tickers, y=risk_pct,
-                labels={"x": "Ticker", "y": "Risk Contribution (%)"},
-                template="plotly_dark",
-                color=risk_pct, color_continuous_scale="Reds"
+            # ── 4.6. AI REBALANCING COMMAND CENTER (PREMIUM CARD GRID) ──────────────
+            render_header("ai", "Institutional Rebalancing Command Center")
+            
+            # Use chunks for grid layout (ULTRA-DENSE: 6 per row)
+            n_cols = 6
+            tickers_list = edited_df.to_dict('records')
+            
+            for i in range(0, len(tickers_list), n_cols):
+                cols = st.columns(n_cols)
+                chunk = tickers_list[i : i + n_cols]
+                
+                for idx, row in enumerate(chunk):
+                    t = row["Ticker"]
+                    w = row["Weight (%)"]
+                    
+                    # Fetch AI target from reco_df
+                    ai_meta = reco_df[reco_df["ticker"] == t].iloc[0] if not reco_df[reco_df["ticker"] == t].empty else None
+                    
+                    if ai_meta is not None:
+                        ai_score = ai_meta["score"]
+                        upside = ai_meta["upside_pct"]
+    
+                        # ── Read action from the shared m_df source ──────────────
+                        status = _action_map.get(t, "HOLD / NEUTRAL")
+    
+                        # Derive display color from canonical action label
+                        if status == "STRONG BUY":          color = "#00ffcc"; border = "2px solid #00ffcc"
+                        elif "BUY" in status:               color = "#2ecc71"; border = "1px solid #2ecc71"
+                        elif "SELL" in status:              color = "#ff4b4b"; border = "2px solid #ff4b4b"
+                        elif "REDUCE" in status:            color = "#e67e22"; border = "1px solid #e67e22"
+                        else:                               color = "#3498db"; border = "1px solid rgba(255,255,255,0.1)"
+    
+                        reason = f"Quality score {ai_score}"
+                        if upside > 10: reason = f"Upside potential (+{upside:.1f}%)"
+                        if w > 20: reason = "Risk concentration limit exceeded"
+    
+                        with cols[idx]:
+                            st.markdown(f"""
+                            <div style='background:rgba(255,255,255,0.02); border:{border}; border-radius:5px; padding:6px; margin-bottom:4px;'>
+                                <div style='display:flex; justify-content:space-between; margin-bottom:4px;'>
+                                    <span style='font-size:0.8rem; font-weight:800; color:{color};'>{t}</span>
+                                    <span style='background:{color}22; color:{color}; padding:1px 4px; border-radius:2px; font-size:0.45rem; font-weight:700;'>{status}</span>
+                                </div>
+                                <div style='display:grid; grid-template-columns: 1fr 1fr; gap:4px; margin-bottom:4px;'>
+                                    <div><div style='color:#777; font-size:0.45rem; text-transform:uppercase;'>WGT</div><div style='font-size:0.75rem; font-weight:700;'>{w:.1f}%</div></div>
+                                    <div><div style='color:#777; font-size:0.45rem; text-transform:uppercase;'>SCORE</div><div style='font-size:0.75rem; font-weight:700;'>{ai_score}</div></div>
+                                </div>
+                                <div style='color:#666; font-size:0.55rem; border-top:1px solid rgba(255,255,255,0.05); padding-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;'>
+                                    {reason}
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                    else:
+                        with cols[idx]:
+                            st.markdown(f"""
+                            <div style='background:rgba(255,255,255,0.01); border:1px dashed rgba(255,255,255,0.08); border-radius:5px; padding:6px; text-align:center;'>
+                                <div style='color:#555; font-size:0.5rem;'>{t}</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+    
+            # ── 4.7. REBALANCING OPTIMIZER ───────────────────────────────────────────
+            st.markdown("### 📊 Portfolio Rebalancing Hub")
+            
+            with st.expander("Institutional Rebalancing Protocol & Rulebook", expanded=False):
+                st.markdown("""
+                **1. Security Assessment Construct (5-Pillar Matrix)**  
+                The analytical engine issues tactical recommendations based on a composite score derived from 5 independent pillars: Technical Trend, AI Quality, Sector-weighted Valuation, Volatility Risk, and Support/Resistance R/R.
+                * **STRONG BUY:** The security achieves optimal alignment across all quantitative pillars. It exhibits elite fundamental quality coupled with highly favorable Risk/Reward metrics. Represents an ideal entry zone.
+                * **BUY / ACCUMULATE:** Strong underlying fundamentals and robust long-term signals, though potentially undergoing short-term consolidation. Suitable for progressive accumulation.
+                * **HOLD / NEUTRAL:** Mixed signals or lack of clear directional advantage. This also applies to elite assets currently trading at premium multiples (overbought). Capital allocation should be deferred pending a structural pullback.
+                * **REDUCE / UNDERPERFORM:** Asset is technically overextended (RSI > 70) yielding elevated tactical risk. Recommends partial profit-taking to mitigate impending mean reversion.
+                * **SELL / AVOID:** Significant deterioration in technical trends and poor profitability metrics. High probability of capital depreciation. Focus shifts to capital preservation.
+    
+                **2. Portfolio Strategy Optimization (Modern Portfolio Theory)**  
+                * **Minimum Volatility:** Prioritizes capital preservation by overwriting cap-weights with a mathematical minimization of portfolio variance. It actively strips out high-beta components. **Application:** Systemic risk spikes, macroeconomic distress, or defensive posturing.
+                * **Risk Parity:** Discards market capitalization entirely. Allocates capital such that the *marginal risk contribution* of each asset forms an equal slice of the total portfolio risk. **Application:** Core long-term portfolio structuring (e.g., All-Weather framework), ensuring no single asset dictates volatility.
+                * **Equal Weight:** A disciplined 1/N allocation scaling. Functionally enforces buying low and selling high during rebalancing cycles. **Application:** Mitigating concentration risk in cap-weighted indices (e.g., extreme mega-cap tech dominance) and maximizing broad diversification.
+                * **Max Sharpe (Optimal MPT):** Implements Markowitz Mean-Variance Optimization. Locates the exact tangency portfolio on the Efficient Frontier, mathematically yielding the maximum return per unit of volatility. **Application:** Standard bullish to neutral market environments demanding optimal risk-adjusted growth.
+                * **Maximum Return:** Agnostic to portfolio variance. Hyper-concentrates capital into the assets demonstrating the highest historical momentum and largest expected returns. **Application:** Aggressive short-term tactical plays during high-conviction momentum rallies.
+                """)
+    
+            if 'pending_optimization' not in st.session_state:
+                st.session_state.pending_optimization = None
+            if 'pending_opt_strategy' not in st.session_state:
+                st.session_state.pending_opt_strategy = None
+    
+            # ── Strategy Controls ──────────────────────────────────────────────
+            strat_col, min_w_col, _ = st.columns([2, 1, 1])
+            with strat_col:
+                strategy_options = {
+                    "🛡️ Minimum Volatility (Lowest Risk)":   "min_vol",
+                    "⚖️ Risk Parity (Strategic Balance)":   "risk_parity",
+                    "🌐 Equal Weight (Max Diversification)": "equal_weight",
+                    "🚀 Max Sharpe (Risk-Adjusted Growth)":  "max_sharpe",
+                    "🎯 Maximum Return (Highest Growth)":    "max_return",
+                }
+                sel_strategy_label = st.selectbox(
+                    "Optimization Strategy",
+                    options=list(strategy_options.keys()), index=2,
+                    help="Choose how to distribute capital: from lowest risk (Min Vol) to highest growth (Max Return)."
+                )
+                sel_strategy = strategy_options[sel_strategy_label]
+    
+            with min_w_col:
+                min_weight_pct = st.slider(
+                    "Min Weight / Ticker (%)",
+                    min_value=0, max_value=10, value=2, step=1,
+                    help="Floor constraint: no ticker will be weighted below this level. Prevents the optimizer from fully selling out a position."
+                )
+                min_w = min_weight_pct / 100.0
+    
+            # ── Strategy Descriptions ──────────────────────────────────────────
+            _strategy_descriptions = {
+                "min_vol": (
+                    "**🛡️ Minimum Volatility** — Finds the allocation with the **lowest possible portfolio variance**, "
+                    "regardless of expected returns. Ideal for capital preservation and bear market defense. "
+                    "Widely used by pension funds and the MSCI Minimum Volatility Index family."
+                ),
+                "risk_parity": (
+                    "**⚖️ Risk Parity** — Allocates capital so each asset contributes **equally** to total portfolio risk. "
+                    "Pioneer strategy used by Ray Dalio (Bridgewater) for the 'All Weather' portfolio. "
+                    "High-volatility assets receive less capital; stable assets receive more."
+                ),
+                "equal_weight": (
+                    "**🌐 Equal Weight (1/N)** — Splits capital evenly across all holdings. Simple yet powerful "
+                    "diversification popularized by the S&P 500 Equal Weight Index (RSP). "
+                    "Avoids the estimation errors often found in complex mathematical models."
+                ),
+                "max_sharpe": (
+                    "**🚀 Max Sharpe (Markowitz MVO)** — Finds the allocation that maximizes return per unit of risk "
+                    "(Sharpe Ratio). Based on Harry Markowitz's Nobel Prize-winning theory. Best for risk-adjusted "
+                    "growth but results tend to be concentrated in top-performing assets."
+                ),
+                "max_return": (
+                    "**🎯 Maximum Return** — Maximizes expected annual return with no regard for volatility. "
+                    "A high-conviction, aggressive strategy favored by George Soros and Stanley Druckenmiller: "
+                    "'To make superior returns, concentrate on what you are most right about.' **Use with caution.**"
+                ),
+            }
+            st.markdown(
+                f"<div style='background:rgba(255,255,255,0.03); padding:10px 14px; border-radius:8px; "
+                f"border-left:3px solid #00d4ff; margin-bottom:12px; font-size:0.83rem;'>"
+                f"{_strategy_descriptions[sel_strategy]}</div>",
+                unsafe_allow_html=True
             )
-            fig_risk_b.update_layout(height=380)
-            st.plotly_chart(fig_risk_b, use_container_width=True)
-
-
+    
+            # ── Core Optimization Functions ────────────────────────────────────
+            def _run_max_sharpe(hist_rets, cov_matrix, n_assets, min_w):
+                """Maximize Sharpe Ratio (Markowitz MVO) with per-asset floor constraint."""
+                def portfolio_stats(w):
+                    p_ret = np.sum(hist_rets.values * w)
+                    p_vol = np.sqrt(np.dot(w.T, np.dot(cov_matrix, w)))
+                    p_sharpe = (p_ret - 0.04) / p_vol if p_vol > 0 else 0
+                    return p_ret, p_vol, p_sharpe
+    
+                # Ensure floor doesn't exceed 1/n (prevent infeasibility)
+                floor = min(min_w, 0.9 / n_assets)
+                cap = min(0.40, 1.0 - floor * (n_assets - 1))
+                bounds = tuple((floor, cap) for _ in range(n_assets))
+                constraints = [
+                    {'type': 'eq', 'fun': lambda x: np.sum(x) - 1},
+                ]
+                init_w = np.array([1.0 / n_assets] * n_assets)
+                result = minimize(lambda w: -portfolio_stats(w)[2], init_w,
+                                  method='SLSQP', bounds=bounds, constraints=constraints)
+                return result.x if result.success else init_w
+    
+            def _run_risk_parity(cov_matrix, n_assets, min_w):
+                """Risk Parity: equalize marginal risk contribution of each asset."""
+                def risk_contributions(w, cov):
+                    port_vol = np.sqrt(np.dot(w.T, np.dot(cov, w)))
+                    marginal  = np.dot(cov, w) / port_vol
+                    contrib   = w * marginal
+                    return contrib
+    
+                def rp_objective(w):
+                    rc = risk_contributions(w, cov_matrix.values)
+                    target = 1.0 / n_assets
+                    return np.sum((rc / rc.sum() - target) ** 2)
+    
+                floor = min(min_w, 0.9 / n_assets)
+                bounds = tuple((floor, 1.0) for _ in range(n_assets))
+                constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - 1}]
+                init_w = np.array([1.0 / n_assets] * n_assets)
+                result = minimize(rp_objective, init_w, method='SLSQP',
+                                  bounds=bounds, constraints=constraints,
+                                  options={'ftol': 1e-10, 'maxiter': 1000})
+                return result.x if result.success else init_w
+    
+            def _run_equal_weight(n_assets):
+                """Equal Weight (1/N): simple uniform allocation."""
+                return np.array([1.0 / n_assets] * n_assets)
+    
+            def _run_min_vol(cov_matrix, n_assets, min_w):
+                """Minimum Volatility: minimize portfolio standard deviation."""
+                floor = min(min_w, 0.9 / n_assets)
+                cap = min(0.40, 1.0 - floor * (n_assets - 1))
+                bounds = tuple((floor, cap) for _ in range(n_assets))
+                constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - 1}]
+                init_w = np.array([1.0 / n_assets] * n_assets)
+    
+                def port_vol(w):
+                    return np.sqrt(np.dot(w.T, np.dot(cov_matrix, w)))
+    
+                result = minimize(port_vol, init_w, method='SLSQP',
+                                  bounds=bounds, constraints=constraints,
+                                  options={'ftol': 1e-12, 'maxiter': 1000})
+                return result.x if result.success else init_w
+    
+            def _run_max_return(hist_rets, n_assets, min_w):
+                """Maximum Return: maximize expected annual return (ignores volatility)."""
+                # Simple analytical solution: concentrate on highest-return assets
+                floor = min(min_w, 0.9 / n_assets)
+                cap   = min(0.40, 1.0 - floor * (n_assets - 1))
+                # Sort assets by expected return descending
+                sorted_idx = np.argsort(hist_rets.values)[::-1]
+                w = np.full(n_assets, floor)
+                remaining = 1.0 - floor * n_assets
+                for i in sorted_idx:
+                    alloc = min(cap - floor, remaining)
+                    w[i] += alloc
+                    remaining -= alloc
+                    if remaining <= 1e-9:
+                        break
+                return w
+    
+            # ── Action Buttons ─────────────────────────────────────────────────
+            act_col1, act_col2 = st.columns([1, 1])
+            with act_col1:
+                if st.button("🚀 GENERATE OPTIMAL REBALANCE", use_container_width=True, type="primary"):
+                    try:
+                        if sel_strategy == "min_vol":
+                            opt_weights = _run_min_vol(cov_matrix, n_assets, min_w)
+                        elif sel_strategy == "risk_parity":
+                            opt_weights = _run_risk_parity(cov_matrix, n_assets, min_w)
+                        elif sel_strategy == "equal_weight":
+                            opt_weights = _run_equal_weight(n_assets)
+                        elif sel_strategy == "max_sharpe":
+                            opt_weights = _run_max_sharpe(hist_rets, cov_matrix, n_assets, min_w)
+                        else:  # max_return
+                            opt_weights = _run_max_return(hist_rets, n_assets, min_w)
+    
+                        # Build comparison table
+                        comparison_data = []
+                        for idx, ticker in enumerate(current_tickers):
+                            price   = latest_prices.get(ticker, 1)
+                            curr_w  = weights[idx] * 100
+                            rec_w   = opt_weights[idx] * 100
+                            curr_s  = st.session_state.portfolio_shares.get(ticker, 0)
+                            rec_s   = (opt_weights[idx] * total_p_val) / price
+                            delta_s = rec_s - curr_s
+                            action  = "HOLD"
+                            if delta_s >  0.1: action = "BUY"
+                            elif delta_s < -0.1: action = "SELL"
+                            comparison_data.append({
+                                "Ticker":            ticker,
+                                "Current Weight %":  curr_w,
+                                "Optimal Weight %":  rec_w,
+                                "Current Shares":    curr_s,
+                                "Optimal Shares":    rec_s,
+                                "Action":            action,
+                                "Delta Shares":      delta_s,
+                                "Est. Value (€)":    delta_s * price,
+                            })
+    
+                        st.session_state.pending_optimization = pd.DataFrame(comparison_data)
+                        st.session_state.pending_opt_strategy = sel_strategy_label
+                        st.rerun()
+    
+                    except Exception as e:
+                        st.error(f"Optimization failed: {e}")
+    
+            with act_col2:
+                pass
+                # csv = edited_df.to_csv(index=False).encode('utf-8')
+                # st.download_button(
+                #     label="📥 DOWNLOAD PORTFOLIO (CSV)",
+                #     data=csv,
+                #     file_name=f"portfolio_{datetime.now().strftime('%Y%m%d')}.csv",
+                #     mime="text/csv",
+                #     use_container_width=True
+                # )
+    
+            # ── Display Suggestions ────────────────────────────────────────────
+            if st.session_state.pending_optimization is not None:
+                st.markdown("---")
+                _used_strategy = st.session_state.pending_opt_strategy or "Unknown Strategy"
+                st.info(f"🎯 **Suggested Rebalancing · Strategy: {_used_strategy}**")
+    
+                # ── Expected metrics after rebalancing ──────────────────────
+                _opt_w_arr = np.array(st.session_state.pending_optimization["Optimal Weight %"].values) / 100
+                try:
+                    _exp_ret  = np.sum(hist_rets.values * _opt_w_arr) * 100
+                    _exp_vol  = np.sqrt(np.dot(_opt_w_arr.T, np.dot(cov_matrix, _opt_w_arr))) * 100
+                    _exp_srp  = (_exp_ret/100 - 0.04) / (_exp_vol/100) if _exp_vol > 0 else 0
+                    _curr_ret = np.sum(hist_rets.values * weights) * 100
+                    _curr_vol = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights))) * 100
+                    _curr_srp = (_curr_ret/100 - 0.04) / (_curr_vol/100) if _curr_vol > 0 else 0
+    
+                    _m1, _m2, _m3, _m4 = st.columns(4)
+                    with _m1: render_metric_tile("Expected Annual Return", f"{_exp_ret:.1f}%", delta=_exp_ret - _curr_ret)
+                    with _m2: render_metric_tile("Expected Annual Vol",    f"{_exp_vol:.1f}%")
+                    with _m3: render_metric_tile("Expected Sharpe",        f"{_exp_srp:.2f}", delta=_exp_srp - _curr_srp)
+                    with _m4: render_metric_tile("Min Weight Floor",       f"{min_weight_pct}%")
+                    st.markdown("<br>", unsafe_allow_html=True)
+                except Exception:
+                    pass  # metrics are optional - skip on error
+    
+                # ── Action summary bar ──────────────────────────────────────
+                _sell_count = (st.session_state.pending_optimization["Action"] == "SELL").sum()
+                _buy_count  = (st.session_state.pending_optimization["Action"] == "BUY").sum()
+                _hold_count = (st.session_state.pending_optimization["Action"] == "HOLD").sum()
+                st.markdown(
+                    f"<div style='font-size:0.82rem; margin-bottom:8px;'>Summary: "
+                    f"<span style='color:#2ecc71; font-weight:700;'>▲ {_buy_count} BUY</span> &nbsp;|&nbsp; "
+                    f"<span style='color:#3498db; font-weight:700;'>— {_hold_count} HOLD</span> &nbsp;|&nbsp; "
+                    f"<span style='color:#e74c3c; font-weight:700;'>▼ {_sell_count} SELL</span></div>",
+                    unsafe_allow_html=True
+                )
+    
+                # ── Rebalancing table ───────────────────────────────────────
+                st.dataframe(
+                    st.session_state.pending_optimization,
+                    column_config={
+                        "Current Weight %": st.column_config.NumberColumn(format="%.2f%%"),
+                        "Optimal Weight %": st.column_config.NumberColumn(format="%.2f%%"),
+                        "Current Shares":   st.column_config.NumberColumn(format="%.2f"),
+                        "Optimal Shares":   st.column_config.NumberColumn(format="%.2f"),
+                        "Delta Shares":     st.column_config.NumberColumn(format="%+.2f"),
+                        "Est. Value (€)":   st.column_config.NumberColumn(format="€%+.2f"),
+                        "Action":           st.column_config.TextColumn("Action"),
+                    },
+                    hide_index=True, use_container_width=True
+                )
+    
+                # ── DISCARD / APPLY buttons ────────────────────────────────
+                sc1, sc2, sc3 = st.columns([2, 1, 1])
+                with sc2:
+                    if st.button("❌ DISCARD", use_container_width=True):
+                        st.session_state.pending_optimization = None
+                        st.session_state.pending_opt_strategy = None
+                        st.rerun()
+                with sc3:
+                    if st.button("✅ APPLY REBALANCE", use_container_width=True, type="primary"):
+                        new_shares_dict = st.session_state.pending_optimization.set_index("Ticker")["Optimal Shares"].to_dict()
+                        st.session_state.portfolio_shares = new_shares_dict
+                        for idx, row in st.session_state.portfolio_df.iterrows():
+                            st.session_state.portfolio_df.at[idx, "Shares"] = new_shares_dict.get(row["Ticker"], 0)
+                        st.session_state.pending_optimization = None
+                        st.session_state.pending_opt_strategy = None
+                        st.toast("✅ Portfolio updated to suggested optimal weights!", icon="🎯")
+                        st.rerun()
+    
+            st.markdown("---")
+    
+            # ── 5. ADVANCED ANALYTICS (Efficient Frontier & Risk) ──────────
+            if len(current_tickers) > 1:
+                render_header("activity", "Markowitz Efficient Frontier — Strategy Tactical Map")
+    
+                curr_r = np.sum(hist_rets.values * weights)
+                curr_v = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
+                curr_sharpe = (curr_r - 0.04) / curr_v if curr_v > 0 else 0
+    
+                # ── Efficient Frontier (Monte Carlo simulation background) ────
+                st.info(
+                    "ℹ️ Each dot represents a randomly weighted portfolio. "
+                    "The **5 labeled markers** show where each optimization strategy lands on the risk/return map. "
+                    "Your current portfolio ★ reveals which strategy style you are closest to."
+                )
+                n_sims  = 2000
+                sim_res = np.zeros((3, n_sims))
+                for i in range(n_sims):
+                    w_rnd  = np.random.dirichlet(np.ones(n_assets))
+                    r_rnd  = np.sum(hist_rets.values * w_rnd)
+                    v_rnd  = np.sqrt(np.dot(w_rnd.T, np.dot(cov_matrix, w_rnd)))
+                    sim_res[0, i] = v_rnd
+                    sim_res[1, i] = r_rnd
+                    sim_res[2, i] = (r_rnd - 0.04) / v_rnd if v_rnd > 0 else 0
+    
+                fig_mpt = go.Figure()
+    
+                # ── Background: Monte Carlo cloud ─────────────────────────────
+                fig_mpt.add_trace(go.Scatter(
+                    x=sim_res[0, :], y=sim_res[1, :], mode="markers",
+                    marker=dict(
+                        color=sim_res[2, :], colorscale="Viridis",
+                        showscale=True, size=4, opacity=0.25,
+                        colorbar=dict(title="Sharpe", x=1.02)
+                    ),
+                    name="Simulated Portfolios",
+                    hovertemplate="Vol: %{x:.1%}<br>Return: %{y:.1%}<extra></extra>"
+                ))
+    
+                # ── Compute & plot The Big 5 strategies ───────────────────────
+                _default_min_w = max(0.02, 1.0 / (n_assets * 5))  # sensible floor for EF display
+                _big5 = []
+                try:
+                    _big5 = [
+                        {
+                            "name":   "🛡️ Min Volatility",
+                            "color":  "#3498db",
+                            "symbol": "diamond",
+                            "w":      _run_min_vol(cov_matrix, n_assets, _default_min_w),
+                            "desc":   "Markowitz / MSCI Min Vol Index",
+                        },
+                        {
+                            "name":   "🚀 Max Sharpe",
+                            "color":  "#2ecc71",
+                            "symbol": "square",
+                            "w":      _run_max_sharpe(hist_rets, cov_matrix, n_assets, _default_min_w),
+                            "desc":   "Harry Markowitz — Nobel Prize MVO",
+                        },
+                        {
+                            "name":   "🎯 Max Return",
+                            "color":  "#e67e22",
+                            "symbol": "triangle-up",
+                            "w":      _run_max_return(hist_rets, n_assets, _default_min_w),
+                            "desc":   "Soros / Druckenmiller — Aggressive Growth",
+                        },
+                        {
+                            "name":   "⚖️ Risk Parity",
+                            "color":  "#9b59b6",
+                            "symbol": "cross",
+                            "w":      _run_risk_parity(cov_matrix, n_assets, _default_min_w),
+                            "desc":   "Ray Dalio — Bridgewater All Weather",
+                        },
+                        {
+                            "name":   "🌐 Equal Weight",
+                            "color":  "#bdc3c7",
+                            "symbol": "circle",
+                            "w":      _run_equal_weight(n_assets),
+                            "desc":   "S&P 500 Equal Weight (RSP) — 1/N Rule",
+                        },
+                    ]
+                except Exception:
+                    pass  # skip if optimizer fails (e.g. single asset)
+    
+                for strat in _big5:
+                    w_s = strat["w"]
+                    r_s = np.sum(hist_rets.values * w_s)
+                    v_s = np.sqrt(np.dot(w_s.T, np.dot(cov_matrix, w_s)))
+                    sh_s = (r_s - 0.04) / v_s if v_s > 0 else 0
+                    fig_mpt.add_trace(go.Scatter(
+                        x=[v_s], y=[r_s],
+                        mode="markers+text",
+                        marker=dict(
+                            color=strat["color"], size=16,
+                            symbol=strat["symbol"],
+                            line=dict(color="white", width=1.5)
+                        ),
+                        text=[strat["name"]],
+                        textposition="top center",
+                        textfont=dict(size=10, color=strat["color"]),
+                        name=strat["name"],
+                        hovertemplate=(
+                            f"<b>{strat['name']}</b><br>"
+                            f"{strat['desc']}<br>"
+                            "Vol:    %{x:.1%}<br>"
+                            "Return: %{y:.1%}<br>"
+                            f"Sharpe: {sh_s:.2f}"
+                            "<extra></extra>"
+                        ),
+                    ))
+    
+                # ── Current portfolio star ─────────────────────────────────────
+                fig_mpt.add_trace(go.Scatter(
+                    x=[curr_v], y=[curr_r], mode="markers+text",
+                    marker=dict(color="#e74c3c", size=20, symbol="star",
+                                line=dict(color="white", width=2)),
+                    text=[f"YOUR PORTFOLIO<br>Sharpe {curr_sharpe:.2f}"],
+                    textposition="top center",
+                    textfont=dict(size=10, color="#e74c3c"),
+                    name="★ Current Portfolio"
+                ))
+                fig_mpt.update_layout(
+                    template="plotly_dark", height=580,
+                    xaxis_title="Annual Volatility (Risk)",
+                    yaxis_title="Annual Historical Return",
+                    xaxis=dict(tickformat=".0%"),
+                    yaxis=dict(tickformat=".0%"),
+                    margin=dict(t=40, b=120, l=10, r=60),
+                    legend=dict(
+                        orientation="h",
+                        yanchor="bottom", y=-0.28,
+                        xanchor="center", x=0.45,
+                        font=dict(size=11),
+                        itemsizing="constant",
+                        bgcolor="rgba(0,0,0,0.3)",
+                        bordercolor="rgba(255,255,255,0.1)",
+                        borderwidth=1,
+                    ),
+                    annotations=[dict(
+                        text="← Lower Risk          Higher Return →",
+                        xref="paper", yref="paper",
+                        x=0.0, y=1.03, showarrow=False,
+                        font=dict(size=10, color="#666"),
+                        align="left"
+                    )],
+                )
+                st.plotly_chart(fig_mpt, use_container_width=True)
+    
+                st.markdown("---")
+                # ── Risk Contribution ─────────────────────────────────────────
+                render_header("risk", "Global Risk Contribution", level="#####")
+                mctr         = np.dot(cov_matrix, weights) / (curr_v if curr_v > 0 else 1)
+                risk_contrib = weights * mctr
+                risk_pct     = risk_contrib / np.sum(np.abs(risk_contrib)) * 100
+    
+                fig_risk_b = px.bar(
+                    x=current_tickers, y=risk_pct,
+                    labels={"x": "Ticker", "y": "Risk Contribution (%)"},
+                    template="plotly_dark",
+                    color=risk_pct, color_continuous_scale="Reds"
+                )
+                fig_risk_b.update_layout(height=380)
+                st.plotly_chart(fig_risk_b, use_container_width=True)
+    
+    
+            else:
+                st.warning("⚠️ Total portfolio value is 0. Please enter the number of shares owned to activate the analysis.")
         else:
-            st.warning("⚠️ Total portfolio value is 0. Please enter the number of shares owned to activate the analysis.")
-    else:
-        st.info("🎯 Start by selecting tickers at the top to build your institutional-grade portfolio.")
+            st.info("🎯 Start by selecting tickers at the top to build your institutional-grade portfolio.")
 
 
         st.markdown("---")

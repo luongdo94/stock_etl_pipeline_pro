@@ -9,7 +9,8 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from etl.load import create_raw_schema
-from etl.transform import _create_staging, _create_intermediate, _create_marts, _run_data_quality_checks
+from etl.transform import _create_staging, _create_intermediate, _create_marts
+from etl.dq_engine import run_dq_validations
 
 @pytest.fixture
 def conn():
@@ -138,13 +139,17 @@ class TestTransformMarts:
         assert fmi[0] > 0
         assert fmi[1] > 0
 
-def test_data_quality_checks_integration(conn):
-    """Ensure DQ checks catch violations in marts."""
-    conn.execute("CREATE SCHEMA marts")
-    conn.execute("CREATE TABLE marts.fct_daily_returns (ticker VARCHAR, date DATE, price_close DOUBLE, volume INTEGER)")
-    conn.execute("INSERT INTO marts.fct_daily_returns (ticker, date, price_close, volume) VALUES (NULL, '2024-01-01', 100, 1000)")
+def test_data_quality_checks_integration(tmp_path):
+    """Ensure Audit Engine catches violations in marts."""
+    db_file = str(tmp_path / "test_dq.duckdb")
+    conn = duckdb.connect(db_file)
     
-    # Add dim_companies to satisfy DQ checks
+    conn.execute("CREATE SCHEMA marts")
+    # Rule 1: fct_no_nulls_ticker (Critical)
+    conn.execute("CREATE TABLE marts.fct_daily_returns (ticker VARCHAR, date DATE, price_open DOUBLE, price_close DOUBLE, volume INTEGER)")
+    conn.execute("INSERT INTO marts.fct_daily_returns (ticker, date, price_close) VALUES (NULL, '2024-01-01', 100)")
+    
+    # Rule 2: dim_unique_tickers (Critical)
     conn.execute("""
         CREATE TABLE marts.dim_companies (
             ticker VARCHAR, company VARCHAR, sector VARCHAR, 
@@ -153,5 +158,12 @@ def test_data_quality_checks_integration(conn):
     """)
     conn.execute("INSERT INTO marts.dim_companies (ticker) VALUES ('AAPL')")
     
-    with pytest.raises(ValueError, match="Data quality checks failed"):
-        _run_data_quality_checks(conn)
+    # Required for DQ Engine to run without schema errors
+    conn.execute("CREATE TABLE IF NOT EXISTS marts.dq_warnings (check_name VARCHAR, violations INTEGER, status VARCHAR, is_critical BOOLEAN, checked_at TIMESTAMP)")
+    conn.execute("CREATE TABLE IF NOT EXISTS marts.etl_audit (run_id UUID, status VARCHAR)")
+    
+    conn.close()
+    
+    # Should return False because of NULL ticker in fct_daily_returns
+    success = run_dq_validations(db_file)
+    assert success is False

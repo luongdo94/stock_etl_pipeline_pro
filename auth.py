@@ -228,3 +228,11 @@ def render_user_profile(cm=None):
             del st.session_state["cm_pass"]
         time.sleep(0.5)
         st.rerun()
+
+        # Best-effort Supabase sign out
+        try:
+            get_supabase_client().auth.sign_out()
+        except Exception:
+            pass
+
+        st.rerun()

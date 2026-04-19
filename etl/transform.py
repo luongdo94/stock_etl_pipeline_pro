@@ -24,7 +24,11 @@ def run_transforms(conn: duckdb.DuckDBPyConnection):
     _create_staging(conn)
     _create_intermediate(conn)
     _create_marts(conn)
-    _run_data_quality_checks(conn)
+    
+    # 📝 Telemetry tables are created in _create_marts.
+    # Logic for DQ validation is now moved to etl/dq_engine.py 
+    # and called from pipeline.py.
+
 
 
 def _create_staging(conn):
@@ -71,6 +75,7 @@ def _create_staging(conn):
             region,
             country,
             currency,
+            quote_type,
             total_debt,
             ebitda,
             gross_margin,
@@ -250,6 +255,31 @@ def _create_marts(conn):
     """
     conn.execute("CREATE SCHEMA IF NOT EXISTS marts")
 
+    # ── Infrastructure: Telemetry Tables (Unified DQ & Auditing) ───────────
+    # Execution Audit Log
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS marts.etl_audit (
+            run_id          UUID PRIMARY KEY,
+            start_time      TIMESTAMP,
+            end_time        TIMESTAMP,
+            status          VARCHAR, -- STARTED, SUCCESS, FAILED
+            mode            VARCHAR, -- INCREMENTAL, FULL
+            rows_processed  INTEGER,
+            error_message   TEXT
+        )
+    """)
+
+    # DQ Warnings History (Dashboard Alerts)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS marts.dq_warnings (
+            check_name      VARCHAR,
+            violations      INTEGER,
+            status          VARCHAR,
+            is_critical     BOOLEAN,
+            checked_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     # ── STEP 0: Financials dimensions FIRST (dependency for FMI in dim_companies) ──
     conn.execute("""
         CREATE OR REPLACE TABLE marts.dim_quarterly_financials AS
@@ -259,6 +289,8 @@ def _create_marts(conn):
             EXTRACT(QUARTER FROM date) AS quarter,
             date AS report_date,
             revenue,
+            net_income,
+            total_equity,
             eps,
             eps_diluted,
             -- Calculate Growth
@@ -278,7 +310,7 @@ def _create_marts(conn):
             ticker,
             EXTRACT(YEAR FROM date) AS year,
             date AS report_date,
-            revenue, eps, eps_diluted,
+            revenue, net_income, total_equity, eps, eps_diluted,
             ROUND((revenue - LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS revenue_growth_pct,
             ROUND((eps - LAG(eps) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(eps) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS eps_growth_pct
         FROM raw.historical_financials
@@ -322,64 +354,105 @@ def _create_marts(conn):
     # DIMENSION: Companies
     conn.execute("""
         CREATE OR REPLACE TABLE marts.dim_companies AS
+        WITH fallback_metrics AS (
+            -- Calculate TTM ROE and FCF from raw statements for missing tickers (e.g. JNJ, DELL spin-offs)
+            SELECT
+                q.ticker,
+                SUM(q.revenue) AS ttm_revenue,
+                SUM(q.net_income) AS ttm_net_income,
+                -- Use latest known equity for ROE denominator
+                ARG_MAX(q.total_equity, q.date) AS latest_equity,
+                -- Get FCF from quarterly history table
+                SUM(fcf.free_cash_flow) AS ttm_fcf
+            FROM (
+                SELECT *, ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) as rn 
+                FROM raw.quarterly_financials
+            ) q
+            LEFT JOIN raw.hist_fcf_quarterly fcf 
+                ON q.ticker = fcf.ticker 
+                AND EXTRACT(YEAR FROM q.date) = fcf.year 
+                AND EXTRACT(QUARTER FROM q.date) = fcf.quarter
+            WHERE q.rn <= 4 -- TTM = Last 4 quarters
+            GROUP BY q.ticker
+        )
         SELECT
-            ticker,
-            company,
-            sector,
-            region,
-            country,
-            currency,
-            cap_category,
-            market_cap,
-            pe_ratio,
-            forward_pe,
-            revenue_ttm,
-            employees,
-            total_debt,
-            ebitda,
-            gross_margin,
-            operating_margin,
-            trailing_eps,
-            forward_eps,
-            roe,
-            ROUND(dividend_yield * 100, 2) AS dividend_yield_pct,
-            price_to_book,
-            beta,
-            target_mean_price,
-            recommendation_key,
-            peg_ratio,
-            price_to_sales,
-            ev_to_ebitda,
-            revenue_growth,
-            earnings_growth,
-            current_ratio,
-            quick_ratio,
-            debt_to_equity,
-            short_ratio,
-            short_percent_of_float,
-            inst_ownership,
-            insider_ownership,
-            free_cashflow,
-            -- 🏆 v3.0 Profitability: Self-calculated FCF Margin
-            ROUND((free_cashflow / NULLIF(revenue_ttm, 0)) * 100, 2) AS fcf_margin,
-            -- 🏆 EXPERT: Historical Baselines (Joined from aggregates)
+            c.ticker,
+            c.company,
+            c.sector,
+            c.region,
+            c.country,
+            c.currency,
+            c.quote_type,
+            c.cap_category,
+            c.market_cap,
+            c.pe_ratio,
+            c.forward_pe,
+            c.revenue_ttm,
+            c.employees,
+            c.total_debt,
+            c.ebitda,
+            c.gross_margin,
+            c.operating_margin,
+            c.trailing_eps,
+            c.forward_eps,
+            -- ✅ ROE Fallback: 1. Priority Yahoo, 2. TTM Manual, 3. Latest Annual Manual
+            COALESCE(
+                c.roe, 
+                ROUND(fb.ttm_net_income / NULLIF(fb.latest_equity, 0), 4),
+                ROUND(ann.net_income / NULLIF(ann.total_equity, 0), 4)
+            ) AS roe,
+            ROUND(c.dividend_yield * 100, 2) AS dividend_yield_pct,
+            c.price_to_book,
+            c.beta,
+            c.target_mean_price,
+            c.recommendation_key,
+            c.peg_ratio,
+            c.price_to_sales,
+            c.ev_to_ebitda,
+            c.revenue_growth,
+            c.earnings_growth,
+            c.current_ratio,
+            c.quick_ratio,
+            c.debt_to_equity,
+            c.short_ratio,
+            c.short_percent_of_float,
+            c.inst_ownership,
+            c.insider_ownership,
+            c.free_cashflow,
+            -- ✅ FCF Margin Fallback: 1. Yahoo, 2. TTM Manual, 3. Annual Manual
+            ROUND(
+                COALESCE(
+                    (c.free_cashflow / NULLIF(c.revenue_ttm, 0)) * 100,
+                    (fb.ttm_fcf / NULLIF(fb.ttm_revenue, 0)) * 100,
+                    (h.free_cash_flow / NULLIF(ann.revenue, 0)) * 100
+                ), 2
+            ) AS fcf_margin,
+            -- 🏆 EXPERT: Historical Baselines
             b.avg_5y_price,
             b.std_dev_5y_price,
             b.high_5y_price,
             b.low_5y_price,
-            -- 🏆 EXPERT: 5-Year Average P/E ratio
             hpe.pe_5y_avg,
-            -- v3.0 Quantitative Metrics
             vol.volatility_30d,
             payout.buyback_yield_pct,
             payout.dividends_paid_yield_pct,
             payout.net_payout_yield_pct,
-            -- v4.0 Fundamental Momentum Index (FMI) components
             fmi.fmi_rev_acceleration,
             fmi.fmi_eps_acceleration,
             fmi.fmi_margin_trend,
             fmi.fmi_quarters_of_growth
         FROM staging.stg_company_info c
+        LEFT JOIN fallback_metrics fb USING (ticker)
+        LEFT JOIN (
+            -- Secondary Fallback: Latest Annual reports
+            SELECT * FROM marts.dim_annual_financials
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY report_date DESC) = 1
+        ) ann USING (ticker)
+        LEFT JOIN (
+            -- Join fixed annual capex/fcf from hist_fcf
+            SELECT * FROM raw.hist_fcf
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY _loaded_at DESC) = 1
+        ) h USING (ticker)
         LEFT JOIN (
             SELECT 
                 ticker, 
@@ -391,7 +464,6 @@ def _create_marts(conn):
             GROUP BY 1
         ) b USING (ticker)
         LEFT JOIN (
-            -- 5-Year Average P/E
             SELECT 
                 p.ticker, 
                 ROUND(AVG(p.close / NULLIF(a.eps, 0)), 2) AS pe_5y_avg
@@ -404,7 +476,6 @@ def _create_marts(conn):
             GROUP BY 1
         ) hpe USING (ticker)
         LEFT JOIN (
-            -- Rolling 30-day annualised volatility from daily returns
             SELECT
                 ticker,
                 ROUND(STDDEV(daily_return_pct) OVER (
@@ -416,7 +487,6 @@ def _create_marts(conn):
             QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) = 1
         ) vol USING (ticker)
         LEFT JOIN (
-            -- Buyback & Dividend Yield (Net Payout)
             SELECT
                 cf.ticker,
                 ROUND(cf.buyback_ttm         / NULLIF(dc.market_cap, 0) * 100, 4) AS buyback_yield_pct,
@@ -426,8 +496,6 @@ def _create_marts(conn):
             JOIN staging.stg_company_info dc USING (ticker)
         ) payout USING (ticker)
         LEFT JOIN (
-            -- v4.0: Fundamental Momentum Index (FMI) pre-computation
-            -- Uses last 4 quarters of data (TTM) vs the prior 4 quarters to measure acceleration.
             WITH ranked AS (
                 SELECT
                     ticker,
@@ -446,13 +514,10 @@ def _create_marts(conn):
             recent_agg AS (
                 SELECT
                     ticker,
-                    -- Revenue: avg QoQ growth rate over latest 4 quarters
                     ROUND(AVG(revenue_growth_qoq_pct), 2)       AS rev_qoq_recent,
                     ROUND(AVG(revenue_growth_yoy_pct), 2)       AS rev_yoy_recent,
-                    -- EPS: avg QoQ growth rate over latest 4 quarters
                     ROUND(AVG(eps_growth_qoq_pct), 2)           AS eps_qoq_recent,
                     ROUND(AVG(eps_growth_yoy_pct), 2)           AS eps_yoy_recent,
-                    -- Consistency: how many of the 4 quarters had positive EPS growth YoY
                     SUM(CASE WHEN eps_growth_yoy_pct > 0 THEN 1 ELSE 0 END) AS quarters_of_growth
                 FROM recent
                 GROUP BY ticker
@@ -467,14 +532,9 @@ def _create_marts(conn):
             )
             SELECT
                 r.ticker,
-                -- Revenue Acceleration = recent QoQ avg - prior QoQ avg  (positive = speeding up)
                 ROUND(r.rev_qoq_recent - COALESCE(p.rev_qoq_prior, r.rev_qoq_recent), 2) AS fmi_rev_acceleration,
-                -- EPS Acceleration    = recent QoQ avg - prior QoQ avg
                 ROUND(r.eps_qoq_recent - COALESCE(p.eps_qoq_prior, r.eps_qoq_recent), 2) AS fmi_eps_acceleration,
-                -- Margin Trend proxy: if most-recent revenue_yoy > eps_yoy then margins compressing, else expanding
-                -- Positive number indicates EPS growing faster than revenue = margin expansion
                 ROUND(r.eps_yoy_recent - r.rev_yoy_recent, 2) AS fmi_margin_trend,
-                -- Streak: 0-4 quarters with positive EPS YoY
                 r.quarters_of_growth                          AS fmi_quarters_of_growth
             FROM recent_agg r
             LEFT JOIN prior_agg p USING (ticker)
@@ -506,111 +566,4 @@ def _create_marts(conn):
     logger.info("✅ Mart tables created: fct_daily_returns, dim_companies, agg_monthly_performance, dim_annual_financials, dim_quarterly_financials")
 
 
-def _run_data_quality_checks(conn):
-    """
-    Data Quality Tests (equivalent to dbt tests).
-    Differentiates between CRITICAL (Abort) and SOFT (Warning) failures.
-    """
-    checks = {
-        # --- CRITICAL: MUST PASS FOR TRADING LOGIC ---
-        "fct_no_nulls_ticker": """
-            SELECT COUNT(*) FROM marts.fct_daily_returns WHERE ticker IS NULL
-        """,
-        "fct_no_nulls_date": """
-            SELECT COUNT(*) FROM marts.fct_daily_returns WHERE date IS NULL
-        """,
-        "fct_no_negative_price": """
-            SELECT COUNT(*) FROM marts.fct_daily_returns WHERE price_close < 0
-        """,
-        "fct_unique_date_ticker": """
-            SELECT COUNT(*) FROM (
-                SELECT date, ticker, COUNT(*) AS cnt
-                FROM marts.fct_daily_returns
-                GROUP BY 1, 2
-                HAVING cnt > 1
-            )
-        """,
-        "fct_no_zero_volume": """
-            SELECT COUNT(*) FROM marts.fct_daily_returns WHERE volume = 0
-        """,
-        # --- SOFT: SHOULD PASS BUT OK TO WARNING ---
-        "dim_no_null_revenue": """
-            SELECT COUNT(*) FROM marts.dim_companies 
-            WHERE (revenue_ttm IS NULL OR revenue_ttm < 0)
-              AND ticker NOT LIKE '^%' AND ticker NOT IN ('SPY')
-        """,
-        "dim_no_null_market_cap": """
-            SELECT COUNT(*) FROM marts.dim_companies 
-            WHERE (market_cap IS NULL OR market_cap <= 0)
-              AND ticker NOT LIKE '^%' AND ticker NOT IN ('SPY')
-        """,
-        "dim_no_null_fundamental_data": """
-            SELECT COUNT(*) FROM marts.dim_companies 
-            WHERE (roe IS NULL OR fcf_margin IS NULL)
-              AND ticker NOT LIKE '^%' AND ticker NOT IN ('SPY')
-        """,
-    }
-    
-    critical_checks = [
-        "fct_no_nulls_ticker", "fct_no_nulls_date", "fct_no_negative_price", 
-        "fct_unique_date_ticker"
-    ]
-    
-    # ── Phase 2: Professional DQ Persistence & Auditing ────────────────────────
-    conn.execute("CREATE SCHEMA IF NOT EXISTS marts")
-    
-    # Execution Audit Log
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS marts.etl_audit (
-            run_id          UUID PRIMARY KEY,
-            start_time      TIMESTAMP,
-            end_time        TIMESTAMP,
-            status          VARCHAR, -- STARTED, SUCCESS, FAILED
-            mode            VARCHAR, -- INCREMENTAL, FULL
-            rows_processed  INTEGER,
-            error_message   TEXT
-        )
-    """)
-
-    # DQ Warnings History
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS marts.dq_warnings (
-            check_name      VARCHAR,
-            violations      INTEGER,
-            status          VARCHAR,
-            is_critical     BOOLEAN,
-            checked_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-
-    print("\n-- DATA QUALITY CHECKS ------------------------------------------")
-    all_critical_passed = True
-    
-    for check_name, query in checks.items():
-        result = conn.execute(query).fetchone()[0]
-        is_critical = check_name in critical_checks
-        
-        if result == 0:
-            status_txt = "✅ PASS"
-            status_db  = "PASS"
-        else:
-            if is_critical:
-                status_txt = f"❌ FAIL (CRITICAL: {result} violations)"
-                status_db  = "CRITICAL"
-                all_critical_passed = False
-            else:
-                status_txt = f"⚠️ WARN (SOFT: {result} violations)"
-                status_db  = "WARNING"
-                
-            # Log to DB for Dashboard consumption (Bug #4)
-            conn.execute("""
-                INSERT INTO marts.dq_warnings (check_name, violations, status, is_critical)
-                VALUES (?, ?, ?, ?)
-            """, [check_name, result, status_db, is_critical])
-        
-        print(f"  {status_txt:35s}  {check_name}")
-    
-    if not all_critical_passed:
-        raise ValueError("❌ CRITICAL Data quality checks failed! Pipeline aborted.")
-    
-    print("  Pipeline consistency verified! Fundamentals gaps logged to marts.dq_warnings.\n")
+    logger.info("✅ Mart tables created: fct_daily_returns, dim_companies, agg_monthly_performance, dim_annual_financials, dim_quarterly_financials")

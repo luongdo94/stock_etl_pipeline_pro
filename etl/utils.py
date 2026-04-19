@@ -3,8 +3,11 @@ import pandas as pd
 import numpy as np
 import duckdb
 import os
+import logging
 from datetime import date, timedelta
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 _WAREHOUSE_DIR = Path(__file__).parent.parent / "warehouse"
 DB_PATH = str(_WAREHOUSE_DIR / "stock_dw.duckdb")
@@ -193,15 +196,19 @@ def get_missing_tickers_for_table(conn: duckdb.DuckDBPyConnection, table_name: s
         # Table might not exist or be empty, treat all as missing
         return all_tickers
 
+# Suffixes typically representing European/UK markets with semi-annual reporting only
+NON_QUARTERLY_SUFFIXES = ('.PA', '.MI', '.AS', '.DE', '.MC', '.LS', '.SW', '.L', '.CO')
+
 def get_smart_recovery_targets(conn: duckdb.DuckDBPyConnection) -> dict:
     """
     Consolidates tickers missing from various critical fundamental tables.
     - metadata: tickers missing from company_info (all types).
     - fundamentals: tickers missing from quarterly_financials,
-                    restricted to EQUITY tickers only (excludes ETF, INDEX).
+                    restricted to EQUITY tickers only (excludes ETF, INDEX)
+                    and filtered to exclude semi-annual reporting markets.
     Returns: {
         'metadata': {ticker: meta},    # Missing from company_info
-        'fundamentals': {ticker: meta} # Missing from quarterly_financials (EQUITY only)
+        'fundamentals': {ticker: meta} # Missing from quarterly_financials
     }
     """
     missing_meta = get_missing_tickers_for_table(conn, "raw.company_info")
@@ -215,13 +222,45 @@ def get_smart_recovery_targets(conn: duckdb.DuckDBPyConnection) -> dict:
     except Exception:
         non_equity_set = set()
 
-    # For fundamentals, only process equity tickers from config
+    # For fundamentals, only process equity tickers from config that are NOT semi-annual reporters
     all_tickers = get_config_tickers()
-    equity_tickers = {k: v for k, v in all_tickers.items() if k not in non_equity_set}
+    
+    def is_eligible_for_quarterly(ticker):
+        # 1. Must not be a known non-equity in our DB
+        if ticker in non_equity_set: return False
+        # 2. Must not be an index (starts with ^)
+        if ticker.startswith('^'): return False
+        # 3. Must not belong to a semi-annual reporting exchange
+        if ticker.upper().endswith(NON_QUARTERLY_SUFFIXES): return False
+        return True
+
+    equity_tickers = {k: v for k, v in all_tickers.items() if is_eligible_for_quarterly(k)}
 
     missing_fundamentals = get_missing_tickers_for_table(conn, "raw.quarterly_financials")
-    # Keep only equity tickers in the fundamentals missing set
+    # Keep only eligible equity tickers in the fundamentals missing set
     missing_fundamentals = {k: v for k, v in missing_fundamentals.items() if k in equity_tickers}
+
+    # Proactive Gap Detection: Also target tickers that exist but have NULL fundamentals
+    # This repairs tickers like JNJ/DELL where summary was null but statements might be fetchable.
+    q_gaps = """
+        SELECT ticker 
+        FROM marts.dim_companies 
+        WHERE quote_type = 'EQUITY'
+          AND (
+            (roe IS NULL) -- Always target missing ROE for any Equity
+            OR 
+            (free_cashflow IS NULL AND sector != 'Financials') -- Only target FCF if not a Bank/Insurance
+          )
+    """
+    try:
+        gap_tickers = [r[0] for r in conn.execute(q_gaps).fetchall()]
+        for t in gap_tickers:
+            if t in equity_tickers:
+                missing_fundamentals[t] = {}
+        if gap_tickers:
+            logger.info(f"   🔍 Smart Recovery identified {len(gap_tickers)} tickers with fundamental gaps (e.g., {gap_tickers[:3]})")
+    except Exception as e:
+        logger.debug(f"Fundamental gap check skipped: {e}")
 
     return {
         "metadata": missing_meta,

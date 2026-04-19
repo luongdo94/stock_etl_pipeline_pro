@@ -51,7 +51,8 @@ Thực hiện ngay trong **Airflow Task `validate`**, trước khi dữ liệu t
 
 ### 🛡️ Smart Fundamental Refresh (Làm mới thông minh)
 - **Quy tắc:** Hệ thống chỉ tải lại dữ liệu tài chính (Thanh khoản, Doanh thu...) nếu dữ liệu hiện tại cũ hơn 72 giờ **HOẶC** mức độ bao phủ của kho dữ liệu thấp hơn **95%**.
-- **Lợi ích:** Tiết kiệm tối đa tài nguyên API và giảm nguy cơ bị khóa tài khoản/IP.
+- **Tự động sửa lỗi (Auto-Repair):** Hệ thống tích hợp logic phát hiện "Lỗ hổng chỉ số". Mọi cổ phiếu (Equity) bị thiếu ROE hoặc FCF sẽ bị bộ máy Smart Recovery đánh dấu và ưu tiên tải lại báo cáo tài chính ngay trong lần chạy tiếp theo để thực hiện tính toán dự phòng.
+- **Lợi ích:** Tiết kiệm tối đa tài nguyên API và đảm bảo Dashboard luôn đầy đủ thông tin phân định mức độ an toàn của cổ phiếu.
 
 ---
 

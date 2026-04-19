@@ -62,5 +62,21 @@ Cuối mỗi chu kỳ ETL, hệ thống tự động chạy bộ kiểm tra DQ:
 - **Soft Tests:** Cảnh báo về các lỗ hổng dữ liệu tài chính (Gaps). Kết quả được lưu vào bảng `marts.dq_warnings` để hiển thị trên Dashboard.
 
 ---
+
+## 5. Cơ chế Phục hồi Dữ liệu Tài chính Thông minh (Fundamental Recovery Engine)
+
+Đây là cơ chế độc quyền giúp hệ thống chống lại tình trạng "lỗ hổng dữ liệu" từ các API miễn phí (như lỗi không có ROE/FCF cho JNJ, DELL, MCD...).
+
+### 5.1. Quy trình tự phục hồi (Recovery Workflow)
+Nếu các chỉ số tóm tắt bị trống (NULL), hệ thống sẽ kích hoạt logic dự phòng đa tầng:
+1.  **Tầng 1 (Ưu tiên - Summary API):** Sử dụng chỉ số tính sẵn từ Yahoo Finance để đảm bảo tính đồng nhất với thị trường.
+2.  **Tầng 2 (Dự phòng TTM - Quarterly Statements):** Nếu Tầng 1 trống, hệ thống tự động trích xuất báo cáo **Thu nhập (Income Statement)** và **Bảng cân đối (Balance Sheet)** hàng quý để tính toán ROE và biên FCF trong 12 tháng gần nhất (TTM).
+3.  **Tầng 3 (Dự phòng Năm - Annual Statements):** Nếu dữ liệu quý không đủ, hệ thống lùi về sử dụng số liệu từ báo cáo năm gần nhất (kết quả thực dương).
+
+### 5.2. Nhận diện lỗi chủ động (Smart Gap Detection)
+Hệ thống không đợi đến khi chạy Full Refresh mới sửa lỗi. Trong mỗi lần chạy hàng ngày (Incremental), bộ máy **Smart Recovery** sẽ quét toàn bộ danh mục Dimension. Nếu phát hiện bất kỳ mã cổ phiếu (Equity) nào bị thiếu ROE hoặc FCF, nó sẽ tự động đưa mã đó vào diện "Cần sửa chữa" và cưỡng bức tải lại báo cáo tài chính thô.
+
+---
+
 > [!TIP]
 > Bạn có thể theo dõi quá trình này thông qua log của Console khi chạy script cập nhật. Mỗi bước đều được chấm thời gian (Timing) để tối ưu hiệu năng.

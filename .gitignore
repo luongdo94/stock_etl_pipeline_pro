@@ -17,6 +17,8 @@ scripts
 *.sh
 dashboard.py
 .agents/
+logs/
+teraform/
 
 # Databases (Data Warehouse)
 warehouse/*.duckdb
