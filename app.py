@@ -1116,6 +1116,48 @@ def get_db_connection(read_only=False):
     finally:
         conn.close()
 
+@st.cache_data(ttl=86400, show_spinner="📅 Fetching Dividend Calendar...")
+def fetch_dividend_calendar(tickers_tuple: tuple) -> dict:
+    """
+    Fetch ex-dividend date and payout date for a list of tickers on-demand.
+    Uses yf.Ticker.calendar (returns datetime.date objects, most reliable source).
+    Cached for 24 hours. Returns dict: {ticker: {'ex_date': str, 'pay_date': str}}
+    """
+    import yfinance as yf
+    import datetime
+    import pandas as pd
+    result = {}
+    with open('/tmp/div_debug.log', 'a') as f:
+        f.write(f"\n--- FETCHING CALENDAR FOR {tickers_tuple} ---\n")
+        for t in tickers_tuple:
+            try:
+                # Fallback chains for robustness
+                cal = yf.Ticker(t).calendar
+                ex_d, pay_d = None, None
+                
+                if isinstance(cal, dict):
+                    ex_d  = cal.get("Ex-Dividend Date")
+                    pay_d = cal.get("Dividend Date")
+                elif isinstance(cal, pd.DataFrame): # Older yfinance handling just in case
+                    if "Ex-Dividend Date" in cal.index: ex_d = cal.loc["Ex-Dividend Date"].iloc[0]
+                    if "Dividend Date" in cal.index:    pay_d = cal.loc["Dividend Date"].iloc[0]
+                
+                f.write(f"Raw cal for {t}: {type(cal)} {cal}\n")
+                
+                ex_str  = ex_d.strftime("%d %b %Y")  if hasattr(ex_d, "strftime")  else (str(ex_d)  if pd.notna(ex_d)  else "—")
+                pay_str = pay_d.strftime("%d %b %Y") if hasattr(pay_d, "strftime") else (str(pay_d) if pd.notna(pay_d) else "—")
+                
+                result[t] = {
+                    "ex_date":  ex_str if ex_str not in ("NaT", "None", "") else "—",
+                    "pay_date": pay_str if pay_str not in ("NaT", "None", "") else "—",
+                }
+                f.write(f"Mapped {t} -> Ex: {result[t]['ex_date']}, Pay: {result[t]['pay_date']}\n")
+            except Exception as e:
+                f.write(f"Error for {t} -> {e}\n")
+                result[t] = {"ex_date": "—", "pay_date": "—"}
+    return result
+
+
 @st.cache_data(ttl=600, show_spinner="📉 Loading Institutional Data Warehouse...")
 def load_data():
     """Load all required data, normalize currencies, and pre-compute técnicos inside cache."""
@@ -4166,6 +4208,10 @@ if active_tab == "7. Portfolio Builder":
             st.session_state.portfolio_cost = {t: 150.0 for t in defaults}
         st.session_state.portfolio_db_synced = True
 
+    # Always ensure _portfolio_version is initialized (may be missing on first run or after cache clear)
+    if '_portfolio_version' not in st.session_state:
+        st.session_state['_portfolio_version'] = 0
+
     _sel_version = st.session_state.get('_portfolio_version', 0)
     p_tickers = st.multiselect(
         "Select Tickers for Portfolio Construction", 
@@ -4209,6 +4255,11 @@ if active_tab == "7. Portfolio Builder":
                             s_col = 'shares' if 'shares' in idf.columns else None
                             c_col = 'cost' if 'cost' in idf.columns else ('cost_basis' if 'cost_basis' in idf.columns else None)
                             mapped_success, missing_tickers = [], []
+
+                            # ── OVERWRITE: wipe existing portfolio first ──────
+                            if import_mode == "Overwrite":
+                                st.session_state.portfolio_shares = {}
+                                st.session_state.portfolio_cost   = {}
                             
                             for _, r in idf.iterrows():
                                 raw_t = str(r['ticker']).upper().strip()
@@ -4217,26 +4268,31 @@ if active_tab == "7. Portfolio Builder":
                                 
                                 if final_t:
                                     mapped_success.append(final_t)
-                                    new_sh = float(r[s_col]) if s_col and pd.notna(r[s_col]) else 0.0
-                                    new_cost = float(r[c_col]) if c_col and pd.notna(r[c_col]) else 0.0
+                                    new_sh   = float(r[s_col])   if s_col and pd.notna(r[s_col])   else 0.0
+                                    new_cost = float(r[c_col])   if c_col and pd.notna(r[c_col])   else 0.0
                                     
                                     if import_mode == "Merge (Accumulate)" and final_t in st.session_state.portfolio_shares:
                                         old_sh = st.session_state.portfolio_shares[final_t]
-                                        old_c = st.session_state.portfolio_cost.get(final_t, 0.0)
+                                        old_c  = st.session_state.portfolio_cost.get(final_t, 0.0)
                                         total_sh = old_sh + new_sh
                                         if total_sh > 0:
                                             avg_c = ((old_sh * old_c) + (new_sh * new_cost)) / total_sh
                                             st.session_state.portfolio_shares[final_t] = total_sh
-                                            st.session_state.portfolio_cost[final_t] = avg_c
+                                            st.session_state.portfolio_cost[final_t]   = avg_c
                                     else:
-                                        if new_sh > 0: st.session_state.portfolio_shares[final_t] = new_sh
-                                        if new_cost > 0: st.session_state.portfolio_cost[final_t] = new_cost
+                                        if new_sh   > 0: st.session_state.portfolio_shares[final_t] = new_sh
+                                        if new_cost > 0: st.session_state.portfolio_cost[final_t]   = new_cost
                                 elif raw_t not in ("NAN", "") and raw_t:
                                     missing_tickers.append(raw_t)
                                     
                             if mapped_success:
                                 valid = [t for t in mapped_success if t in stock_tickers]
-                                st.session_state.portfolio_tickers = list(dict.fromkeys(st.session_state.portfolio_tickers + valid))
+                                if import_mode == "Overwrite":
+                                    # Replace entirely — no legacy tickers retained
+                                    st.session_state.portfolio_tickers = list(dict.fromkeys(valid))
+                                else:
+                                    # Merge — keep existing tickers, append new ones
+                                    st.session_state.portfolio_tickers = list(dict.fromkeys(st.session_state.portfolio_tickers + valid))
                                 st.session_state['_portfolio_version'] += 1
                                 st.session_state['_import_toast'] = f"✅ Imported {len(valid)} assets!"
                                 if missing_tickers:
@@ -4465,7 +4521,11 @@ if active_tab == "7. Portfolio Builder":
                 sel_bench_label = st.selectbox("Select Performance Benchmark", options=list(bench_options.keys()), index=0, key="bench_l1")
                 sel_bench_ticker = bench_options[sel_bench_label]
     
-                initial_investment = 10000
+                # Dynamically set initial investment so the simulation ENDS exactly at the current total market value.
+                # (since 'cum_return' is normalized to 1.0 at start, we calculate backwards from the endpoint)
+                current_cum_return = cum_returns.iloc[-1]
+                initial_investment = total_p_val / current_cum_return if current_cum_return > 0 else total_p_val
+                
                 backtest_df = pd.DataFrame({'date': cum_returns.index, 'cum_return': cum_returns.values})
                 backtest_df["portfolio_value"] = backtest_df["cum_return"] * initial_investment
     
@@ -4504,26 +4564,34 @@ if active_tab == "7. Portfolio Builder":
             # LAYER 2 · STRUCTURAL DIAGNOSIS
             # ═══════════════════════════════════════════════════════════════════
             render_header("globe", "Structural Diagnosis — Exposure & Correlation")
-            l2c1, l2c2, l2c3 = st.columns(3)
+            l2c1, l2c2 = st.columns([1, 1])
+
             with l2c1:
-                render_header("globe", "Geographic Exposure", level="#####")
-                reg_dist = edited_df.groupby("Region")["Market Value"].sum().reset_index()
-                fig_reg = px.pie(reg_dist, values='Market Value', names='Region', hole=0.4,
-                                 color_discrete_sequence=px.colors.qualitative.Pastel)
-                fig_reg.update_layout(template="plotly_dark", height=300, margin=dict(l=10,r=10,t=10,b=10),
-                                      legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5))
-                st.plotly_chart(fig_reg, use_container_width=True)
-    
+                render_header("globe", "Portfolio Exposure — Region × Sector", level="#####")
+                # Sunburst: inner ring = Region, outer ring = Sector
+                fig_sun = px.sunburst(
+                    edited_df,
+                    path=["Region", "Sector"],
+                    values="Market Value",
+                    color="Sector",
+                    color_discrete_sequence=px.colors.qualitative.Pastel,
+                )
+                fig_sun.update_traces(
+                    textinfo="label+percent parent",
+                    insidetextorientation="radial",
+                    hovertemplate="<b>%{label}</b><br>Value: €%{value:,.0f}<br>Share: %{percentParent:.1%}<extra></extra>",
+                )
+                fig_sun.update_layout(
+                    template="plotly_dark",
+                    height=360,
+                    margin=dict(l=0, r=0, t=10, b=0),
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                )
+                st.plotly_chart(fig_sun, use_container_width=True)
+                st.caption("Inner ring = Region · Outer ring = Sector")
+
             with l2c2:
-                render_header("layers", "Thematic Exposure (Sector)", level="#####")
-                sec_dist = edited_df.groupby("Sector")["Market Value"].sum().reset_index()
-                fig_sec = px.pie(sec_dist, values='Market Value', names='Sector', hole=0.4,
-                                 color_discrete_sequence=px.colors.qualitative.Safe)
-                fig_sec.update_layout(template="plotly_dark", height=300, margin=dict(l=10,r=10,t=10,b=10),
-                                      legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5))
-                st.plotly_chart(fig_sec, use_container_width=True)
-    
-            with l2c3:
                 render_header("activity", "Asset Correlation Matrix", level="#####")
                 corr_matrix = ret_matrix.corr()
                 mean_corr = (corr_matrix.values.sum() - n_assets) / (n_assets**2 - n_assets) if n_assets > 1 else 0
@@ -4534,14 +4602,181 @@ if active_tab == "7. Portfolio Builder":
                     color_continuous_scale="RdBu_r", zmin=-1, zmax=1,
                     template="plotly_dark", aspect="auto"
                 )
-                fig_corr.update_layout(height=300, margin=dict(l=0,r=0,t=10,b=0))
+                fig_corr.update_layout(height=360, margin=dict(l=0, r=0, t=10, b=0))
                 st.plotly_chart(fig_corr, use_container_width=True)
     
+            st.markdown("---")
+
+            # ═══════════════════════════════════════════════════════════════════
+            # LAYER 2.5 · DIVIDEND & INCOME TRACKER
+            # ═══════════════════════════════════════════════════════════════════
+            render_header("trending-up", "Dividend & Income Tracker")
+
+            
+            # Build dividend data per portfolio ticker
+            SPECIAL_DIV_THRESHOLD = 8.0  # Yield% > 8 → likely special/one-time, not recurring
+            div_rows = []
+            for t in current_tickers:
+                meta_row = m_df[m_df["Ticker"] == t]
+                if meta_row.empty:
+                    continue
+                meta = meta_row.iloc[0]
+
+                cur_price = latest_prices.get(t, 0.0)
+                yield_pct = float(meta.get("Yield (%)", 0) or 0)
+                shares    = st.session_state.portfolio_shares.get(t, 0.0)
+                cost      = st.session_state.portfolio_cost.get(t, 0.0)
+
+                if yield_pct <= 0 or cur_price <= 0:
+                    continue
+
+                dps         = cur_price * yield_pct / 100
+                proj_income = dps * shares
+                yoc         = (dps / cost * 100) if cost > 0 else 0
+                is_special  = yield_pct > SPECIAL_DIV_THRESHOLD
+
+                div_rows.append({
+                    "Ticker":           t,
+                    "Company":          meta.get("Company", t),
+                    "Sector":           meta.get("Sector", "N/A"),
+                    "Shares":           shares,
+                    "Price (€)":        cur_price,
+                    "DPS (€)":          round(dps, 4),
+                    "Cost Basis (€)":   cost,
+                    "Cur. Yield (%)":   round(yield_pct, 2),
+                    "YOC (%)":          round(yoc, 2),
+                    "Proj. Income (€)": round(proj_income, 2),
+                    "Special":          is_special,
+                    "Type":             "⚠️ Special?" if is_special else "✅ Regular",
+                })
+
+            div_df = pd.DataFrame(div_rows).sort_values("Cur. Yield (%)", ascending=False) if div_rows else pd.DataFrame()
+            has_special = (not div_df.empty) and div_df["Special"].any()
+
+            # Fetch ex-dividend / payout dates on-demand (cached 24h, no DB write)
+            if not div_df.empty:
+                cal_tickers = tuple(sorted(div_df["Ticker"].tolist()))
+                cal_data = fetch_dividend_calendar(cal_tickers)
+                div_df["Ex-Date"]  = div_df["Ticker"].map(lambda t: cal_data.get(t, {}).get("ex_date", "—"))
+                div_df["Pay Date"] = div_df["Ticker"].map(lambda t: cal_data.get(t, {}).get("pay_date", "—"))
+            
+            if div_df.empty:
+                st.info("ℹ️ No dividend-paying assets found. Add assets like UNH, UPS, JNJ, or MSFT to track income.")
+            else:
+                # KPI tiles use ONLY regular dividends to avoid inflating projections
+                reg_df = div_df[~div_df["Special"]]
+                total_annual_income  = reg_df["Proj. Income (€)"].sum()
+                total_cost_basis_div = (reg_df["Cost Basis (€)"] * reg_df["Shares"]).sum()
+                portfolio_yoc        = (total_annual_income / total_cost_basis_div * 100) if total_cost_basis_div > 0 else 0
+                monthly_income       = total_annual_income / 12
+                div_pct_of_portfolio = (total_annual_income / total_p_val * 100) if total_p_val > 0 else 0
+
+                if has_special:
+                    special_tickers = ", ".join(div_df[div_df["Special"]]["Ticker"].tolist())
+                    st.warning(
+                        f"⚠️ **Special Dividend Detected** · {special_tickers} — Yield >8% likely includes a **one-time special dividend** "
+                        f"(e.g. spin-off payout, extraordinary distribution). These are **excluded from income projections** below "
+                        f"to avoid overstating recurring income. Data source: yfinance trailing 12-month yield."
+                    )
+                
+                # ── Summary KPI Tiles ──
+                d1, d2, d3, d4, d5 = st.columns(5)
+                with d1:
+                    render_metric_tile("Proj. Annual Income", f"€{total_annual_income:,.2f}",
+                                       help_text="Sum of (DPS × Shares) for regular dividend payers only")
+                with d2:
+                    render_metric_tile("Monthly Income", f"€{monthly_income:,.2f}",
+                                       help_text="Annual income ÷ 12")
+                with d3:
+                    render_metric_tile("Portfolio YOC", f"{portfolio_yoc:.2f}%",
+                                       help_text="Total projected income ÷ Total cost basis of dividend payers")
+                with d4:
+                    render_metric_tile("Dividend Payers", f"{len(div_df)} / {n_assets}",
+                                       help_text="Stocks with a positive forward dividend yield")
+                with d5:
+                    # Show upcoming payout date if available
+                    today_dt = pd.Timestamp.today().normalize()
+                    upcoming_list = []
+                    for _, row in div_df.iterrows():
+                        if row.get("Pay Date", "—") != "—" and not row["Special"]:
+                            try:
+                                p_date = pd.to_datetime(row["Pay Date"])
+                                if p_date >= today_dt:
+                                    upcoming_list.append((p_date, f"{row['Ticker']}: {row['Pay Date']}"))
+                            except Exception:
+                                pass
+                    upcoming_list.sort(key=lambda x: x[0])
+                    next_pay_str = upcoming_list[0][1] if upcoming_list else "—"
+                    
+                    render_metric_tile("Next Pay Date", next_pay_str,
+                                       help_text="Nearest upcoming dividend payout date among regular payers (future dates only)")
+                
+                st.markdown("<br>", unsafe_allow_html=True)
+                
+                # ── Chart (Full Width) ──
+                render_header("bar-chart-2", "Dividend Yield by Asset", level="#####")
+                fig_div = go.Figure(go.Bar(
+                    x=div_df["Ticker"],
+                    y=div_df["Cur. Yield (%)"],
+                    marker=dict(
+                        color=div_df["Cur. Yield (%)"],
+                        colorscale="Teal",
+                        showscale=False,
+                    ),
+                    text=div_df["Cur. Yield (%)"].apply(lambda v: f"{v:.2f}%"),
+                    textposition="outside",
+                    hovertemplate=(
+                        "<b>%{x}</b><br>"
+                        "Cur. Yield: %{y:.2f}%<br>"
+                        "<extra></extra>"
+                    ),
+                ))
+                fig_div.update_layout(
+                    template="plotly_dark",
+                    height=300,
+                    margin=dict(l=0, r=0, t=10, b=0),
+                    yaxis_title="Yield (%)",
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                )
+                st.plotly_chart(fig_div, use_container_width=True)
+                
+                st.markdown("<br>", unsafe_allow_html=True)
+                
+                # ── Table (Full Width) ──
+                render_header("list", "Income Breakdown", level="#####")
+                display_div = div_df[[
+                    "Ticker", "Type", "Shares", "DPS (€)", "Cur. Yield (%)", "YOC (%)", "Proj. Income (€)", "Ex-Date", "Pay Date"
+                ]].copy()
+                st.dataframe(
+                    display_div,
+                    column_config={
+                        "Ticker":           st.column_config.TextColumn("Ticker"),
+                        "Type":             st.column_config.TextColumn("Type",
+                                                help="Regular = recurring dividend · Special? = likely one-time, excluded from KPIs"),
+                        "Shares":           st.column_config.NumberColumn("Shares", format="%.2f"),
+                        "DPS (€)":          st.column_config.NumberColumn("DPS", format="€%.4f"),
+                        "Cur. Yield (%)":   st.column_config.NumberColumn("Cur. Yield", format="%.2f%%"),
+                        "YOC (%)":          st.column_config.NumberColumn("YOC", format="%.2f%%",
+                                                help="Yield on Cost = DPS ÷ Your Avg. Cost Basis"),
+                        "Proj. Income (€)": st.column_config.NumberColumn("Annual Income", format="€%.2f"),
+                        "Ex-Date":          st.column_config.TextColumn("Ex-Div Date",
+                                                help="Last ex-dividend date (from yfinance, refreshed every 24h)"),
+                        "Pay Date":         st.column_config.TextColumn("Pay Date",
+                                                help="Last dividend payout date (from yfinance, refreshed every 24h)"),
+                    },
+                    hide_index=True,
+                    use_container_width=True,
+                    height=min(320, 40 + len(div_df) * 35),
+                )
+                st.caption("ℹ️ YOC = DPS ÷ Avg. cost basis · Dates fetched on-demand from yfinance, cached 24h · KPI tiles exclude ⚠️ Special?")
+            
             st.markdown("---")
             
             # ═══════════════════════════════════════════════════════════════════
             # LAYER 3 · STRATEGIC REBALANCING & OPTIMIZATION
             # ═══════════════════════════════════════════════════════════════════
+
             # ── 4.6. AI REBALANCING COMMAND CENTER (PREMIUM CARD GRID) ──────────────
             render_header("ai", "Institutional Rebalancing Command Center")
             

@@ -2611,3 +2611,11 @@ tickers:
     name: Zoetis
     sector: Healthcare
     region: US
+  TEM:
+    name: Tempus AI, Inc.
+    sector: Healthcare
+    region: US
+  ANX.PA:
+    name: Amundi Nasdaq 100 ETF
+    sector: Benchmark
+    region: EU
