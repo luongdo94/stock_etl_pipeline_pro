@@ -93,6 +93,179 @@ def run_dq_validations(db_path: str = None):
                 "ticker_query": "SELECT ticker FROM marts.dim_companies WHERE (roe IS NULL OR (fcf_margin IS NULL AND sector != 'Financials')) AND quote_type = 'EQUITY' LIMIT 50",
                 "critical": False
             },
+            
+            # --- COVERAGE TELEMETRY (Soft: warns when key analytical fields are sparse) ---
+            # These checks catch silent data sparsity that causes blank columns in the UI.
+            # Threshold logic: counts tickers WHERE field IS NULL as "violations".
+            # A WARNING fires when null_count > (total_equity * (1 - threshold)).
+            {
+                "id": "coverage_peg_ratio",
+                "name": "COVERAGE: PEG Ratio (target ≥ 40% equity fill)",
+                "query": """
+                    SELECT COUNT(*) FROM marts.dim_companies
+                    WHERE peg_ratio IS NULL AND quote_type = 'EQUITY'
+                    HAVING COUNT(*) > (
+                        SELECT COUNT(*) * 0.60 FROM marts.dim_companies WHERE quote_type = 'EQUITY'
+                    )
+                """,
+                "ticker_query": "SELECT ticker FROM marts.dim_companies WHERE peg_ratio IS NULL AND quote_type = 'EQUITY' LIMIT 50",
+                "coverage_query": """
+                    SELECT ROUND(COUNT(peg_ratio) * 100.0 / NULLIF(COUNT(*), 0), 1)
+                    FROM marts.dim_companies WHERE quote_type = 'EQUITY'
+                """,
+                "critical": False
+            },
+            {
+                "id": "coverage_net_payout",
+                "name": "COVERAGE: Net Payout Yield (target ≥ 50% equity fill)",
+                "query": """
+                    SELECT COUNT(*) FROM marts.dim_companies
+                    WHERE net_payout_yield_pct IS NULL AND quote_type = 'EQUITY'
+                    HAVING COUNT(*) > (
+                        SELECT COUNT(*) * 0.50 FROM marts.dim_companies WHERE quote_type = 'EQUITY'
+                    )
+                """,
+                "ticker_query": "SELECT ticker FROM marts.dim_companies WHERE net_payout_yield_pct IS NULL AND quote_type = 'EQUITY' LIMIT 50",
+                "coverage_query": """
+                    SELECT ROUND(COUNT(net_payout_yield_pct) * 100.0 / NULLIF(COUNT(*), 0), 1)
+                    FROM marts.dim_companies WHERE quote_type = 'EQUITY'
+                """,
+                "critical": False
+            },
+            {
+                "id": "coverage_beta",
+                "name": "COVERAGE: Beta (target ≥ 70% equity fill)",
+                "query": """
+                    SELECT COUNT(*) FROM marts.dim_companies
+                    WHERE beta IS NULL AND quote_type = 'EQUITY'
+                    HAVING COUNT(*) > (
+                        SELECT COUNT(*) * 0.30 FROM marts.dim_companies WHERE quote_type = 'EQUITY'
+                    )
+                """,
+                "ticker_query": "SELECT ticker FROM marts.dim_companies WHERE beta IS NULL AND quote_type = 'EQUITY' LIMIT 50",
+                "coverage_query": """
+                    SELECT ROUND(COUNT(beta) * 100.0 / NULLIF(COUNT(*), 0), 1)
+                    FROM marts.dim_companies WHERE quote_type = 'EQUITY'
+                """,
+                "critical": False
+            },
+            {
+                "id": "coverage_target_price",
+                "name": "COVERAGE: Analyst Target Price (target ≥ 50% equity fill)",
+                "query": """
+                    SELECT COUNT(*) FROM marts.dim_companies
+                    WHERE (target_mean_price IS NULL OR target_mean_price <= 0) AND quote_type = 'EQUITY'
+                    HAVING COUNT(*) > (
+                        SELECT COUNT(*) * 0.50 FROM marts.dim_companies WHERE quote_type = 'EQUITY'
+                    )
+                """,
+                "ticker_query": "SELECT ticker FROM marts.dim_companies WHERE (target_mean_price IS NULL OR target_mean_price <= 0) AND quote_type = 'EQUITY' LIMIT 50",
+                "coverage_query": """
+                    SELECT ROUND(COUNT(CASE WHEN target_mean_price > 0 THEN 1 END) * 100.0 / NULLIF(COUNT(*), 0), 1)
+                    FROM marts.dim_companies WHERE quote_type = 'EQUITY'
+                """,
+                "critical": False
+            },
+            {
+                "id": "coverage_ev_ebitda",
+                "name": "COVERAGE: EV/EBITDA (target ≥ 40% equity fill)",
+                "query": """
+                    SELECT COUNT(*) FROM marts.dim_companies
+                    WHERE ev_to_ebitda IS NULL AND quote_type = 'EQUITY'
+                    HAVING COUNT(*) > (
+                        SELECT COUNT(*) * 0.60 FROM marts.dim_companies WHERE quote_type = 'EQUITY'
+                    )
+                """,
+                "ticker_query": "SELECT ticker FROM marts.dim_companies WHERE ev_to_ebitda IS NULL AND quote_type = 'EQUITY' LIMIT 50",
+                "coverage_query": """
+                    SELECT ROUND(COUNT(ev_to_ebitda) * 100.0 / NULLIF(COUNT(*), 0), 1)
+                    FROM marts.dim_companies WHERE quote_type = 'EQUITY'
+                """,
+                "critical": False
+            },
+            {
+                "id": "coverage_dividend_yield",
+                "name": "COVERAGE: Dividend Yield (target ≥ 70% equity fill)",
+                "query": """
+                    SELECT COUNT(*) FROM marts.dim_companies
+                    WHERE dividend_yield_pct IS NULL AND quote_type = 'EQUITY'
+                    HAVING COUNT(*) > (
+                        SELECT COUNT(*) * 0.30 FROM marts.dim_companies WHERE quote_type = 'EQUITY'
+                    )
+                """,
+                "ticker_query": "SELECT ticker FROM marts.dim_companies WHERE dividend_yield_pct IS NULL AND quote_type = 'EQUITY' LIMIT 50",
+                "coverage_query": """
+                    SELECT ROUND(COUNT(dividend_yield_pct) * 100.0 / NULLIF(COUNT(*), 0), 1)
+                    FROM marts.dim_companies WHERE quote_type = 'EQUITY'
+                """,
+                "critical": False
+            },
+            {
+                "id": "coverage_earnings_growth",
+                "name": "COVERAGE: Earnings Growth (target ≥ 75% equity fill)",
+                "query": """
+                    SELECT COUNT(*) FROM marts.dim_companies
+                    WHERE earnings_growth IS NULL AND quote_type = 'EQUITY'
+                    HAVING COUNT(*) > (
+                        SELECT COUNT(*) * 0.25 FROM marts.dim_companies WHERE quote_type = 'EQUITY'
+                    )
+                """,
+                "ticker_query": "SELECT ticker FROM marts.dim_companies WHERE earnings_growth IS NULL AND quote_type = 'EQUITY' LIMIT 50",
+                "coverage_query": """
+                    SELECT ROUND(COUNT(earnings_growth) * 100.0 / NULLIF(COUNT(*), 0), 1)
+                    FROM marts.dim_companies WHERE quote_type = 'EQUITY'
+                """,
+                "critical": False
+            },
+            {
+                "id": "coverage_short_interest",
+                "name": "COVERAGE: Short Interest (target ≥ 75% equity fill)",
+                "query": """
+                    SELECT COUNT(*) FROM marts.dim_companies
+                    WHERE short_ratio IS NULL AND short_percent_of_float IS NULL AND quote_type = 'EQUITY'
+                    HAVING COUNT(*) > (
+                        SELECT COUNT(*) * 0.25 FROM marts.dim_companies WHERE quote_type = 'EQUITY'
+                    )
+                """,
+                "ticker_query": "SELECT ticker FROM marts.dim_companies WHERE short_ratio IS NULL AND short_percent_of_float IS NULL AND quote_type = 'EQUITY' LIMIT 50",
+                "coverage_query": """
+                    SELECT ROUND(
+                        COUNT(CASE WHEN short_ratio IS NOT NULL OR short_percent_of_float IS NOT NULL THEN 1 END) * 100.0
+                        / NULLIF(COUNT(*), 0), 1)
+                    FROM marts.dim_companies WHERE quote_type = 'EQUITY'
+                """,
+                "critical": False
+            },
+            {
+                "id": "coverage_quarterly_financials",
+                "name": "COVERAGE: Quarterly Financials (target ≥ 90% tickers)",
+                "query": """
+                    SELECT COUNT(*) FROM (
+                        SELECT c.ticker
+                        FROM marts.dim_companies c
+                        LEFT JOIN (
+                            SELECT DISTINCT ticker FROM marts.dim_quarterly_financials
+                        ) q ON c.ticker = q.ticker
+                        WHERE q.ticker IS NULL AND c.quote_type = 'EQUITY'
+                    )
+                    HAVING COUNT(*) > (
+                        SELECT COUNT(*) * 0.10 FROM marts.dim_companies WHERE quote_type = 'EQUITY'
+                    )
+                """,
+                "ticker_query": """
+                    SELECT c.ticker FROM marts.dim_companies c
+                    LEFT JOIN (SELECT DISTINCT ticker FROM marts.dim_quarterly_financials) q ON c.ticker = q.ticker
+                    WHERE q.ticker IS NULL AND c.quote_type = 'EQUITY' LIMIT 50
+                """,
+                "coverage_query": """
+                    SELECT ROUND(
+                        COUNT(DISTINCT q.ticker) * 100.0 / NULLIF(COUNT(DISTINCT c.ticker), 0), 1)
+                    FROM marts.dim_companies c
+                    LEFT JOIN marts.dim_quarterly_financials q ON c.ticker = q.ticker
+                    WHERE c.quote_type = 'EQUITY'
+                """,
+                "critical": False
+            },
         ]
         
         results = []
@@ -112,7 +285,8 @@ def run_dq_validations(db_path: str = None):
         conn.execute("DELETE FROM marts.dq_warnings") # Clear old results in shadow
         
         for t in tests:
-            val = conn.execute(t["query"]).fetchone()[0]
+            raw = conn.execute(t["query"]).fetchone()
+            val = raw[0] if raw else 0  # HAVING clause returns no row when condition not met → val = 0
             failed = val > 0
             
             status_db = "PASS"
@@ -131,10 +305,18 @@ def run_dq_validations(db_path: str = None):
             if failed and "ticker_query" in t:
                 failed_tickers = [row[0] for row in conn.execute(t["ticker_query"]).fetchall()]
 
+            # Coverage checks: display "X% coverage" rather than raw violation count
+            if "coverage_query" in t:
+                cov_raw = conn.execute(t["coverage_query"]).fetchone()
+                cov_pct = cov_raw[0] if cov_raw and cov_raw[0] is not None else 0.0
+                display_value = f"{cov_pct}% coverage"
+            else:
+                display_value = f"{val} violations"
+
             results.append({
                 "name": t["name"],
                 "status": "FAIL" if failed else "PASS",
-                "value": f"{val} violations",
+                "value": display_value,
                 "color": "#ef4444" if failed else "#22c55e",
                 "tickers": failed_tickers
             })

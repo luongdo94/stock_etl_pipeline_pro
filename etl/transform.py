@@ -374,6 +374,21 @@ def _create_marts(conn):
                 AND EXTRACT(QUARTER FROM q.date) = fcf.quarter
             WHERE q.rn <= 4 -- TTM = Last 4 quarters
             GROUP BY q.ticker
+        ),
+        peg_fallback AS (
+            -- ✅ PEG Fallback: PE / avg EPS YoY growth (last 4 quarters of data)
+            -- Only valid when EPS growth is positive (negative growth breaks PEG meaning)
+            SELECT
+                ticker,
+                ROUND(AVG(eps_growth_yoy_pct), 2) AS avg_eps_growth_yoy
+            FROM (
+                SELECT ticker, eps_growth_yoy_pct
+                FROM marts.dim_quarterly_financials
+                WHERE eps_growth_yoy_pct IS NOT NULL
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY report_date DESC) <= 4
+            )
+            GROUP BY ticker
+            HAVING AVG(eps_growth_yoy_pct) > 0  -- only defined for positive growth
         )
         SELECT
             c.ticker,
@@ -406,7 +421,14 @@ def _create_marts(conn):
             c.beta,
             c.target_mean_price,
             c.recommendation_key,
-            c.peg_ratio,
+            -- ✅ PEG Fallback: 1. yfinance pegRatio, 2. Computed PE / eps_growth_yoy
+            COALESCE(
+                CASE WHEN c.peg_ratio > 0 AND c.peg_ratio < 100 THEN c.peg_ratio END,
+                CASE 
+                    WHEN c.pe_ratio > 0 AND pgf.avg_eps_growth_yoy > 0
+                    THEN ROUND(c.pe_ratio / pgf.avg_eps_growth_yoy, 2)
+                END
+            ) AS peg_ratio,
             c.price_to_sales,
             c.ev_to_ebitda,
             c.revenue_growth,
@@ -436,13 +458,18 @@ def _create_marts(conn):
             vol.volatility_30d,
             payout.buyback_yield_pct,
             payout.dividends_paid_yield_pct,
-            payout.net_payout_yield_pct,
+            -- ✅ Net Payout Fallback: 1. Cashflow-based (buyback+div)/mcap, 2. Dividend yield only
+            COALESCE(
+                payout.net_payout_yield_pct,
+                ROUND(c.dividend_yield * 100, 4)
+            ) AS net_payout_yield_pct,
             fmi.fmi_rev_acceleration,
             fmi.fmi_eps_acceleration,
             fmi.fmi_margin_trend,
             fmi.fmi_quarters_of_growth
         FROM staging.stg_company_info c
         LEFT JOIN fallback_metrics fb USING (ticker)
+        LEFT JOIN peg_fallback pgf USING (ticker)
         LEFT JOIN (
             -- Secondary Fallback: Latest Annual reports
             SELECT * FROM marts.dim_annual_financials
@@ -563,7 +590,4 @@ def _create_marts(conn):
         ORDER BY 1, 2
     """)
     
-    logger.info("✅ Mart tables created: fct_daily_returns, dim_companies, agg_monthly_performance, dim_annual_financials, dim_quarterly_financials")
-
-
     logger.info("✅ Mart tables created: fct_daily_returns, dim_companies, agg_monthly_performance, dim_annual_financials, dim_quarterly_financials")

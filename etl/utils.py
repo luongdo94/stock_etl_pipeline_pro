@@ -132,10 +132,12 @@ def needs_fundamentals_refresh(conn: duckdb.DuckDBPyConnection, threshold_hours:
         return True
 
 
-def needs_metadata_refresh(conn: duckdb.DuckDBPyConnection, threshold_hours: int = 720) -> bool:
+def needs_metadata_refresh(conn: duckdb.DuckDBPyConnection, threshold_hours: int = 168) -> bool:
     """
     Checks if static metadata (Company Info, Historical Annuals) needs a refresh.
-    Toggled every 30 days (720h) by default.
+    Toggled every 7 days (168h) by default — aligned with fundamentals refresh cycle.
+    Previously was 30 days (720h); reduced because fundamental metrics (analyst targets,
+    dividend yield, beta) can change meaningfully week-to-week.
     """
     total_target = get_total_ticker_count()
     try:

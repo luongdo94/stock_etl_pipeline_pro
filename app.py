@@ -1216,12 +1216,14 @@ def load_data():
 
         # ── Pipeline Health Data ──
         try:
-            etl_audit_f = conn.execute("""
-                SELECT status, start_time, rows_processed
-                FROM marts.etl_audit 
-                ORDER BY start_time DESC 
-                LIMIT 1
-            """).df()
+            audit_db = str(Path(ROOT) / "warehouse" / "etl_audit.duckdb")
+            with duckdb.connect(audit_db, read_only=True) as a_conn:
+                etl_audit_f = a_conn.execute("""
+                    SELECT status, start_time, rows_processed
+                    FROM etl.audit_log 
+                    ORDER BY start_time DESC 
+                    LIMIT 1
+                """).df()
         except:
             etl_audit_f = pd.DataFrame()
 
@@ -4384,13 +4386,19 @@ if active_tab == "7. Portfolio Builder":
     if p_tickers:
         latest_prices = prices[prices["ticker"].isin(p_tickers)].groupby("ticker")["price_close"].last().to_dict()
         
-        # Build Initial DataFrame for Editor (ONLY if tickers list actually changed or structure is missing/stale)
-        if 'last_portfolio_tickers' not in st.session_state or \
+        _cur_version = st.session_state.get('_portfolio_version', 0)
+        
+        # Build Initial DataFrame for Editor (ONLY if tickers list changed, version bumped, or structure missing/stale)
+        if 'last_portfolio_version' not in st.session_state or \
+           st.session_state.last_portfolio_version != _cur_version or \
+           'last_portfolio_tickers' not in st.session_state or \
            st.session_state.last_portfolio_tickers != p_tickers or \
            'portfolio_df' not in st.session_state or \
            "Cost Basis (€)" not in st.session_state.portfolio_df.columns or \
            "Region" not in st.session_state.portfolio_df.columns:
+            
             st.session_state.last_portfolio_tickers = p_tickers
+            st.session_state.last_portfolio_version = _cur_version
             init_data = []
             for t in p_tickers:
                 # Enrich with m_df data for professional look
