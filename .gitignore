@@ -19,7 +19,7 @@ dashboard.py
 .agents/
 logs/
 teraform/
-
+dashboard_v2/
 # Databases (Data Warehouse)
 warehouse/*.duckdb
 !warehouse/stock_demo.duckdb

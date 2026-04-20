@@ -4410,18 +4410,37 @@ if active_tab == "7. Portfolio Builder":
         # 2. BULK DATA EDITOR
         render_header("layers", "Capital Allocation Grid", level="#####")
         
+        # ── FEAT 1: Inline Position-Level PnL Breakdown ──
+        disp_df = st.session_state.portfolio_df.copy()
+        disp_df["Total Cost (€)"] = disp_df["Cost Basis (€)"] * disp_df["Shares"]
+        disp_df["Market Value"] = disp_df["Price (€)"] * disp_df["Shares"]
+        disp_df["Unrealized PnL (€)"] = disp_df["Market Value"] - disp_df["Total Cost (€)"]
+        disp_df["Unrealized PnL (%)"] = (disp_df["Unrealized PnL (€)"] / disp_df["Total Cost (€)"]).replace([np.inf, -np.inf], 0).fillna(0) * 100
+        
+        _t_val = disp_df["Market Value"].sum()
+        _t_cost = disp_df["Total Cost (€)"].sum()
+        disp_df["Weight (%)"] = (disp_df["Market Value"] / _t_val * 100).fillna(0) if _t_val > 0 else 0
+        disp_df["Contribution (%)"] = (disp_df["Unrealized PnL (€)"] / _t_cost * 100).fillna(0) if _t_cost > 0 else 0
+
         with st.form("portfolio_builder_main_form"):
             # KEY FIX: The data_editor should be the ONLY way to change weights for the current tickers
             edited_df = st.data_editor(
-                st.session_state.portfolio_df,
+                disp_df,
                 column_config={
                     "Ticker": st.column_config.TextColumn("Ticker", disabled=True),
                     "Company": st.column_config.TextColumn("Company", disabled=True),
                     "Region": st.column_config.TextColumn("Region", disabled=True),
                     "Price (€)": st.column_config.NumberColumn("Market Price", format="€%.2f", disabled=True),
-                    "Shares": st.column_config.NumberColumn("Shares owned", min_value=0.0, step=0.01, format="%.2f"),
-                    "Cost Basis (€)": st.column_config.NumberColumn("Avg Cost Basis", min_value=0.0, step=0.01, format="€%.2f")
+                    "Shares": st.column_config.NumberColumn("Shares", min_value=0.0, step=0.01, format="%.4g"),
+                    "Cost Basis (€)": st.column_config.NumberColumn("Unit Cost", min_value=0.0, step=0.01, format="€%.2f"),
+                    "Total Cost (€)": st.column_config.NumberColumn("Total Cost", format="€%.2f", disabled=True),
+                    "Market Value": st.column_config.NumberColumn("Market Value", format="€%.2f", disabled=True),
+                    "Unrealized PnL (€)": st.column_config.NumberColumn("PnL (€)", format="€%.2f", disabled=True),
+                    "Unrealized PnL (%)": st.column_config.NumberColumn("PnL (%)", format="%.2f%%", disabled=True),
+                    "Contribution (%)": st.column_config.NumberColumn("Contribution", format="%.2f%%", disabled=True),
+                    "Weight (%)": st.column_config.NumberColumn("Weight", format="%.2f%%", disabled=True)
                 },
+                column_order=["Ticker", "Company", "Shares", "Cost Basis (€)", "Price (€)", "Total Cost (€)", "Market Value", "Unrealized PnL (€)", "Unrealized PnL (%)", "Contribution (%)", "Weight (%)"],
                 hide_index=True,
                 width="stretch",
                 key="p_portfolio_editor_final"
@@ -4558,6 +4577,37 @@ if active_tab == "7. Portfolio Builder":
                 )
                 st.plotly_chart(fig_bt, use_container_width=True)
     
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            # ── FEAT 2: Historical Stress Test (Beta-weighted Drawdown) ──
+            # Calculate Portfolio Beta against SPY
+            bench_spy = prices_full[(prices_full["ticker"] == "SPY") & (prices_full["date"].isin(port_daily.index))].sort_values("date")
+            bench_spy_daily = bench_spy.set_index("date")["daily_return_pct"].fillna(0) / 100
+            align_df = pd.concat([port_daily, bench_spy_daily], axis=1).dropna()
+            port_beta = align_df.iloc[:, 0].cov(align_df.iloc[:, 1]) / align_df.iloc[:, 1].var() if (len(align_df) > 30 and align_df.iloc[:, 1].var() > 0) else 1.0
+
+            render_header("alert-triangle", f"Historical Stress Test (Beta: {port_beta:.2f})", level="#####")
+            st.caption("Estimated impact based on S&P 500 historical crashes mapped to your portfolio's current beta.")
+            
+            scenarios = [
+                ("📉 2008 Financial Crisis", -0.509),
+                ("🦠 2020 COVID Crash", -0.339),
+                ("🐻 2022 Bear Market", -0.254)
+            ]
+            
+            s_cols = st.columns(3)
+            for i, (s_name, s_drop) in enumerate(scenarios):
+                est_drop_pct = s_drop * port_beta
+                est_drop_val = total_p_val * est_drop_pct
+                with s_cols[i]:
+                    st.markdown(f"""
+                    <div style='background:rgba(231,76,60,0.08); border:1px solid rgba(231,76,60,0.4); border-radius:8px; padding:15px; text-align:center;'>
+                        <div style='color:#e74c3c; font-size:0.85rem; font-weight:700; margin-bottom:5px;'>{s_name}</div>
+                        <div style='color:#e74c3c; font-size:1.5rem; font-weight:900;'>{est_drop_pct*100:.1f}%</div>
+                        <div style='color:#ff9999; font-size:0.9rem;'>Est. Loss: -€{abs(est_drop_val):,.0f}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+            
             st.markdown("---")
     
             # ═══════════════════════════════════════════════════════════════════
@@ -4605,6 +4655,45 @@ if active_tab == "7. Portfolio Builder":
                 fig_corr.update_layout(height=360, margin=dict(l=0, r=0, t=10, b=0))
                 st.plotly_chart(fig_corr, use_container_width=True)
     
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            # ── FEAT 3: Performance Attribution (Waterfall Chart) ──
+            render_header("bar-chart-2", "Performance Attribution (PnL)", level="#####")
+            
+            if total_cost_basis > 0 and len(edited_df) > 0:
+                attr_df = edited_df.copy()
+                attr_df["Total Cost"] = attr_df["Cost Basis (€)"] * attr_df["Shares"]
+                attr_df["Unrealized PnL"] = attr_df["Market Value"] - attr_df["Total Cost"]
+                attr_df = attr_df.sort_values(by="Unrealized PnL", ascending=False)
+                
+                # Plotly Waterfall
+                fig_attr = go.Figure(go.Waterfall(
+                    name="PnL Attribution", orientation="v",
+                    measure=["relative"] * len(attr_df) + ["total"],
+                    x=attr_df["Ticker"].tolist() + ["TOTAL PnL"],
+                    textposition="outside",
+                    text=attr_df["Unrealized PnL"].apply(lambda x: f"{x:+,.0f}").tolist() + [f"{total_pnl:+,.0f}"],
+                    y=attr_df["Unrealized PnL"].tolist() + [0], # y-value for 'total' measure is automatic
+                    connector={"line":{"color":"rgba(255,255,255,0.2)", "dash":"dot"}},
+                    decreasing={"marker":{"color":"#e74c3c"}},
+                    increasing={"marker":{"color":"#2ecc71"}},
+                    totals={"marker":{"color":"#3498db"}}
+                ))
+                
+                fig_attr.update_layout(
+                    template="plotly_dark", height=450,
+                    margin=dict(l=0, r=0, t=10, b=0),
+                    yaxis_title="Unrealized PnL (€)",
+                    xaxis_title="",
+                    showlegend=False,
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                )
+                fig_attr.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(255,255,255,0.05)')
+                st.plotly_chart(fig_attr, use_container_width=True)
+            else:
+                st.info("Performance Attribution requires at least 1 asset and a non-zero cost basis.")
+
             st.markdown("---")
 
             # ═══════════════════════════════════════════════════════════════════
