@@ -5,47 +5,47 @@ tickers:
     region: US
   MSFT:
     name: Microsoft Corporation
-    sector: Cloud/Software
+    sector: Platform Software
     region: US
   AAPL:
     name: Apple Inc.
-    sector: Consumer Tech
+    sector: Consumer Electronics
     region: US
   GOOGL:
     name: Alphabet Inc.
-    sector: Cloud/Software
+    sector: Platform Software
     region: US
   AMZN:
     name: Amazon.com, Inc.
-    sector: Cloud/Ecommerce
+    sector: Ecommerce
     region: US
   META:
     name: Meta Platforms, Inc.
-    sector: Technology
+    sector: Social Media
     region: US
   TSLA:
     name: Tesla, Inc.
-    sector: Consumer Tech
+    sector: Automotive & EV
     region: US
   ADBE:
     name: Adobe Inc.
-    sector: Cloud/Software
+    sector: SaaS
     region: US
   CRM:
     name: Salesforce
-    sector: Cloud/Software
+    sector: SaaS
     region: US
   ORCL:
     name: Oracle
-    sector: Cloud/Software
+    sector: Platform Software
     region: US
   IBM:
     name: International Business Machines Corporation
-    sector: Technology
+    sector: Enterprise Hardware
     region: US
   NFLX:
     name: Netflix, Inc.
-    sector: Comm Services
+    sector: Media & Entertainment
     region: US
   PYPL:
     name: PayPal Holdings, Inc.
@@ -57,43 +57,43 @@ tickers:
     region: US
   SNPS:
     name: Synopsys, Inc.
-    sector: Software/Design
+    sector: Semiconductor Tools
     region: US
   FIG:
     name: Figma
-    sector: Software/Design
+    sector: Design Software
     region: US
   DDOG:
     name: Datadog, Inc.
-    sector: Cloud/Software
+    sector: SaaS
     region: US
   TEAM:
     name: Atlassian Corporation plc
-    sector: Cloud/Software
+    sector: SaaS
     region: US
   SNOW:
     name: Snowflake Inc.
-    sector: Cloud/Software
+    sector: SaaS
     region: US
   NOW:
     name: ServiceNow, Inc.
-    sector: Cloud/Software
+    sector: SaaS
     region: US
   NBIS:
     name: Nebius
-    sector: Cloud/AI
+    sector: AI & Data
     region: US
   GRAB:
     name: Grab Holdings Limited
-    sector: Technology
+    sector: Travel & Leisure
     region: US
   SPOT:
     name: Spotify Technology S.A.
-    sector: Technology
+    sector: Media & Entertainment
     region: US
   APP:
     name: AppLovin Corporation
-    sector: Software/AI
+    sector: AI & Data
     region: US
   TER:
     name: Teradyne, Inc.
@@ -101,31 +101,31 @@ tickers:
     region: US
   MDB:
     name: MongoDB, Inc.
-    sector: Cloud/Software
+    sector: SaaS
     region: US
   APLD:
     name: Applied Digital Corporation
-    sector: Cloud/AI
+    sector: AI & Data
     region: US
   ASTS:
     name: AST SpaceMobile, Inc.
-    sector: Technology
+    sector: Telecom
     region: US
   HPE:
     name: Hewlett Packard Enterprise Company
-    sector: Technology
+    sector: Enterprise Hardware
     region: US
   TRIP:
     name: TripAdvisor, Inc.
-    sector: Technology
+    sector: Travel & Leisure
     region: US
   NET:
     name: Cloudflare, Inc.
-    sector: Cloud/Software
+    sector: Platform Software
     region: US
   U:
     name: Unity Software Inc.
-    sector: Software/AI
+    sector: AI & Data
     region: US
   QCOM:
     name: QUALCOMM Incorporated
@@ -149,7 +149,7 @@ tickers:
     region: US
   ZBRA:
     name: Zebra Technologies Corporation
-    sector: Technology
+    sector: Enterprise Hardware
     region: US
   AMAT:
     name: Applied Materials, Inc.
@@ -189,91 +189,91 @@ tickers:
     region: US
   UNH:
     name: UnitedHealth Group Incorporated
-    sector: Healthcare
+    sector: Managed Care
     region: US
   ELV:
     name: Elevance Health, Inc.
-    sector: Healthcare
+    sector: Managed Care
     region: US
   HIMS:
     name: Hims & Hers Health, Inc.
-    sector: Healthcare
+    sector: Pharma
     region: US
   JNJ:
     name: Johnson & Johnson
-    sector: Healthcare
+    sector: Pharma
     region: US
   ABT:
     name: Abbott Laboratories
-    sector: Healthcare
+    sector: Medical Devices
     region: US
   PFE:
     name: Pfizer
-    sector: Healthcare
+    sector: Pharma
     region: US
   REGN:
     name: Regeneron Pharmaceuticals
-    sector: Healthcare
+    sector: Biotech
     region: US
   DHR:
     name: Danaher
-    sector: Healthcare
+    sector: Life Science Tools
     region: US
   MRK:
     name: Merck
-    sector: Healthcare
+    sector: Pharma
     region: US
   CRSP:
     name: CRISPR Therapeutics
-    sector: Healthcare
+    sector: Biotech
     region: US
   TMO:
     name: Thermo Fisher Scientific
-    sector: Healthcare
+    sector: Life Science Tools
     region: US
   MOH:
     name: Molina Healthcare
-    sector: Healthcare
+    sector: Managed Care
     region: US
   LLY:
     name: Eli Lilly and Company
-    sector: Healthcare
+    sector: Pharma
     region: US
   AMGN:
     name: Amgen Inc.
-    sector: Healthcare
+    sector: Biotech
     region: US
   ISRG:
     name: Intuitive Surgical, Inc.
-    sector: Healthcare
+    sector: Medical Devices
     region: US
   BIIB:
     name: Biogen Inc.
-    sector: Healthcare
+    sector: Biotech
     region: US
   BEAM:
     name: Beam Therapeutics Inc.
-    sector: Healthcare
+    sector: Biotech
     region: US
   TXG:
     name: 10x Genomics, Inc.
-    sector: Healthcare
+    sector: Biotech
     region: US
   NTLA:
     name: Intellia Therapeutics, Inc.
-    sector: Healthcare
+    sector: Biotech
     region: US
   AZN:
     name: AstraZeneca PLC
-    sector: Healthcare
+    sector: Pharma
     region: US
   BMY:
     name: Bristol-Myers Squibb Company
-    sector: Healthcare
+    sector: Pharma
     region: US
   GEHC:
     name: GE HealthCare Technologies Inc.
-    sector: Healthcare
+    sector: Medical Devices
     region: US
   COIN:
     name: Coinbase Global, Inc.
@@ -297,11 +297,11 @@ tickers:
     region: US
   JPM:
     name: JPMorgan Chase & Co.
-    sector: Financials
+    sector: Banks
     region: US
   BAC:
     name: Bank of America
-    sector: Financials
+    sector: Banks
     region: US
   V:
     name: Visa Inc.
@@ -321,39 +321,39 @@ tickers:
     region: US
   CB:
     name: Chubb Limited
-    sector: Financials
+    sector: Insurance
     region: US
   MCO:
     name: Moody's Corporation
-    sector: Financials
+    sector: Capital Markets
     region: US
   BMNR:
     name: BitMine Immersion Technologies Inc.
-    sector: Technology
+    sector: Crypto/Mining
     region: US
   UPS:
     name: United Parcel Service, Inc.
-    sector: Industrials
+    sector: Transportation
     region: US
   UBER:
     name: Uber Technologies, Inc.
-    sector: Technology
+    sector: Travel & Leisure
     region: US
   DELL:
     name: Dell Technologies Inc.
-    sector: Technology
+    sector: Enterprise Hardware
     region: US
   HPQ:
     name: HP Inc.
-    sector: Technology
+    sector: Consumer Electronics
     region: US
   UPWK:
     name: Upwork Inc.
-    sector: Comm Services
+    sector: Digital Advertising
     region: US
   LULU:
     name: Lululemon Athletica Inc.
-    sector: Consumer Retail
+    sector: Retail
     region: US
   MELI:
     name: MercadoLibre, Inc.
@@ -364,8 +364,8 @@ tickers:
     sector: Ecommerce
     region: US
   EL:
-    name: "The Est\xE9e Lauder Companies Inc."
-    sector: Consumer Retail
+    name: The Estée Lauder Companies Inc.
+    sector: Consumer Luxury
     region: US
   FISV:
     name: Fiserv, Inc.
@@ -381,11 +381,11 @@ tickers:
     region: US
   CRWV:
     name: CoreWeave, Inc.
-    sector: Cloud/AI
+    sector: AI & Data
     region: US
   PATH:
     name: UiPath, Inc.
-    sector: Software/AI
+    sector: AI & Data
     region: US
   TSM:
     name: Taiwan Semiconductor Manufacturing Company Limited
@@ -393,39 +393,39 @@ tickers:
     region: US
   T:
     name: AT&T Inc.
-    sector: Comm Services
+    sector: Telecom
     region: US
   VZ:
     name: Verizon Communications Inc.
-    sector: Comm Services
+    sector: Telecom
     region: US
   PG:
     name: The Procter & Gamble Company
-    sector: Consumer Retail
+    sector: Food & Beverage
     region: US
   NKE:
     name: Nike, Inc.
-    sector: Consumer Retail
+    sector: Retail
     region: US
   WMT:
     name: Walmart Inc.
-    sector: Consumer Retail
+    sector: Retail
     region: US
   LOW:
     name: Lowe's Companies, Inc.
-    sector: Consumer Retail
+    sector: Retail
     region: US
   PEP:
     name: PepsiCo, Inc.
-    sector: Consumer Retail
+    sector: Food & Beverage
     region: US
   HD:
     name: The Home Depot, Inc.
-    sector: Consumer Retail
+    sector: Retail
     region: US
   WDC:
     name: Western Digital Corporation
-    sector: Technology
+    sector: Data Storage
     region: US
   CSCO:
     name: Cisco Systems, Inc.
@@ -433,15 +433,15 @@ tickers:
     region: US
   KO:
     name: The Coca-Cola Company
-    sector: Consumer Retail
+    sector: Food & Beverage
     region: US
   TTD:
     name: The Trade Desk, Inc.
-    sector: Technology
+    sector: Digital Advertising
     region: US
   DUK:
     name: Duke Energy Corporation
-    sector: Utilities
+    sector: Regulated Utilities
     region: US
   MP:
     name: MP Materials Corp.
@@ -449,59 +449,59 @@ tickers:
     region: US
   LIN:
     name: Linde plc
-    sector: Industrials
+    sector: Basic Materials
     region: US
   LEN:
     name: Lennar Corporation
-    sector: Industrials
+    sector: Homebuilders
     region: US
   ROK:
     name: Rockwell Automation, Inc.
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   LMT:
     name: Lockheed Martin Corporation
-    sector: Industrials
+    sector: Aerospace & Defense
     region: US
   NOC:
     name: Northrop Grumman Corporation
-    sector: Industrials
+    sector: Aerospace & Defense
     region: US
   PLUG:
     name: Plug Power Inc.
-    sector: Energy
+    sector: Energy Specialty
     region: US
   LEU:
     name: Centrus Energy Corp.
-    sector: Energy
+    sector: Energy Specialty
     region: US
   CVX:
     name: Chevron Corporation
-    sector: Energy
+    sector: Oil & Gas
     region: US
   CL:
-    name: Colgate-Palmolive Company
-    sector: Consumer Retail
+    name: Colgate-Palmolive
+    sector: Food & Beverage
     region: US
   KMB:
-    name: Kimberly-Clark Corporation
-    sector: Consumer Retail
+    name: Kimberly-Clark
+    sector: Food & Beverage
     region: US
   GIS:
-    name: General Mills, Inc.
-    sector: Consumer Retail
+    name: General Mills
+    sector: Food & Beverage
     region: US
   KHC:
-    name: The Kraft Heinz Company
-    sector: Consumer Retail
+    name: Kraft Heinz
+    sector: Food & Beverage
     region: US
   OXY:
     name: Occidental Petroleum Corporation
-    sector: Energy
+    sector: Oil & Gas
     region: US
   CAT:
     name: Caterpillar Inc.
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   ACHR:
     name: Archer Aviation Inc.
@@ -509,15 +509,15 @@ tickers:
     region: US
   ABNB:
     name: Airbnb, Inc.
-    sector: Technology
+    sector: Travel & Leisure
     region: US
   DE:
     name: Deere & Company
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   BA:
     name: The Boeing Company
-    sector: Industrials
+    sector: Aerospace & Defense
     region: US
   ADS.DE:
     name: Adidas
@@ -533,23 +533,23 @@ tickers:
     region: EU
   AI.PA:
     name: Air Liquide
-    sector: Industrials
+    sector: Basic Materials
     region: EU
   AIR.PA:
     name: Airbus
-    sector: Industrials
+    sector: Aerospace & Defense
     region: EU
   ALV.DE:
     name: Allianz
-    sector: Financials
+    sector: Insurance
     region: EU
   ABI.BR:
     name: Anheuser-Busch InBev
-    sector: Consumer Retail
+    sector: Food & Beverage
     region: EU
   ARGX.BR:
     name: Argenx
-    sector: Healthcare
+    sector: Biotech
     region: EU
   ASML.AS:
     name: ASML Holding
@@ -557,79 +557,79 @@ tickers:
     region: EU
   CS.PA:
     name: Axa
-    sector: Financials
+    sector: Insurance
     region: EU
   BAS.DE:
     name: BASF
-    sector: Industrials
+    sector: Basic Materials
     region: EU
   BAYN.DE:
     name: Bayer
-    sector: Healthcare
+    sector: Pharma
     region: EU
   BBVA.MC:
     name: BBVA
-    sector: Financials
+    sector: Banks
     region: EU
   SAN.MC:
     name: Banco Santander
-    sector: Financials
+    sector: Banks
     region: EU
   BMW.DE:
     name: BMW
-    sector: Industrials
+    sector: Automotive & EV
     region: EU
   BNP.PA:
     name: BNP Paribas
-    sector: Financials
+    sector: Banks
     region: EU
   BN.PA:
     name: Danone
-    sector: Consumer Retail
+    sector: Food & Beverage
     region: EU
   DBK.DE:
     name: Deutsche Bank
-    sector: Financials
+    sector: Banks
     region: EU
   DB1.DE:
-    name: "Deutsche B\xF6rse"
-    sector: Financials
+    name: Deutsche Börse
+    sector: Capital Markets
     region: EU
   DHL.DE:
     name: Deutsche Post
-    sector: Industrials
+    sector: Transportation
     region: EU
   DTE.DE:
     name: Deutsche Telekom
-    sector: Comm Services
+    sector: Telecom
     region: EU
   ENEL.MI:
     name: Enel
-    sector: Utilities
+    sector: Regulated Utilities
     region: EU
   ENI.MI:
     name: Eni
-    sector: Energy
+    sector: Oil & Gas
     region: EU
   EL.PA:
     name: EssilorLuxottica
-    sector: Healthcare
+    sector: Medical Devices
     region: EU
   RACE.MI:
     name: Ferrari
     sector: Consumer Luxury
     region: EU
   RMS.PA:
-    name: "Herm\xE8s"
+    name: Hermès
     sector: Consumer Luxury
     region: EU
   IBE.MC:
     name: Iberdrola
-    sector: Utilities
+    sector: Regulated Utilities
     region: EU
   ITX.MC:
     name: Inditex
-    sector: Consumer Retail
+    sector: Retail
     region: EU
   IFX.DE:
     name: Infineon Technologies
@@ -637,35 +637,35 @@ tickers:
     region: EU
   IOS.DE:
     name: IONOS Group SE
-    sector: Cloud/Hosting
+    sector: IT Services
     region: EU
   INGA.AS:
     name: ING Group
-    sector: Financials
+    sector: Banks
     region: EU
   ISP.MI:
     name: Intesa Sanpaolo
-    sector: Financials
+    sector: Banks
     region: EU
   OR.PA:
-    name: "L'Or\xE9al"
-    sector: Consumer Retail
+    name: L'Oréal
+    sector: Consumer Luxury
     region: EU
   MC.PA:
-    name: "LVMH Mo\xEBt Hennessy Louis Vuitton"
+    name: LVMH Moët Hennessy Louis Vuitton
     sector: Consumer Luxury
     region: EU
   MBG.DE:
     name: Mercedes-Benz Group
-    sector: Industrials
+    sector: Automotive & EV
     region: EU
   MUV2.DE:
     name: Munich Re
-    sector: Financials
+    sector: Insurance
     region: EU
   NDA-FI.HE:
     name: Nordea
-    sector: Financials
+    sector: Banks
     region: EU
   PRX.AS:
     name: Prosus
@@ -673,39 +673,39 @@ tickers:
     region: EU
   RHM.DE:
     name: Rheinmetall
-    sector: Industrials
+    sector: Aerospace & Defense
     region: EU
   SAF.PA:
     name: Safran
-    sector: Industrials
+    sector: Aerospace & Defense
     region: EU
   SGO.PA:
     name: Saint-Gobain
-    sector: Industrials
+    sector: Construction & Engineering
     region: EU
   SAN.PA:
     name: Sanofi
-    sector: Healthcare
+    sector: Pharma
     region: EU
   SAP.DE:
     name: SAP
-    sector: Enterprise SW
+    sector: IT Services
     region: EU
   SU.PA:
     name: Schneider Electric
-    sector: Industrials
+    sector: Industrial Machinery
     region: EU
   SIE.DE:
     name: Siemens
-    sector: Industrials
+    sector: Industrial Machinery
     region: EU
   ENR.DE:
     name: Siemens Energy
-    sector: Energy
+    sector: Energy Specialty
     region: EU
   TTE.PA:
     name: TotalEnergies
-    sector: Energy
+    sector: Oil & Gas
     region: EU
   DG.PA:
     name: Vinci SA
@@ -713,47 +713,47 @@ tickers:
     region: EU
   UCG.MI:
     name: UniCredit
-    sector: Financials
+    sector: Banks
     region: EU
   VOW.DE:
     name: Volkswagen Group
-    sector: Industrials
+    sector: Automotive & EV
     region: EU
   WKL.AS:
     name: Wolters Kluwer
-    sector: Technology
+    sector: SaaS
     region: EU
   SMHN.DE:
     name: SUSS MicroTec SE
-    sector: Technology
+    sector: Semiconductors
     region: EU
   RWE.DE:
     name: RWE
-    sector: Utilities
+    sector: Regulated Utilities
     region: EU
   FNTN.DE:
     name: freenet AG
-    sector: Comm Services
+    sector: Telecom
     region: EU
   JEN.DE:
     name: Jenoptik AG
-    sector: Technology
+    sector: Aerospace & Defense
     region: EU
   HAG.DE:
     name: Hensoldt AG
-    sector: Technology
+    sector: Aerospace & Defense
     region: EU
   VWS.CO:
     name: Vestas Wind Systems A/S
-    sector: Energy/Renewables
+    sector: Renewables
     region: EU
   NDX1.DE:
     name: Nordex SE
-    sector: Energy/Renewables
+    sector: Renewables
     region: EU
   ORSTED.CO:
-    name: "\xD8rsted A/S"
-    sector: Energy/Renewables
+    name: Ørsted A/S
+    sector: Renewables
     region: EU
   KER.PA:
     name: Kering
@@ -761,15 +761,15 @@ tickers:
     region: EU
   PUM.DE:
     name: Puma SE
-    sector: Consumer Retail
+    sector: Retail
     region: EU
   ZAL.DE:
     name: Zalando SE
     sector: Ecommerce
     region: EU
   DSY.PA:
-    name: "Dassault Syst\xE8mes SE"
-    sector: Technology
+    name: Dassault Systèmes SE
+    sector: SaaS
     region: EU
   STMPA.PA:
     name: STMicroelectronics N.V.
@@ -781,91 +781,91 @@ tickers:
     region: EU
   NOA3.DE:
     name: Nokia Corporation
-    sector: Technology
+    sector: Networking
     region: EU
   R3NK.DE:
     name: Renk Group AG
-    sector: Industrials
+    sector: Aerospace & Defense
     region: EU
   MTX.DE:
     name: MTU Aero Engines AG
-    sector: Industrials
+    sector: Aerospace & Defense
     region: EU
   LHA.DE:
     name: Deutsche Lufthansa AG
-    sector: Industrials
+    sector: Transportation
     region: EU
   RR.L:
     name: Rolls-Royce Holdings plc
-    sector: Industrials
+    sector: Aerospace & Defense
     region: EU
   TKA.DE:
     name: thyssenkrupp AG
-    sector: Industrials
+    sector: Construction & Engineering
     region: EU
   HLAG.DE:
     name: Hapag-Lloyd AG
-    sector: Industrials
+    sector: Transportation
     region: EU
   SY1.DE:
     name: Symrise AG
-    sector: Industrials
+    sector: Food & Beverage
     region: EU
   BEI.DE:
     name: Beiersdorf Aktiengesellschaft
-    sector: Consumer Retail
+    sector: Food & Beverage
     region: EU
   HEI.DE:
     name: Heidelberg Materials AG
-    sector: Industrials
+    sector: Construction & Engineering
     region: EU
   UNA.AS:
     name: Unilever PLC
-    sector: Consumer Retail
+    sector: Food & Beverage
     region: EU
   NOVN.SW:
     name: Novartis AG
-    sector: Healthcare
+    sector: Pharma
     region: EU
   NESN.SW:
     name: Nestlé S.A.
-    sector: Consumer Retail
+    sector: Food & Beverage
     region: EU
   HEN3.DE:
     name: Henkel AG & Co. KGaA
-    sector: Consumer Retail
+    sector: Food & Beverage
     region: EU
   FRE.DE:
     name: Fresenius SE & Co. KGaA
-    sector: Healthcare
+    sector: Managed Care
     region: EU
   G1A.DE:
     name: GEA Group Aktiengesellschaft
-    sector: Industrials
+    sector: Industrial Machinery
     region: EU
   EOAN.DE:
     name: E.ON SE
-    sector: Utilities
+    sector: Regulated Utilities
     region: EU
   NVO:
     name: Novo Nordisk A/S
-    sector: Healthcare
+    sector: Pharma
     region: EU
   RHHVF:
     name: Roche Holding AG
-    sector: Healthcare
+    sector: Pharma
     region: EU
   HNR1.DE:
-    name: "Hannover R\xFCck SE"
-    sector: Financials
+    name: Hannover Rück SE
+    sector: Insurance
     region: EU
   SHL.DE:
     name: Siemens Healthineers AG
-    sector: Healthcare
+    sector: Medical Devices
     region: EU
   QIA.DE:
     name: QIAGEN N.V.
-    sector: Healthcare
+    sector: Life Science Tools
     region: EU
   BABA:
     name: Alibaba Group Holding Limited
@@ -873,7 +873,7 @@ tickers:
     region: CN
   BIDU:
     name: Baidu, Inc.
-    sector: Cloud/AI
+    sector: AI & Data
     region: CN
   JD:
     name: JD.com, Inc.
@@ -885,15 +885,15 @@ tickers:
     region: CN
   1211.HK:
     name: BYD Company Limited
-    sector: Consumer Tech
+    sector: Automotive & EV
     region: CN
   0285.HK:
     name: BYD Electronic (International) Co., Ltd.
-    sector: Consumer Tech
+    sector: Consumer Electronics
     region: CN
   1810.HK:
     name: Xiaomi Corporation
-    sector: Consumer Tech
+    sector: Consumer Electronics
     region: CN
   8035.T:
     name: Tokyo Electron Limited
@@ -905,35 +905,35 @@ tickers:
     region: JP
   6758.T:
     name: Sony Group Corporation
-    sector: Consumer Tech
+    sector: Consumer Electronics
     region: JP
   7012.T:
     name: Kawasaki Heavy Industries, Ltd.
-    sector: Industrials
+    sector: Aerospace & Defense
     region: JP
   6367.T:
     name: Daikin Industries, Ltd.
-    sector: Industrials
+    sector: Industrial Machinery
     region: JP
   6861.T:
     name: Keyence Corporation
-    sector: Technology
+    sector: Industrial Machinery
     region: JP
   6752.T:
     name: Panasonic Holdings Corporation
-    sector: Consumer Tech
+    sector: Consumer Electronics
     region: JP
   7011.T:
     name: Mitsubishi Heavy Industries, Ltd.
-    sector: Industrials
+    sector: Aerospace & Defense
     region: JP
   9984.T:
     name: SoftBank Group Corp.
-    sector: Technology
+    sector: Capital Markets
     region: JP
   SSLN.MI:
     name: iShares Physical Silver
-    sector: Commodities
+    sector: Basic Materials
     region: EU
   SPY:
     name: SPDR S&P 500 ETF Trust
@@ -953,87 +953,83 @@ tickers:
     region: EU
   ^VIX:
     name: CBOE Volatility Index
-    sector: Volatility
+    sector: Benchmark
     region: US
   ABBV:
     name: AbbVie
-    sector: Healthcare
+    sector: Pharma
     region: US
   ADI:
     name: Analog Devices
-    sector: Technology
+    sector: Semiconductors
     region: US
   ALGN:
     name: Align Technology
-    sector: Healthcare
+    sector: Medical Devices
     region: US
   APH:
     name: Amphenol
-    sector: Technology
+    sector: Semiconductors
     region: US
   AXP:
     name: American Express
-    sector: Financials
+    sector: Financial Services
     region: US
   BRK-B:
     name: Berkshire Hathaway
-    sector: Financials
+    sector: Insurance
     region: US
   BRO:
     name: Brown & Brown
-    sector: Financials
+    sector: Insurance
     region: US
   BSX:
     name: Boston Scientific
-    sector: Healthcare
+    sector: Medical Devices
     region: US
   BX:
     name: Blackstone Inc.
-    sector: Financials
+    sector: Capital Markets
     region: US
   C:
     name: Citigroup
-    sector: Financials
+    sector: Banks
     region: US
   CDNS:
     name: Cadence Design Systems
-    sector: Technology
+    sector: Semiconductor Tools
     region: US
   CEG:
     name: Constellation Energy
-    sector: Utilities
-    region: US
-  CL:
-    name: Colgate-Palmolive
-    sector: Consumer Retail
+    sector: Nuclear & Clean Utilities
     region: US
   CLX:
     name: Clorox
-    sector: Consumer Retail
+    sector: Food & Beverage
     region: US
   COHR:
     name: Coherent Corp.
-    sector: Technology
+    sector: Semiconductors
     region: US
   COST:
     name: Costco
-    sector: Consumer Retail
+    sector: Retail
     region: US
   CRWD:
     name: CrowdStrike
-    sector: Technology
+    sector: Cybersecurity
     region: US
   CVS:
     name: CVS Health
-    sector: Healthcare
+    sector: Managed Care
     region: US
   D:
     name: Dominion Energy
-    sector: Utilities
+    sector: Regulated Utilities
     region: US
   DAL:
     name: Delta Air Lines
-    sector: Industrials
+    sector: Transportation
     region: US
   DASH:
     name: DoorDash
@@ -1041,67 +1037,67 @@ tickers:
     region: US
   EXPE:
     name: Expedia Group
-    sector: Consumer Retail
+    sector: Travel & Leisure
     region: US
   EXR:
     name: Extra Space Storage
-    sector: Real Estate
+    sector: REITs
     region: US
   F:
     name: Ford Motor Company
-    sector: Consumer Retail
+    sector: Automotive & EV
     region: US
   A:
     name: Agilent Technologies
-    sector: Healthcare
+    sector: Life Science Tools
     region: US
   ACGL:
     name: Arch Capital Group
-    sector: Financials
+    sector: Insurance
     region: US
   ACN:
     name: Accenture
-    sector: Technology
+    sector: IT Services
     region: US
   ADM:
     name: Archer Daniels Midland
-    sector: Consumer Retail
+    sector: Food & Beverage
     region: US
   ADSK:
     name: Autodesk
-    sector: Technology
+    sector: SaaS
     region: US
   AEE:
     name: Ameren
-    sector: Utilities
+    sector: Regulated Utilities
     region: US
   AEP:
     name: American Electric Power
-    sector: Utilities
+    sector: Regulated Utilities
     region: US
   AES:
     name: AES Corporation
-    sector: Utilities
+    sector: Regulated Utilities
     region: US
   AFL:
     name: Aflac
-    sector: Financials
+    sector: Insurance
     region: US
   AIG:
     name: American International Group
-    sector: Financials
+    sector: Insurance
     region: US
   AIZ:
     name: Assurant
-    sector: Financials
+    sector: Insurance
     region: US
   AJG:
     name: Arthur J. Gallagher & Co.
-    sector: Financials
+    sector: Insurance
     region: US
   AKAM:
     name: Akamai Technologies
-    sector: Technology
+    sector: Platform Software
     region: US
   ALB:
     name: Albemarle Corporation
@@ -1109,11 +1105,11 @@ tickers:
     region: US
   ALL:
     name: Allstate
-    sector: Financials
+    sector: Insurance
     region: US
   ALLE:
     name: Allegion
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   AMCR:
     name: Amcor
@@ -1121,27 +1117,27 @@ tickers:
     region: US
   AME:
     name: Ametek
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   AMP:
     name: Ameriprise Financial
-    sector: Financials
+    sector: Capital Markets
     region: US
   AMT:
     name: American Tower
-    sector: Real Estate
+    sector: Tower & Data REITs
     region: US
   AON:
     name: Aon plc
-    sector: Financials
+    sector: Insurance
     region: US
   AOS:
     name: A. O. Smith
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   APA:
     name: APA Corporation
-    sector: Energy
+    sector: Oil & Gas
     region: US
   APD:
     name: Air Products
@@ -1149,7 +1145,7 @@ tickers:
     region: US
   APO:
     name: Apollo Global Management
-    sector: Financials
+    sector: Capital Markets
     region: US
   APTV:
     name: Aptiv
@@ -1157,19 +1153,19 @@ tickers:
     region: US
   ARE:
     name: Alexandria Real Estate Equities
-    sector: Real Estate
+    sector: REITs
     region: US
   ARES:
     name: Ares Management
-    sector: Financials
+    sector: Capital Markets
     region: US
   ATO:
     name: Atmos Energy
-    sector: Utilities
+    sector: Regulated Utilities
     region: US
   AVB:
     name: AvalonBay Communities
-    sector: Real Estate
+    sector: REITs
     region: US
   AVGO:
     name: Broadcom
@@ -1181,7 +1177,7 @@ tickers:
     region: US
   AWK:
     name: American Water Works
-    sector: Utilities
+    sector: Regulated Utilities
     region: US
   AXON:
     name: Axon Enterprise
@@ -1189,7 +1185,7 @@ tickers:
     region: US
   AZO:
     name: AutoZone
-    sector: Consumer Retail
+    sector: Retail
     region: US
   BALL:
     name: Ball Corporation
@@ -1197,67 +1193,67 @@ tickers:
     region: US
   BAX:
     name: Baxter International
-    sector: Healthcare
+    sector: Medical Devices
     region: US
   BBY:
     name: Best Buy
-    sector: Consumer Retail
+    sector: Retail
     region: US
   BDX:
     name: Becton Dickinson
-    sector: Healthcare
+    sector: Medical Devices
     region: US
   BEN:
     name: Franklin Resources
-    sector: Financials
+    sector: Capital Markets
     region: US
   BF-B:
-    name: "Brown\u2013Forman"
-    sector: Consumer Retail
+    name: Brown–Forman
+    sector: Food & Beverage
     region: US
   BG:
     name: Bunge Global
-    sector: Consumer Retail
+    sector: Food & Beverage
     region: US
   BK:
     name: BNY Mellon
-    sector: Financials
+    sector: Capital Markets
     region: US
   BKNG:
     name: Booking Holdings
-    sector: Consumer Retail
+    sector: Travel & Leisure
     region: US
   BKR:
     name: Baker Hughes
-    sector: Energy
+    sector: Oil & Gas
     region: US
   BLDR:
     name: Builders FirstSource
-    sector: Industrials
+    sector: Construction & Engineering
     region: US
   BLK:
     name: BlackRock
-    sector: Financials
+    sector: Capital Markets
     region: US
   BR:
     name: Broadridge Financial Solutions
-    sector: Industrials
+    sector: Business Services
     region: US
   BXP:
     name: BXP, Inc.
-    sector: Real Estate
+    sector: REITs
     region: US
   CAG:
     name: Conagra Brands
-    sector: Consumer Retail
+    sector: Food & Beverage
     region: US
   CAH:
     name: Cardinal Health
-    sector: Healthcare
+    sector: Managed Care
     region: US
   CARR:
     name: Carrier Global
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   CASY:
     name: Casey's
@@ -1265,23 +1261,23 @@ tickers:
     region: US
   CBOE:
     name: Cboe Global Markets
-    sector: Financials
+    sector: Capital Markets
     region: US
   CBRE:
     name: CBRE Group
-    sector: Real Estate
+    sector: REITs
     region: US
   CCI:
     name: Crown Castle
-    sector: Real Estate
+    sector: Tower & Data REITs
     region: US
   CCL:
     name: Carnival
-    sector: Consumer Retail
+    sector: Travel & Leisure
     region: US
   CDW:
     name: CDW Corporation
-    sector: Technology
+    sector: Enterprise Hardware
     region: US
   CF:
     name: CF Industries
@@ -1289,43 +1285,43 @@ tickers:
     region: US
   CFG:
     name: Citizens Financial Group
-    sector: Financials
+    sector: Banks
     region: US
   CHD:
     name: Church & Dwight
-    sector: Consumer Retail
+    sector: Food & Beverage
     region: US
   CHRW:
     name: C.H. Robinson
-    sector: Industrials
+    sector: Transportation
     region: US
   CHTR:
     name: Charter Communications
-    sector: Comm Services
+    sector: Telecom
     region: US
   CI:
     name: Cigna
-    sector: Healthcare
+    sector: Managed Care
     region: US
   CIEN:
     name: Ciena
-    sector: Technology
+    sector: Networking
     region: US
   CINF:
     name: Cincinnati Financial
-    sector: Financials
+    sector: Insurance
     region: US
   CMCSA:
     name: Comcast
-    sector: Comm Services
+    sector: Telecom
     region: US
   CME:
     name: CME Group
-    sector: Financials
+    sector: Capital Markets
     region: US
   CMG:
     name: Chipotle Mexican Grill
-    sector: Consumer Retail
+    sector: Restaurants & Hospitality
     region: US
   CMI:
     name: Cummins
@@ -1333,47 +1329,47 @@ tickers:
     region: US
   CMS:
     name: CMS Energy
-    sector: Utilities
+    sector: Regulated Utilities
     region: US
   CNC:
     name: Centene Corporation
-    sector: Healthcare
+    sector: Managed Care
     region: US
   CNP:
     name: CenterPoint Energy
-    sector: Utilities
+    sector: Regulated Utilities
     region: US
   COF:
     name: Capital One
-    sector: Financials
+    sector: Financial Services
     region: US
   COO:
     name: Cooper Companies (The)
-    sector: Healthcare
+    sector: Medical Devices
     region: US
   COP:
     name: ConocoPhillips
-    sector: Energy
+    sector: Oil & Gas
     region: US
   COR:
     name: Cencora
-    sector: Healthcare
+    sector: Managed Care
     region: US
   CPAY:
     name: Corpay
-    sector: Financials
+    sector: Financial Services
     region: US
   CPB:
     name: Campbell's Company (The)
-    sector: Consumer Retail
+    sector: Food & Beverage
     region: US
   CPRT:
     name: Copart
-    sector: Industrials
+    sector: Transportation
     region: US
   CPT:
     name: Camden Property Trust
-    sector: Real Estate
+    sector: REITs
     region: US
   CRH:
     name: CRH plc
@@ -1381,27 +1377,27 @@ tickers:
     region: US
   CRL:
     name: Charles River Laboratories
-    sector: Healthcare
+    sector: Life Science Tools
     region: US
   CSGP:
     name: CoStar Group
-    sector: Real Estate
+    sector: REITs
     region: US
   CSX:
     name: CSX Corporation
-    sector: Industrials
+    sector: Transportation
     region: US
   CTAS:
     name: Cintas
-    sector: Industrials
+    sector: Business Services
     region: US
   CTRA:
     name: Coterra
-    sector: Energy
+    sector: Oil & Gas
     region: US
   CTSH:
     name: Cognizant
-    sector: Technology
+    sector: IT Services
     region: US
   CTVA:
     name: Corteva
@@ -1417,39 +1413,39 @@ tickers:
     region: US
   DECK:
     name: Deckers Brands
-    sector: Consumer Retail
+    sector: Retail
     region: US
   DG:
     name: Dollar General
-    sector: Consumer Retail
+    sector: Retail
     region: US
   DGX:
     name: Quest Diagnostics
-    sector: Healthcare
+    sector: Life Science Tools
     region: US
   DHI:
     name: D. R. Horton
-    sector: Consumer Retail
+    sector: Homebuilders
     region: US
   DIS:
     name: Walt Disney Company (The)
-    sector: Comm Services
+    sector: Media & Entertainment
     region: US
   DLR:
     name: Digital Realty
-    sector: Real Estate
+    sector: Tower & Data REITs
     region: US
   DLTR:
     name: Dollar Tree
-    sector: Consumer Retail
+    sector: Retail
     region: US
   DOC:
     name: Healthpeak Properties
-    sector: Real Estate
+    sector: REITs
     region: US
   DOV:
     name: Dover Corporation
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   DOW:
     name: Dow Inc.
@@ -1457,31 +1453,31 @@ tickers:
     region: US
   DPZ:
     name: Domino's
-    sector: Consumer Retail
+    sector: Restaurants & Hospitality
     region: US
   DRI:
     name: Darden Restaurants
-    sector: Consumer Retail
+    sector: Restaurants & Hospitality
     region: US
   DTE:
     name: DTE Energy
-    sector: Utilities
+    sector: Regulated Utilities
     region: US
   DVA:
     name: DaVita
-    sector: Healthcare
+    sector: Managed Care
     region: US
   DVN:
     name: Devon Energy
-    sector: Energy
+    sector: Oil & Gas
     region: US
   DXCM:
     name: Dexcom
-    sector: Healthcare
+    sector: Medical Devices
     region: US
   EA:
     name: Electronic Arts
-    sector: Comm Services
+    sector: Media & Entertainment
     region: US
   ECL:
     name: Ecolab
@@ -1489,95 +1485,95 @@ tickers:
     region: US
   ED:
     name: Consolidated Edison
-    sector: Utilities
+    sector: Regulated Utilities
     region: US
   EFX:
     name: Equifax
-    sector: Industrials
+    sector: Business Services
     region: US
   EG:
     name: Everest Group
-    sector: Financials
+    sector: Insurance
     region: US
   EIX:
     name: Edison International
-    sector: Utilities
+    sector: Regulated Utilities
     region: US
   EME:
     name: Emcor
-    sector: Industrials
+    sector: Construction & Engineering
     region: US
   EMR:
     name: Emerson Electric
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   EOG:
     name: EOG Resources
-    sector: Energy
+    sector: Oil & Gas
     region: US
   EPAM:
     name: EPAM Systems
-    sector: Technology
+    sector: IT Services
     region: US
   EQIX:
     name: Equinix
-    sector: Real Estate
+    sector: Tower & Data REITs
     region: US
   EQR:
     name: Equity Residential
-    sector: Real Estate
+    sector: REITs
     region: US
   EQT:
     name: EQT Corporation
-    sector: Energy
+    sector: Oil & Gas
     region: US
   ERIE:
     name: Erie Indemnity
-    sector: Financials
+    sector: Insurance
     region: US
   ES:
     name: Eversource Energy
-    sector: Utilities
+    sector: Regulated Utilities
     region: US
   ESS:
     name: Essex Property Trust
-    sector: Real Estate
+    sector: REITs
     region: US
   ETN:
     name: Eaton Corporation
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   ETR:
     name: Entergy
-    sector: Utilities
+    sector: Regulated Utilities
     region: US
   EVRG:
     name: Evergy
-    sector: Utilities
+    sector: Regulated Utilities
     region: US
   EW:
     name: Edwards Lifesciences
-    sector: Healthcare
+    sector: Medical Devices
     region: US
   EXC:
     name: Exelon
-    sector: Utilities
+    sector: Regulated Utilities
     region: US
   EXE:
     name: Expand Energy
-    sector: Energy
+    sector: Oil & Gas
     region: US
   EXPD:
     name: Expeditors International
-    sector: Industrials
+    sector: Transportation
     region: US
   FANG:
     name: Diamondback Energy
-    sector: Energy
+    sector: Oil & Gas
     region: US
   FAST:
     name: Fastenal
-    sector: Industrials
+    sector: Business Services
     region: US
   FCX:
     name: Freeport-McMoRan
@@ -1585,163 +1581,159 @@ tickers:
     region: US
   FDS:
     name: FactSet
-    sector: Financials
+    sector: Capital Markets
     region: US
   FDX:
     name: FedEx
-    sector: Industrials
+    sector: Transportation
     region: US
   FE:
     name: FirstEnergy
-    sector: Utilities
+    sector: Regulated Utilities
     region: US
   FFIV:
     name: F5, Inc.
-    sector: Technology
+    sector: Platform Software
     region: US
   FICO:
     name: Fair Isaac
-    sector: Technology
+    sector: SaaS
     region: US
   FIS:
     name: Fidelity National Information Services
-    sector: Financials
+    sector: Financial Services
     region: US
   FITB:
     name: Fifth Third Bancorp
-    sector: Financials
+    sector: Banks
     region: US
   FIX:
     name: Comfort Systems USA
-    sector: Industrials
+    sector: Construction & Engineering
     region: US
   FOX:
     name: Fox Corporation (Class B)
-    sector: Comm Services
+    sector: Media & Entertainment
     region: US
   FOXA:
     name: Fox Corporation (Class A)
-    sector: Comm Services
+    sector: Media & Entertainment
     region: US
   FRT:
     name: Federal Realty Investment Trust
-    sector: Real Estate
+    sector: REITs
     region: US
   FSLR:
     name: First Solar
-    sector: Technology
+    sector: Renewables
     region: US
   FTV:
     name: Fortive
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   GD:
     name: General Dynamics
-    sector: Industrials
+    sector: Aerospace & Defense
     region: US
   GDDY:
     name: GoDaddy
-    sector: Technology
+    sector: Platform Software
     region: US
   GE:
     name: GE Aerospace
-    sector: Industrials
+    sector: Aerospace & Defense
     region: US
   GEN:
     name: Gen Digital
-    sector: Technology
+    sector: Cybersecurity
     region: US
   GEV:
     name: GE Vernova
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   GILD:
     name: Gilead Sciences
-    sector: Healthcare
-    region: US
-  GIS:
-    name: General Mills
-    sector: Consumer Retail
+    sector: Pharma
     region: US
   GL:
     name: Globe Life
-    sector: Financials
+    sector: Insurance
     region: US
   GLW:
     name: Corning Inc.
-    sector: Technology
+    sector: Networking
     region: US
   GM:
     name: General Motors
-    sector: Consumer Retail
+    sector: Automotive & EV
     region: US
   GNRC:
     name: Generac
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   GPC:
     name: Genuine Parts Company
-    sector: Consumer Retail
+    sector: Retail
     region: US
   GPN:
     name: Global Payments
-    sector: Financials
+    sector: Financial Services
     region: US
   GRMN:
     name: Garmin
-    sector: Consumer Retail
+    sector: Retail
     region: US
   GS:
     name: Goldman Sachs
-    sector: Financials
+    sector: Capital Markets
     region: US
   GWW:
     name: W. W. Grainger
-    sector: Industrials
+    sector: Business Services
     region: US
   HAL:
     name: Halliburton
-    sector: Energy
+    sector: Oil & Gas
     region: US
   HAS:
     name: Hasbro
-    sector: Consumer Retail
+    sector: Retail
     region: US
   HBAN:
     name: Huntington Bancshares
-    sector: Financials
+    sector: Banks
     region: US
   HCA:
     name: HCA Healthcare
-    sector: Healthcare
+    sector: Managed Care
     region: US
   HIG:
     name: Hartford (The)
-    sector: Financials
+    sector: Insurance
     region: US
   HII:
     name: Huntington Ingalls Industries
-    sector: Industrials
+    sector: Aerospace & Defense
     region: US
   HLT:
     name: Hilton Worldwide
-    sector: Consumer Retail
+    sector: Restaurants & Hospitality
     region: US
   HON:
     name: Honeywell
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   HRL:
     name: Hormel Foods
-    sector: Consumer Retail
+    sector: Food & Beverage
     region: US
   HSIC:
     name: Henry Schein
-    sector: Healthcare
+    sector: Managed Care
     region: US
   HST:
     name: Host Hotels & Resorts
-    sector: Real Estate
+    sector: REITs
     region: US
   HSY:
     name: Hershey Company (The)
@@ -1749,31 +1741,31 @@ tickers:
     region: US
   HUBB:
     name: Hubbell Incorporated
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   HUM:
     name: Humana
-    sector: Healthcare
+    sector: Managed Care
     region: US
   HWM:
     name: Howmet Aerospace
-    sector: Industrials
+    sector: Aerospace & Defense
     region: US
   IBKR:
     name: Interactive Brokers
-    sector: Financials
+    sector: Capital Markets
     region: US
   ICE:
     name: Intercontinental Exchange
-    sector: Financials
+    sector: Capital Markets
     region: US
   IDXX:
     name: Idexx Laboratories
-    sector: Healthcare
+    sector: Life Science Tools
     region: US
   IEX:
     name: IDEX Corporation
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   IFF:
     name: International Flavors & Fragrances
@@ -1781,15 +1773,15 @@ tickers:
     region: US
   INCY:
     name: Incyte
-    sector: Healthcare
+    sector: Pharma
     region: US
   INTU:
     name: Intuit
-    sector: Technology
+    sector: SaaS
     region: US
   INVH:
     name: Invitation Homes
-    sector: Real Estate
+    sector: REITs
     region: US
   IP:
     name: International Paper
@@ -1797,123 +1789,115 @@ tickers:
     region: US
   IQV:
     name: IQVIA
-    sector: Healthcare
+    sector: Life Science Tools
     region: US
   IR:
     name: Ingersoll Rand
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   IRM:
     name: Iron Mountain
-    sector: Real Estate
+    sector: Tower & Data REITs
     region: US
   IT:
     name: Gartner
-    sector: Technology
+    sector: SaaS
     region: US
   ITW:
     name: Illinois Tool Works
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   IVZ:
     name: Invesco
-    sector: Financials
+    sector: Capital Markets
     region: US
   J:
     name: Jacobs Solutions
-    sector: Industrials
+    sector: Construction & Engineering
     region: US
   JBHT:
     name: J.B. Hunt
-    sector: Industrials
+    sector: Transportation
     region: US
   JBL:
     name: Jabil
-    sector: Technology
+    sector: Enterprise Hardware
     region: US
   JCI:
     name: Johnson Controls
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   JKHY:
     name: Jack Henry & Associates
-    sector: Financials
+    sector: Financial Services
     region: US
   KDP:
     name: Keurig Dr Pepper
-    sector: Consumer Retail
+    sector: Food & Beverage
     region: US
   KEY:
     name: KeyCorp
-    sector: Financials
+    sector: Banks
     region: US
   KEYS:
     name: Keysight Technologies
-    sector: Technology
-    region: US
-  KHC:
-    name: Kraft Heinz
-    sector: Consumer Retail
+    sector: Semiconductors
     region: US
   KIM:
     name: Kimco Realty
-    sector: Real Estate
+    sector: REITs
     region: US
   KKR:
     name: KKR & Co.
-    sector: Financials
-    region: US
-  KMB:
-    name: Kimberly-Clark
-    sector: Consumer Retail
+    sector: Capital Markets
     region: US
   KMI:
     name: Kinder Morgan
-    sector: Energy
+    sector: Oil & Gas
     region: US
   KR:
     name: Kroger
-    sector: Consumer Retail
+    sector: Retail
     region: US
   KVUE:
     name: Kenvue
-    sector: Consumer Retail
+    sector: Food & Beverage
     region: US
   L:
     name: Loews Corporation
-    sector: Financials
+    sector: Insurance
     region: US
   LDOS:
     name: Leidos
-    sector: Industrials
+    sector: Aerospace & Defense
     region: US
   LH:
     name: Labcorp
-    sector: Healthcare
+    sector: Life Science Tools
     region: US
   LHX:
     name: L3Harris
-    sector: Industrials
+    sector: Aerospace & Defense
     region: US
   LII:
     name: Lennox International
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   LITE:
     name: Lumentum
-    sector: Technology
+    sector: Semiconductors
     region: US
   LNT:
     name: Alliant Energy
-    sector: Utilities
+    sector: Regulated Utilities
     region: US
   LUV:
     name: Southwest Airlines
-    sector: Industrials
+    sector: Transportation
     region: US
   LVS:
     name: Las Vegas Sands
-    sector: Consumer Retail
+    sector: Restaurants & Hospitality
     region: US
   LYB:
     name: LyondellBasell
@@ -1921,7 +1905,7 @@ tickers:
     region: US
   LYV:
     name: Live Nation Entertainment
-    sector: Comm Services
+    sector: Media & Entertainment
     region: US
   MA:
     name: Mastercard
@@ -1929,47 +1913,47 @@ tickers:
     region: US
   MAA:
     name: Mid-America Apartment Communities
-    sector: Real Estate
+    sector: REITs
     region: US
   MAR:
     name: Marriott International
-    sector: Consumer Retail
+    sector: Restaurants & Hospitality
     region: US
   MAS:
     name: Masco
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   MCD:
     name: McDonald's
-    sector: Consumer Retail
+    sector: Restaurants & Hospitality
     region: US
   MCHP:
     name: Microchip Technology
-    sector: Technology
+    sector: Semiconductors
     region: US
   MCK:
     name: McKesson Corporation
-    sector: Healthcare
+    sector: Managed Care
     region: US
   MDLZ:
     name: Mondelez International
-    sector: Consumer Retail
+    sector: Food & Beverage
     region: US
   MDT:
     name: Medtronic
-    sector: Healthcare
+    sector: Medical Devices
     region: US
   MET:
     name: MetLife
-    sector: Financials
+    sector: Insurance
     region: US
   MGM:
     name: MGM Resorts
-    sector: Consumer Retail
+    sector: Restaurants & Hospitality
     region: US
   MKC:
     name: McCormick & Company
-    sector: Consumer Retail
+    sector: Food & Beverage
     region: US
   MLM:
     name: Martin Marietta Materials
@@ -1977,15 +1961,15 @@ tickers:
     region: US
   MMM:
     name: 3M
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   MNST:
     name: Monster Beverage
-    sector: Consumer Retail
+    sector: Food & Beverage
     region: US
   MO:
     name: Altria
-    sector: Consumer Retail
+    sector: Food & Beverage
     region: US
   MOS:
     name: Mosaic Company (The)
@@ -1993,55 +1977,55 @@ tickers:
     region: US
   MPC:
     name: Marathon Petroleum
-    sector: Energy
+    sector: Oil & Gas
     region: US
   MRNA:
     name: Moderna
-    sector: Healthcare
+    sector: Biotech
     region: US
   MRSH:
     name: Marsh McLennan
-    sector: Financials
+    sector: Insurance
     region: US
   MS:
     name: Morgan Stanley
-    sector: Financials
+    sector: Capital Markets
     region: US
   MSCI:
     name: MSCI Inc.
-    sector: Financials
+    sector: Capital Markets
     region: US
   MSI:
     name: Motorola Solutions
-    sector: Technology
+    sector: Networking
     region: US
   MTB:
     name: M&T Bank
-    sector: Financials
+    sector: Banks
     region: US
   MTD:
     name: Mettler Toledo
-    sector: Healthcare
+    sector: Life Science Tools
     region: US
   MU:
     name: Micron Technology
-    sector: Technology
+    sector: Semiconductors
     region: US
   NCLH:
     name: Norwegian Cruise Line Holdings
-    sector: Consumer Retail
+    sector: Travel & Leisure
     region: US
   NDAQ:
     name: Nasdaq, Inc.
-    sector: Financials
+    sector: Capital Markets
     region: US
   NDSN:
     name: Nordson Corporation
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   NEE:
     name: NextEra Energy
-    sector: Utilities
+    sector: Regulated Utilities
     region: US
   NEM:
     name: Newmont
@@ -2049,23 +2033,23 @@ tickers:
     region: US
   NI:
     name: NiSource
-    sector: Utilities
+    sector: Regulated Utilities
     region: US
   NRG:
     name: NRG Energy
-    sector: Utilities
+    sector: Nuclear & Clean Utilities
     region: US
   NSC:
     name: Norfolk Southern
-    sector: Industrials
+    sector: Transportation
     region: US
   NTAP:
     name: NetApp
-    sector: Technology
+    sector: Platform Software
     region: US
   NTRS:
     name: Northern Trust
-    sector: Financials
+    sector: Capital Markets
     region: US
   NUE:
     name: Nucor
@@ -2073,71 +2057,71 @@ tickers:
     region: US
   NVR:
     name: NVR, Inc.
-    sector: Consumer Retail
+    sector: Homebuilders
     region: US
   NWS:
     name: News Corp (Class B)
-    sector: Comm Services
+    sector: Media & Entertainment
     region: US
   NWSA:
     name: News Corp (Class A)
-    sector: Comm Services
+    sector: Media & Entertainment
     region: US
   O:
     name: Realty Income
-    sector: Real Estate
+    sector: REITs
     region: US
   ODFL:
     name: Old Dominion
-    sector: Industrials
+    sector: Transportation
     region: US
   OKE:
     name: Oneok
-    sector: Energy
+    sector: Oil & Gas
     region: US
   OMC:
     name: Omnicom Group
-    sector: Comm Services
+    sector: Media & Entertainment
     region: US
   ORLY:
-    name: "O\u2019Reilly Automotive"
-    sector: Consumer Retail
+    name: O’Reilly Automotive
+    sector: Retail
     region: US
   OTIS:
     name: Otis Worldwide
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   PAYX:
     name: Paychex
-    sector: Industrials
+    sector: Business Services
     region: US
   PCAR:
     name: Paccar
-    sector: Industrials
+    sector: Transportation
     region: US
   PCG:
     name: PG&E Corporation
-    sector: Utilities
+    sector: Nuclear & Clean Utilities
     region: US
   PEG:
     name: Public Service Enterprise Group
-    sector: Utilities
+    sector: Regulated Utilities
     region: US
   PFG:
     name: Principal Financial Group
-    sector: Financials
+    sector: Financial Services
     region: US
   PGR:
     name: Progressive Corporation
-    sector: Financials
+    sector: Insurance
     region: US
   PH:
     name: Parker Hannifin
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   PHM:
     name: PulteGroup
-    sector: Consumer Retail
+    sector: Homebuilders
     region: US
   PKG:
     name: Packaging Corporation of America
@@ -2145,35 +2129,35 @@ tickers:
     region: US
   PLD:
     name: Prologis
-    sector: Real Estate
+    sector: REITs
     region: US
   PLTR:
     name: Palantir Technologies
-    sector: Technology
+    sector: AI & Data
     region: US
   PM:
     name: Philip Morris International
-    sector: Consumer Retail
+    sector: Food & Beverage
     region: US
   PNC:
     name: PNC Financial Services
-    sector: Financials
+    sector: Banks
     region: US
   PNR:
     name: Pentair
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   PNW:
     name: Pinnacle West Capital
-    sector: Utilities
+    sector: Regulated Utilities
     region: US
   PODD:
     name: Insulet Corporation
-    sector: Healthcare
+    sector: Medical Devices
     region: US
   POOL:
     name: Pool Corporation
-    sector: Consumer Retail
+    sector: Retail
     region: US
   PPG:
     name: PPG Industries
@@ -2181,99 +2165,99 @@ tickers:
     region: US
   PPL:
     name: PPL Corporation
-    sector: Utilities
+    sector: Regulated Utilities
     region: US
   PRU:
     name: Prudential Financial
-    sector: Financials
+    sector: Insurance
     region: US
   PSA:
     name: Public Storage
-    sector: Real Estate
+    sector: REITs
     region: US
   PSKY:
     name: Paramount Skydance Corporation
-    sector: Comm Services
+    sector: Media & Entertainment
     region: US
   PSX:
     name: Phillips 66
-    sector: Energy
+    sector: Oil & Gas
     region: US
   PTC:
     name: PTC Inc.
-    sector: Technology
+    sector: SaaS
     region: US
   PWR:
     name: Quanta Services
-    sector: Industrials
+    sector: Construction & Engineering
     region: US
   Q:
     name: Qnity Electronics
-    sector: Technology
+    sector: Semiconductors
     region: US
   RCL:
     name: Royal Caribbean Group
-    sector: Consumer Retail
+    sector: Travel & Leisure
     region: US
   REG:
     name: Regency Centers
-    sector: Real Estate
+    sector: REITs
     region: US
   RF:
     name: Regions Financial Corporation
-    sector: Financials
+    sector: Banks
     region: US
   RJF:
     name: Raymond James Financial
-    sector: Financials
+    sector: Capital Markets
     region: US
   RL:
     name: Ralph Lauren Corporation
-    sector: Consumer Retail
+    sector: Retail
     region: US
   RMD:
     name: ResMed
-    sector: Healthcare
+    sector: Medical Devices
     region: US
   ROL:
     name: Rollins, Inc.
-    sector: Industrials
+    sector: Business Services
     region: US
   ROP:
     name: Roper Technologies
-    sector: Technology
+    sector: SaaS
     region: US
   ROST:
     name: Ross Stores
-    sector: Consumer Retail
+    sector: Retail
     region: US
   RSG:
     name: Republic Services
-    sector: Industrials
+    sector: Business Services
     region: US
   RTX:
     name: RTX Corporation
-    sector: Industrials
+    sector: Aerospace & Defense
     region: US
   RVTY:
     name: Revvity
-    sector: Healthcare
+    sector: Life Science Tools
     region: US
   SATS:
     name: EchoStar
-    sector: Comm Services
+    sector: Telecom
     region: US
   SBAC:
     name: SBA Communications
-    sector: Real Estate
+    sector: Tower & Data REITs
     region: US
   SBUX:
     name: Starbucks
-    sector: Consumer Retail
+    sector: Restaurants & Hospitality
     region: US
   SCHW:
     name: Charles Schwab Corporation
-    sector: Financials
+    sector: Capital Markets
     region: US
   SHW:
     name: Sherwin-Williams
@@ -2281,47 +2265,47 @@ tickers:
     region: US
   SJM:
     name: J.M. Smucker Company (The)
-    sector: Consumer Retail
+    sector: Food & Beverage
     region: US
   SLB:
     name: Schlumberger
-    sector: Energy
+    sector: Oil & Gas
     region: US
   SMCI:
     name: Supermicro
-    sector: Technology
+    sector: Enterprise Hardware
     region: US
   SNA:
     name: Snap-on
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   SNDK:
     name: Sandisk
-    sector: Technology
+    sector: Data Storage
     region: US
   SO:
     name: Southern Company
-    sector: Utilities
+    sector: Regulated Utilities
     region: US
   SOLV:
     name: Solventum
-    sector: Healthcare
+    sector: Pharma
     region: US
   SPG:
     name: Simon Property Group
-    sector: Real Estate
+    sector: REITs
     region: US
   SPGI:
     name: S&P Global
-    sector: Financials
+    sector: Capital Markets
     region: US
   SRE:
     name: Sempra
-    sector: Utilities
+    sector: Regulated Utilities
     region: US
   STE:
     name: Steris
-    sector: Healthcare
+    sector: Medical Devices
     region: US
   STLD:
     name: Steel Dynamics
@@ -2329,15 +2313,15 @@ tickers:
     region: US
   STT:
     name: State Street Corporation
-    sector: Financials
+    sector: Capital Markets
     region: US
   STX:
     name: Seagate Technology
-    sector: Technology
+    sector: Data Storage
     region: US
   STZ:
     name: Constellation Brands
-    sector: Consumer Retail
+    sector: Food & Beverage
     region: US
   SW:
     name: Smurfit Westrock
@@ -2345,151 +2329,151 @@ tickers:
     region: US
   SWK:
     name: Stanley Black & Decker
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   SWKS:
     name: Skyworks Solutions
-    sector: Technology
+    sector: Semiconductors
     region: US
   SYF:
     name: Synchrony Financial
-    sector: Financials
+    sector: Financial Services
     region: US
   SYK:
     name: Stryker Corporation
-    sector: Healthcare
+    sector: Medical Devices
     region: US
   SYY:
     name: Sysco
-    sector: Consumer Retail
+    sector: Restaurants & Hospitality
     region: US
   TAP:
     name: Molson Coors Beverage Company
-    sector: Consumer Retail
+    sector: Food & Beverage
     region: US
   TDG:
     name: TransDigm Group
-    sector: Industrials
+    sector: Aerospace & Defense
     region: US
   TDY:
     name: Teledyne Technologies
-    sector: Technology
+    sector: Aerospace & Defense
     region: US
   TECH:
     name: Bio-Techne
-    sector: Healthcare
+    sector: Life Science Tools
     region: US
   TEL:
     name: TE Connectivity
-    sector: Technology
+    sector: Semiconductors
     region: US
   TFC:
     name: Truist Financial
-    sector: Financials
+    sector: Banks
     region: US
   TGT:
     name: Target Corporation
-    sector: Consumer Retail
+    sector: Retail
     region: US
   TJX:
     name: TJX Companies
-    sector: Consumer Retail
+    sector: Retail
     region: US
   TKO:
     name: TKO Group Holdings
-    sector: Comm Services
+    sector: Media & Entertainment
     region: US
   TMUS:
     name: T-Mobile US
-    sector: Comm Services
+    sector: Telecom
     region: US
   TPL:
     name: Texas Pacific Land Corporation
-    sector: Energy
+    sector: Oil & Gas
     region: US
   TPR:
     name: Tapestry, Inc.
-    sector: Consumer Retail
+    sector: Retail
     region: US
   TRGP:
     name: Targa Resources
-    sector: Energy
+    sector: Oil & Gas
     region: US
   TRMB:
     name: Trimble Inc.
-    sector: Technology
+    sector: SaaS
     region: US
   TROW:
     name: T. Rowe Price
-    sector: Financials
+    sector: Capital Markets
     region: US
   TRV:
     name: Travelers Companies (The)
-    sector: Financials
+    sector: Insurance
     region: US
   TSCO:
     name: Tractor Supply
-    sector: Consumer Retail
+    sector: Retail
     region: US
   TSN:
     name: Tyson Foods
-    sector: Consumer Retail
+    sector: Food & Beverage
     region: US
   TT:
     name: Trane Technologies
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   TTWO:
     name: Take-Two Interactive
-    sector: Comm Services
+    sector: Media & Entertainment
     region: US
   TXT:
     name: Textron
-    sector: Industrials
+    sector: Aerospace & Defense
     region: US
   TYL:
     name: Tyler Technologies
-    sector: Technology
+    sector: SaaS
     region: US
   UAL:
     name: United Airlines Holdings
-    sector: Industrials
+    sector: Transportation
     region: US
   UDR:
     name: UDR, Inc.
-    sector: Real Estate
+    sector: REITs
     region: US
   UHS:
     name: Universal Health Services
-    sector: Healthcare
+    sector: Managed Care
     region: US
   ULTA:
     name: Ulta Beauty
-    sector: Consumer Retail
+    sector: Retail
     region: US
   UNP:
     name: Union Pacific Corporation
-    sector: Industrials
+    sector: Transportation
     region: US
   URI:
     name: United Rentals
-    sector: Industrials
+    sector: Transportation
     region: US
   USB:
     name: U.S. Bancorp
-    sector: Financials
+    sector: Banks
     region: US
   VICI:
     name: Vici Properties
-    sector: Real Estate
+    sector: REITs
     region: US
   VLO:
     name: Valero Energy
-    sector: Energy
+    sector: Oil & Gas
     region: US
   VLTO:
     name: Veralto
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   VMC:
     name: Vulcan Materials Company
@@ -2497,103 +2481,103 @@ tickers:
     region: US
   VRSK:
     name: Verisk Analytics
-    sector: Industrials
+    sector: Business Services
     region: US
   VRSN:
     name: Verisign
-    sector: Technology
+    sector: Platform Software
     region: US
   VRT:
     name: Vertiv
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   VRTX:
     name: Vertex Pharmaceuticals
-    sector: Healthcare
+    sector: Pharma
     region: US
   VST:
     name: Vistra Corp.
-    sector: Utilities
+    sector: Nuclear & Clean Utilities
     region: US
   VTR:
     name: Ventas
-    sector: Real Estate
+    sector: REITs
     region: US
   VTRS:
     name: Viatris
-    sector: Healthcare
+    sector: Pharma
     region: US
   WAB:
     name: Wabtec
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   WAT:
     name: Waters Corporation
-    sector: Healthcare
+    sector: Life Science Tools
     region: US
   WBD:
     name: Warner Bros. Discovery
-    sector: Comm Services
+    sector: Media & Entertainment
     region: US
   WDAY:
     name: Workday, Inc.
-    sector: Technology
+    sector: SaaS
     region: US
   WEC:
     name: WEC Energy Group
-    sector: Utilities
+    sector: Regulated Utilities
     region: US
   WELL:
     name: Welltower
-    sector: Real Estate
+    sector: REITs
     region: US
   WFC:
     name: Wells Fargo
-    sector: Financials
+    sector: Banks
     region: US
   WM:
     name: Waste Management
-    sector: Industrials
+    sector: Business Services
     region: US
   WMB:
     name: Williams Companies
-    sector: Energy
+    sector: Oil & Gas
     region: US
   WRB:
     name: W. R. Berkley Corporation
-    sector: Financials
+    sector: Insurance
     region: US
   WSM:
     name: Williams-Sonoma, Inc.
-    sector: Consumer Retail
+    sector: Retail
     region: US
   WST:
     name: West Pharmaceutical Services
-    sector: Healthcare
+    sector: Medical Devices
     region: US
   WTW:
     name: Willis Towers Watson
-    sector: Financials
+    sector: Insurance
     region: US
   WY:
     name: Weyerhaeuser
-    sector: Real Estate
+    sector: REITs
     region: US
   WYNN:
     name: Wynn Resorts
-    sector: Consumer Retail
+    sector: Restaurants & Hospitality
     region: US
   XEL:
     name: Xcel Energy
-    sector: Utilities
+    sector: Regulated Utilities
     region: US
   XOM:
     name: ExxonMobil
-    sector: Energy
+    sector: Oil & Gas
     region: US
   XYL:
     name: Xylem Inc.
-    sector: Industrials
+    sector: Industrial Machinery
     region: US
   XYZ:
     name: Block, Inc.
@@ -2601,19 +2585,19 @@ tickers:
     region: US
   YUM:
     name: Yum! Brands
-    sector: Consumer Retail
+    sector: Restaurants & Hospitality
     region: US
   ZBH:
     name: Zimmer Biomet
-    sector: Healthcare
+    sector: Medical Devices
     region: US
   ZTS:
     name: Zoetis
-    sector: Healthcare
+    sector: Life Science Tools
     region: US
   TEM:
     name: Tempus AI, Inc.
-    sector: Healthcare
+    sector: Biotech
     region: US
   ANX.PA:
     name: Amundi Nasdaq 100 ETF
