@@ -1181,6 +1181,9 @@ def load_data():
             FROM marts.dim_companies d
             LEFT JOIN raw.company_info r USING (ticker)
         """).df()
+        # Ensure industry column exists even on older warehouses
+        if "industry" not in companies_f.columns:
+            companies_f["industry"] = None
         monthly_f = conn.execute("SELECT * FROM marts.agg_monthly_performance ORDER BY month, ticker").df()
         annual_f = conn.execute("SELECT * FROM marts.dim_annual_financials").df()
         
@@ -1216,12 +1219,14 @@ def load_data():
 
         # ── Pipeline Health Data ──
         try:
-            etl_audit_f = conn.execute("""
-                SELECT status, start_time, rows_processed
-                FROM marts.etl_audit 
-                ORDER BY start_time DESC 
-                LIMIT 1
-            """).df()
+            audit_db = str(Path(ROOT) / "warehouse" / "etl_audit.duckdb")
+            with duckdb.connect(audit_db, read_only=True) as a_conn:
+                etl_audit_f = a_conn.execute("""
+                    SELECT status, start_time, rows_processed
+                    FROM etl.audit_log 
+                    ORDER BY start_time DESC 
+                    LIMIT 1
+                """).df()
         except:
             etl_audit_f = pd.DataFrame()
 
@@ -1426,6 +1431,37 @@ def get_master_screener_data(_companies_df, _prices_df, _quarterly_fin, _annual_
     _non_equities = {"^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"}
     _non_equity_sectors = {"Benchmark", "Volatility"}
     screener_rows = []
+
+    # ── Pre-compute 2-quarter consecutive momentum for EPS & Revenue ────────────
+    # Logic: label = 'Accelerating' if both q[-1] and q[-2] QoQ growth > +10%,
+    #                'Decelerating' if both < -10%, else 'Neutral'
+    # Uses QoQ (quarter-over-quarter) because "2 consecutive quarters" is inherently QoQ —
+    # comparing Q3->Q4->Q1 in sequence, not the same quarter of the prior year (YoY).
+    def _two_quarter_momentum(ticker, qoq_col, threshold=10.0):
+        """Returns 'Accelerating', 'Decelerating', or 'Neutral'.
+        Uses QoQ growth rates for 2 most recent consecutive quarters.
+        """
+        t_q = _quarterly_fin[_quarterly_fin['ticker'] == ticker].sort_values('report_date', ascending=False)
+        if len(t_q) < 2:
+            return 'Neutral'
+        vals = t_q[qoq_col].dropna().head(2).tolist()
+        if len(vals) < 2:
+            return 'Neutral'
+        if vals[0] > threshold and vals[1] > threshold:
+            return 'Accelerating'
+        if vals[0] < -threshold and vals[1] < -threshold:
+            return 'Decelerating'
+        return 'Neutral'
+
+    # Build lookups by ticker (QoQ — consecutive quarter growth)
+    _eps_mom_lookup = {
+        t: _two_quarter_momentum(t, 'eps_growth_qoq_pct')
+        for t in _companies_df['ticker'].unique()
+    }
+    _rev_mom_lookup = {
+        t: _two_quarter_momentum(t, 'revenue_growth_qoq_pct')
+        for t in _companies_df['ticker'].unique()
+    }
     
     for _, row in _companies_df.iterrows():
         ticker = row['ticker']
@@ -1547,7 +1583,9 @@ def get_master_screener_data(_companies_df, _prices_df, _quarterly_fin, _annual_
             "Trend": latest_p.get('ma_signal', 'NEUTRAL'),
             "FMI": fmi_score,
             "FMI Label": fmi_lbl,
-            "Region": row['region']
+            "Region": row['region'],
+            "EPS Momentum": _eps_mom_lookup.get(ticker, 'Neutral'),
+            "Rev Momentum": _rev_mom_lookup.get(ticker, 'Neutral'),
         })
         
     return pd.DataFrame(screener_rows)
@@ -2535,10 +2573,13 @@ if active_tab == "1. Market Regime":
             )
             tree_df['Region'] = tree_df['region'].fillna('Unknown').str.upper()
             
+            tree_df['color_group'] = tree_df['period_return'].apply(lambda x: 'Positive' if x >= 0 else 'Negative')
+            
             fig_tree = px.treemap(
                 tree_df, path=[px.Constant("Global"), 'Region', 'sector', 'ticker'], values='cap_bn',
-                color='period_return', color_continuous_scale='RdYlGn', color_continuous_midpoint=0,
-                range_color=[-p_max, p_max], template="plotly_dark", height=600,
+                color='color_group', 
+                color_discrete_map={'Positive': '#2ecc71', 'Negative': '#e74c3c'},
+                template="plotly_dark", height=600,
                 custom_data=['return_str', 'Region']
             )
             fig_tree.update_traces(
@@ -2551,10 +2592,14 @@ if active_tab == "1. Market Regime":
             
         with sec_tabs[1]:
             if not tree_df.empty and 'sector' in tree_df.columns:
-                fig_sec = px.bar(sector_agg.reset_index(), x='period_return', y='sector', orientation='h', 
-                                 color='period_return', color_continuous_scale='RdYlGn', template="plotly_dark", height=600)
+                s_df = sector_agg.reset_index()
+                s_df['color_group'] = s_df['period_return'].apply(lambda x: 'Positive' if x >= 0 else 'Negative')
+                fig_sec = px.bar(s_df, x='period_return', y='sector', orientation='h', 
+                                 color='color_group', 
+                                 color_discrete_map={'Positive': '#2ecc71', 'Negative': '#e74c3c'},
+                                 template="plotly_dark", height=600)
                 fig_sec.update_traces(texttemplate='%{x:.2f}%', textposition='outside')
-                fig_sec.update_layout(margin=dict(r=20, b=0), yaxis={'categoryorder':'total ascending', 'title': None, 'tickmode': 'linear'})
+                fig_sec.update_layout(showlegend=False, margin=dict(r=20, b=0), yaxis={'categoryorder':'total ascending', 'title': None, 'tickmode': 'linear'})
                 st.plotly_chart(fig_sec, use_container_width=True)
             
         with sec_tabs[2]:
@@ -2563,9 +2608,11 @@ if active_tab == "1. Market Regime":
                 bot_stocks = tree_df.nsmallest(10, 'period_return')
                 movers = pd.concat([top_stocks, bot_stocks]).sort_values('period_return', ascending=True)
                 fig_movers = px.bar(movers, x='period_return', y='ticker', orientation='h', 
-                                    color='period_return', color_continuous_scale='RdYlGn', template="plotly_dark", height=600)
+                                    color='color_group', 
+                                    color_discrete_map={'Positive': '#2ecc71', 'Negative': '#e74c3c'},
+                                    template="plotly_dark", height=600)
                 fig_movers.update_traces(texttemplate='%{x:.2f}%', textposition='outside')
-                fig_movers.update_layout(margin=dict(r=40, b=0), yaxis={'categoryorder':'total ascending', 'title': None, 'tickmode': 'linear', 'dtick': 1})
+                fig_movers.update_layout(showlegend=False, margin=dict(r=40, b=0), yaxis={'categoryorder':'total ascending', 'title': None, 'tickmode': 'linear', 'dtick': 1})
                 st.plotly_chart(fig_movers, use_container_width=True)
 
 
@@ -3974,88 +4021,230 @@ if active_tab == "3. Qualitative Audit (AI)":
 
             # ── PEER COMPARISON ────────────────────────────────────────────
             st.markdown("---")
-            render_header("package", f"Peer Comparison — {meta['sector']} Sector")
 
-            # Get all peers in same sector (excluding indices + the stock itself)
-            peer_companies = companies_full[
-                (companies_full['sector'] == meta['sector']) &
-                (~companies_full['ticker'].isin(indices_list)) &
-                (companies_full['ticker'] != deep_ticker)
-            ].copy()
+            # Smart Peer Matching: Industry-first, then Sector-level fallback
+            _ticker_industry = meta.get("industry")
+            _ticker_sector   = meta.get("sector")
+            _min_peers = 3
+
+            peer_companies = pd.DataFrame()
+            _match_level = "Sector"
+
+            if _ticker_industry and "industry" in companies_full.columns:
+                peer_companies = companies_full[
+                    (companies_full["industry"] == _ticker_industry) &
+                    (~companies_full["ticker"].isin(indices_list)) &
+                    (companies_full["ticker"] != deep_ticker)
+                ].copy()
+                if len(peer_companies) >= _min_peers:
+                    _match_level = "Industry"
+
+            if len(peer_companies) < _min_peers:
+                peer_companies = companies_full[
+                    (companies_full["sector"] == _ticker_sector) &
+                    (~companies_full["ticker"].isin(indices_list)) &
+                    (companies_full["ticker"] != deep_ticker)
+                ].copy()
+                _match_level = "Sector"
+
+            _peer_group_label = _ticker_industry if (_match_level == "Industry" and _ticker_industry) else _ticker_sector
+            render_header("package", f"Peer Comparison — {_peer_group_label} {_match_level}")
 
             if not peer_companies.empty:
-                # Merge with latest price to get RSI/signal for peers
+                # ── Merge with latest price data for RSI / MA signal ──────────────
                 peer_prices = prices.sort_values('date').groupby('ticker').tail(1)[['ticker', 'price_close', 'rsi', 'ma_signal']]
                 peer_df = peer_companies.merge(peer_prices, on='ticker', how='left')
                 peer_df["upside_pct"] = (peer_df["target_mean_price"] / peer_df["price_close"] - 1) * 100
 
-                # 6 comparison metrics
-                metrics_cfg = [
-                    ("P/E Ratio",        "pe_ratio",            False),  # lower is better
-                    ("P/B Ratio",        "price_to_book",       False),
-                    ("ROE (%)",          "roe",                 True,  100),   # higher is better
-                    ("FCF Margin (%)",   "fcf_margin",          True),
-                    ("Analyst Upside %", "upside_pct",          True),
-                    ("Quality Score",    None,                  True),   # computed
-                ]
+                # ── Improvement 2: Compute 1Y Return % for all peers ─────────────
+                _cutoff_1y = pd.Timestamp.now().normalize() - pd.Timedelta(days=365)
+                _peer_tickers = list(peer_df["ticker"].unique()) + [deep_ticker]
+                _prices_1y = prices[prices["ticker"].isin(_peer_tickers)]
 
-                # Build a comparison dataframe
+                def _calc_1y_return(grp):
+                    grp = grp.sort_values("date")
+                    past = grp[grp["date"] <= _cutoff_1y]
+                    if past.empty or len(grp) < 2:
+                        return None
+                    start_p = past.iloc[-1]["price_close"]
+                    end_p   = grp.iloc[-1]["price_close"]
+                    return (end_p / start_p - 1) * 100 if start_p and start_p > 0 else None
+
+                _1y_returns = (
+                    _prices_1y.groupby("ticker")
+                    .apply(_calc_1y_return)
+                    .rename("return_1y_pct")
+                    .reset_index()
+                )
+
+                # ── Build unified comparison rows ─────────────────────────────────
                 rows = []
-                # Add the selected stock first
-                sel_row = meta.copy()
-                sel_row_prices = prices[prices['ticker'] == deep_ticker].tail(1)
+
+                # Selected ticker row — always first
+                sel_row         = meta.copy()
+                sel_row_prices  = prices[prices['ticker'] == deep_ticker].tail(1)
                 if not sel_row_prices.empty:
-                    sel_row['rsi'] = sel_row_prices.iloc[0]['rsi']
+                    sel_row['rsi']       = sel_row_prices.iloc[0]['rsi']
                     sel_row['ma_signal'] = sel_row_prices.iloc[0]['ma_signal']
                 sel_row['upside_pct'] = upside
-                sel_row['quality_score'] = compute_score(sel_row)
+
+                _sel_1y = _1y_returns[_1y_returns["ticker"] == deep_ticker]["return_1y_pct"]
+                _sel_1y_val = float(_sel_1y.iloc[0]) if not _sel_1y.empty and pd.notnull(_sel_1y.iloc[0]) else None
 
                 rows.append({
-                    'ticker': deep_ticker,
-                    'company': meta['company'],
-                    'pe_ratio': meta.get('pe_ratio'),
+                    'ticker':        deep_ticker,
+                    'company':       meta['company'],
+                    'market_cap':    meta.get('market_cap'),
+                    'pe_ratio':      meta.get('pe_ratio'),
                     'price_to_book': meta.get('price_to_book'),
-                    'roe_pct': (meta.get('roe') or 0) * 100,
-                    'fcf_margin': meta.get('fcf_margin') or 0,
-                    'upside_pct': upside,
+                    'roe_pct':       (meta.get('roe') or 0) * 100,
+                    'fcf_margin':    meta.get('fcf_margin') or 0,
+                    'upside_pct':    upside,
+                    'return_1y_pct': _sel_1y_val,
                     'quality_score': compute_score(sel_row),
-                    'is_selected': True
+                    'is_selected':   True,
                 })
 
                 for _, pr in peer_df.iterrows():
                     pr_score_input = pr.copy()
                     pr_score_input['upside_pct'] = pr.get('upside_pct', 0) or 0
+                    _p1y = _1y_returns[_1y_returns["ticker"] == pr["ticker"]]["return_1y_pct"]
                     rows.append({
-                        'ticker': pr['ticker'],
-                        'company': pr.get('company', pr['ticker']),
-                        'pe_ratio': pr.get('pe_ratio'),
+                        'ticker':        pr['ticker'],
+                        'company':       pr.get('company', pr['ticker']),
+                        'market_cap':    pr.get('market_cap'),
+                        'pe_ratio':      pr.get('pe_ratio'),
                         'price_to_book': pr.get('price_to_book'),
-                        'roe_pct': (pr.get('roe') or 0) * 100,
-                        'fcf_margin': pr.get('fcf_margin') or 0,
-                        'upside_pct': pr.get('upside_pct', 0) or 0,
+                        'roe_pct':       (pr.get('roe') or 0) * 100,
+                        'fcf_margin':    pr.get('fcf_margin') or 0,
+                        'upside_pct':    pr.get('upside_pct', 0) or 0,
+                        'return_1y_pct': float(_p1y.iloc[0]) if not _p1y.empty and pd.notnull(_p1y.iloc[0]) else None,
                         'quality_score': compute_score(pr_score_input),
-                        'is_selected': False
+                        'is_selected':   False,
                     })
 
-                comp_df = pd.DataFrame(rows).set_index('ticker')
+                comp_df = pd.DataFrame(rows)
 
-                # Sector averages for reference line
-                sector_avg = comp_df.mean(numeric_only=True)
+                # ── Improvement 1: Sector Average row ────────────────────────────
+                _peer_only = comp_df[~comp_df['is_selected']]
+                _numeric_cols = ['pe_ratio', 'price_to_book', 'roe_pct', 'fcf_margin', 'upside_pct', 'return_1y_pct', 'quality_score']
+                avg_vals = _peer_only[_numeric_cols].mean(numeric_only=True)
+                avg_row = {'ticker': 'AVG', 'company': f'⊘ {_match_level} Average', 'is_selected': False, 'market_cap': None}
+                for c in _numeric_cols:
+                    avg_row[c] = avg_vals.get(c)
+                comp_df = pd.concat([comp_df, pd.DataFrame([avg_row])], ignore_index=True)
+                comp_df = comp_df.set_index('ticker')
 
-                # Display as styled dataframe
-                peer_table = comp_df[['company', 'pe_ratio', 'price_to_book', 'roe_pct', 'fcf_margin', 'upside_pct', 'quality_score']].copy()
-                peer_table.columns = ['Company', 'P/E', 'P/B', 'ROE %', 'FCF%', 'Upside %', 'Quality']
-                peer_table['P/E']  = peer_table['P/E'].apply(lambda x: f"{x:.1f}" if pd.notnull(x) else "N/A")
-                peer_table['P/B']  = peer_table['P/B'].apply(lambda x: f"{x:.1f}" if pd.notnull(x) else "N/A")
-                peer_table['ROE %'] = peer_table['ROE %'].apply(lambda x: f"{x:.1f}%")
-                peer_table['FCF%'] = peer_table['FCF%'].apply(lambda x: f"{x:.1f}%")
-                peer_table['Upside %'] = peer_table['Upside %'].apply(lambda x: f"{x:+.1f}%")
+                # ── Improvement 4: Color coding helper ───────────────────────────
+                # For each metric, we compare against the SECTOR AVERAGE (avg_vals)
+                # Higher-is-better: roe_pct, fcf_margin, upside_pct, return_1y_pct, quality_score
+                # Lower-is-better: pe_ratio, price_to_book
+                HIGHER_BETTER = {'roe_pct', 'fcf_margin', 'upside_pct', 'return_1y_pct', 'quality_score'}
+                LOWER_BETTER  = {'pe_ratio', 'price_to_book'}
 
+                def _color_cell(val, col, avg):
+                    """Return HTML-colored cell content."""
+                    if pd.isna(val) or avg is None or pd.isna(avg):
+                        return val
+                    is_good = (val > avg) if col in HIGHER_BETTER else (val < avg and val > 0)
+                    is_bad  = (val < avg) if col in HIGHER_BETTER else (val > avg and val > 0)
+                    color   = "#00e5a0" if is_good else ("#ff6b6b" if is_bad else "inherit")
+                    return color, val
 
-                st.dataframe(peer_table, use_container_width=True,
-                             column_config={"Quality": st.column_config.ProgressColumn("Quality", min_value=0, max_value=100, format="%d")})
+                # ── Build display table with formatted values ─────────────────────
+                def _fmt_cap(v):
+                    if v is None or pd.isna(v): return "—"
+                    if v >= 1e12: return f"${v/1e12:.1f}T"
+                    if v >= 1e9:  return f"${v/1e9:.0f}B"
+                    return f"${v/1e6:.0f}M"
+
+                # ── Improvement 3+4: Build HTML table with highlight + color coding ─
+                _COL_DEFS = [
+                    ('company',        'Company',     None),
+                    ('market_cap',     'Mkt Cap',     None),
+                    ('pe_ratio',       'P/E',         'lower'),
+                    ('price_to_book',  'P/B',         'lower'),
+                    ('roe_pct',        'ROE %',       'higher'),
+                    ('fcf_margin',     'FCF %',       'higher'),
+                    ('return_1y_pct',  '1Y Return',   'higher'),
+                    ('upside_pct',     'Upside',      'higher'),
+                    ('quality_score',  'Quality',     'higher'),
+                ]
+
+                def _cell_bg(val, col_key, better_dir, avg_dict, is_avg_row):
+                    """Returns background CSS for a cell."""
+                    if is_avg_row or better_dir is None:
+                        return ""
+                    avg = avg_dict.get(col_key)
+                    if avg is None or pd.isna(avg) or val is None or (isinstance(val, float) and pd.isna(val)):
+                        return ""
+                    try:
+                        f_val = float(val)
+                        f_avg = float(avg)
+                    except Exception:
+                        return ""
+                    if better_dir == 'higher':
+                        return "background: rgba(0,229,160,0.18);" if f_val > f_avg * 1.05 else ("background: rgba(255,107,107,0.18);" if f_val < f_avg * 0.95 else "")
+                    else:  # 'lower'
+                        if f_val <= 0: return ""
+                        return "background: rgba(0,229,160,0.18);" if f_val < f_avg * 0.95 else ("background: rgba(255,107,107,0.18);" if f_val > f_avg * 1.05 else "")
+
+                avg_dict = {c: avg_vals.get(c) for c in _numeric_cols}
+
+                html_rows = []
+                for ticker_idx, row_data in comp_df.iterrows():
+                    is_sel  = row_data.get('is_selected', False)
+                    is_avg  = (ticker_idx == 'AVG')
+                    row_bg  = "background: rgba(99,132,255,0.12); font-weight:700;" if is_sel else ("background: rgba(255,255,255,0.04); font-style:italic; font-weight:600;" if is_avg else "")
+                    label   = f"★ {ticker_idx}" if is_sel else ticker_idx
+
+                    cells = f"<td style='padding:8px 10px; color:#a78bfa; font-weight:700;'>{label}</td>"
+                    for col_key, col_label, better_dir in _COL_DEFS:
+                        val = row_data.get(col_key)
+                        cell_style = _cell_bg(val, col_key, better_dir, avg_dict, is_avg)
+
+                        if col_key == 'company':
+                            text = str(val) if val else "—"
+                        elif col_key == 'market_cap':
+                            text = _fmt_cap(val)
+                        elif col_key == 'quality_score':
+                            text = f"{val:.0f}/100" if val is not None and not (isinstance(val, float) and pd.isna(val)) else "—"
+                        elif col_key in ('pe_ratio', 'price_to_book'):
+                            text = f"{float(val):.1f}x" if val is not None and not (isinstance(val, float) and pd.isna(val)) and float(val) > 0 else "N/A"
+                        elif col_key in ('roe_pct', 'fcf_margin', 'upside_pct', 'return_1y_pct'):
+                            if val is not None and not (isinstance(val, float) and pd.isna(val)):
+                                prefix = "+" if float(val) > 0 and col_key in ('upside_pct', 'return_1y_pct') else ""
+                                text = f"{prefix}{float(val):.1f}%"
+                            else:
+                                text = "—"
+                        else:
+                            text = str(val) if val is not None else "—"
+
+                        cells += f"<td style='padding:8px 10px; text-align:center; {cell_style}'>{text}</td>"
+
+                    html_rows.append(f"<tr style='{row_bg}'>{cells}</tr>")
+
+                header_cells = "<th style='padding:8px 10px; color:#94a3b8; text-align:left;'>Ticker</th>"
+                for _, col_label, _ in _COL_DEFS:
+                    header_cells += f"<th style='padding:8px 10px; color:#94a3b8; text-align:center;'>{col_label}</th>"
+
+                html_table = f"""
+                <div style="overflow-x:auto; border-radius:12px; border:1px solid rgba(255,255,255,0.08); margin-bottom:12px;">
+                <table style="width:100%; border-collapse:collapse; font-size:0.88rem; color:#e2e8f0;">
+                  <thead><tr style="border-bottom:1px solid rgba(255,255,255,0.1);">{header_cells}</tr></thead>
+                  <tbody>{"".join(html_rows)}</tbody>
+                </table>
+                </div>
+                <div style="font-size:0.78rem; color:#64748b; margin-top:-4px; margin-bottom:16px;">
+                  🟢 = above {_match_level} avg &nbsp;|&nbsp; 🔴 = below avg &nbsp;|&nbsp; ★ = selected ticker
+                </div>
+                """
+
+                # Improvement 3 — render highlighted table
+                st.markdown(html_table, unsafe_allow_html=True)
+
             else:
-                st.info(f"No peers found in the **{meta['sector']}** sector to compare with.")
+                st.info(f"No peers found in the **{_peer_group_label}** {_match_level} to compare with.")
 
             st.markdown("---")
             render_header("activity", f"Performance Alpha (Cumulative % vs SPY)")
@@ -4384,13 +4573,19 @@ if active_tab == "7. Portfolio Builder":
     if p_tickers:
         latest_prices = prices[prices["ticker"].isin(p_tickers)].groupby("ticker")["price_close"].last().to_dict()
         
-        # Build Initial DataFrame for Editor (ONLY if tickers list actually changed or structure is missing/stale)
-        if 'last_portfolio_tickers' not in st.session_state or \
+        _cur_version = st.session_state.get('_portfolio_version', 0)
+        
+        # Build Initial DataFrame for Editor (ONLY if tickers list changed, version bumped, or structure missing/stale)
+        if 'last_portfolio_version' not in st.session_state or \
+           st.session_state.last_portfolio_version != _cur_version or \
+           'last_portfolio_tickers' not in st.session_state or \
            st.session_state.last_portfolio_tickers != p_tickers or \
            'portfolio_df' not in st.session_state or \
            "Cost Basis (€)" not in st.session_state.portfolio_df.columns or \
            "Region" not in st.session_state.portfolio_df.columns:
+            
             st.session_state.last_portfolio_tickers = p_tickers
+            st.session_state.last_portfolio_version = _cur_version
             init_data = []
             for t in p_tickers:
                 # Enrich with m_df data for professional look
@@ -4410,21 +4605,40 @@ if active_tab == "7. Portfolio Builder":
         # 2. BULK DATA EDITOR
         render_header("layers", "Capital Allocation Grid", level="#####")
         
+        # ── FEAT 1: Inline Position-Level PnL Breakdown ──
+        disp_df = st.session_state.portfolio_df.copy()
+        disp_df["Total Cost (€)"] = disp_df["Cost Basis (€)"] * disp_df["Shares"]
+        disp_df["Market Value"] = disp_df["Price (€)"] * disp_df["Shares"]
+        disp_df["Unrealized PnL (€)"] = disp_df["Market Value"] - disp_df["Total Cost (€)"]
+        disp_df["Unrealized PnL (%)"] = (disp_df["Unrealized PnL (€)"] / disp_df["Total Cost (€)"]).replace([np.inf, -np.inf], 0).fillna(0) * 100
+        
+        _t_val = disp_df["Market Value"].sum()
+        _t_cost = disp_df["Total Cost (€)"].sum()
+        disp_df["Weight (%)"] = (disp_df["Market Value"] / _t_val * 100).fillna(0) if _t_val > 0 else 0
+        disp_df["Contribution (%)"] = (disp_df["Unrealized PnL (€)"] / _t_cost * 100).fillna(0) if _t_cost > 0 else 0
+
         with st.form("portfolio_builder_main_form"):
             # KEY FIX: The data_editor should be the ONLY way to change weights for the current tickers
             edited_df = st.data_editor(
-                st.session_state.portfolio_df,
+                disp_df,
                 column_config={
                     "Ticker": st.column_config.TextColumn("Ticker", disabled=True),
                     "Company": st.column_config.TextColumn("Company", disabled=True),
                     "Region": st.column_config.TextColumn("Region", disabled=True),
                     "Price (€)": st.column_config.NumberColumn("Market Price", format="€%.2f", disabled=True),
-                    "Shares": st.column_config.NumberColumn("Shares owned", min_value=0.0, step=0.01, format="%.2f"),
-                    "Cost Basis (€)": st.column_config.NumberColumn("Avg Cost Basis", min_value=0.0, step=0.01, format="€%.2f")
+                    "Shares": st.column_config.NumberColumn("Shares", min_value=0.0, step=0.01, format="%.4g"),
+                    "Cost Basis (€)": st.column_config.NumberColumn("Unit Cost", min_value=0.0, step=0.01, format="€%.2f"),
+                    "Total Cost (€)": st.column_config.NumberColumn("Total Cost", format="€%.2f", disabled=True),
+                    "Market Value": st.column_config.NumberColumn("Market Value", format="€%.2f", disabled=True),
+                    "Unrealized PnL (€)": st.column_config.NumberColumn("PnL (€)", format="€%.2f", disabled=True),
+                    "Unrealized PnL (%)": st.column_config.NumberColumn("PnL (%)", format="%.2f%%", disabled=True),
+                    "Contribution (%)": st.column_config.NumberColumn("Contribution", format="%.2f%%", disabled=True),
+                    "Weight (%)": st.column_config.NumberColumn("Weight", format="%.2f%%", disabled=True)
                 },
+                column_order=["Ticker", "Company", "Shares", "Cost Basis (€)", "Price (€)", "Total Cost (€)", "Market Value", "Unrealized PnL (€)", "Unrealized PnL (%)", "Contribution (%)", "Weight (%)"],
                 hide_index=True,
                 width="stretch",
-                key="p_portfolio_editor_final"
+                key=f"p_portfolio_editor_v{_cur_version}"
             )
             
             # PASSIVE SYNC: Use a button to lock in changes and update Database
@@ -4558,6 +4772,37 @@ if active_tab == "7. Portfolio Builder":
                 )
                 st.plotly_chart(fig_bt, use_container_width=True)
     
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            # ── FEAT 2: Historical Stress Test (Beta-weighted Drawdown) ──
+            # Calculate Portfolio Beta against SPY
+            bench_spy = prices_full[(prices_full["ticker"] == "SPY") & (prices_full["date"].isin(port_daily.index))].sort_values("date")
+            bench_spy_daily = bench_spy.set_index("date")["daily_return_pct"].fillna(0) / 100
+            align_df = pd.concat([port_daily, bench_spy_daily], axis=1).dropna()
+            port_beta = align_df.iloc[:, 0].cov(align_df.iloc[:, 1]) / align_df.iloc[:, 1].var() if (len(align_df) > 30 and align_df.iloc[:, 1].var() > 0) else 1.0
+
+            render_header("alert-triangle", f"Historical Stress Test (Beta: {port_beta:.2f})", level="#####")
+            st.caption("Estimated impact based on S&P 500 historical crashes mapped to your portfolio's current beta.")
+            
+            scenarios = [
+                ("📉 2008 Financial Crisis", -0.509),
+                ("🦠 2020 COVID Crash", -0.339),
+                ("🐻 2022 Bear Market", -0.254)
+            ]
+            
+            s_cols = st.columns(3)
+            for i, (s_name, s_drop) in enumerate(scenarios):
+                est_drop_pct = s_drop * port_beta
+                est_drop_val = total_p_val * est_drop_pct
+                with s_cols[i]:
+                    st.markdown(f"""
+                    <div style='background:rgba(231,76,60,0.08); border:1px solid rgba(231,76,60,0.4); border-radius:8px; padding:15px; text-align:center;'>
+                        <div style='color:#e74c3c; font-size:0.85rem; font-weight:700; margin-bottom:5px;'>{s_name}</div>
+                        <div style='color:#e74c3c; font-size:1.5rem; font-weight:900;'>{est_drop_pct*100:.1f}%</div>
+                        <div style='color:#ff9999; font-size:0.9rem;'>Est. Loss: -€{abs(est_drop_val):,.0f}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+            
             st.markdown("---")
     
             # ═══════════════════════════════════════════════════════════════════
@@ -4605,6 +4850,45 @@ if active_tab == "7. Portfolio Builder":
                 fig_corr.update_layout(height=360, margin=dict(l=0, r=0, t=10, b=0))
                 st.plotly_chart(fig_corr, use_container_width=True)
     
+            st.markdown("<br>", unsafe_allow_html=True)
+
+            # ── FEAT 3: Performance Attribution (Waterfall Chart) ──
+            render_header("bar-chart-2", "Performance Attribution (PnL)", level="#####")
+            
+            if total_cost_basis > 0 and len(edited_df) > 0:
+                attr_df = edited_df.copy()
+                attr_df["Total Cost"] = attr_df["Cost Basis (€)"] * attr_df["Shares"]
+                attr_df["Unrealized PnL"] = attr_df["Market Value"] - attr_df["Total Cost"]
+                attr_df = attr_df.sort_values(by="Unrealized PnL", ascending=False)
+                
+                # Plotly Waterfall
+                fig_attr = go.Figure(go.Waterfall(
+                    name="PnL Attribution", orientation="v",
+                    measure=["relative"] * len(attr_df) + ["total"],
+                    x=attr_df["Ticker"].tolist() + ["TOTAL PnL"],
+                    textposition="outside",
+                    text=attr_df["Unrealized PnL"].apply(lambda x: f"{x:+,.0f}").tolist() + [f"{total_pnl:+,.0f}"],
+                    y=attr_df["Unrealized PnL"].tolist() + [0], # y-value for 'total' measure is automatic
+                    connector={"line":{"color":"rgba(255,255,255,0.2)", "dash":"dot"}},
+                    decreasing={"marker":{"color":"#e74c3c"}},
+                    increasing={"marker":{"color":"#2ecc71"}},
+                    totals={"marker":{"color":"#3498db"}}
+                ))
+                
+                fig_attr.update_layout(
+                    template="plotly_dark", height=450,
+                    margin=dict(l=0, r=0, t=10, b=0),
+                    yaxis_title="Unrealized PnL (€)",
+                    xaxis_title="",
+                    showlegend=False,
+                    paper_bgcolor="rgba(0,0,0,0)",
+                    plot_bgcolor="rgba(0,0,0,0)",
+                )
+                fig_attr.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(255,255,255,0.05)')
+                st.plotly_chart(fig_attr, use_container_width=True)
+            else:
+                st.info("Performance Attribution requires at least 1 asset and a non-zero cost basis.")
+
             st.markdown("---")
 
             # ═══════════════════════════════════════════════════════════════════
@@ -5379,13 +5663,19 @@ if active_tab == "2. Opportunity Radar":
     # Final Compact Dropdown Layout (Removed Redundant Reset Button)
     scan_presets = [
         "🔍 All Stock Universe",
+        "──────────── 📈 OPPORTUNITY ────────────",
         "🏆 Institutional Pulse (Quality > 75 & Bullish)",
         "📈 Trend Following (MA20 > MA50)",
-        "📉 RSI Mean Reversion (Oversold < 30)",
         "💎 Deep Value (Z-Score < -2.0)",
+        "📉 RSI Mean Reversion (Oversold < 30)",
         "🚀 Buy on Dip (Bullish + Oversold)",
         "⚡ Multi-Indicator Breakout (Bullish + RSI > 50)",
-        "──────────────────────────────",
+        "📈 Both Accelerating (EPS + Revenue QoQ, 2 qtrs > +10%)",
+        "🌱 GARP (Growth at Reasonable Price: PEG < 1.5 + Quality > 60)",
+        "💰 High Quality Dividend (Yield > 2.5% + Quality > 65)",
+        "🔥 Short Squeeze Watch (Short % > 15% + Bullish)",
+        "──────────── ⛔ RISK / WARNING ────────────",
+        "⚠️ Earnings Deterioration (EPS + Revenue QoQ, 2 qtrs < -10%)",
         "⚠️ Structural Caution (Quality < 40 & Bearish)",
         "📉 Negative Momentum (MA20 < MA50)",
         "🔥 Overbought Alert (> 70)",
@@ -5472,6 +5762,21 @@ if active_tab == "2. Opportunity Radar":
     elif "Multi-Indicator Breakdown" in scan_mode:
         f_df = f_df[(f_df["Trend"] == "BEARISH") & (f_df["RSI (14)"] < 50)]
         st.error("💔 Breakdown: Extreme downside momentum (Trend Bearish + RSI < 50). Falling knife.")
+    elif "Both Accelerating" in scan_mode:
+        f_df = f_df[(f_df["EPS Momentum"] == "Accelerating") & (f_df["Rev Momentum"] == "Accelerating")]
+        st.success("📈 Both Accelerating: EPS & Revenue both growing QoQ > +10% for 2 consecutive quarters. Strongest fundamental momentum signal.")
+    elif "Earnings Deterioration" in scan_mode:
+        f_df = f_df[(f_df["EPS Momentum"] == "Decelerating") & (f_df["Rev Momentum"] == "Decelerating")]
+        st.error("⚠️ Earnings Deterioration: EPS & Revenue both declining QoQ > -10% for 2 consecutive quarters.")
+    elif "GARP" in scan_mode:
+        f_df = f_df[(f_df["PEG"] > 0) & (f_df["PEG"] < 1.5) & (f_df["Quality"] > 60) & (f_df["FMI"] > 60)]
+        st.success("🌱 GARP — Growth at a Reasonable Price: PEG < 1.5 (not overvalued for growth rate) + Quality > 60 + FMI > 60. Peter Lynch-style filter.")
+    elif "High Quality Dividend" in scan_mode:
+        f_df = f_df[(f_df["Yield (%)"] > 2.5) & (f_df["Quality"] > 65) & (f_df["Trend"] == "BULLISH")]
+        st.success("💰 High Quality Dividend: Yield > 2.5% with strong fundamentals (Quality > 65) and confirmed uptrend. Income + quality.")
+    elif "Short Squeeze Watch" in scan_mode:
+        f_df = f_df[(f_df["Short %"] > 15) & (f_df["RSI (14)"] < 45) & (f_df["Trend"] == "BULLISH")]
+        st.warning("🔥 Short Squeeze Watch: High short interest (> 15% of float) + oversold RSI + bullish trend reversal. High volatility, event-driven setup.")
     elif "──" in scan_mode:
         # Just to catch the separator line if selected
         st.warning("Please select a valid screening preset.")

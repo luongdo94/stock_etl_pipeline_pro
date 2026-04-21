@@ -95,6 +95,7 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
             quote_type      VARCHAR DEFAULT 'EQUITY',
             company         VARCHAR,
             sector          VARCHAR,
+            industry        VARCHAR,
             region          VARCHAR,
             market_cap      BIGINT,
             pe_ratio        DOUBLE,
@@ -132,11 +133,15 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
             _loaded_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    # Migrate existing tables that predate the quote_type column
+    # Migrate existing tables that predate the quote_type / industry columns
     try:
         conn.execute("ALTER TABLE raw.company_info ADD COLUMN IF NOT EXISTS quote_type VARCHAR DEFAULT 'EQUITY'")
     except Exception:
         pass  # Column already exists or not supported — safe to ignore
+    try:
+        conn.execute("ALTER TABLE raw.company_info ADD COLUMN IF NOT EXISTS industry VARCHAR")
+    except Exception:
+        pass  # Column already exists
     conn.execute("""
         CREATE TABLE IF NOT EXISTS raw.historical_financials (
             ticker          VARCHAR,
@@ -186,6 +191,31 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
             eps_avg         DOUBLE,
             rev_avg         DOUBLE,
             _loaded_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS raw.hist_fcf (
+            ticker              VARCHAR NOT NULL,
+            year                INTEGER NOT NULL,
+            free_cash_flow      DOUBLE,
+            operating_cash_flow DOUBLE,
+            capex               DOUBLE,
+            _extracted_at       TIMESTAMP,
+            _loaded_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (ticker, year)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS raw.hist_fcf_quarterly (
+            ticker              VARCHAR NOT NULL,
+            year                INTEGER NOT NULL,
+            quarter             INTEGER NOT NULL,
+            free_cash_flow      DOUBLE,
+            operating_cash_flow DOUBLE,
+            capex               DOUBLE,
+            _extracted_at       TIMESTAMP,
+            _loaded_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (ticker, year, quarter)
         )
     """)
     logger.info("✅ Raw schema created")
@@ -390,6 +420,7 @@ def load_company_info(
             quote_type      VARCHAR DEFAULT 'EQUITY',
             company         VARCHAR,
             sector          VARCHAR,
+            industry        VARCHAR,
             region          VARCHAR,
             market_cap      BIGINT,
             pe_ratio        DOUBLE,
@@ -429,6 +460,10 @@ def load_company_info(
     """)
     try:
         conn.execute("ALTER TABLE raw.company_info ADD COLUMN IF NOT EXISTS quote_type VARCHAR DEFAULT 'EQUITY'")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE raw.company_info ADD COLUMN IF NOT EXISTS industry VARCHAR")
     except Exception:
         pass
 

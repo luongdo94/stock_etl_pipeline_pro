@@ -12,14 +12,14 @@ airflow/*.db
 dbt
 legacy
 airflow
-scratch
+scratch/
 scripts
 *.sh
 dashboard.py
 .agents/
 logs/
 teraform/
-
+dashboard_v2/
 # Databases (Data Warehouse)
 warehouse/*.duckdb
 !warehouse/stock_demo.duckdb

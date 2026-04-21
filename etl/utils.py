@@ -132,10 +132,12 @@ def needs_fundamentals_refresh(conn: duckdb.DuckDBPyConnection, threshold_hours:
         return True
 
 
-def needs_metadata_refresh(conn: duckdb.DuckDBPyConnection, threshold_hours: int = 720) -> bool:
+def needs_metadata_refresh(conn: duckdb.DuckDBPyConnection, threshold_hours: int = 168) -> bool:
     """
     Checks if static metadata (Company Info, Historical Annuals) needs a refresh.
-    Toggled every 30 days (720h) by default.
+    Toggled every 7 days (168h) by default — aligned with fundamentals refresh cycle.
+    Previously was 30 days (720h); reduced because fundamental metrics (analyst targets,
+    dividend yield, beta) can change meaningfully week-to-week.
     """
     total_target = get_total_ticker_count()
     try:
@@ -196,8 +198,8 @@ def get_missing_tickers_for_table(conn: duckdb.DuckDBPyConnection, table_name: s
         # Table might not exist or be empty, treat all as missing
         return all_tickers
 
-# Suffixes typically representing European/UK markets with semi-annual reporting only
-NON_QUARTERLY_SUFFIXES = ('.PA', '.MI', '.AS', '.DE', '.MC', '.LS', '.SW', '.L', '.CO')
+# Suffixes typically representing European/Asian markets with semi-annual reporting only
+NON_QUARTERLY_SUFFIXES = ('.PA', '.MI', '.AS', '.DE', '.MC', '.LS', '.SW', '.L', '.CO', '.HK', '.T')
 
 def get_smart_recovery_targets(conn: duckdb.DuckDBPyConnection) -> dict:
     """
@@ -211,6 +213,7 @@ def get_smart_recovery_targets(conn: duckdb.DuckDBPyConnection) -> dict:
         'fundamentals': {ticker: meta} # Missing from quarterly_financials
     }
     """
+    # ... existing code ...
     missing_meta = get_missing_tickers_for_table(conn, "raw.company_info")
 
     # Identify tickers already classified as non-equity in the DB
@@ -249,8 +252,9 @@ def get_smart_recovery_targets(conn: duckdb.DuckDBPyConnection) -> dict:
           AND (
             (roe IS NULL) -- Always target missing ROE for any Equity
             OR 
-            (free_cashflow IS NULL AND sector != 'Financials') -- Only target FCF if not a Bank/Insurance
+            (free_cashflow IS NULL AND sector NOT IN ('Financials', 'Fintech', 'Financial Services', 'Real Estate'))
           )
+          AND ticker NOT LIKE '%.T' AND ticker NOT LIKE '%.HK'
     """
     try:
         gap_tickers = [r[0] for r in conn.execute(q_gaps).fetchall()]
