@@ -2573,10 +2573,13 @@ if active_tab == "1. Market Regime":
             )
             tree_df['Region'] = tree_df['region'].fillna('Unknown').str.upper()
             
+            tree_df['color_group'] = tree_df['period_return'].apply(lambda x: 'Positive' if x >= 0 else 'Negative')
+            
             fig_tree = px.treemap(
                 tree_df, path=[px.Constant("Global"), 'Region', 'sector', 'ticker'], values='cap_bn',
-                color='period_return', color_continuous_scale='RdYlGn', color_continuous_midpoint=0,
-                range_color=[-p_max, p_max], template="plotly_dark", height=600,
+                color='color_group', 
+                color_discrete_map={'Positive': '#2ecc71', 'Negative': '#e74c3c'},
+                template="plotly_dark", height=600,
                 custom_data=['return_str', 'Region']
             )
             fig_tree.update_traces(
@@ -2589,10 +2592,14 @@ if active_tab == "1. Market Regime":
             
         with sec_tabs[1]:
             if not tree_df.empty and 'sector' in tree_df.columns:
-                fig_sec = px.bar(sector_agg.reset_index(), x='period_return', y='sector', orientation='h', 
-                                 color='period_return', color_continuous_scale='RdYlGn', template="plotly_dark", height=600)
+                s_df = sector_agg.reset_index()
+                s_df['color_group'] = s_df['period_return'].apply(lambda x: 'Positive' if x >= 0 else 'Negative')
+                fig_sec = px.bar(s_df, x='period_return', y='sector', orientation='h', 
+                                 color='color_group', 
+                                 color_discrete_map={'Positive': '#2ecc71', 'Negative': '#e74c3c'},
+                                 template="plotly_dark", height=600)
                 fig_sec.update_traces(texttemplate='%{x:.2f}%', textposition='outside')
-                fig_sec.update_layout(margin=dict(r=20, b=0), yaxis={'categoryorder':'total ascending', 'title': None, 'tickmode': 'linear'})
+                fig_sec.update_layout(showlegend=False, margin=dict(r=20, b=0), yaxis={'categoryorder':'total ascending', 'title': None, 'tickmode': 'linear'})
                 st.plotly_chart(fig_sec, use_container_width=True)
             
         with sec_tabs[2]:
@@ -2601,9 +2608,11 @@ if active_tab == "1. Market Regime":
                 bot_stocks = tree_df.nsmallest(10, 'period_return')
                 movers = pd.concat([top_stocks, bot_stocks]).sort_values('period_return', ascending=True)
                 fig_movers = px.bar(movers, x='period_return', y='ticker', orientation='h', 
-                                    color='period_return', color_continuous_scale='RdYlGn', template="plotly_dark", height=600)
+                                    color='color_group', 
+                                    color_discrete_map={'Positive': '#2ecc71', 'Negative': '#e74c3c'},
+                                    template="plotly_dark", height=600)
                 fig_movers.update_traces(texttemplate='%{x:.2f}%', textposition='outside')
-                fig_movers.update_layout(margin=dict(r=40, b=0), yaxis={'categoryorder':'total ascending', 'title': None, 'tickmode': 'linear', 'dtick': 1})
+                fig_movers.update_layout(showlegend=False, margin=dict(r=40, b=0), yaxis={'categoryorder':'total ascending', 'title': None, 'tickmode': 'linear', 'dtick': 1})
                 st.plotly_chart(fig_movers, use_container_width=True)
 
 
@@ -4629,7 +4638,7 @@ if active_tab == "7. Portfolio Builder":
                 column_order=["Ticker", "Company", "Shares", "Cost Basis (€)", "Price (€)", "Total Cost (€)", "Market Value", "Unrealized PnL (€)", "Unrealized PnL (%)", "Contribution (%)", "Weight (%)"],
                 hide_index=True,
                 width="stretch",
-                key="p_portfolio_editor_final"
+                key=f"p_portfolio_editor_v{_cur_version}"
             )
             
             # PASSIVE SYNC: Use a button to lock in changes and update Database
