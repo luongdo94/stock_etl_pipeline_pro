@@ -101,6 +101,32 @@ class AuditManager:
         except Exception as e:
             logger.warning(f"⚠️ Could not write to audit log: {e}")
 
+    def sync_to_main_warehouse(self, db_path: str):
+        """Syncs the current run's audit log from etl_audit.duckdb to the production warehouse."""
+        try:
+            with duckdb.connect(db_path) as conn:
+                # Ensure the table exists in the target DB (it should from transform layer, but safe)
+                # Note: we use the same schema/table name as expected by the dashboard/sync
+                conn.execute("CREATE SCHEMA IF NOT EXISTS marts")
+                conn.execute("""
+                    CREATE TABLE IF NOT EXISTS marts.etl_audit (
+                        run_id UUID PRIMARY KEY, start_time TIMESTAMP, end_time TIMESTAMP,
+                        status VARCHAR, mode VARCHAR, rows_processed INTEGER, error_message TEXT
+                    )
+                """)
+                
+                # Attach the persistent audit DB and copy current run
+                conn.execute(f"ATTACH '{AUDIT_DB_PATH}' AS audit_db")
+                conn.execute("""
+                    INSERT OR REPLACE INTO marts.etl_audit 
+                    SELECT * FROM audit_db.etl.audit_log 
+                    WHERE run_id = ?
+                """, [self.run_id])
+                conn.execute("DETACH audit_db")
+            logger.info(f"   📡 Audit log synced to {Path(db_path).name}")
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to sync audit log to main warehouse: {e}")
+
 def _prepare_shadow_db(is_incremental: bool):
     """
     Shadow DB Preparation Strategy:
@@ -331,6 +357,10 @@ def run_pipeline(lookback_days: int = 1825, force_full: bool = False, fast_mode:
 
             perform_atomic_swap()
             logger.info(f"   ⏱  Swap: {time.time()-t0:.1f}s")
+
+            # ── STEP 6: POST-SWAP AUDIT SYNC ──
+            # Sync the success status to the production warehouse so dashboard/cloud see it
+            audit.sync_to_main_warehouse(DB_PATH)
 
 
             logger.info("\n" + "=" * 55)

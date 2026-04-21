@@ -1181,6 +1181,9 @@ def load_data():
             FROM marts.dim_companies d
             LEFT JOIN raw.company_info r USING (ticker)
         """).df()
+        # Ensure industry column exists even on older warehouses
+        if "industry" not in companies_f.columns:
+            companies_f["industry"] = None
         monthly_f = conn.execute("SELECT * FROM marts.agg_monthly_performance ORDER BY month, ticker").df()
         annual_f = conn.execute("SELECT * FROM marts.dim_annual_financials").df()
         
@@ -3976,88 +3979,230 @@ if active_tab == "3. Qualitative Audit (AI)":
 
             # ── PEER COMPARISON ────────────────────────────────────────────
             st.markdown("---")
-            render_header("package", f"Peer Comparison — {meta['sector']} Sector")
 
-            # Get all peers in same sector (excluding indices + the stock itself)
-            peer_companies = companies_full[
-                (companies_full['sector'] == meta['sector']) &
-                (~companies_full['ticker'].isin(indices_list)) &
-                (companies_full['ticker'] != deep_ticker)
-            ].copy()
+            # Smart Peer Matching: Industry-first, then Sector-level fallback
+            _ticker_industry = meta.get("industry")
+            _ticker_sector   = meta.get("sector")
+            _min_peers = 3
+
+            peer_companies = pd.DataFrame()
+            _match_level = "Sector"
+
+            if _ticker_industry and "industry" in companies_full.columns:
+                peer_companies = companies_full[
+                    (companies_full["industry"] == _ticker_industry) &
+                    (~companies_full["ticker"].isin(indices_list)) &
+                    (companies_full["ticker"] != deep_ticker)
+                ].copy()
+                if len(peer_companies) >= _min_peers:
+                    _match_level = "Industry"
+
+            if len(peer_companies) < _min_peers:
+                peer_companies = companies_full[
+                    (companies_full["sector"] == _ticker_sector) &
+                    (~companies_full["ticker"].isin(indices_list)) &
+                    (companies_full["ticker"] != deep_ticker)
+                ].copy()
+                _match_level = "Sector"
+
+            _peer_group_label = _ticker_industry if (_match_level == "Industry" and _ticker_industry) else _ticker_sector
+            render_header("package", f"Peer Comparison — {_peer_group_label} {_match_level}")
 
             if not peer_companies.empty:
-                # Merge with latest price to get RSI/signal for peers
+                # ── Merge with latest price data for RSI / MA signal ──────────────
                 peer_prices = prices.sort_values('date').groupby('ticker').tail(1)[['ticker', 'price_close', 'rsi', 'ma_signal']]
                 peer_df = peer_companies.merge(peer_prices, on='ticker', how='left')
                 peer_df["upside_pct"] = (peer_df["target_mean_price"] / peer_df["price_close"] - 1) * 100
 
-                # 6 comparison metrics
-                metrics_cfg = [
-                    ("P/E Ratio",        "pe_ratio",            False),  # lower is better
-                    ("P/B Ratio",        "price_to_book",       False),
-                    ("ROE (%)",          "roe",                 True,  100),   # higher is better
-                    ("FCF Margin (%)",   "fcf_margin",          True),
-                    ("Analyst Upside %", "upside_pct",          True),
-                    ("Quality Score",    None,                  True),   # computed
-                ]
+                # ── Improvement 2: Compute 1Y Return % for all peers ─────────────
+                _cutoff_1y = pd.Timestamp.now().normalize() - pd.Timedelta(days=365)
+                _peer_tickers = list(peer_df["ticker"].unique()) + [deep_ticker]
+                _prices_1y = prices[prices["ticker"].isin(_peer_tickers)]
 
-                # Build a comparison dataframe
+                def _calc_1y_return(grp):
+                    grp = grp.sort_values("date")
+                    past = grp[grp["date"] <= _cutoff_1y]
+                    if past.empty or len(grp) < 2:
+                        return None
+                    start_p = past.iloc[-1]["price_close"]
+                    end_p   = grp.iloc[-1]["price_close"]
+                    return (end_p / start_p - 1) * 100 if start_p and start_p > 0 else None
+
+                _1y_returns = (
+                    _prices_1y.groupby("ticker")
+                    .apply(_calc_1y_return)
+                    .rename("return_1y_pct")
+                    .reset_index()
+                )
+
+                # ── Build unified comparison rows ─────────────────────────────────
                 rows = []
-                # Add the selected stock first
-                sel_row = meta.copy()
-                sel_row_prices = prices[prices['ticker'] == deep_ticker].tail(1)
+
+                # Selected ticker row — always first
+                sel_row         = meta.copy()
+                sel_row_prices  = prices[prices['ticker'] == deep_ticker].tail(1)
                 if not sel_row_prices.empty:
-                    sel_row['rsi'] = sel_row_prices.iloc[0]['rsi']
+                    sel_row['rsi']       = sel_row_prices.iloc[0]['rsi']
                     sel_row['ma_signal'] = sel_row_prices.iloc[0]['ma_signal']
                 sel_row['upside_pct'] = upside
-                sel_row['quality_score'] = compute_score(sel_row)
+
+                _sel_1y = _1y_returns[_1y_returns["ticker"] == deep_ticker]["return_1y_pct"]
+                _sel_1y_val = float(_sel_1y.iloc[0]) if not _sel_1y.empty and pd.notnull(_sel_1y.iloc[0]) else None
 
                 rows.append({
-                    'ticker': deep_ticker,
-                    'company': meta['company'],
-                    'pe_ratio': meta.get('pe_ratio'),
+                    'ticker':        deep_ticker,
+                    'company':       meta['company'],
+                    'market_cap':    meta.get('market_cap'),
+                    'pe_ratio':      meta.get('pe_ratio'),
                     'price_to_book': meta.get('price_to_book'),
-                    'roe_pct': (meta.get('roe') or 0) * 100,
-                    'fcf_margin': meta.get('fcf_margin') or 0,
-                    'upside_pct': upside,
+                    'roe_pct':       (meta.get('roe') or 0) * 100,
+                    'fcf_margin':    meta.get('fcf_margin') or 0,
+                    'upside_pct':    upside,
+                    'return_1y_pct': _sel_1y_val,
                     'quality_score': compute_score(sel_row),
-                    'is_selected': True
+                    'is_selected':   True,
                 })
 
                 for _, pr in peer_df.iterrows():
                     pr_score_input = pr.copy()
                     pr_score_input['upside_pct'] = pr.get('upside_pct', 0) or 0
+                    _p1y = _1y_returns[_1y_returns["ticker"] == pr["ticker"]]["return_1y_pct"]
                     rows.append({
-                        'ticker': pr['ticker'],
-                        'company': pr.get('company', pr['ticker']),
-                        'pe_ratio': pr.get('pe_ratio'),
+                        'ticker':        pr['ticker'],
+                        'company':       pr.get('company', pr['ticker']),
+                        'market_cap':    pr.get('market_cap'),
+                        'pe_ratio':      pr.get('pe_ratio'),
                         'price_to_book': pr.get('price_to_book'),
-                        'roe_pct': (pr.get('roe') or 0) * 100,
-                        'fcf_margin': pr.get('fcf_margin') or 0,
-                        'upside_pct': pr.get('upside_pct', 0) or 0,
+                        'roe_pct':       (pr.get('roe') or 0) * 100,
+                        'fcf_margin':    pr.get('fcf_margin') or 0,
+                        'upside_pct':    pr.get('upside_pct', 0) or 0,
+                        'return_1y_pct': float(_p1y.iloc[0]) if not _p1y.empty and pd.notnull(_p1y.iloc[0]) else None,
                         'quality_score': compute_score(pr_score_input),
-                        'is_selected': False
+                        'is_selected':   False,
                     })
 
-                comp_df = pd.DataFrame(rows).set_index('ticker')
+                comp_df = pd.DataFrame(rows)
 
-                # Sector averages for reference line
-                sector_avg = comp_df.mean(numeric_only=True)
+                # ── Improvement 1: Sector Average row ────────────────────────────
+                _peer_only = comp_df[~comp_df['is_selected']]
+                _numeric_cols = ['pe_ratio', 'price_to_book', 'roe_pct', 'fcf_margin', 'upside_pct', 'return_1y_pct', 'quality_score']
+                avg_vals = _peer_only[_numeric_cols].mean(numeric_only=True)
+                avg_row = {'ticker': 'AVG', 'company': f'⊘ {_match_level} Average', 'is_selected': False, 'market_cap': None}
+                for c in _numeric_cols:
+                    avg_row[c] = avg_vals.get(c)
+                comp_df = pd.concat([comp_df, pd.DataFrame([avg_row])], ignore_index=True)
+                comp_df = comp_df.set_index('ticker')
 
-                # Display as styled dataframe
-                peer_table = comp_df[['company', 'pe_ratio', 'price_to_book', 'roe_pct', 'fcf_margin', 'upside_pct', 'quality_score']].copy()
-                peer_table.columns = ['Company', 'P/E', 'P/B', 'ROE %', 'FCF%', 'Upside %', 'Quality']
-                peer_table['P/E']  = peer_table['P/E'].apply(lambda x: f"{x:.1f}" if pd.notnull(x) else "N/A")
-                peer_table['P/B']  = peer_table['P/B'].apply(lambda x: f"{x:.1f}" if pd.notnull(x) else "N/A")
-                peer_table['ROE %'] = peer_table['ROE %'].apply(lambda x: f"{x:.1f}%")
-                peer_table['FCF%'] = peer_table['FCF%'].apply(lambda x: f"{x:.1f}%")
-                peer_table['Upside %'] = peer_table['Upside %'].apply(lambda x: f"{x:+.1f}%")
+                # ── Improvement 4: Color coding helper ───────────────────────────
+                # For each metric, we compare against the SECTOR AVERAGE (avg_vals)
+                # Higher-is-better: roe_pct, fcf_margin, upside_pct, return_1y_pct, quality_score
+                # Lower-is-better: pe_ratio, price_to_book
+                HIGHER_BETTER = {'roe_pct', 'fcf_margin', 'upside_pct', 'return_1y_pct', 'quality_score'}
+                LOWER_BETTER  = {'pe_ratio', 'price_to_book'}
 
+                def _color_cell(val, col, avg):
+                    """Return HTML-colored cell content."""
+                    if pd.isna(val) or avg is None or pd.isna(avg):
+                        return val
+                    is_good = (val > avg) if col in HIGHER_BETTER else (val < avg and val > 0)
+                    is_bad  = (val < avg) if col in HIGHER_BETTER else (val > avg and val > 0)
+                    color   = "#00e5a0" if is_good else ("#ff6b6b" if is_bad else "inherit")
+                    return color, val
 
-                st.dataframe(peer_table, use_container_width=True,
-                             column_config={"Quality": st.column_config.ProgressColumn("Quality", min_value=0, max_value=100, format="%d")})
+                # ── Build display table with formatted values ─────────────────────
+                def _fmt_cap(v):
+                    if v is None or pd.isna(v): return "—"
+                    if v >= 1e12: return f"${v/1e12:.1f}T"
+                    if v >= 1e9:  return f"${v/1e9:.0f}B"
+                    return f"${v/1e6:.0f}M"
+
+                # ── Improvement 3+4: Build HTML table with highlight + color coding ─
+                _COL_DEFS = [
+                    ('company',        'Company',     None),
+                    ('market_cap',     'Mkt Cap',     None),
+                    ('pe_ratio',       'P/E',         'lower'),
+                    ('price_to_book',  'P/B',         'lower'),
+                    ('roe_pct',        'ROE %',       'higher'),
+                    ('fcf_margin',     'FCF %',       'higher'),
+                    ('return_1y_pct',  '1Y Return',   'higher'),
+                    ('upside_pct',     'Upside',      'higher'),
+                    ('quality_score',  'Quality',     'higher'),
+                ]
+
+                def _cell_bg(val, col_key, better_dir, avg_dict, is_avg_row):
+                    """Returns background CSS for a cell."""
+                    if is_avg_row or better_dir is None:
+                        return ""
+                    avg = avg_dict.get(col_key)
+                    if avg is None or pd.isna(avg) or val is None or (isinstance(val, float) and pd.isna(val)):
+                        return ""
+                    try:
+                        f_val = float(val)
+                        f_avg = float(avg)
+                    except Exception:
+                        return ""
+                    if better_dir == 'higher':
+                        return "background: rgba(0,229,160,0.18);" if f_val > f_avg * 1.05 else ("background: rgba(255,107,107,0.18);" if f_val < f_avg * 0.95 else "")
+                    else:  # 'lower'
+                        if f_val <= 0: return ""
+                        return "background: rgba(0,229,160,0.18);" if f_val < f_avg * 0.95 else ("background: rgba(255,107,107,0.18);" if f_val > f_avg * 1.05 else "")
+
+                avg_dict = {c: avg_vals.get(c) for c in _numeric_cols}
+
+                html_rows = []
+                for ticker_idx, row_data in comp_df.iterrows():
+                    is_sel  = row_data.get('is_selected', False)
+                    is_avg  = (ticker_idx == 'AVG')
+                    row_bg  = "background: rgba(99,132,255,0.12); font-weight:700;" if is_sel else ("background: rgba(255,255,255,0.04); font-style:italic; font-weight:600;" if is_avg else "")
+                    label   = f"★ {ticker_idx}" if is_sel else ticker_idx
+
+                    cells = f"<td style='padding:8px 10px; color:#a78bfa; font-weight:700;'>{label}</td>"
+                    for col_key, col_label, better_dir in _COL_DEFS:
+                        val = row_data.get(col_key)
+                        cell_style = _cell_bg(val, col_key, better_dir, avg_dict, is_avg)
+
+                        if col_key == 'company':
+                            text = str(val) if val else "—"
+                        elif col_key == 'market_cap':
+                            text = _fmt_cap(val)
+                        elif col_key == 'quality_score':
+                            text = f"{val:.0f}/100" if val is not None and not (isinstance(val, float) and pd.isna(val)) else "—"
+                        elif col_key in ('pe_ratio', 'price_to_book'):
+                            text = f"{float(val):.1f}x" if val is not None and not (isinstance(val, float) and pd.isna(val)) and float(val) > 0 else "N/A"
+                        elif col_key in ('roe_pct', 'fcf_margin', 'upside_pct', 'return_1y_pct'):
+                            if val is not None and not (isinstance(val, float) and pd.isna(val)):
+                                prefix = "+" if float(val) > 0 and col_key in ('upside_pct', 'return_1y_pct') else ""
+                                text = f"{prefix}{float(val):.1f}%"
+                            else:
+                                text = "—"
+                        else:
+                            text = str(val) if val is not None else "—"
+
+                        cells += f"<td style='padding:8px 10px; text-align:center; {cell_style}'>{text}</td>"
+
+                    html_rows.append(f"<tr style='{row_bg}'>{cells}</tr>")
+
+                header_cells = "<th style='padding:8px 10px; color:#94a3b8; text-align:left;'>Ticker</th>"
+                for _, col_label, _ in _COL_DEFS:
+                    header_cells += f"<th style='padding:8px 10px; color:#94a3b8; text-align:center;'>{col_label}</th>"
+
+                html_table = f"""
+                <div style="overflow-x:auto; border-radius:12px; border:1px solid rgba(255,255,255,0.08); margin-bottom:12px;">
+                <table style="width:100%; border-collapse:collapse; font-size:0.88rem; color:#e2e8f0;">
+                  <thead><tr style="border-bottom:1px solid rgba(255,255,255,0.1);">{header_cells}</tr></thead>
+                  <tbody>{"".join(html_rows)}</tbody>
+                </table>
+                </div>
+                <div style="font-size:0.78rem; color:#64748b; margin-top:-4px; margin-bottom:16px;">
+                  🟢 = above {_match_level} avg &nbsp;|&nbsp; 🔴 = below avg &nbsp;|&nbsp; ★ = selected ticker
+                </div>
+                """
+
+                # Improvement 3 — render highlighted table
+                st.markdown(html_table, unsafe_allow_html=True)
+
             else:
-                st.info(f"No peers found in the **{meta['sector']}** sector to compare with.")
+                st.info(f"No peers found in the **{_peer_group_label}** {_match_level} to compare with.")
 
             st.markdown("---")
             render_header("activity", f"Performance Alpha (Cumulative % vs SPY)")

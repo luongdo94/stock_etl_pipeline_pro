@@ -407,6 +407,7 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
             "quote_type":      price_mod.get('quoteType', 'EQUITY'),
             "company":         meta.get("name") or price_mod.get("shortName") or ticker,
             "sector":          meta.get("sector") or profile.get("sector", "N/A"),
+            "industry":        profile.get("industry") or None,  # Granular sub-category from Yahoo
             "region":          meta.get("region") or "N/A",
             "market_cap":      norm_val(summary.get('marketCap') or price_mod.get('marketCap')),
             "pe_ratio":        summary.get('trailingPE'),
