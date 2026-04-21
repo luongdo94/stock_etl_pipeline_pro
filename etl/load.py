@@ -188,6 +188,31 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
             _loaded_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS raw.hist_fcf (
+            ticker              VARCHAR NOT NULL,
+            year                INTEGER NOT NULL,
+            free_cash_flow      DOUBLE,
+            operating_cash_flow DOUBLE,
+            capex               DOUBLE,
+            _extracted_at       TIMESTAMP,
+            _loaded_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (ticker, year)
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS raw.hist_fcf_quarterly (
+            ticker              VARCHAR NOT NULL,
+            year                INTEGER NOT NULL,
+            quarter             INTEGER NOT NULL,
+            free_cash_flow      DOUBLE,
+            operating_cash_flow DOUBLE,
+            capex               DOUBLE,
+            _extracted_at       TIMESTAMP,
+            _loaded_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (ticker, year, quarter)
+        )
+    """)
     logger.info("✅ Raw schema created")
 
 

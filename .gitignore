@@ -12,7 +12,7 @@ airflow/*.db
 dbt
 legacy
 airflow
-scratch
+scratch/
 scripts
 *.sh
 dashboard.py

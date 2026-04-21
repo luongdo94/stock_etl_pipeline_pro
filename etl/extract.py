@@ -292,13 +292,25 @@ def extract_stock_prices(
                 currency = currencies.get(ticker, "EUR")
                 if currency != "EUR" and not fx_data.empty:
                     fx_col = f"{currency}EUR=X" if f"{currency}EUR=X" in fx_data.columns else None
+                    
+                    # yfinance resolves GBpEUR=X to GBPEUR=X implicitly, which is the *pound* rate.
+                    # We must use the pound rate but we need to divide the final pence price by 100.
+                    if fx_col is None and currency.upper() == "GBP":
+                         fx_col = "GBPEUR=X" if "GBPEUR=X" in fx_data.columns else None
+                         
                     if fx_col:
                         rates = fx_data[[fx_col]].reset_index()
                         rates.columns = ["date", "fx_rate"]
                         df = pd.merge(df, rates, on="date", how="left")
                         df["fx_rate"] = df["fx_rate"].ffill().bfill().fillna(1.0)
+                        
+                        scale_factor = 1.0
+                        if currency == "GBp":
+                            scale_factor = 100.0  # GBp (pence) to GBP (pound) ratio
+                            
                         for col in ["open", "high", "low", "close"]:
-                            df[col] = df[col] * df["fx_rate"]
+                            df[col] = (df[col] * df["fx_rate"]) / scale_factor
+                            
                         df = df.drop(columns=["fx_rate"])
 
                 # Metadata

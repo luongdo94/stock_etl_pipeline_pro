@@ -6,7 +6,7 @@ import pandas as pd
 from pathlib import Path
 from etl.pipeline import AuditManager
 
-# Mocking DB_PATH for testing
+# Mocking AUDIT_DB_PATH for testing
 TEST_DB_PATH = "warehouse/test_audit.duckdb"
 
 class TestAuditManager(unittest.TestCase):
@@ -19,16 +19,16 @@ class TestAuditManager(unittest.TestCase):
         # Ensure the warehouse dir exists
         Path("warehouse").mkdir(exist_ok=True)
         
-        # Patch the DB_PATH used in AuditManager for this session
+        # Patch the AUDIT_DB_PATH used in AuditManager for this session
         import etl.pipeline
-        cls.original_db_path = etl.pipeline.DB_PATH
-        etl.pipeline.DB_PATH = TEST_DB_PATH
+        cls.original_db_path = etl.pipeline.AUDIT_DB_PATH
+        etl.pipeline.AUDIT_DB_PATH = TEST_DB_PATH
 
     @classmethod
     def tearDownClass(cls):
-        """Restore original DB_PATH and cleanup."""
+        """Restore original AUDIT_DB_PATH and cleanup."""
         import etl.pipeline
-        etl.pipeline.DB_PATH = cls.original_db_path
+        etl.pipeline.AUDIT_DB_PATH = cls.original_db_path
         if os.path.exists(TEST_DB_PATH):
             os.remove(TEST_DB_PATH)
 
@@ -41,7 +41,7 @@ class TestAuditManager(unittest.TestCase):
         
         # Verify in DB
         with duckdb.connect(TEST_DB_PATH) as conn:
-            res = conn.execute("SELECT status, rows_processed, mode FROM marts.etl_audit WHERE run_id = ?", [run_id]).fetchone()
+            res = conn.execute("SELECT status, rows_processed, mode FROM etl.audit_log WHERE run_id = ?", [run_id]).fetchone()
             self.assertIsNotNone(res)
             self.assertEqual(res[0], "SUCCESS")
             self.assertEqual(res[1], 100)
@@ -61,7 +61,7 @@ class TestAuditManager(unittest.TestCase):
             
         # Verify in DB
         with duckdb.connect(TEST_DB_PATH) as conn:
-            res = conn.execute("SELECT status, error_message FROM marts.etl_audit WHERE run_id = ?", [run_id]).fetchone()
+            res = conn.execute("SELECT status, error_message FROM etl.audit_log WHERE run_id = ?", [run_id]).fetchone()
             self.assertIsNotNone(res)
             self.assertEqual(res[0], "FAILED")
             self.assertIn("Simulated Pipeline Crash", res[1])
@@ -78,7 +78,7 @@ class TestAuditManager(unittest.TestCase):
             # Exit will auto-sync
             
         with duckdb.connect(TEST_DB_PATH) as conn:
-            val = conn.execute("SELECT rows_processed FROM marts.etl_audit WHERE run_id = ?", [run_id]).fetchone()[0]
+            val = conn.execute("SELECT rows_processed FROM etl.audit_log WHERE run_id = ?", [run_id]).fetchone()[0]
             self.assertEqual(val, 75)
 
 if __name__ == "__main__":

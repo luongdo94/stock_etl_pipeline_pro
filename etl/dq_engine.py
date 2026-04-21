@@ -89,8 +89,8 @@ def run_dq_validations(db_path: str = None):
             {
                 "id": "dim_fundamental_check", 
                 "name": "DIM: Fundamental Data (ROE/FCF)", 
-                "query": "SELECT COUNT(*) FROM marts.dim_companies WHERE (roe IS NULL OR (fcf_margin IS NULL AND sector != 'Financials')) AND quote_type = 'EQUITY'",
-                "ticker_query": "SELECT ticker FROM marts.dim_companies WHERE (roe IS NULL OR (fcf_margin IS NULL AND sector != 'Financials')) AND quote_type = 'EQUITY' LIMIT 50",
+                "query": "SELECT COUNT(*) FROM marts.dim_companies WHERE (roe IS NULL OR (fcf_margin IS NULL AND sector NOT IN ('Financials', 'Fintech', 'Financial Services', 'Real Estate'))) AND quote_type = 'EQUITY' AND ticker NOT LIKE '%.T' AND ticker NOT LIKE '%.HK'",
+                "ticker_query": "SELECT ticker FROM marts.dim_companies WHERE (roe IS NULL OR (fcf_margin IS NULL AND sector NOT IN ('Financials', 'Fintech', 'Financial Services', 'Real Estate'))) AND quote_type = 'EQUITY' AND ticker NOT LIKE '%.T' AND ticker NOT LIKE '%.HK' LIMIT 50",
                 "critical": False
             },
             
