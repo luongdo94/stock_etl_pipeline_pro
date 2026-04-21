@@ -1117,44 +1117,64 @@ def get_db_connection(read_only=False):
         conn.close()
 
 @st.cache_data(ttl=86400, show_spinner="📅 Fetching Dividend Calendar...")
-def fetch_dividend_calendar(tickers_tuple: tuple) -> dict:
+def fetch_dividend_calendar(tickers_tuple: tuple, companies_df: "pd.DataFrame" = None) -> dict:
     """
-    Fetch ex-dividend date and payout date for a list of tickers on-demand.
-    Uses yf.Ticker.calendar (returns datetime.date objects, most reliable source).
-    Cached for 24 hours. Returns dict: {ticker: {'ex_date': str, 'pay_date': str}}
+    Returns ex-dividend date and pay date for a list of tickers.
+
+    Strategy (Cloud-safe):
+      1. PRIMARY: Read from marts.dim_companies (populated nightly by ETL — no Yahoo IP block).
+      2. FALLBACK: Live yfinance call (works on local only; fails silently on Cloud).
+
+    Returns dict: {ticker: {'ex_date': str, 'pay_date': str}}
     """
-    import yfinance as yf
-    import datetime
     import pandas as pd
     result = {}
-    with open('/tmp/div_debug.log', 'a') as f:
-        f.write(f"\n--- FETCHING CALENDAR FOR {tickers_tuple} ---\n")
-        for t in tickers_tuple:
-            try:
-                # Fallback chains for robustness
-                cal = yf.Ticker(t).calendar
-                ex_d, pay_d = None, None
-                
-                if isinstance(cal, dict):
-                    ex_d  = cal.get("Ex-Dividend Date")
-                    pay_d = cal.get("Dividend Date")
-                elif isinstance(cal, pd.DataFrame): # Older yfinance handling just in case
-                    if "Ex-Dividend Date" in cal.index: ex_d = cal.loc["Ex-Dividend Date"].iloc[0]
-                    if "Dividend Date" in cal.index:    pay_d = cal.loc["Dividend Date"].iloc[0]
-                
-                f.write(f"Raw cal for {t}: {type(cal)} {cal}\n")
-                
-                ex_str  = ex_d.strftime("%d %b %Y")  if hasattr(ex_d, "strftime")  else (str(ex_d)  if pd.notna(ex_d)  else "—")
-                pay_str = pay_d.strftime("%d %b %Y") if hasattr(pay_d, "strftime") else (str(pay_d) if pd.notna(pay_d) else "—")
-                
-                result[t] = {
-                    "ex_date":  ex_str if ex_str not in ("NaT", "None", "") else "—",
-                    "pay_date": pay_str if pay_str not in ("NaT", "None", "") else "—",
-                }
-                f.write(f"Mapped {t} -> Ex: {result[t]['ex_date']}, Pay: {result[t]['pay_date']}\n")
-            except Exception as e:
-                f.write(f"Error for {t} -> {e}\n")
-                result[t] = {"ex_date": "—", "pay_date": "—"}
+
+    # ── PRIMARY: Read from pre-fetched DB columns ──────────────────────────────
+    if companies_df is not None and not companies_df.empty:
+        db_cols = {'ex_dividend_date', 'pay_date'}
+        if db_cols.issubset(set(companies_df.columns)):
+            for t in tickers_tuple:
+                row = companies_df[companies_df['ticker'] == t]
+                if row.empty:
+                    result[t] = {'ex_date': '—', 'pay_date': '—'}
+                    continue
+                ex_raw  = row['ex_dividend_date'].iloc[0]
+                pay_raw = row['pay_date'].iloc[0]
+
+                def _fmt(v):
+                    if v is None or pd.isna(v) or str(v) in ('None', 'NaT', '', 'nan'):
+                        return '—'
+                    try:
+                        return pd.to_datetime(v).strftime('%d %b %Y')
+                    except Exception:
+                        return str(v)
+
+                result[t] = {'ex_date': _fmt(ex_raw), 'pay_date': _fmt(pay_raw)}
+            return result
+
+    # ── FALLBACK: Live yfinance (local only — will silently fail on Cloud) ─────
+    import yfinance as yf
+    import datetime
+    for t in tickers_tuple:
+        try:
+            cal = yf.Ticker(t).calendar
+            ex_d, pay_d = None, None
+            if isinstance(cal, dict):
+                ex_d  = cal.get('Ex-Dividend Date')
+                pay_d = cal.get('Dividend Date')
+            elif isinstance(cal, pd.DataFrame):
+                if 'Ex-Dividend Date' in cal.index: ex_d  = cal.loc['Ex-Dividend Date'].iloc[0]
+                if 'Dividend Date'    in cal.index: pay_d = cal.loc['Dividend Date'].iloc[0]
+
+            def _safe_fmt(v):
+                if v is None or (hasattr(v, '__class__') and 'NaT' in str(type(v))): return '—'
+                try: return pd.to_datetime(v).strftime('%d %b %Y')
+                except: return '—'
+
+            result[t] = {'ex_date': _safe_fmt(ex_d), 'pay_date': _safe_fmt(pay_d)}
+        except Exception:
+            result[t] = {'ex_date': '—', 'pay_date': '—'}
     return result
 
 
@@ -4937,10 +4957,10 @@ if active_tab == "7. Portfolio Builder":
             div_df = pd.DataFrame(div_rows).sort_values("Cur. Yield (%)", ascending=False) if div_rows else pd.DataFrame()
             has_special = (not div_df.empty) and div_df["Special"].any()
 
-            # Fetch ex-dividend / payout dates on-demand (cached 24h, no DB write)
+            # Fetch ex-dividend / payout dates — reads from DB (Cloud-safe, no Yahoo IP block)
             if not div_df.empty:
                 cal_tickers = tuple(sorted(div_df["Ticker"].tolist()))
-                cal_data = fetch_dividend_calendar(cal_tickers)
+                cal_data = fetch_dividend_calendar(cal_tickers, companies_df=companies)
                 div_df["Ex-Date"]  = div_df["Ticker"].map(lambda t: cal_data.get(t, {}).get("ex_date", "—"))
                 div_df["Pay Date"] = div_df["Ticker"].map(lambda t: cal_data.get(t, {}).get("pay_date", "—"))
             

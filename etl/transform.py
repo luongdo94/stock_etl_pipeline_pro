@@ -107,6 +107,8 @@ def _create_staging(conn):
             ROUND(forward_pe, 2) AS forward_pe,
             revenue_ttm,
             employees,
+            ex_dividend_date,
+            pay_date,
             -- Categorize market cap
             CASE
                 WHEN market_cap >= 1e12 THEN 'Mega-Cap (>$1T)'
@@ -468,7 +470,9 @@ def _create_marts(conn):
             fmi.fmi_rev_acceleration,
             fmi.fmi_eps_acceleration,
             fmi.fmi_margin_trend,
-            fmi.fmi_quarters_of_growth
+            fmi.fmi_quarters_of_growth,
+            c.ex_dividend_date,
+            c.pay_date
         FROM staging.stg_company_info c
         LEFT JOIN fallback_metrics fb USING (ticker)
         LEFT JOIN peg_fallback pgf USING (ticker)

@@ -391,7 +391,8 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
         profile    = data.get('assetProfile', {})
         stats      = data.get('defaultKeyStatistics', {})
         financials = data.get('financialData', {})
-        price_mod  = data.get('price', {}) 
+        price_mod  = data.get('price', {})
+        calendar   = data.get('calendarEvents', {})  # Contains ex-dividend & pay dates
 
         # Determine currency and FX rate
         currency = financials.get('financialCurrency') or summary.get('currency') or _guess_currency(ticker)
@@ -442,6 +443,39 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
             "insider_ownership":stats.get('heldPercentInsiders'),
             "_extracted_at":   datetime.now(),
         }
+
+        # ── DIVIDEND DATES (from calendarEvents — avoids live API calls on Cloud) ────
+        def _parse_div_date(val):
+            """Safely parse dividend date from various formats returned by yahooquery."""
+            if val is None: return None
+            try:
+                if hasattr(val, 'strftime'):
+                    return val.strftime('%Y-%m-%d')
+                s = str(val).strip()
+                if s in ('', 'None', 'NaT', 'nan', '0'): return None
+                # Handle epoch timestamps (Yahoo sometimes returns raw unix timestamps)
+                if s.isdigit() and len(s) >= 9:
+                    import datetime as _dt
+                    return _dt.datetime.utcfromtimestamp(int(s)).strftime('%Y-%m-%d')
+                return pd.to_datetime(s).strftime('%Y-%m-%d')
+            except Exception:
+                return None
+
+        # calendarEvents.dividends is a list of {exDividendDate, date} dicts in yahooquery
+        cal_dividends = calendar.get('dividends', [])
+        ex_div_raw, pay_raw = None, None
+        if cal_dividends:
+            # Take the most recent entry
+            last_entry = cal_dividends[-1] if isinstance(cal_dividends, list) else {}
+            ex_div_raw = last_entry.get('exDividendDate')
+            pay_raw    = last_entry.get('date')
+        else:
+            # Fallback: some yahooquery versions place dates directly in calendarEvents
+            ex_div_raw = calendar.get('exDividendDate')
+            pay_raw    = calendar.get('dividendDate')
+
+        record['ex_dividend_date'] = _parse_div_date(ex_div_raw)
+        record['pay_date']         = _parse_div_date(pay_raw)
 
         # Sanitize Yield
         dy  = summary.get('dividendYield')

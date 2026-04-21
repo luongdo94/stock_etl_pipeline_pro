@@ -455,6 +455,8 @@ def load_company_info(
             insider_ownership DOUBLE,
             _extracted_at   TIMESTAMP,
             dividend_yield  DOUBLE,
+            ex_dividend_date VARCHAR,
+            pay_date         VARCHAR,
             _loaded_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
@@ -464,6 +466,14 @@ def load_company_info(
         pass
     try:
         conn.execute("ALTER TABLE raw.company_info ADD COLUMN IF NOT EXISTS industry VARCHAR")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE raw.company_info ADD COLUMN IF NOT EXISTS ex_dividend_date VARCHAR")
+    except Exception:
+        pass
+    try:
+        conn.execute("ALTER TABLE raw.company_info ADD COLUMN IF NOT EXISTS pay_date VARCHAR")
     except Exception:
         pass
 
