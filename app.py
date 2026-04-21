@@ -1431,6 +1431,37 @@ def get_master_screener_data(_companies_df, _prices_df, _quarterly_fin, _annual_
     _non_equities = {"^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"}
     _non_equity_sectors = {"Benchmark", "Volatility"}
     screener_rows = []
+
+    # ── Pre-compute 2-quarter consecutive momentum for EPS & Revenue ────────────
+    # Logic: label = 'Accelerating' if both q[-1] and q[-2] QoQ growth > +10%,
+    #                'Decelerating' if both < -10%, else 'Neutral'
+    # Uses QoQ (quarter-over-quarter) because "2 consecutive quarters" is inherently QoQ —
+    # comparing Q3->Q4->Q1 in sequence, not the same quarter of the prior year (YoY).
+    def _two_quarter_momentum(ticker, qoq_col, threshold=10.0):
+        """Returns 'Accelerating', 'Decelerating', or 'Neutral'.
+        Uses QoQ growth rates for 2 most recent consecutive quarters.
+        """
+        t_q = _quarterly_fin[_quarterly_fin['ticker'] == ticker].sort_values('report_date', ascending=False)
+        if len(t_q) < 2:
+            return 'Neutral'
+        vals = t_q[qoq_col].dropna().head(2).tolist()
+        if len(vals) < 2:
+            return 'Neutral'
+        if vals[0] > threshold and vals[1] > threshold:
+            return 'Accelerating'
+        if vals[0] < -threshold and vals[1] < -threshold:
+            return 'Decelerating'
+        return 'Neutral'
+
+    # Build lookups by ticker (QoQ — consecutive quarter growth)
+    _eps_mom_lookup = {
+        t: _two_quarter_momentum(t, 'eps_growth_qoq_pct')
+        for t in _companies_df['ticker'].unique()
+    }
+    _rev_mom_lookup = {
+        t: _two_quarter_momentum(t, 'revenue_growth_qoq_pct')
+        for t in _companies_df['ticker'].unique()
+    }
     
     for _, row in _companies_df.iterrows():
         ticker = row['ticker']
@@ -1552,7 +1583,9 @@ def get_master_screener_data(_companies_df, _prices_df, _quarterly_fin, _annual_
             "Trend": latest_p.get('ma_signal', 'NEUTRAL'),
             "FMI": fmi_score,
             "FMI Label": fmi_lbl,
-            "Region": row['region']
+            "Region": row['region'],
+            "EPS Momentum": _eps_mom_lookup.get(ticker, 'Neutral'),
+            "Rev Momentum": _rev_mom_lookup.get(ticker, 'Neutral'),
         })
         
     return pd.DataFrame(screener_rows)
@@ -5621,13 +5654,19 @@ if active_tab == "2. Opportunity Radar":
     # Final Compact Dropdown Layout (Removed Redundant Reset Button)
     scan_presets = [
         "🔍 All Stock Universe",
+        "──────────── 📈 OPPORTUNITY ────────────",
         "🏆 Institutional Pulse (Quality > 75 & Bullish)",
         "📈 Trend Following (MA20 > MA50)",
-        "📉 RSI Mean Reversion (Oversold < 30)",
         "💎 Deep Value (Z-Score < -2.0)",
+        "📉 RSI Mean Reversion (Oversold < 30)",
         "🚀 Buy on Dip (Bullish + Oversold)",
         "⚡ Multi-Indicator Breakout (Bullish + RSI > 50)",
-        "──────────────────────────────",
+        "📈 Both Accelerating (EPS + Revenue QoQ, 2 qtrs > +10%)",
+        "🌱 GARP (Growth at Reasonable Price: PEG < 1.5 + Quality > 60)",
+        "💰 High Quality Dividend (Yield > 2.5% + Quality > 65)",
+        "🔥 Short Squeeze Watch (Short % > 15% + Bullish)",
+        "──────────── ⛔ RISK / WARNING ────────────",
+        "⚠️ Earnings Deterioration (EPS + Revenue QoQ, 2 qtrs < -10%)",
         "⚠️ Structural Caution (Quality < 40 & Bearish)",
         "📉 Negative Momentum (MA20 < MA50)",
         "🔥 Overbought Alert (> 70)",
@@ -5714,6 +5753,21 @@ if active_tab == "2. Opportunity Radar":
     elif "Multi-Indicator Breakdown" in scan_mode:
         f_df = f_df[(f_df["Trend"] == "BEARISH") & (f_df["RSI (14)"] < 50)]
         st.error("💔 Breakdown: Extreme downside momentum (Trend Bearish + RSI < 50). Falling knife.")
+    elif "Both Accelerating" in scan_mode:
+        f_df = f_df[(f_df["EPS Momentum"] == "Accelerating") & (f_df["Rev Momentum"] == "Accelerating")]
+        st.success("📈 Both Accelerating: EPS & Revenue both growing QoQ > +10% for 2 consecutive quarters. Strongest fundamental momentum signal.")
+    elif "Earnings Deterioration" in scan_mode:
+        f_df = f_df[(f_df["EPS Momentum"] == "Decelerating") & (f_df["Rev Momentum"] == "Decelerating")]
+        st.error("⚠️ Earnings Deterioration: EPS & Revenue both declining QoQ > -10% for 2 consecutive quarters.")
+    elif "GARP" in scan_mode:
+        f_df = f_df[(f_df["PEG"] > 0) & (f_df["PEG"] < 1.5) & (f_df["Quality"] > 60) & (f_df["FMI"] > 60)]
+        st.success("🌱 GARP — Growth at a Reasonable Price: PEG < 1.5 (not overvalued for growth rate) + Quality > 60 + FMI > 60. Peter Lynch-style filter.")
+    elif "High Quality Dividend" in scan_mode:
+        f_df = f_df[(f_df["Yield (%)"] > 2.5) & (f_df["Quality"] > 65) & (f_df["Trend"] == "BULLISH")]
+        st.success("💰 High Quality Dividend: Yield > 2.5% with strong fundamentals (Quality > 65) and confirmed uptrend. Income + quality.")
+    elif "Short Squeeze Watch" in scan_mode:
+        f_df = f_df[(f_df["Short %"] > 15) & (f_df["RSI (14)"] < 45) & (f_df["Trend"] == "BULLISH")]
+        st.warning("🔥 Short Squeeze Watch: High short interest (> 15% of float) + oversold RSI + bullish trend reversal. High volatility, event-driven setup.")
     elif "──" in scan_mode:
         # Just to catch the separator line if selected
         st.warning("Please select a valid screening preset.")
