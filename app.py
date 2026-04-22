@@ -1692,7 +1692,7 @@ def render_sector_health_matrix(m_df: pd.DataFrame):
         yaxis=dict(gridcolor='rgba(255,255,255,0.05)', zeroline=False)
     )
     
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
     
     # 3. Methodology Footer
     st.markdown(f"""
@@ -1962,7 +1962,7 @@ if not prices_full.empty:
 
 
 st.sidebar.markdown("<br>", unsafe_allow_html=True)
-if st.sidebar.button("🔄 Refresh Data", use_container_width=True, type="secondary", help="Clear cache & reload from warehouse"):
+if st.sidebar.button("🔄 Refresh Data", width="stretch", type="secondary", help="Clear cache & reload from warehouse"):
     st.cache_data.clear()
     st.toast("🚀 Refreshing Intelligence...", icon="✅")
     st.rerun()
@@ -2346,7 +2346,7 @@ with head_r:
     
     hub_label = f"SIGNAL ({total_alerts + upcoming_count})" if (total_alerts + upcoming_count) > 0 else "SIGNAL"
     
-    with st.popover(hub_label, use_container_width=True):
+    with st.popover(hub_label, width="stretch"):
         tab_sig, tab_mov, tab_ern = st.tabs(["SIGNALS", "MOVERS", "EARNINGS"])
         # ... rest of logic remains inside ...
         
@@ -2508,7 +2508,7 @@ if active_tab == "1. Market Regime":
                 yaxis_title="Price (USD)",
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
             )
-            st.plotly_chart(fig_spy, use_container_width=True)
+            st.plotly_chart(fig_spy, width="stretch")
         else:
             st.info("SPY data not available for the selected period.")
 
@@ -2539,7 +2539,7 @@ if active_tab == "1. Market Regime":
                 yaxis=dict(title="% Above MA50", range=[0, 100], ticksuffix="%"),
                 xaxis_title="", showlegend=False
             )
-            st.plotly_chart(fig_br, use_container_width=True)
+            st.plotly_chart(fig_br, width="stretch")
         else:
             st.info("Calculating breadth history... run pipeline if empty.")
 
@@ -2608,7 +2608,7 @@ if active_tab == "1. Market Regime":
                 hovertemplate="<b>%{label}</b><br>Region: %{customdata[1]}<br>Mkt Cap: €%{value:.1f}B<br>Return: %{customdata[0]}<extra></extra>"
             )
             fig_tree.update_layout(margin=dict(l=0, r=0, b=0, t=30))
-            st.plotly_chart(fig_tree, use_container_width=True)
+            st.plotly_chart(fig_tree, width="stretch")
             
         with sec_tabs[1]:
             if not tree_df.empty and 'sector' in tree_df.columns:
@@ -2620,7 +2620,7 @@ if active_tab == "1. Market Regime":
                                  template="plotly_dark", height=600)
                 fig_sec.update_traces(texttemplate='%{x:.2f}%', textposition='outside')
                 fig_sec.update_layout(showlegend=False, margin=dict(r=20, b=0), yaxis={'categoryorder':'total ascending', 'title': None, 'tickmode': 'linear'})
-                st.plotly_chart(fig_sec, use_container_width=True)
+                st.plotly_chart(fig_sec, width="stretch")
             
         with sec_tabs[2]:
             if not tree_df.empty:
@@ -2633,7 +2633,7 @@ if active_tab == "1. Market Regime":
                                     template="plotly_dark", height=600)
                 fig_movers.update_traces(texttemplate='%{x:.2f}%', textposition='outside')
                 fig_movers.update_layout(showlegend=False, margin=dict(r=40, b=0), yaxis={'categoryorder':'total ascending', 'title': None, 'tickmode': 'linear', 'dtick': 1})
-                st.plotly_chart(fig_movers, use_container_width=True)
+                st.plotly_chart(fig_movers, width="stretch")
 
 
     with b2:
@@ -3027,7 +3027,7 @@ if active_tab == "3. Qualitative Audit (AI)":
                 _audit_time    = _uv_data.get("extracted_at", "")
                 _unified_report = _uv_data.get("report", "")
 
-            if st.button("Run Real-Time AI Risk Audit", type="primary", use_container_width=True):
+            if st.button("Run Real-Time AI Risk Audit", type="primary", width="stretch"):
                 with st.spinner(f"Scanning news for {meta['company']}..."):
                     llm_res = analyze_risk_with_llm(deep_ticker, meta['company'])
                     if llm_res.get("error"):
@@ -3256,7 +3256,7 @@ if active_tab == "3. Qualitative Audit (AI)":
                                 st.markdown(f"<div style='margin-bottom:12px;padding:8px 12px;background:rgba(255,255,255,0.04);border-radius:6px;border-left:3px solid {_mood_color};font-size:0.85rem;'><b style='color:{_mood_color};'>{_mood_lbl}</b> &nbsp;·&nbsp; FinBERT: {abs(_avg_sent):.2f}</div>", unsafe_allow_html=True)
                         
                         # Popover for details
-                        with st.popover(f"View {len(_news_items)} Detailed Headlines", use_container_width=True):
+                        with st.popover(f"View {len(_news_items)} Detailed Headlines", width="stretch"):
                             st.markdown("### 📰 Recent Headlines")
                             if _pipe:
                                 for _i, _res in enumerate(_results):
@@ -3342,7 +3342,7 @@ if active_tab == "3. Qualitative Audit (AI)":
                     paper_bgcolor="rgba(0,0,0,0)"
                 )
                 with tab_q:
-                    st.plotly_chart(fig_radar, use_container_width=True)
+                    st.plotly_chart(fig_radar, width="stretch")
                     
                     # Score summary under radar
                     _q_score = ai_score
@@ -3696,7 +3696,7 @@ if active_tab == "3. Qualitative Audit (AI)":
             )
             fig_tech.update_yaxes(title_text="Price (€)", row=1, col=1)
             fig_tech.update_yaxes(title_text="RSI", row=2, col=1, range=[0, 100])
-            st.plotly_chart(fig_tech, use_container_width=True)
+            st.plotly_chart(fig_tech, width="stretch")
 
             # --- HISTORICAL FUNDAMENTAL TRENDS (Dual Axis) ---
             st.markdown("---")
@@ -3799,7 +3799,7 @@ if active_tab == "3. Qualitative Audit (AI)":
                     fig_fin.update_yaxes(title_text=f"Amount (€{unit})", secondary_y=False, range=[0, (max_val/scale)*1.3])
                     fig_fin.update_yaxes(title_text="Earnings Per Share (€)", secondary_y=True)
                     
-                    st.plotly_chart(fig_fin, use_container_width=True)
+                    st.plotly_chart(fig_fin, width="stretch")
 
 
                 else:
@@ -3905,7 +3905,7 @@ if active_tab == "3. Qualitative Audit (AI)":
                         fig_fin_q.update_yaxes(title_text=f"Amount (€{unit_q})", secondary_y=False, range=y_range_q)
                         fig_fin_q.update_yaxes(title_text="Earnings Per Share (€)", secondary_y=True)
                         
-                        st.plotly_chart(fig_fin_q, use_container_width=True)
+                        st.plotly_chart(fig_fin_q, width="stretch")
 
                     else:
                         st.info("No historical quarterly financial data available for this ticker.")
@@ -4012,7 +4012,7 @@ if active_tab == "3. Qualitative Audit (AI)":
                 )
                 
                 fig_own.add_annotation(text=f"{(inst_own+insider_own)*100:.1f}%<br><b>Locked</b>", x=0.5, y=0.5, font_size=20, showarrow=False)
-                st.plotly_chart(fig_own, use_container_width=True)
+                st.plotly_chart(fig_own, width="stretch")
                 
             with col_own2:
                 squeeze_color = "#e74c3c" if short_pct > 0.15 else "#f39c12" if short_pct > 0.05 else "#2ecc71"
@@ -4034,7 +4034,7 @@ if active_tab == "3. Qualitative Audit (AI)":
                     }
                 ))
                 fig_short.update_layout(template="plotly_dark", height=300, margin=dict(l=20, r=20, t=50, b=20))
-                st.plotly_chart(fig_short, use_container_width=True)
+                st.plotly_chart(fig_short, width="stretch")
                 
                 st.markdown(f"<p style='text-align:center; color:#bbb; font-size:1rem;'>Short Ratio (Days to Cover): <b>{short_ratio:.1f} days</b></p>", unsafe_allow_html=True)
 
@@ -4092,7 +4092,7 @@ if active_tab == "3. Qualitative Audit (AI)":
 
                 _1y_returns = (
                     _prices_1y.groupby("ticker")
-                    .apply(_calc_1y_return)
+                    .apply(_calc_1y_return, include_groups=False)
                     .rename("return_1y_pct")
                     .reset_index()
                 )
@@ -4283,7 +4283,7 @@ if active_tab == "3. Qualitative Audit (AI)":
             fig_rel.add_trace(go.Scatter(x=common_dates, y=ticker_cum, name=f"{deep_ticker} (%)", line=dict(color="#3498db", width=3)))
             fig_rel.add_trace(go.Scatter(x=common_dates, y=spy_cum, name="SPY (%)", line=dict(color="rgba(255,255,255,0.4)", width=2, dash="dot")))
             fig_rel.update_layout(template="plotly_dark", height=450, yaxis_title="Return (%)", hovermode="x unified", margin=dict(t=20, l=10, r=10, b=10))
-            st.plotly_chart(fig_rel, use_container_width=True)
+            st.plotly_chart(fig_rel, width="stretch")
 
             st.markdown("<div style='margin-top:35px; padding:6px 12px; background:rgba(255,255,255,0.03); border-left:4px solid #2ecc71; color:#2ecc71; font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:1.5px;'>LAYER 5: PORTFOLIO IDEA MANAGEMENT</div>", unsafe_allow_html=True)
             # --- WATCHLIST QUICK SAVE WORKFLOW ---
@@ -4379,7 +4379,7 @@ if active_tab == "6. Watchlist":
             edited_df = st.data_editor(
                 _wl_df_safe,
                 column_config=config,
-                use_container_width=True,
+                width="stretch",
                 num_rows="dynamic",
                 hide_index=True,
                 height=400
@@ -4434,13 +4434,13 @@ if active_tab == "7. Portfolio Builder":
     
     with tc1:
         # --- CSV / Excel Portfolio Importer ---
-        with st.popover("📂 Import Portfolio", use_container_width=True):
+        with st.popover("📂 Import Portfolio", width="stretch"):
             st.markdown("**Format:** `ticker` (Required), `shares`, `cost` (Optional)")
             uploaded_file = st.file_uploader("Select file", type=["csv", "xlsx"], label_visibility="collapsed")
             import_mode = st.radio("Mode", ["Overwrite", "Merge (Accumulate)"], horizontal=True, label_visibility="collapsed")
             
             if uploaded_file is not None:
-                if st.button("▶ Start Import", key="do_import_btn", type="primary", use_container_width=True):
+                if st.button("▶ Start Import", key="do_import_btn", type="primary", width="stretch"):
                     try:
                         import pandas as pd, io
                         if uploaded_file.name.endswith('.csv'):
@@ -4512,7 +4512,7 @@ if active_tab == "7. Portfolio Builder":
     
     with tc2:
         # --- Manual Transaction Tool ---
-        with st.popover("➕ Add Trade", use_container_width=True):
+        with st.popover("➕ Add Trade", width="stretch"):
             st.caption("Register a manual transaction")
             mt_ticker = st.selectbox("Select Asset", stock_tickers, key="mt_tick_sel")
             mt_type   = st.radio("Transaction Type", ["🟢 Buy", "🔴 Sell"], horizontal=True, key="mt_type_radio")
@@ -4523,7 +4523,7 @@ if active_tab == "7. Portfolio Builder":
             if "Buy" in mt_type:
                 mt_price = st.number_input("Purchase Price", min_value=0.0001, value=1.0, step=0.01, key="mt_price_input")
             
-            if st.button("Confirm Transaction", type="primary", use_container_width=True):
+            if st.button("Confirm Transaction", type="primary", width="stretch"):
                 if "Buy" in mt_type:
                     # ── BUY: Add shares, recalculate WAC ──────────────────────
                     if mt_price <= 0:
@@ -4662,7 +4662,7 @@ if active_tab == "7. Portfolio Builder":
             )
             
             # PASSIVE SYNC: Use a button to lock in changes and update Database
-            recompute = st.form_submit_button("Save & Calculate", use_container_width=True, type="primary")
+            recompute = st.form_submit_button("Save & Calculate", width="stretch", type="primary")
 
         if recompute:
             st.session_state.portfolio_df = edited_df.copy()
@@ -4790,7 +4790,7 @@ if active_tab == "7. Portfolio Builder":
                     template="plotly_dark", height=500,
                     yaxis_title="Value (€)", margin=dict(t=10, l=10, r=10, b=10)
                 )
-                st.plotly_chart(fig_bt, use_container_width=True)
+                st.plotly_chart(fig_bt, width="stretch")
     
             st.markdown("<br>", unsafe_allow_html=True)
 
@@ -4853,7 +4853,7 @@ if active_tab == "7. Portfolio Builder":
                     paper_bgcolor="rgba(0,0,0,0)",
                     plot_bgcolor="rgba(0,0,0,0)",
                 )
-                st.plotly_chart(fig_sun, use_container_width=True)
+                st.plotly_chart(fig_sun, width="stretch")
                 st.caption("Inner ring = Region · Outer ring = Sector")
 
             with l2c2:
@@ -4868,7 +4868,7 @@ if active_tab == "7. Portfolio Builder":
                     template="plotly_dark", aspect="auto"
                 )
                 fig_corr.update_layout(height=360, margin=dict(l=0, r=0, t=10, b=0))
-                st.plotly_chart(fig_corr, use_container_width=True)
+                st.plotly_chart(fig_corr, width="stretch")
     
             st.markdown("<br>", unsafe_allow_html=True)
 
@@ -4905,7 +4905,7 @@ if active_tab == "7. Portfolio Builder":
                     plot_bgcolor="rgba(0,0,0,0)",
                 )
                 fig_attr.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(255,255,255,0.05)')
-                st.plotly_chart(fig_attr, use_container_width=True)
+                st.plotly_chart(fig_attr, width="stretch")
             else:
                 st.info("Performance Attribution requires at least 1 asset and a non-zero cost basis.")
 
@@ -5043,7 +5043,7 @@ if active_tab == "7. Portfolio Builder":
                     paper_bgcolor="rgba(0,0,0,0)",
                     plot_bgcolor="rgba(0,0,0,0)",
                 )
-                st.plotly_chart(fig_div, use_container_width=True)
+                st.plotly_chart(fig_div, width="stretch")
                 
                 st.markdown("<br>", unsafe_allow_html=True)
                 
@@ -5070,7 +5070,7 @@ if active_tab == "7. Portfolio Builder":
                                                 help="Last dividend payout date (from yfinance, refreshed every 24h)"),
                     },
                     hide_index=True,
-                    use_container_width=True,
+                    width="stretch",
                     height=min(320, 40 + len(div_df) * 35),
                 )
                 st.caption("ℹ️ YOC = DPS ÷ Avg. cost basis · Dates fetched on-demand from yfinance, cached 24h · KPI tiles exclude ⚠️ Special?")
@@ -5310,7 +5310,7 @@ if active_tab == "7. Portfolio Builder":
             # ── Action Buttons ─────────────────────────────────────────────────
             act_col1, act_col2 = st.columns([1, 1])
             with act_col1:
-                if st.button("🚀 GENERATE OPTIMAL REBALANCE", use_container_width=True, type="primary"):
+                if st.button("🚀 GENERATE OPTIMAL REBALANCE", width="stretch", type="primary"):
                     try:
                         if sel_strategy == "min_vol":
                             opt_weights = _run_min_vol(cov_matrix, n_assets, min_w)
@@ -5361,7 +5361,7 @@ if active_tab == "7. Portfolio Builder":
                 #     data=csv,
                 #     file_name=f"portfolio_{datetime.now().strftime('%Y%m%d')}.csv",
                 #     mime="text/csv",
-                #     use_container_width=True
+                #     width="stretch"
                 # )
     
             # ── Display Suggestions ────────────────────────────────────────────
@@ -5413,18 +5413,18 @@ if active_tab == "7. Portfolio Builder":
                         "Est. Value (€)":   st.column_config.NumberColumn(format="€%+.2f"),
                         "Action":           st.column_config.TextColumn("Action"),
                     },
-                    hide_index=True, use_container_width=True
+                    hide_index=True, width="stretch"
                 )
     
                 # ── DISCARD / APPLY buttons ────────────────────────────────
                 sc1, sc2, sc3 = st.columns([2, 1, 1])
                 with sc2:
-                    if st.button("❌ DISCARD", use_container_width=True):
+                    if st.button("❌ DISCARD", width="stretch"):
                         st.session_state.pending_optimization = None
                         st.session_state.pending_opt_strategy = None
                         st.rerun()
                 with sc3:
-                    if st.button("✅ APPLY REBALANCE", use_container_width=True, type="primary"):
+                    if st.button("✅ APPLY REBALANCE", width="stretch", type="primary"):
                         new_shares_dict = st.session_state.pending_optimization.set_index("Ticker")["Optimal Shares"].to_dict()
                         st.session_state.portfolio_shares = new_shares_dict
                         for idx, row in st.session_state.portfolio_df.iterrows():
@@ -5580,7 +5580,7 @@ if active_tab == "7. Portfolio Builder":
                         align="left"
                     )],
                 )
-                st.plotly_chart(fig_mpt, use_container_width=True)
+                st.plotly_chart(fig_mpt, width="stretch")
     
                 st.markdown("---")
                 # ── Risk Contribution ─────────────────────────────────────────
@@ -5596,7 +5596,7 @@ if active_tab == "7. Portfolio Builder":
                     color=risk_pct, color_continuous_scale="Reds"
                 )
                 fig_risk_b.update_layout(height=380)
-                st.plotly_chart(fig_risk_b, use_container_width=True)
+                st.plotly_chart(fig_risk_b, width="stretch")
     
     
             else:
@@ -5838,7 +5838,7 @@ if active_tab == "2. Opportunity Radar":
     paged_df = display_df.iloc[:st.session_state.radar_limit]
     st.dataframe(
         paged_df,
-        use_container_width=True, 
+        width="stretch", 
         height=520,
         column_config={
             "Quality":         st.column_config.ProgressColumn("Quality Score", min_value=0, max_value=100, format="%d"),
@@ -5850,11 +5850,11 @@ if active_tab == "2. Opportunity Radar":
 
     # Load All Button
     if len(display_df) > st.session_state.radar_limit:
-        if st.button(f"📥 Load All (Showing {st.session_state.radar_limit} of {len(display_df)})", use_container_width=True):
+        if st.button(f"📥 Load All (Showing {st.session_state.radar_limit} of {len(display_df)})", width="stretch"):
             st.session_state.radar_limit = len(display_df)
             st.rerun()
     elif len(display_df) > 50:
-        if st.button("🔄 Reset to Top 50", use_container_width=True):
+        if st.button("🔄 Reset to Top 50", width="stretch"):
             st.session_state.radar_limit = 50
             st.rerun()
 
@@ -6654,7 +6654,7 @@ if active_tab == "4. Quantitative Forecast (ML)":
                 help="LSTM Core: stable mean-reversion • Transformer: high-vol pattern recognition • PatchTST: channel-independent fundamentals • Smart Blend: trains all 3 engines and auto-weights them by accuracy (RMSE)."
             )
             
-        run_forecast = st.form_submit_button("🎯 EXECUTE ML ENSEMBLE FORECAST", use_container_width=True, type="primary")
+        run_forecast = st.form_submit_button("🎯 EXECUTE ML ENSEMBLE FORECAST", width="stretch", type="primary")
 
     # Initialize before the forecast block so the metrics panel never hits NameError
     ensemble_metrics = {}
@@ -7058,7 +7058,7 @@ Monte Carlo 90% CI: <b style='color:#fff;'>€{p5_final:.2f}</b> ↔ <b style='c
         fig_fc.add_trace(go.Scatter(x=future_dates, y=p90, name="Upper Reward Bound (90%)", line=dict(color="rgba(0,255,0,0.5)", width=2, dash="dot")))
  
         fig_fc.update_layout(template="plotly_dark", height=600, yaxis_title="Price (€)", margin=dict(t=20, l=10, r=10, b=10))
-        st.plotly_chart(fig_fc, use_container_width=True)
+        st.plotly_chart(fig_fc, width="stretch")
 
         st.markdown("---")
 
@@ -7090,7 +7090,7 @@ Monte Carlo 90% CI: <b style='color:#fff;'>€{p5_final:.2f}</b> ↔ <b style='c
                     color='Weight (%)', color_continuous_scale="Viridis"
                 )
                 fig_imp.update_layout(xaxis_title="Influence (%)", showlegend=False, margin=dict(t=0, b=0, l=0, r=0))
-                st.plotly_chart(fig_imp, use_container_width=True)
+                st.plotly_chart(fig_imp, width="stretch")
             else:
                 st.info("Insufficient data for SHAP analysis.")
             
@@ -7157,7 +7157,7 @@ Monte Carlo 90% CI: <b style='color:#fff;'>€{p5_final:.2f}</b> ↔ <b style='c
                         "Regime": "⬆️ High" if e["regime"]=="high_vix" else "⬇️ Low",
                         "Anchor Model": e["anchor"]
                     } for e in _perf_data[-20:][::-1]]
-                    st.dataframe(pd.DataFrame(anchor_rows), use_container_width=True, hide_index=True)
+                    st.dataframe(pd.DataFrame(anchor_rows), width="stretch", hide_index=True)
 
                     # Section B: VIX-Regime Performance Chart
                     if len(_perf_data) >= 3:
@@ -7181,7 +7181,7 @@ Monte Carlo 90% CI: <b style='color:#fff;'>€{p5_final:.2f}</b> ↔ <b style='c
                             )
                             fig_meta.update_layout(margin=dict(t=10,b=0,l=0,r=0),
                                                    legend=dict(orientation="h", y=1.12))
-                            st.plotly_chart(fig_meta, use_container_width=True)
+                            st.plotly_chart(fig_meta, width="stretch")
                             st.caption("💡 Lower bar = more effective model in that market regime. Key question: Does LSTM or Transformer perform better during VIX spikes?")
 
             st.markdown("<br>", unsafe_allow_html=True)
@@ -7372,7 +7372,7 @@ if active_tab == "5. Backtest Lab":
             initial_capital = st.number_input("Initial Capital (€)", 1000, 1_000_000, 10000, step=1000)
             tx_cost_v = st.slider("Transaction Cost (%)", 0.0, 1.0, 0.1, step=0.05)
             
-            run_backtest = st.form_submit_button("▶ Run Backtest", use_container_width=True, type="primary")
+            run_backtest = st.form_submit_button("▶ Run Backtest", width="stretch", type="primary")
 
     with bt_col2:
         if run_backtest and bt_ticker:
@@ -7443,7 +7443,7 @@ if active_tab == "5. Backtest Lab":
                 </div>
                 """, unsafe_allow_html=True)
                 
-                st.dataframe(comp_df, use_container_width=True, hide_index=True,
+                st.dataframe(comp_df, width="stretch", hide_index=True,
                              column_config={
                                  "Return %": st.column_config.NumberColumn("Return", format="%.1f%%"),
                                  "Sharpe": st.column_config.NumberColumn("Sharpe", format="%.2f"),
@@ -7477,10 +7477,10 @@ if active_tab == "5. Backtest Lab":
                 fig_bt.add_trace(go.Scatter(x=r["dates_arr"], y=r["equity_curve"], name=r["strategy"], line=dict(color="#00ffcc", width=3)))
             
             fig_bt.update_layout(template="plotly_dark", height=450, yaxis_title="Equity (€)", hovermode="x unified", legend=dict(orientation="h", y=1.05))
-            st.plotly_chart(fig_bt, use_container_width=True)
+            st.plotly_chart(fig_bt, width="stretch")
 
             with st.expander("📋 View Trade Log"):
-                st.dataframe(pd.DataFrame(r["trade_log"]), use_container_width=True, hide_index=True)
+                st.dataframe(pd.DataFrame(r["trade_log"]), width="stretch", hide_index=True)
         else:
             st.info("👈 Configure your trading rule on the left and click **Run Simulation** to start.")
 
