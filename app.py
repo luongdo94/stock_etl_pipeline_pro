@@ -3468,10 +3468,13 @@ if active_tab == "3. Qualitative Audit (AI)":
                     if pd.notnull(debt_eq_raw) and debt_eq_raw != 0:
                         debt_eq_txt = f"{(debt_eq_raw / 100.0):.2f}x"
                     else:
-                        debt_eq_txt = "N/A (Neg Equity)" if meta.get('total_debt', 0) > 0 else "0.00x"
+                        _tot_debt = meta.get('total_debt', 0)
+                        debt_eq_txt = "N/A (Neg Equity)" if pd.notnull(_tot_debt) and _tot_debt > 0 else "0.00x"
                     
                     curr_rat  = meta.get('current_ratio', 0)
+                    if pd.isna(curr_rat): curr_rat = 0
                     quick_rat = meta.get('quick_ratio', 0)
+                    if pd.isna(quick_rat): quick_rat = 0
                     
                     # Liquidity Status Colors
                     c_col = "#2ecc71" if curr_rat > 1.5 else ("#e74c3c" if curr_rat < 1.0 else "#f39c12")
