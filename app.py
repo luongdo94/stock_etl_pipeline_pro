@@ -6688,6 +6688,7 @@ if active_tab == "4. Quantitative Forecast (ML)":
         # Pre-fetch Company data for Sector context
         co_data = companies_full[companies_full["ticker"] == fc_ticker].iloc[0] if not companies_full[companies_full["ticker"] == fc_ticker].empty else None
         sector_val = co_data['sector'] if co_data is not None else None
+        company_val = co_data['company'] if co_data is not None and 'company' in co_data else fc_ticker
         
         # 1. ML Prediction — branch on engine_mode (Standardized lookback by horizon)
         if forecast_days <= 14:   std_lookback = 90
