@@ -482,6 +482,11 @@ def _get_macro_fallback_from_db(conn=None) -> dict:
 @st.cache_resource(show_spinner="📥 Loading Institutional NLP Engine (FinBERT ~440MB)...")
 def get_finbert_pipeline():
     """Loads the ProsusAI/finbert model for financial-specific sentiment analysis."""
+    import os
+    import warnings
+    # Suppress transformers alias warnings
+    os.environ["TRANSFORMERS_VERBOSITY"] = "error"
+    warnings.filterwarnings("ignore", module="transformers")
     from transformers import pipeline
     try:
         return pipeline("sentiment-analysis", model="ProsusAI/finbert")
