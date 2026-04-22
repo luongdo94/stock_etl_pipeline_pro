@@ -484,12 +484,14 @@ def get_finbert_pipeline():
     """Loads the ProsusAI/finbert model for financial-specific sentiment analysis."""
     import os
     import warnings
-    # Suppress transformers alias warnings
     os.environ["TRANSFORMERS_VERBOSITY"] = "error"
-    warnings.filterwarnings("ignore", module="transformers")
-    from transformers import pipeline
-    try:
-        return pipeline("sentiment-analysis", model="ProsusAI/finbert")
+    os.environ["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+    
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        from transformers import pipeline
+        try:
+            return pipeline("sentiment-analysis", model="ProsusAI/finbert")
     except Exception as e:
         import traceback
         traceback.print_exc()
