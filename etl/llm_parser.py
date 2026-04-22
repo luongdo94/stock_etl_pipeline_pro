@@ -11,6 +11,7 @@ Usage:
 import os
 import json
 import feedparser
+import urllib.parse
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -33,9 +34,15 @@ def _get_client():
 # ── News Fetcher (Free — Google News RSS) ────────────────────────────────────
 def _fetch_recent_headlines(ticker: str, company_name: str, max_items: int = 12) -> list[str]:
     """Fetch recent news headlines from Google News RSS for a given ticker."""
+    
+    # 1. Use URL encoding for company names with spaces
+    # 2. Append when:7d to ensure news is fresh and relevant
+    q_company = urllib.parse.quote(f"{company_name} stock when:7d")
+    q_ticker = urllib.parse.quote(f"{ticker} stock when:7d")
+    
     queries = [
-        f"https://news.google.com/rss/search?q={ticker}+stock&hl=en-US&gl=US&ceid=US:en",
-        f"https://news.google.com/rss/search?q={company_name}+finance&hl=en-US&gl=US&ceid=US:en",
+        f"https://news.google.com/rss/search?q={q_company}&hl=en-US&gl=US&ceid=US:en",
+        f"https://news.google.com/rss/search?q={q_ticker}&hl=en-US&gl=US&ceid=US:en",
     ]
     headlines = []
     for url in queries:
@@ -79,9 +86,14 @@ Analyze the headlines and return your assessment as a **valid JSON object** with
 Scoring Guide for red_flag_score:
 - 0-20: No material risks detected. Predominantly positive news.
 - 21-40: Minor concerns. Monitor but no action needed.
-- 41-60: Moderate risk. Headline-level concerns worth investigating.
+- 41-60: Moderate risk. Headline-level concerns worth investigating (e.g., M&A rumors causing uncertainty or subsidiary stock drops).
 - 61-80: Significant risk. Potential legal, operational, or financial issues.
 - 81-100: Critical. Imminent threat to shareholder value (lawsuits, fraud, CEO departure).
+
+CRITICAL INSTRUCTIONS:
+1. Return ONLY the JSON object. No markdown, no explanation, no code fences.
+2. DO NOT hallucinate or assume positive business strategies (e.g., 'fiber infrastructure', 'clean energy') unless explicitly mentioned in the provided headlines.
+3. If headlines show the stock or its subsidiary dropping due to M&A rumors, you MUST classify it as at least Moderate Risk (score > 40) and state the uncertainty.
 
 IMPORTANT: Return ONLY the JSON object. No markdown, no explanation, no code fences.
 

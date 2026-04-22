@@ -190,6 +190,11 @@ def get_unified_verdict(api_key: str, metrics: dict, nlp_result: dict) -> str:
         ma20_cur       = metrics.get("ma_20_current", "N/A")
         ma50_cur       = metrics.get("ma_50_current", "N/A")
 
+        # Macro data
+        vix_current = metrics.get("vix_current", "N/A")
+        spy_trend   = metrics.get("spy_trend", 0)
+        spy_str     = f"{float(spy_trend):+.2f}%" if isinstance(spy_trend, (int, float)) else "N/A"
+
         # NLP data
         nlp_score     = nlp_result.get("red_flag_score", 0)
         nlp_sentiment = nlp_result.get("sentiment", "Neutral")
@@ -199,17 +204,23 @@ def get_unified_verdict(api_key: str, metrics: dict, nlp_result: dict) -> str:
         nlp_headlines = nlp_result.get("headlines_analyzed", 0)
 
         # Signal alignment check
-        quant_bullish = int(ai_score) >= 65 if str(ai_score).isdigit() else False
-        news_bullish  = nlp_score <= 25 and nlp_sentiment in ["Positive"]
-        news_bearish  = nlp_score >= 60 or nlp_sentiment in ["Negative", "Critical"]
+        _ai_sc = int(ai_score) if str(ai_score).isdigit() else 50
+        quant_bullish = _ai_sc >= 65
+        quant_bearish = _ai_sc <= 45
+        
+        news_bullish  = nlp_score <= 35
+        news_bearish  = nlp_score >= 50 or nlp_sentiment in ["Negative", "Critical"]
+        
         if quant_bullish and news_bullish:
-            alignment = "CONVERGENCE — Both quantitative and qualitative signals are bullish."
+            alignment = "CONVERGENCE (BULLISH) — Both quantitative and qualitative signals are strong."
         elif quant_bullish and news_bearish:
-            alignment = "DIVERGENCE — Strong fundamentals but negative news sentiment. High risk of surprise downside."
-        elif not quant_bullish and news_bullish:
-            alignment = "DIVERGENCE — Positive news but weak fundamentals. Rally may be unsustainable."
+            alignment = "DIVERGENCE — Strong fundamentals but negative news/high risk. High probability of surprise downside."
+        elif quant_bearish and news_bullish:
+            alignment = "DIVERGENCE — Positive news but weak fundamentals. Rally may be an unsustainable trap."
+        elif quant_bearish and news_bearish:
+            alignment = "CONVERGENCE (BEARISH) — Both quantitative and qualitative signals are weak."
         else:
-            alignment = "ALIGNMENT (BEARISH) — Both quantitative and qualitative signals are weak."
+            alignment = "MIXED/NEUTRAL — Signals are mixed. Weigh both fundamental value and immediate news risks carefully."
 
         prompt = f"""You are a Chief Investment Officer (CIO) at a top-tier hedge fund.
 You have received both QUANTITATIVE data and QUALITATIVE news intelligence for a stock.
@@ -227,8 +238,12 @@ Your task: synthesize both and issue ONE definitive, actionable investment verdi
 - RSI: {_f(rsi, 1)} | MA Signal: {ma_signal} | P/E: {_f(pe, 1)}x | PEG: {_f(peg, 2)} | FCF: {_f(fcf, 1, '%')}
 - Market Regime: {regime}
 
+### MACRO ENVIRONMENT (Context)
+- VIX (Fear Index): {vix_current} (>25 indicates high panic, <15 indicates complacency)
+- SPY (S&P 500) Trend: {spy_str} (Relative broad market strength)
+
 ### QUALITATIVE (News Intelligence — {nlp_headlines} sources analyzed)
-- News Red Flag Score: {nlp_score}/100
+- News Red Flag Score: {nlp_score}/100 (NOTE: Any score >= 40 means MODERATE TO HIGH RISK. Do not call this 'low risk' or 'favorable'!)
 - Sentiment: {nlp_sentiment} | Risk Category: {nlp_category}
 - NLP Recommendation: "{nlp_reco}"
 - Key News Signals: {'; '.join(nlp_insights[:3]) if nlp_insights else 'None'}
@@ -241,6 +256,7 @@ Write a unified analysis with these FIVE sections:
 
 ### 💼 CIO Verdict
 One decisive paragraph (3-4 sentences). What is your final call? Reference BOTH the quantitative and qualitative data.
+IMPORTANT: If the News Red Flag Score is >= 40 or Sentiment is Neutral/Negative, you MUST explicitly mention the negative catalysts (e.g., price drops, uncertainty) and how they impact the short-term outlook, regardless of how strong the fundamentals are.
 
 ### 💡 Signal Convergence Analysis
 One paragraph explaining the interplay between the news sentiment and the fundamental data.
@@ -3070,6 +3086,8 @@ if active_tab == "3. Qualitative Audit (AI)":
                                 "stop_loss_technical": round(_stop_loss, 2),
                                 "ma_20_current": round(float(df_deep["ma_20"].iloc[-1]), 2) if "ma_20" in df_deep.columns and not df_deep["ma_20"].isna().all() else "N/A",
                                 "ma_50_current": round(float(df_deep["ma_50"].iloc[-1]), 2) if "ma_50" in df_deep.columns and not df_deep["ma_50"].isna().all() else "N/A",
+                                "vix_current": macro.get("VIX", {}).get("val", "N/A") if 'macro' in locals() else "N/A",
+                                "spy_trend": macro.get("SPY", {}).get("pct", 0) if 'macro' in locals() else 0,
                             }
                             with st.spinner("Synthesizing CIO Unified Verdict..."):
                                 _unified_report = get_unified_verdict(_cohere_key_ra, _unified_metrics, llm_res)
@@ -3201,7 +3219,10 @@ if active_tab == "3. Qualitative Audit (AI)":
                 st.markdown("<div style='color:#f39c12; font-size:0.85rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-top:16px; margin-bottom:8px; border-bottom:1px solid rgba(243,156,18,0.3); padding-bottom:6px;'>📰 Market Sentiment (FinBERT)</div>", unsafe_allow_html=True)
                 try:
                     import feedparser
-                    _rss_url = f"https://news.google.com/rss/search?q={deep_ticker}+stock&hl=en-US&gl=US&ceid=US:en"
+                    import urllib.parse
+                    # Prefer searching by company name to avoid ticker clash with US stocks
+                    _q = urllib.parse.quote(f"{meta.get('company', deep_ticker)} stock when:7d")
+                    _rss_url = f"https://news.google.com/rss/search?q={_q}&hl=en-US&gl=US&ceid=US:en"
                     _feed = feedparser.parse(_rss_url)
                     _news_items = _feed.entries[:10]
                     if _news_items:
@@ -6719,7 +6740,9 @@ if active_tab == "4. Quantitative Forecast (ML)":
         
         # 2. News Sentiment (High-Accuracy FinBERT) using Google News
         import feedparser
-        rss_url = f"https://news.google.com/rss/search?q={fc_ticker}+stock&hl=en-US&gl=US&ceid=US:en"
+        import urllib.parse
+        _q_fc = urllib.parse.quote(f"{company_val} stock when:7d") if company_val else urllib.parse.quote(f"{fc_ticker} stock when:7d")
+        rss_url = f"https://news.google.com/rss/search?q={_q_fc}&hl=en-US&gl=US&ceid=US:en"
         feed = feedparser.parse(rss_url)
         titles = [entry.get("title", "").split(" - ")[0] for entry in feed.entries[:10]]
         avg_sent = analyze_sentiment_finbert(titles) if titles else 0
