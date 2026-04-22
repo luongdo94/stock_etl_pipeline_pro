@@ -3096,52 +3096,17 @@ if active_tab == "3. Qualitative Audit (AI)":
 
             st.markdown("---")
             
-            # ── QUAL vs QUANT: Full-Width 50/50 Split View ───────────────────
-            render_header("zap", "Qualitative vs. Quantitative Risk Analysis", level="####")
-            st.caption("Left: NLP-powered real-time sentiment from news headlines (Cohere AI). Right: Quantitative pillar breakdown from fundamental data.")
+            # ── AI RISK COCKPIT ───────────────────
+            render_header("zap", "Real-Time AI Risk Audit", level="####")
+            st.caption("Integrated NLP sentiment and Quantitative pillar breakdown from fundamental data.")
             
-            qual_col, quant_col = st.columns([1, 1])
-            
-            # ── LEFT: NLP Qualitative Audit ──────────────────────────────────
-            with qual_col:
-                st.markdown("<div style='color:#3498db; font-size:0.85rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px; border-bottom:1px solid rgba(52,152,219,0.3); padding-bottom:6px;'>Qualitative NLP Audit</div>", unsafe_allow_html=True)
-                
-                if _uv_data:
-                    # nlp_score, nlp_sentiment, nlp_insights come from _uv_data (set in session_state)
-                    nlp_score     = _uv_data.get("nlp_score", 0)
-                    nlp_sentiment = _uv_data.get("nlp_sentiment", "Neutral")
-                    nlp_insights  = _uv_data.get("nlp_insights", [])
-                    nlp_report    = _uv_data.get("report", "N/A")
-                    
-                    if nlp_score <= 25:   nlp_border, nlp_badge = "#2ecc71", "LOW RISK"
-                    elif nlp_score <= 50: nlp_border, nlp_badge = "#f1c40f", "MODERATE"
-                    elif nlp_score <= 75: nlp_border, nlp_badge = "#e67e22", "ELEVATED"
-                    else:                 nlp_border, nlp_badge = "#e74c3c", "HIGH RISK"
-                    
-                    st.markdown(f"""
-                    <div style='display:flex; align-items:center; gap:12px; margin-bottom:12px; padding:10px; background:rgba(255,255,255,0.03); border-radius:8px; border-left:3px solid {nlp_border};'>
-                        <div style='text-align:center; min-width:55px;'>
-                            <div style='font-size:1.8rem; font-weight:900; color:{nlp_border}; line-height:1;'>{nlp_score}</div>
-                            <div style='font-size:0.6rem; color:#888;'>/100</div>
-                        </div>
-                        <div>
-                            <div style='font-size:0.75rem; font-weight:700; color:{nlp_border};'>{nlp_badge}</div>
-                            <div style='font-size:0.72rem; color:#aaa;'>Sentiment: <b>{nlp_sentiment}</b></div>
-                        </div>
-                    </div>
-                    <div style='font-size:0.8rem; font-style:italic; color:#ddd; border-left:2px solid #3498db; padding-left:8px; margin-bottom:10px;'>"{nlp_report[:200]}..."</div>
-                    <div style='color:#999; font-size:0.72rem; font-weight:700; margin-bottom:5px;'>KEY INSIGHTS:</div>
-                    <ul style='color:#bbb; font-size:0.78rem; line-height:1.5; padding-left:14px; margin:0;'>
-                        {"".join([f"<li>{item}</li>" for item in nlp_insights])}
-                    </ul>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.markdown("""
-                    <div style='text-align:center; padding:40px 20px; color:#666; background:rgba(255,255,255,0.02); border-radius:10px; border:1px dashed rgba(255,255,255,0.1);'>
-                        <div style='font-size:2.5rem; filter:grayscale(1); opacity:0.3; margin-bottom:15px;'>🔍</div>
-                        <div style='font-size:0.85rem;'>Click <b>'Run Real-Time AI Risk Audit'</b> above<br>to analyze news sentiment and detected hidden risks.</div>
-                    </div>
-                    """, unsafe_allow_html=True)
+            if not _uv_data:
+                st.markdown("""
+                <div style='text-align:center; padding:40px 20px; color:#666; background:rgba(255,255,255,0.02); border-radius:10px; border:1px dashed rgba(255,255,255,0.1); margin-top:20px;'>
+                    <div style='font-size:2.5rem; filter:grayscale(1); opacity:0.3; margin-bottom:15px;'>🔍</div>
+                    <div style='font-size:0.85rem;'>Click <b>'Run Real-Time AI Risk Audit'</b> above<br>to generate the CIO Deep Dive and Risk Scorecard.</div>
+                </div>
+                """, unsafe_allow_html=True)
 
             # ── AI Risk Cockpit: 3-Column Premium Scorecard (Full-Width) ──
             if _uv_data:
@@ -3214,26 +3179,23 @@ if active_tab == "3. Qualitative Audit (AI)":
     </div>
     """, unsafe_allow_html=True)
 
-            # ── PART B: 50/50 Split — Narrative (left) | Radar (right) ──────
+            # ── PART B: Full-Width Narrative & 50/50 Split (News | Radar) ──────
             st.markdown("<hr style='border:0; height:1px; background:rgba(255,255,255,0.08); margin:24px 0;'>", unsafe_allow_html=True)
+            
+            # Detailed Audit Narrative (Full Width, only when audit has been run)
+            if _uv_data:
+                st.markdown("<div style='color:#3498db; font-size:1.1rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:12px; border-bottom:1px solid rgba(52,152,219,0.3); padding-bottom:6px;'>🧠 CIO AI Deep Dive & Scenario Analysis</div>", unsafe_allow_html=True)
+                st.info(_uv_data.get("report", ""))
+                _show_insights = _uv_data.get("nlp_insights", []) if isinstance(_uv_data, dict) else []
+                if _show_insights:
+                    with st.expander("🧩 Raw Evidence: News Signals Analyzed"):
+                        for insight in _show_insights:
+                            st.markdown(f"- {insight}")
+                st.markdown("<br>", unsafe_allow_html=True)
+
             qual_col, quant_col = st.columns([1, 1])
 
             with qual_col:
-                # Detailed Audit Narrative (only when audit has been run)
-                if _uv_data:
-                    with st.expander("🔍 Detailed CIO Reasoning & Full Audit", expanded=True):
-                        st.markdown(
-                            f"<div style='background:rgba(255,255,255,0.03); border-left:4px solid #555;"
-                            f" border-radius:8px; padding:20px; font-size:0.9rem; line-height:1.7; color:#efefef;'>"
-                            + _uv_data.get("report", "") + "</div>",
-                            unsafe_allow_html=True
-                        )
-                        _show_insights = _uv_data.get("nlp_insights", []) if isinstance(_uv_data, dict) else []
-                        if _show_insights:
-                            st.markdown("---")
-                            st.markdown("<div style='font-size:0.75rem; color:#888; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;'>🧩 Raw Evidence: News Signals Analyzed</div>", unsafe_allow_html=True)
-                            for insight in _show_insights:
-                                st.markdown(f"<div style='font-size:0.78rem; color:#ccc; border-left:2px solid #3498db; padding-left:8px; margin-bottom:5px;'>{insight}</div>", unsafe_allow_html=True)
 
                 # ── NEWS FEED (Auto-load, FinBERT Sentiment) ─────────────────
                 st.markdown("<div style='color:#f39c12; font-size:0.85rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-top:16px; margin-bottom:8px; border-bottom:1px solid rgba(243,156,18,0.3); padding-bottom:6px;'>📰 Market Sentiment (FinBERT)</div>", unsafe_allow_html=True)
