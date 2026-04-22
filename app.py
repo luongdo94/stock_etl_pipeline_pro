@@ -237,9 +237,9 @@ Your task: synthesize both and issue ONE definitive, actionable investment verdi
 {alignment}
 
 ---
-Write a unified analysis with these FOUR sections:
+Write a unified analysis with these FIVE sections:
 
-### CIO Verdict
+### 💼 CIO Verdict
 One decisive paragraph (3-4 sentences). What is your final call? Reference BOTH the quantitative and qualitative data.
 
 ### 💡 Signal Convergence Analysis
@@ -249,6 +249,12 @@ If signals DIVERGE, explain which side (news vs fundamentals) you trust more and
 ### 🎯 Actionable Recommendation
 State your recommendation — one of: **STRONG BUY / BUY / WATCH & ACCUMULATE / HOLD / REDUCE / AVOID**
 Include practical execution context where relevant (entry levels, targets, risk management). Use the technical data provided as reference — apply your own judgment, not mechanical formulas.
+
+### 📊 3-Scenario Valuation Analysis
+Break down the investment thesis into three probabilistic scenarios. For each, provide a brief catalyst and an implied upside/downside target based on the data:
+- **🐻 Bear Case (20%):** [Catalyst] → Target Range
+- **📈 Base Case (60%):** [Catalyst] → Target Range
+- **🚀 Bull Case (20%):** [Catalyst] → Target Range
 
 ### ⚠️ Key Risks to Monitor
 3 concise bullet points covering the most material risks.
@@ -264,7 +270,7 @@ Rules: English only. Be decisive and direct. Under 400 words total. Start the Ac
         response = co.chat(
             model="command-r-plus-08-2024",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=700,
+            max_tokens=900,
         )
         return response.message.content[0].text
 
