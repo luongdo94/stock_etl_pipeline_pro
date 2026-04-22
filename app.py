@@ -168,6 +168,7 @@ def get_unified_verdict(api_key: str, metrics: dict, nlp_result: dict) -> str:
         upside    = metrics.get("upside_pct", 0)
         rsi       = metrics.get("rsi", 50)
         ma_signal = metrics.get("ma_signal", "N/A")
+        smart_money = metrics.get("smart_money", "N/A")
         pe        = metrics.get("pe_ratio", "N/A")
         peg       = metrics.get("peg_ratio", "N/A")
         fcf       = metrics.get("fcf_margin", "N/A")
@@ -235,7 +236,7 @@ Your task: synthesize both and issue ONE definitive, actionable investment verdi
 - 52W Range: €{_f(low_52w)} – €{_f(high_52w)} | % from MA200: {pct_from_ma200}
 - Technical Levels: S1=€{_f(support_s1)} | S2=€{_f(support_s2)} | R1=€{_f(resistance_r1)} | R2=€{_f(resistance_r2)} | Stop=€{_f(stop_loss_tech)}
 - Moving Averages: MA20=€{_f(ma20_cur)} | MA50=€{_f(ma50_cur)}
-- RSI: {_f(rsi, 1)} | MA Signal: {ma_signal} | P/E: {_f(pe, 1)}x | PEG: {_f(peg, 2)} | FCF: {_f(fcf, 1, '%')}
+- RSI: {_f(rsi, 1)} | MA Signal: {ma_signal} | Smart Money: {smart_money} | P/E: {_f(pe, 1)}x | PEG: {_f(peg, 2)} | FCF: {_f(fcf, 1, '%')}
 - Market Regime: {regime}
 
 ### MACRO ENVIRONMENT (Context)
@@ -1311,6 +1312,7 @@ def compute_institutional_rating(
     sector: str,
     w52_pos: float,
     rr: float,
+    sm_status: str = "N/A"
 ) -> dict:
     """
     Unified 5-Pillar Institutional Rating Engine (v13.0).
@@ -1376,26 +1378,35 @@ def compute_institutional_rating(
     elif rr > 1.2: p_conv_c = "#2ecc71"
     else:           p_conv_c = "#e74c3c"
 
+    # ── PILLAR 6: SMART MONEY ───────────────────────────────────────────
+    if sm_status.upper() == "ACCUMULATION":
+        p_sm_c = "#2ecc71"
+    elif sm_status.upper() == "DISTRIBUTION":
+        p_sm_c = "#e74c3c"
+    else:
+        p_sm_c = "#95a5a6"
+
     # ── SYNTHESIS: Final Action Label ────────────────────────────────────
     pts = (
         (1 if p_trend_c in ["#2ecc71", "#00ffcc"] else 0) +
         (1 if p_qual_c  in ["#2ecc71", "#00ffcc"] else 0) +
         (1 if p_val_c   in ["#2ecc71", "#00ffcc", "#3498db"] else 0) +
         (1 if p_risk_c  == "#2ecc71" else 0) +
-        (1 if p_conv_c  in ["#2ecc71", "#00ffcc"] else 0)
+        (1 if p_conv_c  in ["#2ecc71", "#00ffcc"] else 0) +
+        (1 if p_sm_c    == "#2ecc71" else 0)
     )
 
-    if pts >= 4 and p_qual_c != "#e74c3c":
+    if pts >= 5 and p_qual_c != "#e74c3c":
         action_label, action_color = "STRONG BUY",          "#00ffcc"
-    elif pts >= 3 and p_trend_c == "#f1c40f" and latest_rsi < 45:
+    elif pts >= 3 and p_trend_c != "#e74c3c":
         action_label, action_color = "BUY / ACCUMULATE",    "#2ecc71"
     elif p_trend_c == "#e74c3c" and p_val_c == "#e74c3c":
         action_label, action_color = "SELL / AVOID",        "#e74c3c"
-    elif pts <= 1 and p_qual_c == "#e74c3c":
+    elif pts <= 2 and p_qual_c == "#e74c3c":
         action_label, action_color = "SELL / AVOID",        "#e74c3c"
-    elif pts <= 1 and p_qual_c in ["#2ecc71", "#00ffcc"]:
+    elif pts <= 2 and p_qual_c in ["#2ecc71", "#00ffcc"]:
         action_label, action_color = "HOLD / NEUTRAL",      "#f1c40f"
-    elif latest_rsi > 70 and pts <= 3:
+    elif latest_rsi > 70 and pts <= 4:
         action_label, action_color = "REDUCE / UNDERPERFORM","#e67e22"
     else:
         action_label, action_color = "HOLD / NEUTRAL",      "#f1c40f"
@@ -1408,6 +1419,7 @@ def compute_institutional_rating(
         "p_val_c":       p_val_c,
         "p_risk_c":      p_risk_c,
         "p_conv_c":      p_conv_c,
+        "p_sm_c":        p_sm_c,
         "pts":           pts,
     }
 
@@ -1567,6 +1579,13 @@ def get_master_screener_data(_companies_df, _prices_df, _quarterly_fin, _annual_
         # Use shared tactical metrics (same formula as Deep Dive)
         _tm = get_tactical_metrics(ticker_prices, cur_p)
 
+        # Smart Money Spirit
+        _raw_obv = (np.sign(ticker_prices['price_close'].diff().fillna(0)) * ticker_prices['volume']).cumsum()
+        _obv_roc = _raw_obv.pct_change(5).replace([np.inf, -np.inf], 0).fillna(0)
+        obv_short = _obv_roc.tail(5).mean() if len(_obv_roc) >= 5 else 0
+        obv_long  = _obv_roc.tail(20).mean() if len(_obv_roc) >= 20 else 0
+        sm_spirit = "Accumulation" if obv_short > obv_long else "Distribution"
+
         _rating = compute_institutional_rating(
             ai_score   = ai_score,
             ma_sig     = ma_sig,
@@ -1577,6 +1596,7 @@ def get_master_screener_data(_companies_df, _prices_df, _quarterly_fin, _annual_
             sector     = str(row.get('sector', '')),
             w52_pos    = _tm["w52_pos"],
             rr         = _tm["rr_score"],   # scoring uses raw r1 target
+            sm_status  = sm_spirit
         )
         action_label = _rating["action_label"]   # plain text — no emoji
 
@@ -1618,6 +1638,7 @@ def get_master_screener_data(_companies_df, _prices_df, _quarterly_fin, _annual_
             "MCap (B)": round(mcap_b, 1),
             "RSI (14)": round(latest_rsi, 1),
             "Z-Score": round(ticker_prices['price_z_score'].iloc[-1] if 'price_z_score' in ticker_prices.columns else 0, 2),
+            "Smart Money": sm_spirit,
             "vs MA200 (%)": round(ticker_prices['pct_from_ma200'].iloc[-1] if 'pct_from_ma200' in ticker_prices.columns else 0, 1),
             "Yield (%)": round(div_yield, 2),
             "Net Payout (%)": round(net_payout, 2),
@@ -2907,6 +2928,16 @@ if active_tab == "3. Qualitative Audit (AI)":
             elif _rr > 1.2: p_conv, p_conv_c = "MEDIUM", "#2ecc71"
             else: p_conv, p_conv_c = "LOW", "#e74c3c"
             
+            # PILLAR 6: SMART MONEY
+            _raw_obv = (np.sign(df_deep['price_close'].diff().fillna(0)) * df_deep['volume']).cumsum()
+            _obv_roc = _raw_obv.pct_change(5).replace([np.inf, -np.inf], 0).fillna(0)
+            obv_short = _obv_roc.tail(5).mean() if len(_obv_roc) >= 5 else 0
+            obv_long  = _obv_roc.tail(20).mean() if len(_obv_roc) >= 20 else 0
+            if obv_short > obv_long:
+                p_sm, p_sm_c = "ACCUMULATION", "#2ecc71"
+            else:
+                p_sm, p_sm_c = "DISTRIBUTION", "#e74c3c"
+            
             # ── MASTER POSITIONING LOGIC ──────────────────────────────────────
             # We still call compute_institutional_rating to derive pillar colours
             # (p_trend_c, p_val_c, etc.) for the UI matrix.
@@ -2922,9 +2953,10 @@ if active_tab == "3. Qualitative Audit (AI)":
                 sector     = str(meta.get("sector", "")),
                 w52_pos    = _w52_pos,
                 rr         = _tm["rr_score"],   # scoring uses raw r1 target
+                sm_status  = p_sm
             )
-            # Action label: canonical value from Screener engine (m_df)
-            act_str = _action_map.get(deep_ticker, _rating["action_label"])
+            # Action label: Always use the fresh rating calculated above to reflect the latest logic
+            act_str = _rating["action_label"]
             # Colour is derived from the canonical label — NOT from the local engine score
             _colour_map = {
                 "STRONG BUY":          "#00ffcc",
@@ -2950,7 +2982,12 @@ if active_tab == "3. Qualitative Audit (AI)":
             elif act_str == "HOLD / NEUTRAL" and _rating["p_qual_c"] in ["#2ecc71", "#00ffcc"]:
                 act_desc = "Elite asset currently overextended or expensive. Wait for a healthy structural pullback before deployment."
             elif act_str == "REDUCE / UNDERPERFORM":
-                act_desc = f"Locally overbought (RSI: {_rsi_val:.1f}). Fundamentals remain solid but tactical risk is elevated. Consider locking profits."
+                if _rsi_val > 70:
+                    act_desc = f"Locally overbought (RSI: {_rsi_val:.1f}). Momentum is peaking. Tactical risk is elevated. Consider locking profits."
+                elif p_sm_c == "#e74c3c":
+                    act_desc = f"Institutional Distribution detected (Smart Money is exiting). Despite low RSI ({_rsi_val:.1f}), the flow is negative. Avoid catching falling knives."
+                else:
+                    act_desc = "Technical structure weakening. Momentum divergence detected. Reduce exposure to preserve capital."
             else:
                 act_desc = "Mixed signals across pillars. System lacks execution conviction. Monitor for structural breakout or mean reversion."
 
@@ -2998,23 +3035,27 @@ if active_tab == "3. Qualitative Audit (AI)":
             st.markdown(f"""
             <div style='background:rgba(10,15,25,0.6); border:1px solid rgba(255,255,255,0.1); border-radius:12px; padding:20px; margin-bottom:25px;'>
                 <div style='display:flex; justify-content:space-between; text-align:center; margin-bottom:20px; flex-wrap:wrap; gap:10px;'>
-                    <div style='flex:1; background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; border-top:3px solid {p_trend_c};'>
+                    <div style='flex:1; background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; border-top:3px solid {p_trend_c}; min-width:14%'>
                         <div style='font-size:0.65em; color:#aab; text-transform:uppercase; letter-spacing:1px;'>Technical Trend</div>
                         <div style='font-weight:900; font-size:0.9em; color:{p_trend_c}; margin-top:8px;'>{p_trend}</div>
                     </div>
-                    <div style='flex:1; background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; border-top:3px solid {p_qual_c};'>
+                    <div style='flex:1; background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; border-top:3px solid {p_qual_c}; min-width:14%'>
                         <div style='font-size:0.65em; color:#aab; text-transform:uppercase; letter-spacing:1px;'>Quality</div>
                         <div style='font-weight:900; font-size:0.9em; color:{p_qual_c}; margin-top:8px;'>{p_qual}</div>
                     </div>
-                    <div style='flex:1; background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; border-top:3px solid {p_val_c};'>
+                    <div style='flex:1; background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; border-top:3px solid {p_val_c}; min-width:14%'>
                         <div style='font-size:0.65em; color:#aab; text-transform:uppercase; letter-spacing:1px;'>Valuation</div>
                         <div style='font-weight:900; font-size:0.9em; color:{p_val_c}; margin-top:8px;'>{p_val}</div>
                     </div>
-                    <div style='flex:1; background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; border-top:3px solid {p_risk_c};'>
+                    <div style='flex:1; background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; border-top:3px solid {p_sm_c}; min-width:14%'>
+                        <div style='font-size:0.65em; color:#aab; text-transform:uppercase; letter-spacing:1px;'>Smart Money</div>
+                        <div style='font-weight:900; font-size:0.9em; color:{p_sm_c}; margin-top:8px;'>{p_sm}</div>
+                    </div>
+                    <div style='flex:1; background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; border-top:3px solid {p_risk_c}; min-width:14%'>
                         <div style='font-size:0.65em; color:#aab; text-transform:uppercase; letter-spacing:1px;'>Risk (52w)</div>
                         <div style='font-weight:900; font-size:0.9em; color:{p_risk_c}; margin-top:8px;'>{p_risk}</div>
                     </div>
-                    <div style='flex:1; background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; border-top:3px solid {p_conv_c};'>
+                    <div style='flex:1; background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; border-top:3px solid {p_conv_c}; min-width:14%'>
                         <div style='font-size:0.65em; color:#aab; text-transform:uppercase; letter-spacing:1px;'>Risk/Reward</div>
                         <div style='font-weight:900; font-size:0.9em; color:{p_conv_c}; margin-top:8px;'>{p_conv}</div>
                     </div>
@@ -3086,6 +3127,7 @@ if active_tab == "3. Qualitative Audit (AI)":
                                 "fmi_label":     _fmi_data_ra.get("label", "N/A"),
                                 "price":         cur_p,
                                 "market_regime": regime,
+                                "smart_money":   p_sm,
                                 "support_s1":    round(_s1, 2),
                                 "support_s2":    round(_s2, 2),
                                 "resistance_r1": round(_r1, 2),
@@ -4631,6 +4673,7 @@ if active_tab == "7. Portfolio Builder":
                     "Market Cap (B)": meta.get("MCap (B)", 0),
                     "Z-Score": meta.get("Z-Score", 0.0),
                     "RSI (14)": meta.get("RSI (14)", 50.0),
+                    "Smart Money": meta.get("Smart Money", "Neutral"),
                     "Price (€)": latest_prices.get(t, 0),
                     "Shares": st.session_state.portfolio_shares.get(t, 10.0),
                     "Cost Basis (€)": st.session_state.portfolio_cost.get(t, latest_prices.get(t, 0))
@@ -4662,6 +4705,7 @@ if active_tab == "7. Portfolio Builder":
                     "Region": st.column_config.TextColumn("Region", disabled=True),
                     "Z-Score": st.column_config.NumberColumn("Z-Score", format="%.2f", disabled=True),
                     "RSI (14)": st.column_config.NumberColumn("RSI", format="%.1f", disabled=True),
+                    "Smart Money": st.column_config.TextColumn("Smart Money", disabled=True),
                     "Price (€)": st.column_config.NumberColumn("Market Price", format="€%.2f", disabled=True),
                     "Shares": st.column_config.NumberColumn("Shares", min_value=0.0, step=0.01, format="%.4g"),
                     "Cost Basis (€)": st.column_config.NumberColumn("Unit Cost", min_value=0.0, step=0.01, format="€%.2f"),
@@ -4672,7 +4716,7 @@ if active_tab == "7. Portfolio Builder":
                     "Contribution (%)": st.column_config.NumberColumn("Contribution", format="%.2f%%", disabled=True),
                     "Weight (%)": st.column_config.NumberColumn("Weight", format="%.2f%%", disabled=True)
                 },
-                column_order=["Ticker", "Company", "Shares", "Cost Basis (€)", "Price (€)", "Total Cost (€)", "Market Value", "Unrealized PnL (€)", "Unrealized PnL (%)", "Z-Score", "RSI (14)", "Contribution (%)", "Weight (%)"],
+                column_order=["Ticker", "Company", "Shares", "Cost Basis (€)", "Price (€)", "Total Cost (€)", "Market Value", "Unrealized PnL (€)", "Unrealized PnL (%)", "Z-Score", "RSI (14)", "Smart Money", "Contribution (%)", "Weight (%)"],
                 hide_index=True,
                 width="stretch",
                 key=f"p_portfolio_editor_v{_cur_version}"
@@ -6105,12 +6149,20 @@ if active_tab == "4. Quantitative Forecast (ML)":
             else:
                 df['regime_score'] = 50.0
 
+            # ── Smart Money / Volume Dynamics (14th Feature) ──
+            # On-Balance Volume Rate of Change (Stationary indicator for Smart Money accumulation)
+            _raw_obv = (np.sign(df['price_close'].diff().fillna(0)) * df['volume']).cumsum()
+            df['obv_roc'] = _raw_obv.pct_change(5).replace([np.inf, -np.inf], 0).fillna(0)
+            # Clip extreme values to prevent exploding gradients in ML
+            df['obv_roc'] = df['obv_roc'].clip(-5.0, 5.0)
+
             features = [
                 'price_close', 'daily_return_pct',
                 'spy_ret', 'vix_ret',
                 'vol_surge', 'rsi', 'price_z_score',
                 'pe_ratio', 'roe', 'fcf_margin',
-                'debt_ebitda', 'rev_growth', 'regime_score'
+                'debt_ebitda', 'rev_growth', 'regime_score',
+                'obv_roc'
             ]
             data = df[features].ffill().fillna(0).values.astype(np.float32)
 
