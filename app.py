@@ -492,10 +492,10 @@ def get_finbert_pipeline():
         from transformers import pipeline
         try:
             return pipeline("sentiment-analysis", model="ProsusAI/finbert")
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return None
+        except Exception as e:
+            import traceback
+            traceback.print_exc()
+            return None
 
 # ── PREMIUM UI: Institutional SVG Icon Library ──────────────────────────────
 SVG_ICONS = {
