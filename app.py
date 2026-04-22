@@ -4485,8 +4485,22 @@ if active_tab == "7. Portfolio Builder":
         # --- Manual Transaction Tool ---
         with st.popover("➕ Add Trade", width="stretch"):
             st.caption("Register a manual transaction")
-            mt_ticker = st.selectbox("Select Asset", stock_tickers, key="mt_tick_sel")
             mt_type   = st.radio("Transaction Type", ["🟢 Buy", "🔴 Sell"], horizontal=True, key="mt_type_radio")
+            
+            _avail_tickers = st.session_state.portfolio_tickers if "Sell" in mt_type else stock_tickers
+            if "Sell" in mt_type and not _avail_tickers:
+                st.info("Your portfolio is empty.")
+                mt_ticker = None
+            else:
+                if "Sell" in mt_type:
+                    def _fmt(t):
+                        return f"{t} (Owned: {st.session_state.portfolio_shares.get(t, 0):.4g})"
+                    mt_ticker = st.selectbox("Select Asset", _avail_tickers, format_func=_fmt, key="mt_tick_sel")
+                    _owned = st.session_state.portfolio_shares.get(mt_ticker, 0)
+                    st.caption(f"Available to sell: **{_owned:.4g}** shares")
+                else:
+                    mt_ticker = st.selectbox("Select Asset", _avail_tickers, key="mt_tick_sel")
+                
             mt_shares = st.number_input("Shares", min_value=0.0001, value=1.0, step=1.0, key="mt_shares_input")
             
             # Only show price input for Buy
@@ -4494,8 +4508,8 @@ if active_tab == "7. Portfolio Builder":
             if "Buy" in mt_type:
                 mt_price = st.number_input("Purchase Price", min_value=0.0001, value=1.0, step=0.01, key="mt_price_input")
             
-            if st.button("Confirm Transaction", type="primary", width="stretch"):
-                if "Buy" in mt_type:
+            if st.button("Confirm Transaction", type="primary", use_container_width=True, disabled=(mt_ticker is None)):
+                if mt_ticker and "Buy" in mt_type:
                     # ── BUY: Add shares, recalculate WAC ──────────────────────
                     if mt_price <= 0:
                         st.warning("Purchase price must be greater than 0.")
