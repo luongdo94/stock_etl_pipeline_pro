@@ -17,7 +17,7 @@ _COOKIE_TTL_DAYS = 7
 @st.cache_resource
 def get_supabase_client():
     url = st.secrets.get("SUPABASE_URL")
-    key = st.secrets.get("SUPABASE_KEY") or st.secrets.get("SUPABASE_SERVICE_KEY")
+    key = st.secrets.get("SUPABASE_SERVICE_ROLE_KEY") or st.secrets.get("SUPABASE_SERVICE_KEY") or st.secrets.get("SUPABASE_KEY")
     if not url or not key:
         return None
     return create_client(url, key)
