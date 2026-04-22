@@ -4629,6 +4629,8 @@ if active_tab == "7. Portfolio Builder":
                     "Sector": meta.get("Sector", "N/A"),
                     "Region": meta.get("Region", "US"),
                     "Market Cap (B)": meta.get("MCap (B)", 0),
+                    "Z-Score": meta.get("Z-Score", 0.0),
+                    "RSI (14)": meta.get("RSI (14)", 50.0),
                     "Price (€)": latest_prices.get(t, 0),
                     "Shares": st.session_state.portfolio_shares.get(t, 10.0),
                     "Cost Basis (€)": st.session_state.portfolio_cost.get(t, latest_prices.get(t, 0))
@@ -4658,6 +4660,8 @@ if active_tab == "7. Portfolio Builder":
                     "Ticker": st.column_config.TextColumn("Ticker", disabled=True),
                     "Company": st.column_config.TextColumn("Company", disabled=True),
                     "Region": st.column_config.TextColumn("Region", disabled=True),
+                    "Z-Score": st.column_config.NumberColumn("Z-Score", format="%.2f", disabled=True),
+                    "RSI (14)": st.column_config.NumberColumn("RSI", format="%.1f", disabled=True),
                     "Price (€)": st.column_config.NumberColumn("Market Price", format="€%.2f", disabled=True),
                     "Shares": st.column_config.NumberColumn("Shares", min_value=0.0, step=0.01, format="%.4g"),
                     "Cost Basis (€)": st.column_config.NumberColumn("Unit Cost", min_value=0.0, step=0.01, format="€%.2f"),
@@ -4668,7 +4672,7 @@ if active_tab == "7. Portfolio Builder":
                     "Contribution (%)": st.column_config.NumberColumn("Contribution", format="%.2f%%", disabled=True),
                     "Weight (%)": st.column_config.NumberColumn("Weight", format="%.2f%%", disabled=True)
                 },
-                column_order=["Ticker", "Company", "Shares", "Cost Basis (€)", "Price (€)", "Total Cost (€)", "Market Value", "Unrealized PnL (€)", "Unrealized PnL (%)", "Contribution (%)", "Weight (%)"],
+                column_order=["Ticker", "Company", "Shares", "Cost Basis (€)", "Price (€)", "Total Cost (€)", "Market Value", "Unrealized PnL (€)", "Unrealized PnL (%)", "Z-Score", "RSI (14)", "Contribution (%)", "Weight (%)"],
                 hide_index=True,
                 width="stretch",
                 key=f"p_portfolio_editor_v{_cur_version}"
