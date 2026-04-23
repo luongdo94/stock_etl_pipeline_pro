@@ -2607,3 +2607,155 @@ tickers:
     name: Amundi Nasdaq 100 ETF
     sector: Benchmark
     region: EU
+  AT1.DE:
+    name: Aroundtown SA
+    sector: Real Estate
+    region: EU
+  NDA.DE:
+    name: Aurubis AG
+    sector: Basic Materials
+    region: EU
+  AG1.DE:
+    name: AUTO1 Group SE
+    sector: Ecommerce
+    region: EU
+  BC8.DE:
+    name: Bechtle AG
+    sector: IT Services
+    region: EU
+  GBF.DE:
+    name: Bilfinger SE
+    sector: Industrials
+    region: EU
+  EVD.DE:
+    name: CTS Eventim AG & Co. KGaA
+    sector: Media & Entertainment
+    region: EU
+  DHER.DE:
+    name: Delivery Hero SE
+    sector: Ecommerce
+    region: EU
+  DEZ.DE:
+    name: DEUTZ AG
+    sector: Industrials
+    region: EU
+  DWS.DE:
+    name: DWS Group GmbH & Co. KGaA
+    sector: Financials
+    region: EU
+  EVK.DE:
+    name: Evonik Industries AG
+    sector: Basic Materials
+    region: EU
+  FTK.DE:
+    name: flatexDEGIRO AG
+    sector: Fintech
+    region: EU
+  FRA.DE:
+    name: Fraport AG
+    sector: Transportation
+    region: EU
+  FPE3.DE:
+    name: FUCHS SE
+    sector: Basic Materials
+    region: EU
+  HLE.DE:
+    name: HELLA GmbH & Co. KGaA
+    sector: Automotive & EV
+    region: EU
+  HOT.DE:
+    name: HOCHTIEF AG
+    sector: Construction & Engineering
+    region: EU
+  BOSS.DE:
+    name: HUGO BOSS AG
+    sector: Consumer Luxury
+    region: EU
+  JUN3.DE:
+    name: Jungheinrich AG
+    sector: Industrial Machinery
+    region: EU
+  SDF.DE:
+    name: K+S Aktiengesellschaft
+    sector: Basic Materials
+    region: EU
+  KGX.DE:
+    name: KION Group AG
+    sector: Industrial Machinery
+    region: EU
+  KBX.DE:
+    name: Knorr-Bremse AG
+    sector: Industrial Machinery
+    region: EU
+  KRN.DE:
+    name: KRONES AG
+    sector: Industrial Machinery
+    region: EU
+  LXS.DE:
+    name: LANXESS Aktiengesellschaft
+    sector: Basic Materials
+    region: EU
+  LEG.DE:
+    name: LEG Immobilien SE
+    sector: Real Estate
+    region: EU
+  NEM.DE:
+    name: Nemetschek SE
+    sector: SaaS
+    region: EU
+  PAG911.DE:
+    name: Porsche AG
+    sector: Automotive & EV
+    region: EU
+  RAA.DE:
+    name: RATIONAL Aktiengesellschaft
+    sector: Industrial Machinery
+    region: EU
+  RDC.DE:
+    name: Redcare Pharmacy N.V.
+    sector: Ecommerce
+    region: EU
+  RTL.DE:
+    name: RTL Group S.A.
+    sector: Media & Entertainment
+    region: EU
+  SZG.DE:
+    name: Salzgitter Aktiengesellschaft
+    sector: Basic Materials
+    region: EU
+  SRT3.DE:
+    name: Sartorius Aktiengesellschaft
+    sector: Life Science Tools
+    region: EU
+  SHA.DE:
+    name: Schaeffler AG
+    sector: Industrial Machinery
+    region: EU
+  SAX.DE:
+    name: Ströer SE & Co. KGaA
+    sector: Media & Entertainment
+    region: EU
+  TEG.DE:
+    name: TAG Immobilien AG
+    sector: Real Estate
+    region: EU
+  TLX.DE:
+    name: Talanx AG
+    sector: Insurance
+    region: EU
+  8TRA.DE:
+    name: TRATON SE
+    sector: Automotive & EV
+    region: EU
+  TUI1.DE:
+    name: TUI AG
+    sector: Travel & Leisure
+    region: EU
+  UTDI.DE:
+    name: United Internet AG
+    sector: Telecom
+    region: EU
+  WCH.DE:
+    name: Wacker Chemie AG
+    sector: Basic Materials
+    region: EU
