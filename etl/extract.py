@@ -1384,3 +1384,88 @@ def extract_earnings_calendar(tickers: dict = None) -> pd.DataFrame:
     
     logger.info(f"✅ Earnings Calendar: {len(successful_tickers)} tickers successful.")
     return pd.DataFrame(records) if records else pd.DataFrame(columns=["ticker", "earnings_date", "eps_avg", "rev_avg"])
+
+
+def extract_earnings_history(tickers: dict = None) -> pd.DataFrame:
+    """
+    Fetch historical EPS Actual vs Estimate (Earnings Surprise) for the last 4 quarters.
+    Uses yahooquery's earning_history attribute.
+    Returns DataFrame with columns:
+        ticker, quarter_date, eps_actual, eps_estimate, eps_difference, surprise_pct, currency, period
+    """
+    if tickers is None:
+        tickers = get_equity_tickers()
+
+    if not tickers or not YQTicker:
+        return pd.DataFrame()
+
+    logger.info(f"📊 EARNINGS SURPRISE: Fetching history for {len(tickers)} equities...")
+    records = []
+    ticker_keys = [t for t in tickers.keys() if not t.startswith("^")]
+    successful_tickers = set()
+
+    def process_history(df_raw, ticker_symbol):
+        """Parse earning_history DataFrame for a single ticker."""
+        if not isinstance(df_raw, pd.DataFrame) or df_raw.empty:
+            return
+        df = df_raw.reset_index() if df_raw.index.name else df_raw.copy()
+        # filter to this ticker if multi-ticker df
+        if "symbol" in df.columns:
+            df = df[df["symbol"] == ticker_symbol]
+        for _, row in df.iterrows():
+            try:
+                quarter_date = pd.to_datetime(row.get("quarter")).date()
+            except Exception:
+                continue
+            records.append({
+                "ticker":         ticker_symbol,
+                "quarter_date":   quarter_date,
+                "eps_actual":     row.get("epsActual"),
+                "eps_estimate":   row.get("epsEstimate"),
+                "eps_difference": row.get("epsDifference"),
+                "surprise_pct":   row.get("surprisePercent"),
+                "currency":       row.get("currency", ""),
+                "period":         row.get("period", ""),
+                "_extracted_at":  datetime.now(),
+            })
+        successful_tickers.add(ticker_symbol)
+
+    # ── PASS 1: BATCH FETCH ────────────────────────────────────────────────────
+    import time, random
+    batch_size = 40
+    for i in range(0, len(ticker_keys), batch_size):
+        batch = ticker_keys[i:i + batch_size]
+        logger.info(f"   📅 Earnings history batch {i // batch_size + 1}/{(len(ticker_keys) // batch_size) + 1}...")
+        try:
+            yq = YQTicker(batch, asynchronous=True)
+            raw = yq.earning_history
+            if isinstance(raw, pd.DataFrame) and not raw.empty:
+                df = raw.reset_index() if "symbol" in raw.index.names else raw.copy()
+                for ticker in df["symbol"].unique() if "symbol" in df.columns else batch:
+                    process_history(df[df["symbol"] == ticker] if "symbol" in df.columns else df, ticker)
+        except Exception as e:
+            logger.warning(f"   ⚠️ Earnings history batch failed: {e}")
+        time.sleep(1.0 + random.random())
+
+    # ── PASS 2: SURGICAL RETRY for misses ─────────────────────────────────────
+    failed = [t for t in ticker_keys if t not in successful_tickers]
+    if failed:
+        logger.info(f"🔄 PASS 2: Retry earnings history for {len(failed)} tickers...")
+        for ticker in failed:
+            time.sleep(random.uniform(2, 4))
+            try:
+                yq = YQTicker(ticker, asynchronous=False)
+                raw = yq.earning_history
+                process_history(raw, ticker)
+                if ticker in successful_tickers:
+                    logger.info(f"   ✅ Recovered earnings history: {ticker}")
+            except Exception:
+                pass
+
+    logger.info(f"✅ Earnings Surprise: {len(successful_tickers)} tickers successful, {len(records)} quarter records.")
+    if not records:
+        return pd.DataFrame(columns=["ticker", "quarter_date", "eps_actual", "eps_estimate", "eps_difference", "surprise_pct", "currency", "period", "_extracted_at"])
+    df_out = pd.DataFrame(records)
+    df_out["quarter_date"] = pd.to_datetime(df_out["quarter_date"])
+    df_out = df_out.drop_duplicates(subset=["ticker", "quarter_date"], keep="last")
+    return df_out

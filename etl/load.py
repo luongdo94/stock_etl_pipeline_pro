@@ -194,6 +194,21 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
         )
     """)
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS raw.earnings_surprise (
+            ticker          VARCHAR NOT NULL,
+            quarter_date    DATE NOT NULL,
+            eps_actual      DOUBLE,
+            eps_estimate    DOUBLE,
+            eps_difference  DOUBLE,
+            surprise_pct    DOUBLE,
+            currency        VARCHAR,
+            period          VARCHAR,
+            _extracted_at   TIMESTAMP,
+            _loaded_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (ticker, quarter_date)
+        )
+    """)
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS raw.hist_fcf (
             ticker              VARCHAR NOT NULL,
             year                INTEGER NOT NULL,
@@ -265,6 +280,45 @@ def load_earnings_calendar(
     """)
     conn.unregister("df_tmp")
     logger.info(f"✅ Loaded {len(df)} earnings calendar records → raw.earnings_calendar")
+    return len(df)
+
+
+def load_earnings_surprise(
+    conn: duckdb.DuckDBPyConnection,
+    df: pd.DataFrame
+):
+    """Load EPS Actual vs Estimate history (upsert by ticker + quarter_date)."""
+    if df.empty:
+        logger.info("  ⚠️ No earnings surprise data to load — skipping")
+        return 0
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS raw.earnings_surprise (
+            ticker          VARCHAR NOT NULL,
+            quarter_date    DATE NOT NULL,
+            eps_actual      DOUBLE,
+            eps_estimate    DOUBLE,
+            eps_difference  DOUBLE,
+            surprise_pct    DOUBLE,
+            currency        VARCHAR,
+            period          VARCHAR,
+            _extracted_at   TIMESTAMP,
+            _loaded_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (ticker, quarter_date)
+        )
+    """)
+    conn.register("df_tmp", df)
+    conn.execute("""
+        INSERT OR REPLACE INTO raw.earnings_surprise
+            (ticker, quarter_date, eps_actual, eps_estimate, eps_difference, surprise_pct, currency, period, _extracted_at)
+        SELECT
+            ticker,
+            CAST(quarter_date AS DATE),
+            eps_actual, eps_estimate, eps_difference, surprise_pct,
+            currency, period, _extracted_at
+        FROM df_tmp
+    """)
+    conn.unregister("df_tmp")
+    logger.info(f"✅ Loaded {len(df)} earnings surprise records → raw.earnings_surprise ({df['ticker'].nunique()} tickers)")
     return len(df)
 
 

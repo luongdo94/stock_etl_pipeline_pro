@@ -243,18 +243,21 @@ def get_smart_recovery_targets(conn: duckdb.DuckDBPyConnection) -> dict:
     # Keep only eligible equity tickers in the fundamentals missing set
     missing_fundamentals = {k: v for k, v in missing_fundamentals.items() if k in equity_tickers}
 
-    # Proactive Gap Detection: Also target tickers that exist but have NULL fundamentals
-    # This repairs tickers like JNJ/DELL where summary was null but statements might be fetchable.
+    # Proactive Gap Detection: Only retry tickers that are completely empty
+    # (no revenue AND no eps at all). This prevents infinite retries for EU tickers
+    # where Yahoo Finance simply doesn't provide ROE or FCF (StockholdersEquity missing).
     q_gaps = """
-        SELECT ticker 
-        FROM marts.dim_companies 
-        WHERE quote_type = 'EQUITY'
-          AND (
-            (roe IS NULL) -- Always target missing ROE for any Equity
-            OR 
-            (free_cashflow IS NULL AND sector NOT IN ('Financials', 'Fintech', 'Financial Services', 'Real Estate'))
+        SELECT dc.ticker
+        FROM marts.dim_companies dc
+        WHERE dc.quote_type = 'EQUITY'
+          AND dc.ticker NOT LIKE '%.T'
+          AND dc.ticker NOT LIKE '%.HK'
+          -- Only target tickers with NO quarterly data at all (revenue AND eps both null)
+          AND NOT EXISTS (
+              SELECT 1 FROM raw.quarterly_financials qf
+              WHERE qf.ticker = dc.ticker
+                AND (qf.revenue IS NOT NULL OR qf.eps IS NOT NULL)
           )
-          AND ticker NOT LIKE '%.T' AND ticker NOT LIKE '%.HK'
     """
     try:
         gap_tickers = [r[0] for r in conn.execute(q_gaps).fetchall()]
@@ -264,7 +267,36 @@ def get_smart_recovery_targets(conn: duckdb.DuckDBPyConnection) -> dict:
         if gap_tickers:
             logger.info(f"   🔍 Smart Recovery identified {len(gap_tickers)} tickers with fundamental gaps (e.g., {gap_tickers[:3]})")
     except Exception as e:
-        logger.debug(f"Fundamental gap check skipped: {e}")
+        logger.debug(f"Earnings season check skipped: {e}")
+
+    # ── Earnings Season Smart Detection ───────────────────────────────────
+    # Only target tickers that:
+    #   1. Reported yesterday/today OR are reporting in the next 2 days (narrow window)
+    #   2. Do NOT yet have earnings_surprise data loaded AFTER their report date
+    #      (prevents re-fetching every day once we've already captured the result)
+    q_season = """
+        SELECT ec.ticker
+        FROM raw.earnings_calendar ec
+        WHERE ec.earnings_date BETWEEN (CURRENT_DATE - INTERVAL '1 days')
+                                   AND (CURRENT_DATE + INTERVAL '2 days')
+          -- Skip tickers where we already have fresh data captured after report date
+          AND NOT EXISTS (
+              SELECT 1 FROM raw.earnings_surprise es
+              WHERE es.ticker = ec.ticker
+                AND es._loaded_at >= ec.earnings_date
+          )
+    """
+    try:
+        season_tickers = [r[0] for r in conn.execute(q_season).fetchall()]
+        added_count = 0
+        for t in season_tickers:
+            if t in equity_tickers and t not in missing_fundamentals:
+                missing_fundamentals[t] = {}
+                added_count += 1
+        if added_count > 0:
+            logger.info(f"   📅 Earnings Season: Prioritizing {added_count} active reporters (e.g., {season_tickers[:3]})")
+    except Exception as e:
+        logger.debug(f"Earnings season check skipped: {e}")
 
     return {
         "metadata": missing_meta,

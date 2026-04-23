@@ -235,12 +235,13 @@ def _create_intermediate(conn):
             ROUND((close - week52_high) / week52_high * 100, 2) AS pct_from_52w_high,
             -- 🏆 EXPERT: Z-Score (Price distance from 5Y mean in standard deviations)
             ROUND((close - avg_5y) / NULLIF(std_dev_5y, 0), 2) AS price_z_score,
-            -- Golden/Death cross signal (MA50 vs MA200)
+            -- MA Trend Signal: Long-term trend (MA50 vs MA200) takes priority.
+            -- MA20 vs MA50 is used as a secondary signal only when the long-term trend is ambiguous.
             CASE
-                WHEN ma_50 > ma_200 THEN 'STRONG BULL'
-                WHEN ma_20 > ma_50 THEN 'BULLISH'
-                WHEN ma_20 < ma_50 THEN 'BEARISH'
-                WHEN ma_50 < ma_200 THEN 'STRONG BEAR'
+                WHEN ma_50 > ma_200 AND ma_20 > ma_50  THEN 'STRONG BULL'  -- Golden Cross + short-term confirmation
+                WHEN ma_50 > ma_200 AND ma_20 <= ma_50 THEN 'BULLISH'      -- Golden Cross but short-term pulling back
+                WHEN ma_50 < ma_200 AND ma_20 < ma_50  THEN 'STRONG BEAR'  -- Death Cross + short-term confirmation
+                WHEN ma_50 < ma_200 AND ma_20 >= ma_50 THEN 'BEARISH'      -- Death Cross but short-term recovering
                 ELSE 'NEUTRAL'
             END AS ma_signal,
             -- Volume spike
@@ -565,8 +566,8 @@ def _create_marts(conn):
             )
             SELECT
                 r.ticker,
-                ROUND(r.rev_qoq_recent - COALESCE(p.rev_qoq_prior, r.rev_qoq_recent), 2) AS fmi_rev_acceleration,
-                ROUND(r.eps_qoq_recent - COALESCE(p.eps_qoq_prior, r.eps_qoq_recent), 2) AS fmi_eps_acceleration,
+                ROUND(r.rev_qoq_recent - p.rev_qoq_prior, 2) AS fmi_rev_acceleration,
+                ROUND(r.eps_qoq_recent - p.eps_qoq_prior, 2) AS fmi_eps_acceleration,
                 ROUND(r.eps_yoy_recent - r.rev_yoy_recent, 2) AS fmi_margin_trend,
                 r.quarters_of_growth                          AS fmi_quarters_of_growth
             FROM recent_agg r

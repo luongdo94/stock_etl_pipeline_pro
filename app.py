@@ -90,44 +90,44 @@ Analyze the following stock data and produce a concise, professional investment 
 
 ## Stock Data: {ticker} ({company})
 - **Sector**: {sector}
-- **Current Price**: \u20ac{_fmt(price)}
+- **Current Price**: €{_fmt(price)}
 - **AI Quality Score**: {ai_score}/100
 - **Fundamental Momentum Index (FMI)**: {fmi_score}/100 ({fmi_label})
 - **Analyst Recommendation**: {action} | **Consensus**: {consensus}
-- **Analyst Price Target**: \u20ac{_fmt(target_p)} (Implied Upside: {_fmt(upside, 1)}%)
+- **Analyst Price Target**: €{_fmt(target_p)} (Implied Upside: {_fmt(upside, 1)}%)
 - **52-Week Position**: {_fmt(w52_pos, 0)}% of range
 
 ### Technical Indicators
 - **RSI (14)**: {_fmt(rsi, 1)} {rsi_note}
 - **MA Trend Signal**: {ma_signal}
-- **Price Z-Score**: {_fmt(z_score, 2)} (deviation from 60-day mean)
+- **Price Z-Score**: {_fmt(z_score, 2)}σ (deviation from 5-year historical mean; >+2=Historically expensive, <-2=Historically cheap)
 
 ### Valuation & Profitability
-- **P/E**: {_fmt(pe, 1)}x | **PEG**: {_fmt(peg, 2)} | **P/B**: {_fmt(pb, 2)}x
+- **Forward P/E**: {_fmt(metrics.get('forward_pe', pe), 1)}x | **Trailing P/E**: {_fmt(pe, 1)}x | **PEG**: {_fmt(peg, 2)} | **P/B**: {_fmt(pb, 2)}x
 - **ROE**: {_fmt(roe, 1, '%')} | **FCF Margin**: {_fmt(fcf, 1, '%')} | **Dividend Yield**: {_fmt(div_yield, 2, '%')}
 - **Beta**: {_fmt(beta, 2)} | **Market Regime**: {regime}
 
 ---
 Write a structured analysis with exactly these THREE sections:
 
-### 1. \U0001f3af Investment Verdict
+### 1. 🎯 Investment Verdict
 One clear paragraph (3-5 sentences). State the overall investment thesis, Buy/Hold/Sell, and primary driver.
 
-### 2. \U0001f4ca Technical & Fundamental Analysis
+### 2. 📊 Technical & Fundamental Analysis
 One paragraph (3-5 sentences). Analyze the interplay between technical signals and the fundamental picture. Highlight any divergence or confirmation.
 
-### 3. \u26a0\ufe0f Key Risks & Catalysts
+### 3. ⚠️ Key Risks & Catalysts
 - Risk 1: (specific, quantitative)
 - Risk 2: (specific, quantitative)
 - Catalyst 1: (specific, quantitative)
 - Catalyst 2: (specific, quantitative)
 
-Rules: English only. Be direct and decisive. Reference specific data points. Under 300 words."""
+Rules: English only. Be direct and decisive. Reference specific data points. Under 350 words."""
 
         response = co.chat(
             model="command-r-plus-08-2024",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=600,
+            max_tokens=700,
         )
         return response.message.content[0].text
 
@@ -223,28 +223,39 @@ def get_unified_verdict(api_key: str, metrics: dict, nlp_result: dict) -> str:
         else:
             alignment = "MIXED/NEUTRAL — Signals are mixed. Weigh both fundamental value and immediate news risks carefully."
 
+        # All prices in DB are already normalized to EUR
         prompt = f"""You are a Chief Investment Officer (CIO) at a top-tier hedge fund.
 You have received both QUANTITATIVE data and QUALITATIVE news intelligence for a stock.
 Your task: synthesize both and issue ONE definitive, actionable investment verdict.
 
 ## Stock: {ticker} ({company}) | Sector: {sector}
 
+### DECISION GUIDANCE (apply judgment, not mechanical rules)
+- Very weak fundamentals (AI Score < 35) + high news risk (Red Flag ≥ 60) → lean REDUCE/AVOID
+- Elevated sentiment risk (Red Flag ≥ 70) → exercise caution regardless of fundamentals
+- Statistically stretched price (Z-Score > +2.5) with mediocre fundamentals → avoid a BUY call
+- If News Red Flag ≥ 40 or Sentiment is Neutral/Negative, explicitly mention negative catalysts in the verdict
+
+---
+
 ### QUANTITATIVE (Fundamental & Technical)
 - AI Quality Score: {ai_score}/100
-- Price Z-Score: {z_score:+.2f}σ (deviation from 60-day mean; >+2=Overbought, <-2=Oversold)
+- Price Z-Score: {z_score:+.2f}σ (deviation from 5-year historical mean; >+2=Historically expensive, <-2=Historically cheap)
 - Price: €{_f(price)} | Analyst Target: €{_f(target_p)} | Implied Upside: {_f(upside, 1)}%
-- 52W Range: €{_f(low_52w)} – €{_f(high_52w)} | % from MA200: {pct_from_ma200}
+- 52W Range: €{_f(low_52w)} – €{_f(high_52w)} | % from MA200: {pct_from_ma200} | 52W Position: {_f(metrics.get('w52_pos','N/A'), 0)}%
 - Technical Levels: S1=€{_f(support_s1)} | S2=€{_f(support_s2)} | R1=€{_f(resistance_r1)} | R2=€{_f(resistance_r2)} | Stop=€{_f(stop_loss_tech)}
 - Moving Averages: MA20=€{_f(ma20_cur)} | MA50=€{_f(ma50_cur)}
-- RSI: {_f(rsi, 1)} | MA Signal: {ma_signal} | Smart Money: {smart_money} | P/E: {_f(pe, 1)}x | PEG: {_f(peg, 2)} | FCF: {_f(fcf, 1, '%')}
+- RSI: {_f(rsi, 1)} | MA Signal: {ma_signal} | Smart Money: {smart_money} | Forward P/E: {_f(metrics.get('forward_pe', pe), 1)}x | PEG: {_f(peg, 2)} | FCF: {_f(fcf, 1, '%')}
+- Debt/EBITDA: {_f(metrics.get('debt_ebitda', 'N/A'), 2)}x | Net Payout Yield: {_f(metrics.get('net_payout_yield_pct', 'N/A'), 2)}% 
+- Earnings Surprise (last 2Q): {metrics.get('earnings_surprise_summary', 'N/A')}
 - Market Regime: {regime}
 
-### MACRO ENVIRONMENT (Context)
-- VIX (Fear Index): {vix_current} (>25 indicates high panic, <15 indicates complacency)
-- SPY (S&P 500) Trend: {spy_str} (Relative broad market strength)
+### MACRO ENVIRONMENT
+- VIX (Fear Index): {vix_current} (>25 = high panic, <15 = complacency)
+- SPY (S&P 500) Trend: {spy_str}
 
 ### QUALITATIVE (News Intelligence — {nlp_headlines} sources analyzed)
-- News Red Flag Score: {nlp_score}/100 (NOTE: Any score >= 40 means MODERATE TO HIGH RISK. Do not call this 'low risk' or 'favorable'!)
+- News Red Flag Score: {nlp_score}/100
 - Sentiment: {nlp_sentiment} | Risk Category: {nlp_category}
 - NLP Recommendation: "{nlp_reco}"
 - Key News Signals: {'; '.join(nlp_insights[:3]) if nlp_insights else 'None'}
@@ -253,41 +264,32 @@ Your task: synthesize both and issue ONE definitive, actionable investment verdi
 {alignment}
 
 ---
-Write a unified analysis with these FIVE sections:
+Write a unified analysis with FIVE sections. Total length: under 550 words.
 
 ### 💼 CIO Verdict
-One decisive paragraph (3-4 sentences). What is your final call? Reference BOTH the quantitative and qualitative data.
-IMPORTANT: If the News Red Flag Score is >= 40 or Sentiment is Neutral/Negative, you MUST explicitly mention the negative catalysts (e.g., price drops, uncertainty) and how they impact the short-term outlook, regardless of how strong the fundamentals are.
+One decisive paragraph (3-4 sentences). Final call referencing BOTH quantitative and qualitative data.
 
 ### 💡 Signal Convergence Analysis
-One paragraph explaining the interplay between the news sentiment and the fundamental data.
-If signals DIVERGE, explain which side (news vs fundamentals) you trust more and why.
+One paragraph on the interplay between news sentiment and fundamentals. If diverging, state which side you trust more and why.
 
 ### 🎯 Actionable Recommendation
-State your recommendation — one of: **STRONG BUY / BUY / WATCH & ACCUMULATE / HOLD / REDUCE / AVOID**
-Include practical execution context where relevant (entry levels, targets, risk management). Use the technical data provided as reference — apply your own judgment, not mechanical formulas.
+State: **STRONG BUY / BUY / WATCH & ACCUMULATE / HOLD / REDUCE / AVOID**
+Include practical execution context (entry levels, targets, risk management) using the technical data.
 
-### 📊 3-Scenario Valuation Analysis
-Break down the investment thesis into three probabilistic scenarios. For each, provide a brief catalyst and an implied upside/downside target based on the data:
-- **🐻 Bear Case (20%):** [Catalyst] → Target Range
-- **📈 Base Case (60%):** [Catalyst] → Target Range
-- **🚀 Bull Case (20%):** [Catalyst] → Target Range
+### 📊 3-Scenario Valuation
+- **🐻 Bear Case (20%):** [Catalyst] → Target
+- **📈 Base Case (60%):** [Catalyst] → Target  
+- **🚀 Bull Case (20%):** [Catalyst] → Target
 
 ### ⚠️ Key Risks to Monitor
-3 concise bullet points covering the most material risks.
+3 concise bullet points on the most material risks.
 
-### 📊 Decision Guidance
-Consider these thresholds when forming your view (use your judgment, not hard rules):
-- Very weak fundamentals (AI Score < 35) with high news risk (Red Flag ≥ 60) → lean toward REDUCE or AVOID
-- Elevated sentiment risk (Red Flag ≥ 70) → exercise caution regardless of fundamentals
-- Statistically stretched price (Z-Score > +2.5) with mediocre fundamentals → avoid a BUY call
-
-Rules: English only. Be decisive and direct. Under 400 words total. Start the Actionable Recommendation label on its own line."""
+Rules: English only. Be decisive. Reference specific numbers. Start each section header on its own line."""
 
         response = co.chat(
             model="command-r-plus-08-2024",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=900,
+            max_tokens=1000,
         )
         return response.message.content[0].text
 
@@ -1267,6 +1269,15 @@ def load_data():
         except Exception:
             hist_fcf_q_f = pd.DataFrame()
 
+        try:
+            earnings_surprise_f = conn.execute(
+                "SELECT ticker, quarter_date, eps_actual, eps_estimate, eps_difference, surprise_pct, currency, period FROM raw.earnings_surprise ORDER BY ticker, quarter_date"
+            ).df()
+            if not earnings_surprise_f.empty:
+                earnings_surprise_f["quarter_date"] = pd.to_datetime(earnings_surprise_f["quarter_date"])
+        except Exception:
+            earnings_surprise_f = pd.DataFrame(columns=["ticker", "quarter_date", "eps_actual", "eps_estimate", "eps_difference", "surprise_pct", "currency", "period"])
+
         # ── Pipeline Health Data ──
         try:
             audit_db = str(Path(ROOT) / "warehouse" / "etl_audit.duckdb")
@@ -1295,8 +1306,8 @@ def load_data():
 
 
     return (
-        prices_f, companies_f, monthly_f, annual_f, quarterly_f, earnings_calendar, 
-        dq_warnings_f, hist_fcf_f, hist_fcf_q_f, etl_audit_f, total_tickers_f
+        prices_f, companies_f, monthly_f, annual_f, quarterly_f, earnings_calendar,
+        dq_warnings_f, hist_fcf_f, hist_fcf_q_f, etl_audit_f, total_tickers_f, earnings_surprise_f
     )
 
 
@@ -1304,31 +1315,45 @@ def load_data():
 @st.cache_data(ttl=3600)
 def get_sm_spirit_unified_v2(df_raw: "pd.DataFrame") -> str:
     """
-    Standardized Institutional Flow Engine (v2.0 - Cache Busted).
-    Ensures identical results across tabs by cleaning data before calculation.
-    """
-    if df_raw is None or df_raw.empty or len(df_raw) < 20:
-        return "NEUTRAL"
+    Standardized Institutional Flow Engine (v3.0).
     
-    # 1. Standardize: Take only necessary columns, sort by date
-    # CRITICAL: Use only the last 126 trading days (approx 6 months) for the OBV baseline.
-    # This ensures % changes (ROC) remain sensitive to recent volume spikes and prevents "Large Number Bias".
+    Method: OBV vs MA(21) — industry standard for institutional flow detection.
+    - ACCUMULATION: OBV is above its 21-day MA (institutions buying net)
+    - DISTRIBUTION: OBV is below its 21-day MA (institutions selling net)
+    
+    Uses last 126 trading days (~6 months) to avoid large-number bias in cumsum.
+    """
+    if df_raw is None or df_raw.empty or len(df_raw) < 30:
+        return "NEUTRAL"
+
+    # 1. Standardize: sort, deduplicate, take last 126 trading days
     df = df_raw[['date', 'price_close', 'volume']].copy()
     df = df.sort_values("date").drop_duplicates("date").tail(126).reset_index(drop=True)
-    
-    # 2. Fill missing volume or price to prevent NaN propagation in cumsum
+
+    # 2. Fill gaps
     df['price_close'] = df['price_close'].ffill().fillna(0)
     df['volume']      = df['volume'].fillna(0)
-    
-    # 3. Core Logic: OBV ROC
-    _raw_obv = (np.sign(df['price_close'].diff().fillna(0)) * df['volume']).cumsum()
-    _obv_roc = _raw_obv.pct_change(5).replace([np.inf, -np.inf], 0).fillna(0)
-    
-    # 4. Momentum Comparison
-    obv_short = _obv_roc.tail(5).mean()
-    obv_long  = _obv_roc.tail(20).mean()
-    
-    return ("Accumulation" if obv_short > obv_long else "Distribution").upper()
+
+    # 3. Compute OBV (Granville standard)
+    obv = (np.sign(df['price_close'].diff().fillna(0)) * df['volume']).cumsum()
+
+    # 4. OBV vs its 21-day simple moving average
+    obv_ma21 = obv.rolling(21).mean()
+
+    # 5. Signal: current OBV vs its MA
+    #    Require the last 5 days to consistently be above/below MA to avoid whipsaws
+    recent_obv    = obv.tail(5)
+    recent_obv_ma = obv_ma21.tail(5)
+
+    above_count = (recent_obv > recent_obv_ma).sum()
+    below_count = (recent_obv < recent_obv_ma).sum()
+
+    if above_count >= 3:
+        return "ACCUMULATION"
+    elif below_count >= 3:
+        return "DISTRIBUTION"
+    else:
+        return "NEUTRAL"
 
 
 def compute_institutional_rating(
@@ -1355,14 +1380,19 @@ def compute_institutional_rating(
             p_trend_c, p_qual_c, p_val_c, p_risk_c, p_conv_c  (str)
     """
     # ── PILLAR 1: TECHNICAL TREND ──────────────────────────────────────────
-    if ma_sig == "BULLISH" and latest_rsi < 65:
-        p_trend_c = "#2ecc71"
-    elif ma_sig == "BULLISH" and latest_rsi >= 65:
-        p_trend_c = "#f1c40f"   # Extended / overbought in uptrend
-    elif ma_sig == "BEARISH" and latest_rsi <= 35:
-        p_trend_c = "#f1c40f"   # Oversold in downtrend — caution
+    _ma_upper = ma_sig.upper() if ma_sig else ""
+    if _ma_upper == "STRONG BULL" and latest_rsi < 70:
+        p_trend_c = "#00ffcc"            # Golden Cross + RSI not overbought → strongest signal
+    elif _ma_upper in ("STRONG BULL", "BULLISH") and latest_rsi < 65:
+        p_trend_c = "#2ecc71"            # Bullish trend, healthy RSI
+    elif _ma_upper in ("STRONG BULL", "BULLISH") and latest_rsi >= 65:
+        p_trend_c = "#f1c40f"            # Bullish but extended / overbought
+    elif _ma_upper in ("BEARISH", "STRONG BEAR") and latest_rsi <= 35:
+        p_trend_c = "#f1c40f"            # Death Cross but oversold — potential reversal caution
+    elif _ma_upper == "STRONG BEAR":
+        p_trend_c = "#c0392b"            # Death Cross confirmed — dark red
     else:
-        p_trend_c = "#e74c3c"
+        p_trend_c = "#e74c3c"            # BEARISH or NEUTRAL
 
     # ── PILLAR 2: QUALITY ────────────────────────────────────────────────
     if ai_score >= 70:   p_qual_c = "#00ffcc"
@@ -1453,21 +1483,19 @@ def compute_institutional_rating(
     }
 
 
-def get_tactical_metrics(ticker_prices: "pd.DataFrame", cur_p: float) -> dict:
+def get_tactical_metrics(ticker_prices: "pd.DataFrame", cur_p: float, analyst_target: float = 0.0) -> dict:
     """
     Single source of truth for all short/mid-term tactical indicators.
     Called identically by the Screener, Deep Dive, and any future tab.
 
+    Parameters:
+        analyst_target: Analyst consensus mean target price. When > cur_p meaningfully,
+                        used as rr_score target instead of 20-day technical high.
+
     Returns a dict containing:
-        rsi        — RSI-14 (float, from warehouse-vectorised column if available)
-        s1         — 20-day support (lowest low)
-        r1         — 20-day resistance (highest high)
-        stop_loss  — s1 * 0.96
-        tp1        — r1 * 1.05  (5% extension above resistance)
-        rr         — reward-to-risk ratio
-        w52_pos    — position within 52-week range [0-100]
+        rsi, s1, r1, stop_loss, tp1, rr, rr_score, w52_pos
     """
-    # RSI — prefer the warehouse-computed column; fall back to local calc
+    # RSI
     if "rsi" in ticker_prices.columns and ticker_prices["rsi"].notna().any():
         rsi_val = float(ticker_prices["rsi"].iloc[-1])
     else:
@@ -1481,16 +1509,20 @@ def get_tactical_metrics(ticker_prices: "pd.DataFrame", cur_p: float) -> dict:
     s1 = float(ticker_prices["price_low"].tail(20).min())
     r1 = float(ticker_prices["price_high"].tail(20).max())
 
-    # Derived levels (identical formula everywhere)
+    # Derived levels
     stop_loss = s1 * 0.96
-    tp1       = r1 * 1.05          # 5% extension above 20-day high
+    tp1       = r1 * 1.05
 
-    # Risk/Reward — two variants:
-    #   rr_score: uses raw r1 as target (no extension) → feeds rating engine
-    #   rr:       uses tp1 = r1*1.05 → display only in Deep Dive trading plan
-    risk_dist     = cur_p - stop_loss
-    rr_score_dist = r1  - cur_p
-    rr_disp_dist  = tp1 - cur_p
+    # Risk/Reward
+    risk_dist    = cur_p - stop_loss
+    rr_disp_dist = tp1 - cur_p     # display: always uses tp1 (technical)
+
+    # rr_score: prefer analyst target when it is meaningfully above current price
+    if analyst_target > cur_p * 1.01:
+        rr_score_dist = analyst_target - cur_p
+    else:
+        rr_score_dist = r1 - cur_p  # fallback: 20-day technical high
+
     rr_score = (rr_score_dist / risk_dist) if risk_dist > 0 else 0.0
     rr       = (rr_disp_dist  / risk_dist) if risk_dist > 0 else 0.0
 
@@ -1602,11 +1634,16 @@ def get_master_screener_data(_companies_df, _prices_df, _quarterly_fin, _annual_
         
         # ── Unified 5-Pillar Rating (delegates to compute_institutional_rating) ──
         ma_sig = str(latest_p.get('ma_signal', 'NEUTRAL'))
-        pe_v   = float(score_input.get('pe_ratio')  or 0)
+        # Forward PE preferred over trailing for valuation (forward-looking)
+        pe_v   = float(score_input.get('forward_pe') or score_input.get('pe_ratio') or 0)
         peg_v  = float(score_input.get('peg_ratio') or 0)
 
         # Use shared tactical metrics (same formula as Deep Dive)
-        _tm = get_tactical_metrics(ticker_prices, cur_p)
+        _tm = get_tactical_metrics(
+            ticker_prices,
+            cur_p,
+            analyst_target=float(row.get('target_mean_price') or 0)
+        )
 
         # Smart Money Spirit (Unified)
         sm_spirit = get_sm_spirit_unified_v2(ticker_prices)
@@ -1781,7 +1818,7 @@ def render_sector_health_matrix(m_df: pd.DataFrame):
 
 
 # Primary Data Load (Cached)
-prices_full, companies_full, monthly_full, annual_fin, quarterly_fin, earnings_cal, dq_warnings, hist_fcf_full, hist_fcf_q_full, etl_audit, total_universe_size = load_data()
+prices_full, companies_full, monthly_full, annual_fin, quarterly_fin, earnings_cal, dq_warnings, hist_fcf_full, hist_fcf_q_full, etl_audit, total_universe_size, earnings_surprise_full = load_data()
 m_df = get_master_screener_data(companies_full, prices_full, quarterly_fin, annual_fin)
 
 
@@ -2848,7 +2885,7 @@ if active_tab == "3. Qualitative Audit (AI)":
             st.markdown("<div style='margin-top:10px; padding:6px 12px; background:rgba(255,255,255,0.03); border-left:4px solid #3498db; color:#3498db; font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:1.5px;'>LAYER 1: STRUCTURAL CONTEXT</div>", unsafe_allow_html=True)
             # ── TRADING CONTEXT (TOP of page) — 52-Week Range & Strategic Plan ─
             # All tactical values computed by the shared helper (identical formula to Screener)
-            _tm        = get_tactical_metrics(df_deep, cur_p)
+            _tm        = get_tactical_metrics(df_deep, cur_p, analyst_target=target_p)
             _s1        = _tm["s1"]
             _r1        = _tm["r1"]
             _s2        = float(df_deep["price_low"].tail(50).min())
@@ -2968,7 +3005,7 @@ if active_tab == "3. Qualitative Audit (AI)":
                 ma_sig     = _ma_sig,
                 latest_rsi = _rsi_val,
                 upside     = float(upside),
-                pe_v       = float(meta_enriched.get("pe_ratio")  or 0),
+                pe_v       = float(meta_enriched.get("forward_pe") or meta_enriched.get("pe_ratio") or 0),
                 peg_v      = float(meta_enriched.get("peg_ratio") or 0),
                 sector     = str(meta.get("sector", "")),
                 w52_pos    = _w52_pos,
@@ -3137,6 +3174,33 @@ if active_tab == "3. Qualitative Audit (AI)":
                                 quarterly_fin[quarterly_fin["ticker"] == deep_ticker] if not quarterly_fin.empty else pd.DataFrame(),
                                 df_fin
                             )
+                            # --- Earnings Surprise Summary (last 2 quarters) ---
+                            _es_for_llm = "N/A"
+                            if not earnings_surprise_full.empty:
+                                _es_tmp = earnings_surprise_full[
+                                    earnings_surprise_full["ticker"] == deep_ticker
+                                ].sort_values("quarter_date", ascending=False).head(2)
+                                if not _es_tmp.empty:
+                                    _es_parts = []
+                                    for _, _er in _es_tmp.iterrows():
+                                        _act = _er.get("eps_actual", None)
+                                        _est = _er.get("eps_estimate", None)
+                                        _pct = _er.get("surprise_pct", None)
+                                        _pd  = str(_er.get("quarter_date", ""))[:7]
+                                        if _act is not None and _est is not None:
+                                            _beat = "BEAT" if (_act > _est) else "MISS"
+                                            _es_parts.append(f"{_pd}: {_beat} ({'+' if _pct and _pct > 0 else ''}{round(_pct, 1) if _pct else 'N/A'}%)")
+                                    _es_for_llm = " | ".join(_es_parts) if _es_parts else "N/A"
+
+                            _debt_ebitda_for_llm = "N/A"
+                            try:
+                                _ebitda_v = float(meta.get("ebitda") or 0)
+                                _debt_v   = float(meta.get("total_debt") or 0)
+                                if _ebitda_v > 0:
+                                    _debt_ebitda_for_llm = round(_debt_v / _ebitda_v, 2)
+                            except Exception:
+                                pass
+
                             _unified_metrics = {
                                 **meta_enriched,
                                 "ticker":        deep_ticker,
@@ -3155,8 +3219,14 @@ if active_tab == "3. Qualitative Audit (AI)":
                                 "stop_loss_technical": round(_stop_loss, 2),
                                 "ma_20_current": round(float(df_deep["ma_20"].iloc[-1]), 2) if "ma_20" in df_deep.columns and not df_deep["ma_20"].isna().all() else "N/A",
                                 "ma_50_current": round(float(df_deep["ma_50"].iloc[-1]), 2) if "ma_50" in df_deep.columns and not df_deep["ma_50"].isna().all() else "N/A",
-                                "vix_current": macro.get("VIX", {}).get("val", "N/A") if 'macro' in locals() else "N/A",
-                                "spy_trend": macro.get("SPY", {}).get("pct", 0) if 'macro' in locals() else 0,
+                                "vix_current":   macro.get("VIX", {}).get("val", "N/A") if 'macro' in locals() else "N/A",
+                                "spy_trend":     macro.get("SPY", {}).get("pct", 0) if 'macro' in locals() else 0,
+                                # --- Enrichments ---
+                                "forward_pe":           float(meta.get("forward_pe") or 0) or "N/A",
+                                "debt_ebitda":          _debt_ebitda_for_llm,
+                                "earnings_surprise_summary": _es_for_llm,
+                                "net_payout_yield_pct": float(meta.get("net_payout_yield_pct") or 0) or "N/A",
+                                "w52_pos":              round(_w52_pos, 1),
                             }
                             with st.spinner("Synthesizing CIO Unified Verdict..."):
                                 _unified_report = get_unified_verdict(_cohere_key_ra, _unified_metrics, llm_res)
@@ -3499,23 +3569,22 @@ if active_tab == "3. Qualitative Audit (AI)":
                     bb_yield   = meta.get('buyback_yield_pct', 0)
                     render_metric_row("Net Payout",   f"{net_payout:.2f}%", delta=f"BB: {bb_yield:.1f}%")
                     
-                    roe_raw = meta.get('roe', 0) * 100
+                    roe_raw = float(meta.get('roe') or 0) * 100
                     roe_col = "#2ecc71" if roe_raw >= 15 else ("#e74c3c" if roe_raw < 5 else None)
                     render_metric_row("ROE", f"{roe_raw:.1f}%", value_color=roe_col, help_text="🟢 > 15% (Strong Profitability) | 🔴 < 5% (Poor)")
                     
-                    gm_val = meta.get('gross_margin', 0) * 100
+                    gm_val = float(meta.get('gross_margin') or 0) * 100
                     gm_col = "#2ecc71" if gm_val >= 40 else ("#e74c3c" if gm_val < 10 else None)
                     render_metric_row("Gross Margin", f"{gm_val:.1f}%", value_color=gm_col, help_text="🟢 > 40% (Wide Moat) | 🔴 < 10% (Thin Margin)")
                     
-                    op_margin = meta.get('operating_margin', 0)
-                    op_val = op_margin*100 if pd.notnull(op_margin) else 0
+                    op_val = float(meta.get('operating_margin') or 0) * 100
                     op_col = "#2ecc71" if op_val >= 15 else ("#e74c3c" if op_val < 5 else None)
                     render_metric_row("Op Margin", f"{op_val:.1f}%", value_color=op_col)
                     
-                    fcf_m = meta.get('fcf_margin', 0)
+                    fcf_m = float(meta.get('fcf_margin') or 0)
                     render_metric_row("FCF Margin", f"{fcf_m:.1f}%", value_color="#2ecc71" if fcf_m > 15 else None)
                     
-                    rev_growth = meta.get('revenue_growth', 0) * 100
+                    rev_growth = float(meta.get('revenue_growth') or 0) * 100
                     rev_col = "#2ecc71" if rev_growth > 20 else ("#e74c3c" if rev_growth < 0 else None)
                     render_metric_row("Rev Growth", f"{rev_growth:.1f}%", value_color=rev_col)
                     st.markdown("</div>", unsafe_allow_html=True)
@@ -3902,6 +3971,18 @@ if active_tab == "3. Qualitative Audit (AI)":
                         scale_q = 1e9 if max_val_q >= 1e9 else 1e6
                         unit_q = "B" if scale_q == 1e9 else "M"
                         
+                        # ── Merge Earnings Surprise (Actual vs Estimate) ───────────
+                        if not earnings_surprise_full.empty:
+                            _es_q = earnings_surprise_full[earnings_surprise_full["ticker"] == deep_ticker].copy()
+                            if not _es_q.empty:
+                                # Create join keys
+                                _es_q["year"] = _es_q["quarter_date"].dt.year
+                                _es_q["quarter"] = _es_q["quarter_date"].dt.quarter
+                                df_fin_q_plot = df_fin_q_plot.merge(
+                                    _es_q[["year", "quarter", "eps_estimate", "surprise_pct"]],
+                                    on=["year", "quarter"], how="left"
+                                )
+
                         fig_fin_q = make_subplots(specs=[[{"secondary_y": True}]])
                         
                         rev_text_q = [f"{v:+.1f}%" if pd.notnull(v) else "" for v in df_fin_q_plot['rev_growth']]
@@ -3939,19 +4020,36 @@ if active_tab == "3. Qualitative Audit (AI)":
                                 secondary_y=False
                             )
                         
+                        # EPS ACTUAL (Line)
                         fig_fin_q.add_trace(
                             go.Scatter(
                                 x=x_labels, 
                                 y=df_fin_q_plot['eps'], 
-                                name="EPS (€)", 
+                                name="Actual EPS (€)", 
                                 line=dict(color="orange", width=3), 
-                                mode="lines+markers+text",
+                                mode="lines+markers",
+                                hovertemplate="<b>Quarter: %{x}</b><br>Actual EPS: €%{y:.2f}<br>QoQ Growth: %{text}<extra></extra>",
                                 text=eps_text_q,
-                                textposition="top center",
-                                hovertemplate="<b>Quarter: %{x}</b><br>EPS: €%{y:.2f}<br>QoQ Growth: %{text}<extra></extra>"
                             ),
                             secondary_y=True
                         )
+
+                        # EPS ESTIMATE (Dashed Line)
+                        if "eps_estimate" in df_fin_q_plot.columns and df_fin_q_plot["eps_estimate"].notna().any():
+                            # Create surprise labels for hover
+                            surprise_text = [f"{v*100:+.1f}% Surprise" if pd.notnull(v) else "No Est." for v in df_fin_q_plot.get('surprise_pct', [])]
+                            fig_fin_q.add_trace(
+                                go.Scatter(
+                                    x=x_labels, 
+                                    y=df_fin_q_plot['eps_estimate'], 
+                                    name="EPS Estimate (€)", 
+                                    line=dict(color="rgba(189, 195, 199, 0.8)", width=2, dash="dash"), 
+                                    mode="lines+markers",
+                                    hovertemplate="<b>Quarter: %{x}</b><br>Estimated EPS: €%{y:.2f}<br>Result: %{text}<extra></extra>",
+                                    text=surprise_text,
+                                ),
+                                secondary_y=True
+                            )
                         
                         fig_fin_q.update_layout(
                             template="plotly_dark", height=500,
@@ -3973,6 +4071,8 @@ if active_tab == "3. Qualitative Audit (AI)":
                 else:
                     st.info("Quarterly financials warehouse table is empty. Please run the ETL pipeline.")
             
+
+
             # ── DCF INTRINSIC VALUATION MODEL ───────────────────────────────
             st.markdown("---")
             render_header("gem", "Discounted Cash Flow (DCF) Intrinsic Valuation")
