@@ -38,7 +38,7 @@ from plotly.subplots import make_subplots
 import numpy as np
 import yfinance as yf
 from etl.llm_parser import analyze_risk_with_llm
-from etl.utils import compute_score, compute_fmi_live
+from etl.utils import compute_score
 
 
 # ── COHERE AI INTELLIGENCE ENGINE ───────────────────────────────────────────
@@ -60,8 +60,6 @@ def get_cohere_insight(api_key: str, metrics: dict) -> str:
         company   = metrics.get("company", ticker)
         sector    = metrics.get("sector", "N/A")
         ai_score  = metrics.get("ai_score", "N/A")
-        fmi_score = metrics.get("fmi_score", "N/A")
-        fmi_label = metrics.get("fmi_label", "N/A")
         action    = metrics.get("action", "N/A")
         price     = metrics.get("price", "N/A")
         upside    = metrics.get("upside_pct", 0)
@@ -92,7 +90,6 @@ Analyze the following stock data and produce a concise, professional investment 
 - **Sector**: {sector}
 - **Current Price**: €{_fmt(price)}
 - **AI Quality Score**: {ai_score}/100
-- **Fundamental Momentum Index (FMI)**: {fmi_score}/100 ({fmi_label})
 - **Analyst Recommendation**: {action} | **Consensus**: {consensus}
 - **Analyst Price Target**: €{_fmt(target_p)} (Implied Upside: {_fmt(upside, 1)}%)
 - **52-Week Position**: {_fmt(w52_pos, 0)}% of range
@@ -1625,13 +1622,6 @@ def get_master_screener_data(_companies_df, _prices_df, _quarterly_fin, _annual_
 
         ai_score  = compute_score(score_input)
         
-        # 🚀 OPTIMIZATION: Compute FMI instantly using pre-calculated DuckDB variables 
-        # instead of dataframe filtering which causes heavy CPU load in loops.
-        from etl.utils import compute_fmi_details
-        _fmi_res  = compute_fmi_details(row.to_dict())
-        fmi_score = _fmi_res["total"]
-        fmi_lbl   = _fmi_res["label"]
-        
         # ── Unified 5-Pillar Rating (delegates to compute_institutional_rating) ──
         ma_sig = str(latest_p.get('ma_signal', 'NEUTRAL'))
         # Forward PE preferred over trailing for valuation (forward-looking)
@@ -1713,8 +1703,6 @@ def get_master_screener_data(_companies_df, _prices_df, _quarterly_fin, _annual_
             "Vol 30D (%)": round(vol_30d, 1) if vol_30d else 0,
             "Short %": round(short_pct, 1),
             "Trend": latest_p.get('ma_signal', 'NEUTRAL'),
-            "FMI": fmi_score,
-            "FMI Label": fmi_lbl,
             "Region": row['region'],
             "EPS Momentum": _eps_mom_lookup.get(ticker, 'Neutral'),
             "Rev Momentum": _rev_mom_lookup.get(ticker, 'Neutral'),
@@ -2102,7 +2090,7 @@ losers = movers.sort_values('chg_24h', ascending=True).head(5)
 
 # 2. Quant Intelligence Engine (Scores)
 # Import the canonical scoring engine from etl.utils (single source of truth)
-from etl.utils import compute_score, compute_score_details, get_macro_regime, apply_macro_adjustment, compute_fmi_score, compute_fmi_details, get_fmi_label, compute_fmi_live
+from etl.utils import compute_score, compute_score_details, get_macro_regime, apply_macro_adjustment
 
 latest_prices_reco = prices_full.sort_values('date').groupby('ticker').tail(1).copy()
 # Note: fct_daily_returns has no 'rsi' column — only merge columns that exist
@@ -3170,10 +3158,7 @@ if active_tab == "3. Qualitative Audit (AI)":
                             or st.session_state.get("cohere_api_key", "")
                         )
                         if _cohere_key_ra:
-                            _fmi_data_ra = compute_fmi_live(
-                                quarterly_fin[quarterly_fin["ticker"] == deep_ticker] if not quarterly_fin.empty else pd.DataFrame(),
-                                df_fin
-                            )
+
                             # --- Earnings Surprise Summary (last 2 quarters) ---
                             _es_for_llm = "N/A"
                             if not earnings_surprise_full.empty:
@@ -3207,8 +3192,7 @@ if active_tab == "3. Qualitative Audit (AI)":
                                 "company":       meta.get("company", deep_ticker),
                                 "sector":        meta.get("sector", "N/A"),
                                 "ai_score":      ai_score,
-                                "fmi_score":     _fmi_data_ra.get("total", "N/A"),
-                                "fmi_label":     _fmi_data_ra.get("label", "N/A"),
+
                                 "price":         cur_p,
                                 "market_regime": regime,
                                 "smart_money":   p_sm,
@@ -3408,7 +3392,6 @@ if active_tab == "3. Qualitative Audit (AI)":
 
 
             with quant_col:
-                tab_q, tab_m = st.tabs(["Quality Breakdown", "Momentum (FMI)"])
                 
                 # Build radar from score_details
                 _radar_sd = compute_score_details(meta_enriched)
@@ -3469,7 +3452,7 @@ if active_tab == "3. Qualitative Audit (AI)":
                     margin=dict(t=20, b=10, l=40, r=40),
                     paper_bgcolor="rgba(0,0,0,0)"
                 )
-                with tab_q:
+                with st.container():
                     st.plotly_chart(fig_radar, use_container_width=True)
                     
                     # Score summary under radar
@@ -3480,47 +3463,7 @@ if active_tab == "3. Qualitative Audit (AI)":
                     
                     """, unsafe_allow_html=True)
 
-                # ── FMI Panel (below radar) ────────────────────────────────────
-                with tab_m:
-                    # Compute FMI live from quarterly data (no ETL re-run needed)
-                    _qtrs = quarterly_fin[quarterly_fin["ticker"] == deep_ticker] if not quarterly_fin.empty else pd.DataFrame()
-                    _anns = annual_fin[annual_fin["ticker"] == deep_ticker] if not annual_fin.empty else pd.DataFrame()
-                    _fmi_data = compute_fmi_live(_qtrs, _anns)
-                    _fmi_total = _fmi_data["total"]
-                    _fmi_label = _fmi_data["label"]
-                    _fmi_components = _fmi_data["components"]
-                    _fmi_color = (
-                        "#2ecc71" if _fmi_total >= 75 else
-                        "#00ffcc" if _fmi_total >= 55 else
-                        "#f39c12" if _fmi_total >= 40 else
-                        "#e74c3c"
-                    )
-                    _fmi_bars = ""
-                    _fmi_maxes = {"Revenue Acceleration": 30, "EPS Acceleration": 30, "Margin Expansion": 25, "Earnings Consistency": 15}
-                    for comp_name, comp_val in _fmi_components.items():
-                        max_pts = _fmi_maxes.get(comp_name, 30)
-                        pct = min(100, int((comp_val / max_pts) * 100))
-                        _fmi_bars += (
-                            f"<div style='margin-bottom:5px;'>"
-                            f"<div style='display:flex;justify-content:space-between;font-size:0.65rem;color:#aaa;margin-bottom:2px;'>"
-                            f"<span>{comp_name}</span><span style='color:#fff;'>{comp_val}/{max_pts}</span>"
-                            f"</div>"
-                            f"<div style='background:rgba(255,255,255,0.07);border-radius:3px;height:5px;'>"
-                            f"<div style='background:{_fmi_color};width:{pct}%;height:5px;border-radius:3px;'></div>"
-                            f"</div></div>"
-                        )
-                    _fmi_html = (
-                        "<div style='margin-top:10px;padding:10px;background:rgba(255,255,255,0.03);"
-                        "border:1px solid rgba(255,255,255,0.07);border-radius:8px;'>"
-                        "<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;'>"
-                        "<span style='font-size:0.72rem;font-weight:700;color:#8899aa;text-transform:uppercase;letter-spacing:1px;'>Fundamental Momentum Index</span>"
-                        f"<span style='font-size:0.95rem;font-weight:900;color:{_fmi_color};'>{_fmi_total}/100"
-                        f"&nbsp;<span style='font-size:0.7rem;font-weight:500;color:{_fmi_color};'>{_fmi_label}</span>"
-                        "</span></div>"
-                        + _fmi_bars +
-                        "</div>"
-                    )
-                    st.markdown(_fmi_html, unsafe_allow_html=True)
+
 
             st.markdown("---")
             st.markdown("<div style='margin-top:35px; margin-bottom:15px; padding:6px 12px; background:rgba(255,255,255,0.03); border-left:4px solid #e74c3c; color:#e74c3c; font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:1.5px;'>LAYER 4: DEEP DIAGNOSTICS & RAW DATA</div>", unsafe_allow_html=True)
@@ -5991,26 +5934,23 @@ if active_tab == "2. Opportunity Radar":
         with rcol2:
             max_pe = st.slider("Max Forward P/E", 0, 100, 100)
             min_upside = st.slider("Min Analyst Upside (%)", -50, 100, -50)
-        with rcol3:
-            min_fmi = st.slider("Min FMI Score", 0, 100, 0,
-                                help="Fundamental Momentum Index (0-100). Higher = stronger earnings/revenue acceleration.")
+
 
     f_df = f_df[
         (f_df["Quality"] >= min_score) &
         (f_df["RSI (14)"].between(rsi_range[0], rsi_range[1])) &
         (f_df["P/E (Fwd)"] <= max_pe) &
-        (f_df["Upside (%)"] >= min_upside) &
-        (f_df["FMI"] >= min_fmi)
+        (f_df["Upside (%)"] >= min_upside)
     ]
 
     # ── Display Results ───────────────────────────────────────────────────────
-    display_cols = ["Ticker", "Company", "Sector", "Action", "Quality", "FMI",
+    display_cols = ["Ticker", "Company", "Sector", "Action", "Quality",
                     "Upside (%)", "MCap (B)", "RSI (14)", "Z-Score",
                     "vs MA200 (%)", "P/E (Fwd)", "EV/EBITDA", "PEG", "FCF Margin (%)",
                     "ROE (%)", "Yield (%)", "Net Payout (%)", "Debt/EBITDA"]
-    display_df = f_df.sort_values(["Quality", "FMI"], ascending=False)[display_cols]
+    display_df = f_df.sort_values(["Quality"], ascending=False)[display_cols]
 
-    st.markdown(f"**Found {len(display_df)} active opportunities** — Sorted by Quality + FMI")
+    st.markdown(f"**Found {len(display_df)} active opportunities** — Sorted by Quality")
     
     # ── PAGINATION / LIMIT LOGIC ──────────────────────────────────────────────
     if 'radar_limit' not in st.session_state:
@@ -6023,7 +5963,6 @@ if active_tab == "2. Opportunity Radar":
         height=520,
         column_config={
             "Quality":         st.column_config.ProgressColumn("Quality Score", min_value=0, max_value=100, format="%d"),
-            "FMI":             st.column_config.ProgressColumn("FMI Score", min_value=0, max_value=100, format="%d"),
             "Upside (%)": st.column_config.NumberColumn("Upside %", format="%+.1f%%"),
             "Debt/EBITDA":     st.column_config.NumberColumn("Debt/EBITDA", format="%.2f"),
         }

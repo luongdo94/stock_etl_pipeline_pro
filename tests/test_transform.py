@@ -115,29 +115,6 @@ class TestTransformIntermediate:
         assert rsi == 100
 
 class TestTransformMarts:
-    def test_fmi_acceleration_logic(self, conn):
-        """Verify that FMI correctly detects revenue/EPS acceleration."""
-        dates = [f"202{i}-01-01" for i in range(1, 9)]
-        df = pd.DataFrame({
-            'ticker': ['AAPL'] * 8,
-            'date': pd.to_datetime(dates),
-            'revenue': [100, 110, 125, 145, 170, 205, 250, 310],
-            'eps': [1, 1.1, 1.3, 1.6, 2.0, 2.6, 3.4, 4.5],
-            'eps_diluted': [1, 1.1, 1.3, 1.6, 2.0, 2.6, 3.4, 4.5]
-        })
-        conn.register("df_q", df)
-        conn.execute("INSERT INTO raw.quarterly_financials (ticker, date, revenue, eps, eps_diluted) SELECT * FROM df_q")
-        
-        conn.execute("INSERT INTO raw.company_info (ticker, company, market_cap, _extracted_at) VALUES ('AAPL', 'Apple', 2e12, CURRENT_TIMESTAMP)")
-        conn.execute("INSERT INTO raw.stock_prices (ticker, date, close, volume, _extracted_at) VALUES ('AAPL', '2024-01-01', 150, 1000, CURRENT_TIMESTAMP)")
-
-        _create_staging(conn)
-        _create_intermediate(conn)
-        _create_marts(conn)
-        
-        fmi = conn.execute("SELECT fmi_rev_acceleration, fmi_eps_acceleration FROM marts.dim_companies WHERE ticker='AAPL'").fetchone()
-        assert fmi[0] > 0
-        assert fmi[1] > 0
 
 def test_data_quality_checks_integration(tmp_path):
     """Ensure Audit Engine catches violations in marts."""

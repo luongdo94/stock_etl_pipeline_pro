@@ -468,10 +468,6 @@ def _create_marts(conn):
                 payout.net_payout_yield_pct,
                 ROUND(c.dividend_yield * 100, 4)
             ) AS net_payout_yield_pct,
-            fmi.fmi_rev_acceleration,
-            fmi.fmi_eps_acceleration,
-            fmi.fmi_margin_trend,
-            fmi.fmi_quarters_of_growth,
             c.ex_dividend_date,
             c.pay_date
         FROM staging.stg_company_info c
@@ -529,50 +525,6 @@ def _create_marts(conn):
             FROM staging.stg_cashflows cf
             JOIN staging.stg_company_info dc USING (ticker)
         ) payout USING (ticker)
-        LEFT JOIN (
-            WITH ranked AS (
-                SELECT
-                    ticker,
-                    report_date,
-                    revenue,
-                    eps,
-                    revenue_growth_qoq_pct,
-                    eps_growth_qoq_pct,
-                    revenue_growth_yoy_pct,
-                    eps_growth_yoy_pct,
-                    ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY report_date DESC) AS rn
-                FROM marts.dim_quarterly_financials
-            ),
-            recent   AS (SELECT * FROM ranked WHERE rn <= 4),
-            prior    AS (SELECT * FROM ranked WHERE rn BETWEEN 5 AND 8),
-            recent_agg AS (
-                SELECT
-                    ticker,
-                    ROUND(AVG(revenue_growth_qoq_pct), 2)       AS rev_qoq_recent,
-                    ROUND(AVG(revenue_growth_yoy_pct), 2)       AS rev_yoy_recent,
-                    ROUND(AVG(eps_growth_qoq_pct), 2)           AS eps_qoq_recent,
-                    ROUND(AVG(eps_growth_yoy_pct), 2)           AS eps_yoy_recent,
-                    SUM(CASE WHEN eps_growth_yoy_pct > 0 THEN 1 ELSE 0 END) AS quarters_of_growth
-                FROM recent
-                GROUP BY ticker
-            ),
-            prior_agg AS (
-                SELECT
-                    ticker,
-                    ROUND(AVG(revenue_growth_qoq_pct), 2) AS rev_qoq_prior,
-                    ROUND(AVG(eps_growth_qoq_pct), 2)     AS eps_qoq_prior
-                FROM prior
-                GROUP BY ticker
-            )
-            SELECT
-                r.ticker,
-                ROUND(r.rev_qoq_recent - p.rev_qoq_prior, 2) AS fmi_rev_acceleration,
-                ROUND(r.eps_qoq_recent - p.eps_qoq_prior, 2) AS fmi_eps_acceleration,
-                ROUND(r.eps_yoy_recent - r.rev_yoy_recent, 2) AS fmi_margin_trend,
-                r.quarters_of_growth                          AS fmi_quarters_of_growth
-            FROM recent_agg r
-            LEFT JOIN prior_agg p USING (ticker)
-        ) fmi USING (ticker)
     """)
     
     # AGGREGATE: Monthly performance per ticker
