@@ -2703,10 +2703,6 @@ tickers:
     name: Nemetschek SE
     sector: SaaS
     region: EU
-  PAG911.DE:
-    name: Porsche AG
-    sector: Automotive & EV
-    region: EU
   RAA.DE:
     name: RATIONAL Aktiengesellschaft
     sector: Industrial Machinery
@@ -2715,10 +2711,6 @@ tickers:
     name: Redcare Pharmacy N.V.
     sector: Ecommerce
     region: EU
-  RTL.DE:
-    name: RTL Group S.A.
-    sector: Media & Entertainment
-    region: EU
   SZG.DE:
     name: Salzgitter Aktiengesellschaft
     sector: Basic Materials
@@ -2726,10 +2718,6 @@ tickers:
   SRT3.DE:
     name: Sartorius Aktiengesellschaft
     sector: Life Science Tools
-    region: EU
-  SHA.DE:
-    name: Schaeffler AG
-    sector: Industrial Machinery
     region: EU
   SAX.DE:
     name: Ströer SE & Co. KGaA
@@ -2759,3 +2747,304 @@ tickers:
     name: Wacker Chemie AG
     sector: Basic Materials
     region: EU
+  1U1.DE:
+    name: 1&1 AG
+    sector: Telecom
+    region: EU
+  ADN1.DE:
+    name: adesso SE
+    sector: IT Services
+    region: EU
+  ADV.DE:
+    name: Adtran Networks SE
+    sector: Telecom
+    region: EU
+  AOF.DE:
+    name: ATOSS Software AG
+    sector: SaaS
+    region: EU
+  BFSA.DE:
+    name: Befesa S.A.
+    sector: Basic Materials
+    region: EU
+  BVB.DE:
+    name: Borussia Dortmund GmbH & Co. KGaA
+    sector: Media & Entertainment
+    region: EU
+  COK.DE:
+    name: CANCOM SE
+    sector: IT Services
+    region: EU
+  AFX.DE:
+    name: Carl Zeiss Meditec AG
+    sector: Medical Devices
+    region: EU
+  CWC.DE:
+    name: CEWE Stiftung & Co. KGaA
+    sector: Consumer Retail
+    region: EU
+  DMP.DE:
+    name: Dermapharm Holding SE
+    sector: Pharma
+    region: EU
+  DBAN.DE:
+    name: Deutsche Beteiligungs AG
+    sector: Financials
+    region: EU
+  DEQ.DE:
+    name: Deutsche EuroShop AG
+    sector: Real Estate
+    region: EU
+  DRW3.DE:
+    name: Drägerwerk AG & Co. KGaA
+    sector: Medical Devices
+    region: EU
+  DUE.DE:
+    name: Dürr Aktiengesellschaft
+    sector: Industrial Machinery
+    region: EU
+  EUZ.DE:
+    name: Eckert & Ziegler SE
+    sector: Life Science Tools
+    region: EU
+  ELG.DE:
+    name: Elmos Semiconductor SE
+    sector: Semiconductors
+    region: EU
+  EKT.DE:
+    name: Energiekontor AG
+    sector: Renewables
+    region: EU
+  EVT.DE:
+    name: Evotec SE
+    sector: Biotech
+    region: EU
+  FIE.DE:
+    name: Fielmann Group AG
+    sector: Retail
+    region: EU
+  VH2.DE:
+    name: Friedrich Vorwerk Group SE
+    sector: Industrials
+    region: EU
+  GFT.DE:
+    name: GFT Technologies SE
+    sector: IT Services
+    region: EU
+  GYC.DE:
+    name: Grand City Properties S.A.
+    sector: Real Estate
+    region: EU
+  GLJ.DE:
+    name: Grenke AG
+    sector: Financials
+    region: EU
+  HAB.DE:
+    name: Hamborner REIT AG
+    sector: Real Estate
+    region: EU
+  HDD.DE:
+    name: Heidelberger Druckmaschinen AG
+    sector: Industrial Machinery
+    region: EU
+  HFG.DE:
+    name: HelloFresh SE
+    sector: Ecommerce
+    region: EU
+  HBH.DE:
+    name: Hornbach Holding AG & Co. KGaA
+    sector: Retail
+    region: EU
+  HYQ.DE:
+    name: Hypoport SE
+    sector: Fintech
+    region: EU
+  INH.DE:
+    name: Indus Holding AG
+    sector: Financials
+    region: EU
+  IXX.DE:
+    name: init innovation in traffic systems SE
+    sector: IT Services
+    region: EU
+  JST.DE:
+    name: JOST Werke SE
+    sector: Automotive & EV
+    region: EU
+  KCO.DE:
+    name: Klöckner & Co SE
+    sector: Basic Materials
+    region: EU
+  KSB3.DE:
+    name: KSB SE & Co. KGaA
+    sector: Industrial Machinery
+    region: EU
+  KWS.DE:
+    name: KWS SAAT SE & Co. KGaA
+    sector: Basic Materials
+    region: EU
+  MBB.DE:
+    name: MBB SE
+    sector: Financials
+    region: EU
+  MED.DE:
+    name: Medios AG
+    sector: Pharma
+    region: EU
+  MLP.DE:
+    name: MLP SE
+    sector: Financials
+    region: EU
+  MUX.DE:
+    name: Mutares SE & Co. KGaA
+    sector: Financials
+    region: EU
+  NA9.DE:
+    name: Nagarro SE
+    sector: IT Services
+    region: EU
+  NOEJ.DE:
+    name: NORMA Group SE
+    sector: Industrial Machinery
+    region: EU
+  PAT.DE:
+    name: PATRIZIA SE
+    sector: Real Estate
+    region: EU
+  PBB.DE:
+    name: Deutsche Pfandbriefbank AG
+    sector: Banks
+    region: EU
+  PNE3.DE:
+    name: PNE AG
+    sector: Renewables
+    region: EU
+  PSM.DE:
+    name: ProSiebenSat.1 Media SE
+    sector: Media & Entertainment
+    region: EU
+  TPE.DE:
+    name: PVA TePla AG
+    sector: Industrial Machinery
+    region: EU
+  ALO.PA:
+    name: Alstom SA
+    sector: Industrials
+    region: EU
+  EN.PA:
+    name: Bouygues SA
+    sector: Construction & Engineering
+    region: EU
+  CAP.PA:
+    name: Capgemini SE
+    sector: IT Services
+    region: EU
+  CA.PA:
+    name: Carrefour SA
+    sector: Retail
+    region: EU
+  ACA.PA:
+    name: Crédit Agricole S.A.
+    sector: Banks
+    region: EU
+  AM.PA:
+    name: Dassault Aviation SA
+    sector: Aerospace & Defense
+    region: EU
+  ENGI.PA:
+    name: Engie SA
+    sector: Regulated Utilities
+    region: EU
+  ERF.PA:
+    name: Eurofins Scientific SE
+    sector: Life Science Tools
+    region: EU
+  LR.PA:
+    name: Legrand SA
+    sector: Industrials
+    region: EU
+  ML.PA:
+    name: Michelin
+    sector: Automotive & EV
+    region: EU
+  ORA.PA:
+    name: Orange S.A.
+    sector: Telecom
+    region: EU
+  RI.PA:
+    name: Pernod Ricard SA
+    sector: Food & Beverage
+    region: EU
+  PUB.PA:
+    name: Publicis Groupe S.A.
+    sector: Media & Entertainment
+    region: EU
+  RNO.PA:
+    name: Renault SA
+    sector: Automotive & EV
+    region: EU
+  GLE.PA:
+    name: Société Générale S.A.
+    sector: Banks
+    region: EU
+  TEP.PA:
+    name: Teleperformance SE
+    sector: Industrials
+    region: EU
+  STLAP.PA:
+    name: Stellantis N.V.
+    sector: Automotive & EV
+    region: EU
+  URW.PA:
+    name: Unibail-Rodamco-Westfield SE
+    sector: Real Estate
+    region: EU
+  FR.PA:
+    name: Valeo SE
+    sector: Automotive & EV
+    region: EU
+  VIE.PA:
+    name: Veolia Environnement S.A.
+    sector: Regulated Utilities
+    region: EU
+  VIV.PA:
+    name: Vivendi SE
+    sector: Media & Entertainment
+    region: EU
+  WLN.PA:
+    name: Worldline SA
+    sector: Fintech
+    region: EU
+  P911.DE:
+    name: Porsche AG
+    sector: Automotive & EV
+    region: EU
+  RRTL.DE:
+    name: RTL Group S.A.
+    sector: Media & Entertainment
+    region: EU
+  SHA0.DE:
+    name: Schaeffler AG
+    sector: Industrial Machinery
+    region: EU
+  DOU.DE:
+    name: Douglas AG
+    sector: Retail
+    region: EU
+  KTN.DE:
+    name: Kontron AG
+    sector: IT Services
+    region: EU
+  MT.AS:
+    name: ArcelorMittal
+    sector: Basic Materials
+    region: EU
+  6762.T:
+    sector: Technology
+    industry: Electronic Components
+  BESI.AS:
+    sector: Technology
+    industry: Semiconductor Equipment & Materials
+  ACMR:
+    sector: Technology
+    industry: Semiconductor Equipment & Materials
