@@ -379,6 +379,10 @@ tickers:
     name: Fortinet, Inc.
     sector: Cybersecurity
     region: US
+  ZS:
+    name: Zscaler, Inc.
+    sector: Cybersecurity
+    region: US
   CRWV:
     name: CoreWeave, Inc.
     sector: AI & Data
