@@ -4720,6 +4720,8 @@ if active_tab == "7. Portfolio Builder":
            st.session_state.last_portfolio_tickers != p_tickers or \
            'portfolio_df' not in st.session_state or \
            "Cost Basis (€)" not in st.session_state.portfolio_df.columns or \
+           "Action" not in st.session_state.portfolio_df.columns or \
+           not any(emoji in str(x) for x in st.session_state.portfolio_df.get("Action", []) for emoji in ["💎", "🟢", "🔴", "🟡", "🟠"]) or \
            "Region" not in st.session_state.portfolio_df.columns:
             
             st.session_state.last_portfolio_tickers = p_tickers
@@ -4728,15 +4730,23 @@ if active_tab == "7. Portfolio Builder":
             for t in p_tickers:
                 # Enrich with m_df data for professional look
                 meta = m_df[m_df["Ticker"] == t].iloc[0] if not m_df[m_df["Ticker"] == t].empty else {}
+                
+                _act = meta.get("Action", "Neutral")
+                _act_emoji = "💎 " if "STRONG" in _act else "🟢 " if "BUY" in _act else "🔴 " if "SELL" in _act else "🟠 " if "REDUCE" in _act else "🟡 "
+                
+                _sm = meta.get("Smart Money", "Neutral")
+                _sm_emoji = "🟢 " if "ACCUMULATION" in _sm else "🔴 " if "DISTRIBUTION" in _sm else "⚪ "
+                
                 init_data.append({
                     "Ticker": t,
                     "Company": meta.get("Company", t),
                     "Sector": meta.get("Sector", "N/A"),
+                    "Action": _act_emoji + _act,
                     "Region": meta.get("Region", "US"),
                     "Market Cap (B)": meta.get("MCap (B)", 0),
                     "Z-Score": meta.get("Z-Score", 0.0),
                     "RSI (14)": meta.get("RSI (14)", 50.0),
-                    "Smart Money": meta.get("Smart Money", "Neutral"),
+                    "Smart Money": _sm_emoji + _sm,
                     "Price (€)": latest_prices.get(t, 0),
                     "Shares": st.session_state.portfolio_shares.get(t, 10.0),
                     "Cost Basis (€)": st.session_state.portfolio_cost.get(t, latest_prices.get(t, 0))
@@ -4765,6 +4775,7 @@ if active_tab == "7. Portfolio Builder":
                 column_config={
                     "Ticker": st.column_config.TextColumn("Ticker", disabled=True),
                     "Company": st.column_config.TextColumn("Company", disabled=True),
+                    "Action": st.column_config.TextColumn("Action", disabled=True),
                     "Region": st.column_config.TextColumn("Region", disabled=True),
                     "Z-Score": st.column_config.NumberColumn("Z-Score", format="%.2f", disabled=True),
                     "RSI (14)": st.column_config.NumberColumn("RSI", format="%.1f", disabled=True),
@@ -4779,7 +4790,7 @@ if active_tab == "7. Portfolio Builder":
                     "Contribution (%)": st.column_config.NumberColumn("Contribution", format="%.2f%%", disabled=True),
                     "Weight (%)": st.column_config.NumberColumn("Weight", format="%.2f%%", disabled=True)
                 },
-                column_order=["Ticker", "Company", "Shares", "Cost Basis (€)", "Price (€)", "Total Cost (€)", "Market Value", "Unrealized PnL (€)", "Unrealized PnL (%)", "Z-Score", "RSI (14)", "Smart Money", "Contribution (%)", "Weight (%)"],
+                column_order=["Ticker", "Company", "Action", "Shares", "Cost Basis (€)", "Price (€)", "Total Cost (€)", "Market Value", "Unrealized PnL (€)", "Unrealized PnL (%)", "Z-Score", "RSI (14)", "Smart Money", "Contribution (%)", "Weight (%)"],
                 hide_index=True,
                 width="stretch",
                 key=f"p_portfolio_editor_v{_cur_version}"
@@ -5205,65 +5216,7 @@ if active_tab == "7. Portfolio Builder":
             # LAYER 3 · STRATEGIC REBALANCING & OPTIMIZATION
             # ═══════════════════════════════════════════════════════════════════
 
-            # ── 4.6. AI REBALANCING COMMAND CENTER (PREMIUM CARD GRID) ──────────────
-            render_header("ai", "Institutional Rebalancing Command Center")
-            
-            # Use chunks for grid layout (ULTRA-DENSE: 6 per row)
-            n_cols = 6
-            tickers_list = edited_df.to_dict('records')
-            
-            for i in range(0, len(tickers_list), n_cols):
-                cols = st.columns(n_cols)
-                chunk = tickers_list[i : i + n_cols]
-                
-                for idx, row in enumerate(chunk):
-                    t = row["Ticker"]
-                    w = row["Weight (%)"]
-                    
-                    # Fetch AI target from reco_df
-                    ai_meta = reco_df[reco_df["ticker"] == t].iloc[0] if not reco_df[reco_df["ticker"] == t].empty else None
-                    
-                    if ai_meta is not None:
-                        ai_score = ai_meta["score"]
-                        upside = ai_meta["upside_pct"]
-    
-                        # ── Read action from the shared m_df source ──────────────
-                        status = _action_map.get(t, "HOLD / NEUTRAL")
-    
-                        # Derive display color from canonical action label
-                        if status == "STRONG BUY":          color = "#00ffcc"; border = "2px solid #00ffcc"
-                        elif "BUY" in status:               color = "#2ecc71"; border = "1px solid #2ecc71"
-                        elif "SELL" in status:              color = "#ff4b4b"; border = "2px solid #ff4b4b"
-                        elif "REDUCE" in status:            color = "#e67e22"; border = "1px solid #e67e22"
-                        else:                               color = "#3498db"; border = "1px solid rgba(255,255,255,0.1)"
-    
-                        reason = f"Quality score {ai_score}"
-                        if upside > 10: reason = f"Upside potential (+{upside:.1f}%)"
-                        if w > 20: reason = "Risk concentration limit exceeded"
-    
-                        with cols[idx]:
-                            st.markdown(f"""
-                            <div style='background:rgba(255,255,255,0.02); border:{border}; border-radius:5px; padding:6px; margin-bottom:4px;'>
-                                <div style='display:flex; justify-content:space-between; margin-bottom:4px;'>
-                                    <span style='font-size:0.8rem; font-weight:800; color:{color};'>{t}</span>
-                                    <span style='background:{color}22; color:{color}; padding:1px 4px; border-radius:2px; font-size:0.45rem; font-weight:700;'>{status}</span>
-                                </div>
-                                <div style='display:grid; grid-template-columns: 1fr 1fr; gap:4px; margin-bottom:4px;'>
-                                    <div><div style='color:#777; font-size:0.45rem; text-transform:uppercase;'>WGT</div><div style='font-size:0.75rem; font-weight:700;'>{w:.1f}%</div></div>
-                                    <div><div style='color:#777; font-size:0.45rem; text-transform:uppercase;'>SCORE</div><div style='font-size:0.75rem; font-weight:700;'>{ai_score}</div></div>
-                                </div>
-                                <div style='color:#666; font-size:0.55rem; border-top:1px solid rgba(255,255,255,0.05); padding-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;'>
-                                    {reason}
-                                </div>
-                            </div>
-                            """, unsafe_allow_html=True)
-                    else:
-                        with cols[idx]:
-                            st.markdown(f"""
-                            <div style='background:rgba(255,255,255,0.01); border:1px dashed rgba(255,255,255,0.08); border-radius:5px; padding:6px; text-align:center;'>
-                                <div style='color:#555; font-size:0.5rem;'>{t}</div>
-                            </div>
-                            """, unsafe_allow_html=True)
+
     
             # ── 4.7. REBALANCING OPTIMIZER ───────────────────────────────────────────
             st.markdown("### 📊 Portfolio Rebalancing Hub")
@@ -5739,22 +5692,7 @@ if active_tab == "7. Portfolio Builder":
             with colY: a_metric = st.selectbox("Metric", ["Price", "Volume", "Daily Return %", "RSI"])
             with colZ: a_condition = st.selectbox("Condition", ["above", "below"])
             a_value = st.number_input("Threshold Value", value=100.0)
-            # ── Standardized Common Ratings ──
-            if ai_score > 80: 
-                action_label = "💎 STRONG BUY"
-                action_color = "#2ecc71"
-            elif ai_score > 65: 
-                action_label = "🟢 BUY / ACCUMULATE"
-                action_color = "#27ae60"
-            elif ai_score > 45: 
-                action_label = "🟡 HOLD / NEUTRAL"
-                action_color = "#f1c40f"
-            elif ai_score > 35: 
-                action_label = "🟠 REDUCE / UNDERPERFORM"
-                action_color = "#e67e22"
-            else: 
-                action_label = "🔴 SELL / AVOID"
-                action_color = "#e74c3c"
+
             a_email = st.text_input("Notify Email", value="dgl.rocketmail94@gmail.com")
             submitted = st.form_submit_button("Deploy Alert Rule")
             if submitted:
@@ -5944,8 +5882,8 @@ if active_tab == "2. Opportunity Radar":
     ]
 
     # ── Display Results ───────────────────────────────────────────────────────
-    display_cols = ["Ticker", "Company", "Sector", "Action", "Quality",
-                    "Upside (%)", "MCap (B)", "RSI (14)", "Z-Score",
+    display_cols = ["Ticker", "Company", "Sector", "Action", "Quality", "Smart Money",
+                    "Upside (%)", "RSI (14)", "Z-Score",
                     "vs MA200 (%)", "P/E (Fwd)", "EV/EBITDA", "PEG", "FCF Margin (%)",
                     "ROE (%)", "Yield (%)", "Net Payout (%)", "Debt/EBITDA"]
     display_df = f_df.sort_values(["Quality"], ascending=False)[display_cols]
@@ -5963,6 +5901,7 @@ if active_tab == "2. Opportunity Radar":
         height=520,
         column_config={
             "Quality":         st.column_config.ProgressColumn("Quality Score", min_value=0, max_value=100, format="%d"),
+            "Smart Money":     st.column_config.TextColumn("Smart Money"),
             "Upside (%)": st.column_config.NumberColumn("Upside %", format="%+.1f%%"),
             "Debt/EBITDA":     st.column_config.NumberColumn("Debt/EBITDA", format="%.2f"),
         }
