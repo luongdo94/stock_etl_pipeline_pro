@@ -1302,6 +1302,35 @@ def load_data():
 
 # ── ANALYTICS ENGINE: Global Screener Data ──────────────────────────────────
 @st.cache_data(ttl=3600)
+def get_sm_spirit_unified_v2(df_raw: "pd.DataFrame") -> str:
+    """
+    Standardized Institutional Flow Engine (v2.0 - Cache Busted).
+    Ensures identical results across tabs by cleaning data before calculation.
+    """
+    if df_raw is None or df_raw.empty or len(df_raw) < 20:
+        return "NEUTRAL"
+    
+    # 1. Standardize: Take only necessary columns, sort by date
+    # CRITICAL: Use only the last 126 trading days (approx 6 months) for the OBV baseline.
+    # This ensures % changes (ROC) remain sensitive to recent volume spikes and prevents "Large Number Bias".
+    df = df_raw[['date', 'price_close', 'volume']].copy()
+    df = df.sort_values("date").drop_duplicates("date").tail(126).reset_index(drop=True)
+    
+    # 2. Fill missing volume or price to prevent NaN propagation in cumsum
+    df['price_close'] = df['price_close'].ffill().fillna(0)
+    df['volume']      = df['volume'].fillna(0)
+    
+    # 3. Core Logic: OBV ROC
+    _raw_obv = (np.sign(df['price_close'].diff().fillna(0)) * df['volume']).cumsum()
+    _obv_roc = _raw_obv.pct_change(5).replace([np.inf, -np.inf], 0).fillna(0)
+    
+    # 4. Momentum Comparison
+    obv_short = _obv_roc.tail(5).mean()
+    obv_long  = _obv_roc.tail(20).mean()
+    
+    return ("Accumulation" if obv_short > obv_long else "Distribution").upper()
+
+
 def compute_institutional_rating(
     ai_score: float,
     ma_sig: str,
@@ -1579,12 +1608,8 @@ def get_master_screener_data(_companies_df, _prices_df, _quarterly_fin, _annual_
         # Use shared tactical metrics (same formula as Deep Dive)
         _tm = get_tactical_metrics(ticker_prices, cur_p)
 
-        # Smart Money Spirit
-        _raw_obv = (np.sign(ticker_prices['price_close'].diff().fillna(0)) * ticker_prices['volume']).cumsum()
-        _obv_roc = _raw_obv.pct_change(5).replace([np.inf, -np.inf], 0).fillna(0)
-        obv_short = _obv_roc.tail(5).mean() if len(_obv_roc) >= 5 else 0
-        obv_long  = _obv_roc.tail(20).mean() if len(_obv_roc) >= 20 else 0
-        sm_spirit = "Accumulation" if obv_short > obv_long else "Distribution"
+        # Smart Money Spirit (Unified)
+        sm_spirit = get_sm_spirit_unified_v2(ticker_prices)
 
         _rating = compute_institutional_rating(
             ai_score   = ai_score,
@@ -2928,15 +2953,10 @@ if active_tab == "3. Qualitative Audit (AI)":
             elif _rr > 1.2: p_conv, p_conv_c = "MEDIUM", "#2ecc71"
             else: p_conv, p_conv_c = "LOW", "#e74c3c"
             
-            # PILLAR 6: SMART MONEY
-            _raw_obv = (np.sign(df_deep['price_close'].diff().fillna(0)) * df_deep['volume']).cumsum()
-            _obv_roc = _raw_obv.pct_change(5).replace([np.inf, -np.inf], 0).fillna(0)
-            obv_short = _obv_roc.tail(5).mean() if len(_obv_roc) >= 5 else 0
-            obv_long  = _obv_roc.tail(20).mean() if len(_obv_roc) >= 20 else 0
-            if obv_short > obv_long:
-                p_sm, p_sm_c = "ACCUMULATION", "#2ecc71"
-            else:
-                p_sm, p_sm_c = "DISTRIBUTION", "#e74c3c"
+            # PILLAR 6: SMART MONEY (Unified - Always use full history for path-dependent OBV)
+            df_sm_raw = prices_full[prices_full["ticker"] == deep_ticker]
+            p_sm = get_sm_spirit_unified_v2(df_sm_raw)
+            p_sm_c = "#2ecc71" if p_sm == "ACCUMULATION" else "#e74c3c"
             
             # ── MASTER POSITIONING LOGIC ──────────────────────────────────────
             # We still call compute_institutional_rating to derive pillar colours
@@ -6918,14 +6938,9 @@ if active_tab == "4. Quantitative Forecast (ML)":
             sent_label = "Bullish" if avg_sent > 0.1 else "Bearish" if avg_sent < -0.1 else "Neutral"
             st.metric("News Sentiment Mood", sent_label, delta=f"{avg_sent:.2f}")
         with mcol3:
-            # Smart Money Momentum Logic
-            # Compute OBV ROC directly from df_fc (raw data always available)
-            _raw_obv = (np.sign(df_fc['price_close'].diff().fillna(0)) * df_fc['volume']).cumsum()
-            _obv_roc = _raw_obv.pct_change(5).replace([np.inf, -np.inf], 0).fillna(0)
-            obv_short = _obv_roc.tail(5).mean()
-            obv_long  = _obv_roc.tail(20).mean()
-            sm_spirit = "Accumulation" if obv_short > obv_long else "Distribution"
-            st.metric("Smart Money Spirit", sm_spirit, delta="Positive Flow" if sm_spirit == "Accumulation" else "Heavy Selling")
+            # Smart Money Spirit (Unified)
+            sm_spirit = get_sm_spirit_unified_v2(df_fc)
+            st.metric("Smart Money Spirit", sm_spirit, delta="Positive Flow" if sm_spirit == "ACCUMULATION" else "Heavy Selling")
         with mcol4:
             if precision_score is not None:
                 p_val = f"{precision_score:.1f}%"
@@ -6936,7 +6951,7 @@ if active_tab == "4. Quantitative Forecast (ML)":
             st.metric(p_label, p_val, delta=p_delta)
             
         # Highlight divergence
-        if (sent_label == "Bearish" and sm_spirit == "Accumulation") or (sent_label == "Bullish" and sm_spirit == "Distribution"):
+        if (sent_label == "Bearish" and sm_spirit == "ACCUMULATION") or (sent_label == "Bullish" and sm_spirit == "DISTRIBUTION"):
             div_type = "BULLISH DIVERGENCE (Smart Money Accumulating despite Retail Fear)" if sent_label == "Bearish" else "BEARISH DIVERGENCE (Smart Money Distributing despite Retail Greed)"
             div_color = "#2ecc71" if sent_label == "Bearish" else "#e74c3c"
             div_icon = "📈" if sent_label == "Bearish" else "📉"
