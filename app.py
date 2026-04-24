@@ -307,7 +307,11 @@ Rules: English only. Be decisive. Reference specific numbers. Start each section
 def get_forex_rates(target="EUR"):
     import yfinance as yf
     try:
-        df = yf.download(f"USD{target}=X", period="1d", progress=False)["Close"]
+        import sys, os
+        from contextlib import redirect_stdout, redirect_stderr
+        with open(os.devnull, 'w') as devnull:
+            with redirect_stdout(devnull), redirect_stderr(devnull):
+                df = yf.download(f"USD{target}=X", period="1d", progress=False, threads=False)["Close"]
         rate = df.iloc[-1].item() if not df.empty else 1.0
         return float(rate)
     except:
@@ -321,9 +325,15 @@ def fetch_macro_data():
     import logging
     yf.set_tz_cache_location("/tmp/yfinance_tz") # Mute warnings in streamlit
     try:
+        import sys, os
+        from contextlib import redirect_stdout, redirect_stderr
+        
         # DX-Y.NYB: Dollar, ^TNX: 10Y Yield, ^IRX: 13W T-Bill, ^VIX: Vol, CL=F: Oil, GC=F: Gold
         tickers = "SPY DX-Y.NYB ^TNX ^IRX ^VIX CL=F GC=F"
-        data = yf.download(tickers, period="5d", interval="1d", progress=False)
+        
+        with open(os.devnull, 'w') as devnull:
+            with redirect_stdout(devnull), redirect_stderr(devnull):
+                data = yf.download(tickers, period="5d", interval="1d", progress=False, threads=False)
         
         # Handling multi-index columns from yfinance 0.2.x+
         if "Close" in data.columns.levels[0]:
@@ -5934,7 +5944,7 @@ if active_tab == "2. Opportunity Radar":
             rsi_range = st.slider("RSI Range", 0, 100, (0, 100))
         with rcol2:
             max_pe = st.slider("Max Forward P/E", 0, 200, 200)
-            min_upside = st.slider("Min Analyst Upside (%)", -50, 100, -50)
+            z_score_range = st.slider("Z-Score Range", -5.0, 5.0, (-5.0, 5.0), step=0.1)
         with rcol3:
             filter_trend = st.selectbox(
                 "Trend Filter",
@@ -5951,7 +5961,7 @@ if active_tab == "2. Opportunity Radar":
         (f_df["Quality"] >= min_score) &
         (f_df["RSI (14)"].between(rsi_range[0], rsi_range[1])) &
         (f_df["P/E (Fwd)"].fillna(999) <= max_pe) &
-        (f_df["Upside (%)"] >= min_upside)
+        (f_df["Z-Score"].between(z_score_range[0], z_score_range[1]))
     ]
     if "BULLISH only" in filter_trend:
         f_df = f_df[f_df["Trend"] == "BULLISH"]
