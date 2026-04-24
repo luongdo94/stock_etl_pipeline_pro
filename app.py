@@ -5804,32 +5804,8 @@ if active_tab == "2. Opportunity Radar":
     m_df = get_master_screener_data(companies_full, prices_full, quarterly_fin, annual_fin)
 
     
-    # ── Quick Filter Modes (High-Fidelity Redesign) ────────────────────────────
-    st.markdown("""
-        <style>
-        div.stButton > button {
-            background-color: rgba(255, 255, 255, 0.05);
-            color: #ccc;
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 20px;
-            padding: 10px 20px;
-            transition: all 0.3s ease;
-            font-weight: 600;
-        }
-        div.stButton > button:hover {
-            border-color: #0668E1;
-            color: white;
-            background-color: rgba(6, 104, 225, 0.1);
-            transform: translateY(-2px);
-        }
-        div.stButton > button:active {
-            background-color: #0668E1;
-            color: white;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-
-    # Final Compact Dropdown Layout (Removed Redundant Reset Button)
+    # ── Applied Logic (Synced with Backtest Engine) ───────────────────────────
+    # Final Compact Dropdown Layout
     scan_presets = [
         "🔍 All Stock Universe",
         "──────────── 📈 OPPORTUNITY ────────────",
@@ -6001,15 +5977,106 @@ if active_tab == "2. Opportunity Radar":
         st.session_state.radar_limit = 50
         
     paged_df = display_df.iloc[:st.session_state.radar_limit]
+    
+    # Apply Pandas Styler for coloring
+    def style_opportunity_df(df):
+        def highlight_action(val):
+            val_str = str(val).upper()
+            if "STRONG BUY" in val_str: return 'color: #2ecc71; font-weight: 800'
+            elif "BUY" in val_str: return 'color: #27ae60; font-weight: bold'
+            elif "SELL" in val_str: return 'color: #e74c3c; font-weight: bold'
+            elif "REDUCE" in val_str: return 'color: #e67e22; font-weight: bold'
+            return 'color: #f1c40f'  # HOLD
+            
+        def highlight_smart_money(val):
+            val_str = str(val).upper()
+            if "ACCUMULATION" in val_str: return 'color: #2ecc71'
+            elif "DISTRIBUTION" in val_str: return 'color: #e74c3c'
+            return ''
+            
+        def color_pos_neg(val):
+            try:
+                v = float(val)
+                if v > 0: return 'color: #2ecc71'
+                elif v < 0: return 'color: #e74c3c'
+            except: pass
+            return ''
+            
+        def color_zscore(val):
+            try:
+                v = float(val)
+                if v <= -2.0: return 'color: #2ecc71; font-weight: bold'
+                elif v >= 2.0: return 'color: #e74c3c; font-weight: bold'
+            except: pass
+            return ''
+            
+        def color_rsi(val):
+            try:
+                v = float(val)
+                if v < 35: return 'color: #2ecc71; font-weight: bold'
+                elif v > 65: return 'color: #e74c3c; font-weight: bold'
+            except: pass
+            return ''
+            
+        def color_peg(val):
+            try:
+                v = float(val)
+                if v > 0 and v <= 1.0: return 'color: #2ecc71'
+                elif v > 2.5: return 'color: #e74c3c'
+            except: pass
+            return ''
+
+        def color_debt(val):
+            try:
+                v = float(val)
+                if v < 1.5: return 'color: #2ecc71'
+                elif v > 3.0: return 'color: #e74c3c'
+            except: pass
+            return ''
+
+        def color_high_good(val, threshold):
+            try:
+                if float(val) >= threshold: return 'color: #2ecc71'
+            except: pass
+            return ''
+
+        styler = df.style.map(highlight_action, subset=['Action']) \
+                         .map(highlight_smart_money, subset=['Smart Money']) \
+                         .map(color_pos_neg, subset=['Upside (%)', 'vs MA200 (%)']) \
+                         .map(color_zscore, subset=['Z-Score']) \
+                         .map(color_rsi, subset=['RSI (14)']) \
+                         .map(color_peg, subset=['PEG']) \
+                         .map(color_debt, subset=['Debt/EBITDA']) \
+                         .map(lambda x: color_high_good(x, 3.0), subset=['Yield (%)']) \
+                         .map(lambda x: color_high_good(x, 15.0), subset=['ROE (%)'])
+        return styler
+
+    styled_df = style_opportunity_df(paged_df)
+
     st.dataframe(
-        paged_df,
-        width="stretch", 
-        height=520,
+        styled_df,
+        use_container_width=True, 
+        height=550,
+        hide_index=True,
         column_config={
-            "Quality":         st.column_config.ProgressColumn("Quality Score", min_value=0, max_value=100, format="%d"),
-            "Smart Money":     st.column_config.TextColumn("Smart Money"),
-            "Upside (%)": st.column_config.NumberColumn("Upside %", format="%+.1f%%"),
-            "Debt/EBITDA":     st.column_config.NumberColumn("Debt/EBITDA", format="%.2f"),
+            "Ticker":          st.column_config.TextColumn("Ticker", width="small"),
+            "Company":         st.column_config.TextColumn("Company", width="medium"),
+            "Sector":          st.column_config.TextColumn("Sector", width="small"),
+            "Action":          st.column_config.TextColumn("Action", width="small"),
+            "Quality":         st.column_config.ProgressColumn("Quality", min_value=0, max_value=100, format="%d", help="Fundamental Quality Score (v4.0)"),
+            "Smart Money":     st.column_config.TextColumn("Smart Money", width="small"),
+            "Upside (%)":      st.column_config.NumberColumn("Upside", format="%+.1f%%"),
+            "RSI (14)":        st.column_config.NumberColumn("RSI", format="%d"),
+            "Z-Score":         st.column_config.NumberColumn("Z-Score", format="%+.2f"),
+            "vs MA200 (%)":    st.column_config.NumberColumn("vs MA200", format="%+.1f%%"),
+            "P/E (Fwd)":       st.column_config.NumberColumn("Fwd P/E", format="%.1fx"),
+            "EV/EBITDA":       st.column_config.NumberColumn("EV/EBITDA", format="%.1fx"),
+            "PEG":             st.column_config.NumberColumn("PEG", format="%.2f"),
+            "FCF Margin (%)":  st.column_config.NumberColumn("FCF Margin", format="%.1f%%"),
+            "ROE (%)":         st.column_config.NumberColumn("ROE", format="%.1f%%"),
+            "Yield (%)":       st.column_config.NumberColumn("Yield", format="%.2f%%"),
+            "Net Payout (%)":  st.column_config.NumberColumn("Net Payout", format="%.2f%%"),
+            "Debt/EBITDA":     st.column_config.NumberColumn("Debt/EBITDA", format="%.2fx"),
         }
     )
 
