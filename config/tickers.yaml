@@ -3051,3 +3051,39 @@ tickers:
     name: ACM Research
     sector: Technology
     region: US
+  "2344.TW":
+    name: Winbond Electronics
+    sector: Semiconductors
+    region: Asia
+  RIVN:
+    name: Rivian Automotive
+    sector: Automotive & EV
+    region: US
+  SEDG:
+    name: SolarEdge Technologies
+    sector: Renewables
+    region: US
+  ENPH:
+    name: Enphase Energy
+    sector: Renewables
+    region: US
+  RUN:
+    name: Sunrun Inc.
+    sector: Renewables
+    region: US
+  OKLO:
+    name: Oklo Inc.
+    sector: Energy Specialty
+    region: US
+  BE:
+    name: Bloom Energy
+    sector: Energy Specialty
+    region: US
+  AAOI:
+    name: Applied Optoelectronics
+    sector: Networking
+    region: US
+  CRDO:
+    name: Credo Technology Group
+    sector: Semiconductors
+    region: US
