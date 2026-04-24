@@ -6175,7 +6175,7 @@ if active_tab == "4. Quantitative Forecast (ML)":
             df['obv_roc'] = df['obv_roc'].clip(-5.0, 5.0)
 
             features = [
-                'daily_return_pct', 'price_close',
+                'price_close', 'daily_return_pct',
                 'spy_ret', 'vix_ret',
                 'vol_surge', 'rsi', 'price_z_score',
                 'pe_ratio', 'roe', 'fcf_margin',
@@ -6187,12 +6187,12 @@ if active_tab == "4. Quantitative Forecast (ML)":
             from sklearn.preprocessing import MinMaxScaler
             scaler       = MinMaxScaler(feature_range=(-1, 1))
             data_scaled  = scaler.fit_transform(data)
-            target_scaler = MinMaxScaler(feature_range=(-1, 1))
-            target_scaler.fit(data[:, 0:1])
+            price_scaler = MinMaxScaler(feature_range=(-1, 1))
+            price_scaler.fit(data[:, 0:1])
 
             result = {
                 'data_scaled' : data_scaled,
-                'price_scaler': target_scaler,  # Keep key name for backwards compatibility, but it scales returns now
+                'price_scaler': price_scaler,
                 'features'    : features,
                 'data'        : data,
                 'df'          : df,
@@ -6325,9 +6325,7 @@ if active_tab == "4. Quantitative Forecast (ML)":
             y_base_inf   = last_seq_t[:, -1, 0].unsqueeze(1)
             preds_scaled = (model(last_seq_t) + y_base_inf).cpu().numpy().flatten()
         
-        lstm_predicted_returns = price_scaler.inverse_transform(preds_scaled.reshape(-1,1)).flatten()
-        last_price = data[-1, 1]
-        lstm_predicted_prices = last_price * np.cumprod(1 + lstm_predicted_returns / 100.0)
+        lstm_predicted_prices = price_scaler.inverse_transform(preds_scaled.reshape(-1,1)).flatten()
         
         # ── Raw ARIMA ──
         ts_raw = df['price_close'].values
@@ -6351,7 +6349,7 @@ if active_tab == "4. Quantitative Forecast (ML)":
             p_clamped = np.clip(p_raw, p_prev * (1 - dynamic_clamp), p_prev * (1 + dynamic_clamp))
             clamped_prices.append(p_clamped)
             
-        current_price = data[-1, 1]
+        current_price = data[-1,0]
         if np.isnan(ensemble_prices[-1]) or current_price==0: return None,None,None
         
         model.eval()
@@ -6446,14 +6444,14 @@ if active_tab == "4. Quantitative Forecast (ML)":
                 y_baseline_inf = last_seq[:, -1, 0].unsqueeze(1)
                 pred_scaled = (model(last_seq) + y_baseline_inf).cpu().numpy()[0]
 
-            # Inverse-transform only return column
-            target_scaler = feat['price_scaler']
+            # Inverse-transform only price column
+            price_scaler = MinMaxScaler(feature_range=(-1, 1))
+            price_scaler.fit(data[:, 0:1])
             full_pred = np.zeros((forecast_days, len(features)))
             full_pred[:, 0] = pred_scaled
-            forecast_returns = target_scaler.inverse_transform(full_pred[:, 0:1]).flatten()
+            forecast_raw = price_scaler.inverse_transform(full_pred[:, 0:1]).flatten()
 
-            last_price = data[-1, 1]
-            forecast_raw = last_price * np.cumprod(1 + forecast_returns / 100.0)
+            last_price = data[-1, 0]
             total_return = (forecast_raw[-1] / last_price - 1) if last_price > 0 else 0.0
 
             # ── v9.1: Real gradient attribution (not random) ──
@@ -6544,13 +6542,12 @@ if active_tab == "4. Quantitative Forecast (ML)":
                 y_baseline_p = last_seq_p[:, -1, 0].unsqueeze(1)
                 pred_scaled  = (model(last_seq_p) + y_baseline_p).cpu().numpy()[0]
 
-            # Inverse-transform price from returns
+            # Inverse-transform price
             full_pred_p    = np.zeros((forecast_days, len(features)))
             full_pred_p[:, 0] = pred_scaled
-            forecast_returns_p = price_scaler.inverse_transform(full_pred_p[:, 0:1]).flatten()
+            forecast_raw_p = price_scaler.inverse_transform(full_pred_p[:, 0:1]).flatten()
 
-            last_price_p = data[-1, 1]
-            forecast_raw_p = last_price_p * np.cumprod(1 + forecast_returns_p / 100.0)
+            last_price_p = data[-1, 0]
             total_return_p = (forecast_raw_p[-1] / last_price_p - 1) if last_price_p > 0 else 0.0
 
             # Gradient-based feature importance
@@ -6569,7 +6566,7 @@ if active_tab == "4. Quantitative Forecast (ML)":
             return None, 0.0, {}
 
     @st.cache_data(show_spinner="Smart Blend: Training all 3 AI Engines (LSTM + Transformer + PatchTST)...")
-    def train_predict_ensemble(df_ticker, lookback=90, forecast_days=30, sector_name=None, quality_score=50, regime="NEUTRAL"):
+    def train_predict_ensemble(df_ticker, lookback=90, forecast_days=30, sector_name=None, quality_score=50):
         """
         Performance-Weighted Ensemble: trains all 3 engines, evaluates each on the
         most recent holdout period (last forecast_days of known data), and blends
@@ -6600,13 +6597,8 @@ if active_tab == "4. Quantitative Forecast (ML)":
                     pred_s = mdl(inp).cpu().numpy().flatten()[:forecast_days]
                 fp = np.zeros((forecast_days, n_feat)); fp[:, 0] = pred_s
                 fa = np.zeros((forecast_days, n_feat)); fa[:, 0] = actual_s
-                pr_ret = price_scaler.inverse_transform(fp[:, 0:1]).flatten()
-                ar_ret = price_scaler.inverse_transform(fa[:, 0:1]).flatten()
-                
-                base_price = data[n_d - forecast_days - 1, 1]
-                pp = base_price * np.cumprod(1 + pr_ret / 100.0)
-                ap = base_price * np.cumprod(1 + ar_ret / 100.0)
-                
+                pp = price_scaler.inverse_transform(fp[:, 0:1]).flatten()
+                ap = price_scaler.inverse_transform(fa[:, 0:1]).flatten()
                 return float(np.sqrt(np.mean((pp - ap) ** 2))), float(np.mean(np.abs((ap - pp) / (np.abs(ap) + 1e-8))) * 100), float(1.0 if (pp[-1] > pp[0]) == (ap[-1] > ap[0]) else 0.0)
 
             def _infer(mdl):
@@ -6616,10 +6608,7 @@ if active_tab == "4. Quantitative Forecast (ML)":
                     y_base = last_x[:, -1, 0].unsqueeze(1)
                     pr = (mdl(last_x) + y_base).cpu().numpy().flatten()[:forecast_days]
                 fp = np.zeros((forecast_days, n_feat)); fp[:, 0] = pr
-                pr_ret = price_scaler.inverse_transform(fp[:, 0:1]).flatten()
-                base_price = data[-1, 1]
-                pp = base_price * np.cumprod(1 + pr_ret / 100.0)
-                return pp
+                return price_scaler.inverse_transform(fp[:, 0:1]).flatten()
 
             results = {}
             import time as _time
@@ -6671,15 +6660,10 @@ if active_tab == "4. Quantitative Forecast (ML)":
             except Exception: pass
 
             if not results: return None, 0.0, {}, {}
-            
-            # Boost PatchTST weight if in BULLISH regime
-            if "BULLISH" in regime and 'PatchTST' in results:
-                results['PatchTST']['rmse'] = results['PatchTST']['rmse'] / 1.2
-                
             inv_rmse = {k: 1.0 / max(v['rmse'], 0.01) for k, v in results.items()}; total_inv = sum(inv_rmse.values()); weights = {k: round(v / total_inv, 4) for k, v in inv_rmse.items()}
             blended = np.zeros(forecast_days)
             for k, v in results.items(): blended += weights[k] * v['path'][:forecast_days]
-            last_price_e = data[-1, 1]; total_return_e = (blended[-1] / last_price_e - 1) if last_price_e > 0 else 0.0
+            last_price_e = data[-1, 0]; total_return_e = (blended[-1] / last_price_e - 1) if last_price_e > 0 else 0.0
             feat_imp_e = {f: 0.0 for f in features}
             try:
                 last_seq_e = torch.FloatTensor(data_scaled[-lookback:]).unsqueeze(0).to(device)
@@ -6793,7 +6777,7 @@ if active_tab == "4. Quantitative Forecast (ML)":
             with st.spinner(f"Smart Blend: Training all 3 ML engines ({std_lookback}D Lookback)..."):
                 _ens = train_predict_ensemble(
                     df_fc, lookback=std_lookback, forecast_days=forecast_days,
-                    sector_name=sector_val, quality_score=drift_score, regime=regime)
+                    sector_name=sector_val, quality_score=drift_score)
             if _ens[0] is not None:
                 lstm_path, lstm_return, feat_imp, _em = _ens
                 st.session_state['ensemble_metrics'] = _em
