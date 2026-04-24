@@ -309,24 +309,28 @@ def get_smart_recovery_targets(conn: duckdb.DuckDBPyConnection) -> dict:
 # and the ETL email report (Airflow). Any changes here propagate everywhere.
 
 def compute_score_details(row) -> dict:
-    """Institutional-Grade Categorized Quality Score v3.0 — 6 pillars, strictly 100 points.
-    
-    v3.0 changes vs v2.0:
-    - All threshold checks replaced with np.interp (Linear Interpolation) to eliminate
-      the 'Cliff Effect' where a tiny price move caused point jumps.
-    - Shareholder Yield: Now uses Net Payout Yield (Dividend + Buyback) instead of
-      only dividend yield, correctly rewarding Big Tech buyback programs.
-    - Risk Adjustment: Beta-based penalty/bonus added as a new scoring factor.
-      High-beta (>1.8) stocks get penalized; low-beta (<0.8) defensive stocks get a bonus.
+    """Institutional-Grade Categorized Quality Score v4.0 — 7 pillars, strictly 100 points.
+
+    v4.0 changes vs v3.1:
+    - Context & Momentum: 25 → 15 pts (momentum is tactical, not structural quality)
+    - Analyst Estimates:   5 → 10 pts (collective fundamental research is high-signal)
+    - Revenue Consistency: NEW 5pt pillar (growth trajectory: rev_growth + earn_growth)
+    - Early Stage flag: pre-profit growth stocks (RIVN, OKLO...) exempt from harsh PE penalty
+                        and receive partial Profitability credit for improving EPS trajectory
+    - Red Flags strengthened: D/EBITDA threshold tightened (10→8), new 12+ tier (-15)
+    - Sell/Underperform consensus now deducts 2pts from Analyst Estimates
+    - P/B sector-adjusted for financials (v3.1 carry-over)
+    - ROE excluded from Valuation to prevent double-counting (v3.1 carry-over)
     """
     categories = {
-        "Valuation": 0,             # PEG, P/E, P/B           — Max 20
-        "Profitability": 0,         # FCF Margin, ROE         — Max 25 (or 30 for Tech)
-        "Financial Health": 0,      # Debt/EBITDA             — Max 15
-        "Net Payout Yield": 0,      # Dividend + Buyback      — Max 10 (or 5 for Tech cap)
-        "Context & Momentum": 0,    # Z-Score, RSI, MA Signal — Max 25
-        "Analyst Estimates": 0,     # Upside & Consensus      — Max 5
-        "Red Flags": 0              # Hard penalties          — (Negative only)
+        "Valuation": 0,             # PEG, P/E, P/B            — Max 20
+        "Profitability": 0,         # FCF Margin, ROE          — Max 25 (or 30 for Tech)
+        "Financial Health": 0,      # Debt/EBITDA              — Max 15
+        "Net Payout Yield": 0,      # Dividend + Buyback       — Max 10 (or 5 for Tech cap)
+        "Context & Momentum": 0,    # MA Signal, RSI, Z-Score  — Max 15 (reduced from 25)
+        "Analyst Estimates": 0,     # Upside & Consensus       — Max 10 (increased from 5)
+        "Revenue Consistency": 0,   # Growth trajectory        — Max 5  (new in v4.0)
+        "Red Flags": 0              # Hard penalties           — (Negative only)
     }
 
     def get_num(key, default=None):
@@ -339,36 +343,71 @@ def compute_score_details(row) -> dict:
             return default
 
     sector = str(row.get("sector", "")).lower()
-    is_tech_growth     = any(s in sector for s in ["tech", "semi", "software", "comm", "cloud", "ai"])
-    is_financial_utility = any(s in sector for s in ["financial", "utilities", "real estate", "bank"])
 
-    # ── 1. VALUATION (Max 20) — np.interp eliminates cliff effect ─────────────
-    pe  = get_num("pe_ratio",     999)
+    # Exact-set matching based on actual warehouse sector values (from dim_companies).
+    # Avoids false positives like 'Biotech' (contains 'tech') or 'Commodity' (contains 'comm').
+    _TECH_SECTORS = {
+        "ai & data", "design software", "ecommerce", "fintech",
+        "platform software", "semiconductor tools", "semiconductors", "technology",
+        # Sectors that were MISSED by old substring match:
+        "consumer electronics", "cybersecurity", "data storage", "digital advertising",
+        "enterprise hardware", "it services", "media & entertainment", "networking",
+        "saas", "social media", "telecom",
+    }
+    _FINANCIAL_SECTORS = {
+        "banks", "capital markets", "financial services", "financials",
+        "insurance", "regulated utilities", "nuclear & clean utilities",
+        "real estate", "reits", "tower & data reits",
+    }
+    is_tech_growth       = sector in _TECH_SECTORS
+    is_financial_utility = sector in _FINANCIAL_SECTORS
+
+    # ── Early Stage / Pre-Profit Detection ──────────────────────────────────────
+    # Pre-profit growth stocks (RIVN, OKLO, RUN...) should not be penalized like
+    # stagnant unprofitable businesses. Detect via 3 concurrent signals:
+    #   1. Currently unprofitable (P/E < 0)
+    #   2. Revenue growing fast (≥ 15% YoY)
+    #   3. EPS trajectory improving (forward_eps > trailing_eps)
+    pe         = get_num("pe_ratio", 999)
+    rev_growth = get_num("revenue_growth", 0) or 0
+    fwd_eps    = get_num("forward_eps", None)
+    trail_eps  = get_num("trailing_eps", None)
+    is_early_stage = (
+        pe is not None and pe < 0 and
+        rev_growth > 0.15 and
+        fwd_eps is not None and trail_eps is not None and fwd_eps > trail_eps
+    )
+
     pb  = get_num("price_to_book", 99)
-    peg = get_num("peg_ratio",    999)
+    peg = get_num("peg_ratio", 999)
     roe = get_num("roe", 0)
 
-    # PEG: 0→12pts at PEG≤0.8, linearly decreases to 0pts at PEG≥3.0
+    # ── 1. VALUATION (Max 20) ────────────────────────────────────────────────────
     if peg and peg > 0:
         categories["Valuation"] += np.interp(peg, [0.8, 1.5, 2.5, 3.0], [12, 10, 4, 0])
+    elif is_early_stage:
+        # Early stage: P/E is meaningless (negative). Reward fast revenue growth instead.
+        categories["Valuation"] += np.interp(rev_growth * 100, [15, 30, 50, 80], [4, 8, 10, 12])
     else:
-        # Fallback to P/E with sector-aware bands
         pe_bands = [20, 35, 50, 70] if is_tech_growth else [15, 22, 35, 50]
         if pe and pe > 0:
             categories["Valuation"] += np.interp(pe, pe_bands, [12, 8, 3, 0])
 
-    # P/B: smooth decay
+    # P/B: sector-adjusted — financials have different P/B norms than tech/industrials
     if pb and pb > 0:
-        categories["Valuation"] += np.interp(pb, [1.0, 3.5, 6.0, 10.0], [8, 6, 2, 0])
+        if is_financial_utility:
+            # Banks: P/B 1.0-1.8 is ideal; below 0.5 may signal distress (limited credit)
+            categories["Valuation"] += np.interp(pb, [0.5, 1.0, 1.8, 3.0, 5.0], [2, 8, 8, 4, 0])
+        else:
+            categories["Valuation"] += np.interp(pb, [1.0, 3.5, 6.0, 10.0], [8, 6, 2, 0])
 
-    # ROE bonus
-    if roe and roe > 0:
-        categories["Valuation"] += np.interp(roe * 100, [10, 20, 35, 50], [0, 3, 5, 5])
-
+    # ROE excluded from Valuation — lives in Profitability pillar only (no double-count).
     categories["Valuation"] = min(int(round(categories["Valuation"])), 20)
 
-    # ── 2. PROFITABILITY (Max 25, or 30 for Tech) — smooth FCF scoring ────────
+    # ── 2. PROFITABILITY (Max 25, or 30 for Tech) ────────────────────────────────
     fcf = get_num("fcf_margin", 0) or 0
+    earn_growth = get_num("earnings_growth", 0) or 0
+
     if fcf > 0:
         categories["Profitability"] += np.interp(fcf, [0, 5, 12, 20, 30], [1, 6, 12, 15, 15])
 
@@ -376,14 +415,18 @@ def compute_score_details(row) -> dict:
         categories["Profitability"] += np.interp(roe * 100, [5, 10, 18, 30], [0, 4, 8, 10])
 
     if is_tech_growth and fcf > 20:
-        categories["Profitability"] += 5  # Exceptional tech bonus
+        categories["Profitability"] += 5  # Exceptional tech FCF bonus
+
+    # Early stage: partial profitability credit when losses are shrinking (EPS improving)
+    if is_early_stage and fcf <= 0 and earn_growth > 0:
+        categories["Profitability"] += np.interp(earn_growth * 100, [0, 20, 50, 100], [0, 3, 5, 7])
 
     cap = 30 if is_tech_growth else 25
     categories["Profitability"] = min(int(round(categories["Profitability"])), cap)
 
-    # ── 3. FINANCIAL HEALTH (Max 15) — smooth Debt/EBITDA scoring ────────────
-    debt   = get_num("total_debt", 0) or 0
-    ebitda = get_num("ebitda",     0)
+    # ── 3. FINANCIAL HEALTH (Max 15) ─────────────────────────────────────────────
+    debt  = get_num("total_debt", 0) or 0
+    ebitda = get_num("ebitda", 0)
     ratio  = debt / ebitda if ebitda and ebitda > 0 else 999
 
     if is_financial_utility:
@@ -393,93 +436,120 @@ def compute_score_details(row) -> dict:
 
     categories["Financial Health"] = min(int(round(categories["Financial Health"])), 15)
 
-    # ── 4. NET PAYOUT YIELD (Max 10) — v3.0: Dividend + Buyback ──────────────
-    # Prefer pre-computed net_payout_yield_pct from dim_companies (ETL v3.0).
-    # Fallback to dividend_yield_pct only for backward compatibility.
+    # ── 4. NET PAYOUT YIELD (Max 10, or 5 for Tech) ──────────────────────────────
     net_payout = get_num("net_payout_yield_pct", None)
     if net_payout is None or net_payout == 0:
-        # Fallback: reconstruct from dividend + buyback_yield fields individually
-        div_pct     = get_num("dividend_yield_pct",  0) or 0
-        buyback_pct = get_num("buyback_yield_pct",   0) or 0
+        div_pct     = get_num("dividend_yield_pct", 0) or 0
+        buyback_pct = get_num("buyback_yield_pct",  0) or 0
         net_payout  = div_pct + buyback_pct
 
-    # Cap Tech contribution (buyback-heavy) differently from classic dividend payers
     raw_yield_score = np.interp(net_payout, [0, 1.0, 2.5, 4.0, 6.0], [0, 3, 6, 9, 10])
     if is_tech_growth:
         raw_yield_score = min(raw_yield_score, 5)  # Tech cap — profitability should dominate
 
     categories["Net Payout Yield"] = int(round(raw_yield_score))
 
-    # ── 5. CONTEXT & MOMENTUM (Max 20) ────────────────────────────────────────
+    # ── 5. CONTEXT & MOMENTUM (Max 15) — reduced from 25 ────────────────────────
+    # Momentum is tactical, not structural. Capped at 15 to prevent a bullish trend
+    # from masking fundamental weaknesses or overwhelming a fundamentally sound stock.
     sig = str(row.get("ma_signal", "NEUTRAL")).upper()
-    rsi = get_num("rsi", 50) or 50
+    rsi = get_num("rsi", None)  # None = no RSI data: skip RSI scoring (no bias from default)
     z   = get_num("price_z_score", 0) or 0
 
-    if "BULL" in sig:       categories["Context & Momentum"] += 12
-    elif "NEUTRAL" in sig:  categories["Context & Momentum"] += 4
+    if "BULL" in sig:       categories["Context & Momentum"] += 8
+    elif "NEUTRAL" in sig:  categories["Context & Momentum"] += 3
 
-    # RSI: ideal buy zone 35-60, penalise overbought (>75) smoothly
-    if 35 <= rsi <= 60:
-        categories["Context & Momentum"] += 12
-    elif rsi > 60:
-        categories["Context & Momentum"] += max(0, np.interp(rsi, [60, 75, 90], [8, 0, -5]))
-    else:
-        categories["Context & Momentum"] += np.interp(rsi, [20, 35], [0, 5])
+    # RSI: scored only when real data is available (no default = no fabricated bonus)
+    if rsi is not None:
+        if 35 <= rsi <= 60:
+            categories["Context & Momentum"] += 5
+        elif rsi > 60:
+            categories["Context & Momentum"] += max(0, np.interp(rsi, [60, 75, 90], [4, 0, -2]))
+        else:
+            categories["Context & Momentum"] += np.interp(rsi, [20, 35], [0, 3])
 
-    # Z-Score bonus/penalty
-    categories["Context & Momentum"] += np.interp(z, [-3, -1.5, 0, 1.8, 3], [6, 6, 0, -3, -5])
+    # Z-Score: contrarian signal — oversold gets mild bonus, overbought gets penalty
+    categories["Context & Momentum"] += np.interp(z, [-3, -1.5, 0, 1.8, 3], [4, 4, 0, -2, -4])
 
-    categories["Context & Momentum"] = max(0, min(int(round(categories["Context & Momentum"])), 25))
+    categories["Context & Momentum"] = max(0, min(int(round(categories["Context & Momentum"])), 15))
 
-    # ── 6. ANALYST ESTIMATES (Max 10) — smooth upside scoring ─────────────────
+    # ── 6. ANALYST ESTIMATES (Max 10) — increased from 5 ────────────────────────
+    # Collective analyst research reflects deep fundamental due diligence.
     upside_raw = row.get("upside_pct", 0)
-    upside = float(upside_raw) if pd.notnull(upside_raw) else 0
+    upside    = float(upside_raw) if pd.notnull(upside_raw) else 0
     consensus = str(row.get("recommendation_key", "") or "").lower()
 
-    categories["Analyst Estimates"] += np.interp(upside, [0, 5, 15, 30, 50], [0, 1, 1.5, 2.5, 3])
+    # Upside potential: max 5pts (smooth curve)
+    categories["Analyst Estimates"] += np.interp(upside, [0, 5, 15, 30, 50], [0, 1, 2, 4, 5])
 
-    if "strong buy" in consensus: categories["Analyst Estimates"] += 2
-    elif "buy"      in consensus: categories["Analyst Estimates"] += 1
+    # Consensus quality: up to +5pts for conviction buys, -2pts for sell signals
+    if "strong buy" in consensus:
+        categories["Analyst Estimates"] += 5
+    elif "buy" in consensus:
+        categories["Analyst Estimates"] += 3
+    elif "hold" in consensus:
+        categories["Analyst Estimates"] += 1
+    elif "sell" in consensus or "underperform" in consensus:
+        categories["Analyst Estimates"] -= 2  # Sell consensus = meaningful negative signal
 
-    categories["Analyst Estimates"] = min(int(round(categories["Analyst Estimates"])), 5)
+    categories["Analyst Estimates"] = max(0, min(int(round(categories["Analyst Estimates"])), 10))
 
-    # ── 7. RED FLAGS (Instant penalties) ──────────────────────────────────────
-    rev_growth = get_num("revenue_growth", 0) or 0
+    # ── 7. REVENUE CONSISTENCY (Max 5) — new in v4.0 ────────────────────────────
+    # Rewards companies with a consistent, multi-dimensional growth trajectory.
+    # Uses both revenue_growth (top-line) and earnings_growth (bottom-line).
+    if rev_growth > 0.15 and earn_growth > 0.10:
+        categories["Revenue Consistency"] = 5   # Accelerating: strong double-digit on both
+    elif rev_growth > 0.05 and earn_growth > -0.10:
+        categories["Revenue Consistency"] = 3   # Stable: moderate growth, losses not widening
+    elif rev_growth > 0:
+        categories["Revenue Consistency"] = 2   # At least top-line is growing
+    elif rev_growth < -0.05:
+        categories["Revenue Consistency"] = 0   # Declining revenue = no credit
+    else:
+        categories["Revenue Consistency"] = 1   # Flat but not deteriorating
+
+    # ── 8. RED FLAGS (Instant penalties) — strengthened in v4.0 ─────────────────
     if pe and pe < 0:
-        if rev_growth * 100 > 25:
-            categories["Red Flags"] -= 5   # Growth exception
+        if is_early_stage:
+            categories["Red Flags"] -= 3    # Pre-profit growth: minor flag (expected)
+        elif rev_growth * 100 > 25:
+            categories["Red Flags"] -= 5    # Unprofitable but high-growth: moderate flag
         else:
-            categories["Red Flags"] -= 10  # Unprofitable no-growth (Reduced from -20)
+            categories["Red Flags"] -= 12  # Unprofitable + stagnant: serious flag
 
-    if not is_financial_utility and ratio > 10.0 and ratio != 999:
-        categories["Red Flags"] -= 10  # Debt crisis (Reduced from -15)
+    # Debt threshold tightened (10→8); new critical tier at D/EBITDA > 12
+    if not is_financial_utility and ratio != 999:
+        if ratio > 12:
+            categories["Red Flags"] -= 15  # Debt crisis — potential solvency risk
+        elif ratio > 8:
+            categories["Red Flags"] -= 10  # High leverage — watch for refinancing risk
 
     if z < -1.5 and ("sell" in consensus or "underperform" in consensus):
-        categories["Red Flags"] -= 5   # Value trap (Reduced from -10)
+        categories["Red Flags"] -= 5       # Value trap signal: price falling + analysts bearish
 
-    # ── v3.0: BETA RISK ADJUSTMENT ────────────────────────────────────────────
+    # Beta Risk Adjustment
     beta = get_num("beta", None)
     if beta is not None:
         if beta > 1.8:
-            # High-volatility penalty (smooth, max -5 per user request)
             categories["Red Flags"] -= int(round(np.interp(beta, [1.8, 2.5, 3.5], [1, 3, 5])))
         elif beta < 0.8 and not is_tech_growth:
-            # Defensive bonus: low-beta, non-tech stocks (e.g. Utilities, Consumer Staples)
             categories["Red Flags"] += int(round(np.interp(beta, [0.0, 0.4, 0.8], [5, 5, 2])))
 
-    # ── FINAL SCORE ────────────────────────────────────────────────────────────
+    # ── FINAL SCORE ──────────────────────────────────────────────────────────────
     base_score = (
         categories["Valuation"] +
         categories["Profitability"] +
         categories["Financial Health"] +
         categories["Net Payout Yield"] +
         categories["Context & Momentum"] +
-        categories["Analyst Estimates"]
+        categories["Analyst Estimates"] +
+        categories["Revenue Consistency"]
     )
     total = base_score + categories["Red Flags"]
     final_score = int(max(0, min(total, 100)))
 
     return {"total": final_score, "breakdown": categories}
+
 
 
 def compute_score(row) -> int:
@@ -512,24 +582,40 @@ def get_macro_regime(macro_data: dict) -> str:
     return "NEUTRAL"
 
 
-def apply_macro_adjustment(score: int, sector: str, regime: str) -> int:
+def apply_macro_adjustment(score: int, sector: str, regime: str, vix: float = 20.0) -> int:
     """
     Applies a macro-environment overlay penalty/bonus to an individual stock score.
 
     Rules (all capped to keep score in [0, 100]):
-      RISK_OFF        → All stocks -5. Growth/Tech -3 additional = -8 total.
+      RISK_OFF        → Gradient penalty based on VIX level (vix 25→mild, vix 45→full).
+                        Tech/Growth receives a larger penalty than defensives.
       INFLATION_SHOCK → Tech/Growth/Software -8 (rates hurt long-duration assets).
-                         Financials/Energy/Real-Estate +3 (they benefit from rising rates).
+                         Financials/Energy/Real-Estate +3 (benefit from rising rates).
       RISK_ON         → Tech/Growth/Software +5 bonus.
       NEUTRAL         → No adjustment.
     """
     sector_lower = str(sector).lower()
-    is_tech  = any(s in sector_lower for s in ["tech", "semi", "software", "cloud", "ai", "comm"])
-    is_value = any(s in sector_lower for s in ["financial", "energy", "utilities", "real estate", "bank", "material"])
+    _TECH_SECTORS = {
+        "ai & data", "design software", "ecommerce", "fintech",
+        "platform software", "semiconductor tools", "semiconductors", "technology",
+        "consumer electronics", "cybersecurity", "data storage", "digital advertising",
+        "enterprise hardware", "it services", "media & entertainment", "networking",
+        "saas", "social media", "telecom",
+    }
+    _VALUE_SECTORS = {
+        "banks", "capital markets", "financial services", "financials", "insurance",
+        "oil & gas", "energy specialty", "regulated utilities", "nuclear & clean utilities",
+        "real estate", "reits", "tower & data reits", "basic materials",
+    }
+    is_tech  = sector_lower in _TECH_SECTORS
+    is_value = sector_lower in _VALUE_SECTORS
 
     delta = 0
     if regime == "RISK_OFF":
-        delta = -8 if is_tech else -5
+        # Gradient: VIX 25 → 40% severity, VIX 35 → 70%, VIX 45+ → 100%
+        severity = float(np.interp(vix, [25, 35, 45], [0.4, 0.7, 1.0]))
+        max_penalty = -8 if is_tech else -5
+        delta = int(round(max_penalty * severity))
     elif regime == "INFLATION_SHOCK":
         delta = -8 if is_tech else (3 if is_value else 0)
     elif regime == "RISK_ON":

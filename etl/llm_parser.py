@@ -70,6 +70,11 @@ RISK_AUDIT_PROMPT = """You are a **Chief Risk Officer (CRO)** at a top-tier inve
 You will receive a list of recent news headlines about a specific public company.
 Your task is to assess hidden risks that standard financial ratios (P/E, ROE, etc.) CANNOT detect.
 
+**Current Macro Environment: {macro_context}**
+Use this macro context to calibrate your risk assessment. In a RISK-OFF or BEARISH environment,
+weight downside risks more heavily. In a BULLISH / RISK-ON environment, consider whether
+the company is positioned to benefit from the current trend.
+
 Analyze the headlines and return your assessment as a **valid JSON object** with the following structure:
 {{
     "red_flag_score": <int 0-100>,
@@ -94,6 +99,7 @@ CRITICAL INSTRUCTIONS:
 1. Return ONLY the JSON object. No markdown, no explanation, no code fences.
 2. DO NOT hallucinate or assume positive business strategies (e.g., 'fiber infrastructure', 'clean energy') unless explicitly mentioned in the provided headlines.
 3. If headlines show the stock or its subsidiary dropping due to M&A rumors, you MUST classify it as at least Moderate Risk (score > 40) and state the uncertainty.
+4. Factor in the macro environment: in RISK_OFF/BEARISH regimes, apply an additional 5-10 point premium to your red_flag_score if the company has exposure to cyclical headwinds.
 
 IMPORTANT: Return ONLY the JSON object. No markdown, no explanation, no code fences.
 
@@ -102,11 +108,16 @@ Recent Headlines:
 {headlines}
 """
 
-def analyze_risk_with_llm(ticker: str, company_name: str) -> dict:
+def analyze_risk_with_llm(ticker: str, company_name: str, macro_context: str = "NEUTRAL | VIX=N/A") -> dict:
     """
     Main entry point for LLM Risk Audit.
     Returns a dict with red_flag_score, sentiment, key_insights, risk_category, recommendation.
     On failure, returns a safe default dict.
+
+    Args:
+        ticker: Stock ticker symbol.
+        company_name: Full company name.
+        macro_context: Regime string to inject into prompt, e.g. 'BEARISH / CAUTION | VIX=28.5 | DXY+0.4%'
     """
     default_result = {
         "red_flag_score": 0,
@@ -124,10 +135,11 @@ def analyze_risk_with_llm(ticker: str, company_name: str) -> dict:
             default_result["key_insights"] = ["No recent news found for this ticker."]
             return default_result
 
-        # 2. Build prompt
+        # 2. Build prompt with macro context injected
         headlines_text = "\n".join([f"- {h}" for h in headlines])
         prompt = RISK_AUDIT_PROMPT.format(
-            company=company_name, ticker=ticker, headlines=headlines_text
+            company=company_name, ticker=ticker, headlines=headlines_text,
+            macro_context=macro_context
         )
 
         # 3. Call Cohere

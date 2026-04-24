@@ -163,7 +163,7 @@ def get_unified_verdict(api_key: str, metrics: dict, nlp_result: dict) -> str:
             z_score = 0
         price     = metrics.get("price", "N/A")
         upside    = metrics.get("upside_pct", 0)
-        rsi       = metrics.get("rsi", 50)
+        rsi       = metrics.get("rsi", None)  # None = no data; avoid fake neutral RSI=50 in prompt
         ma_signal = metrics.get("ma_signal", "N/A")
         smart_money = metrics.get("smart_money", "N/A")
         pe        = metrics.get("pe_ratio", "N/A")
@@ -204,7 +204,7 @@ def get_unified_verdict(api_key: str, metrics: dict, nlp_result: dict) -> str:
         # Signal alignment check
         _ai_sc = int(ai_score) if str(ai_score).isdigit() else 50
         quant_bullish = _ai_sc >= 65
-        quant_bearish = _ai_sc <= 45
+        quant_bearish = _ai_sc <= 38  # v4.0: aligned with WEAK tier threshold
         
         news_bullish  = nlp_score <= 35
         news_bearish  = nlp_score >= 50 or nlp_sentiment in ["Negative", "Critical"]
@@ -242,8 +242,9 @@ Your task: synthesize both and issue ONE definitive, actionable investment verdi
 - 52W Range: €{_f(low_52w)} – €{_f(high_52w)} | % from MA200: {pct_from_ma200} | 52W Position: {_f(metrics.get('w52_pos','N/A'), 0)}%
 - Technical Levels: S1=€{_f(support_s1)} | S2=€{_f(support_s2)} | R1=€{_f(resistance_r1)} | R2=€{_f(resistance_r2)} | Stop=€{_f(stop_loss_tech)}
 - Moving Averages: MA20=€{_f(ma20_cur)} | MA50=€{_f(ma50_cur)}
-- RSI: {_f(rsi, 1)} | MA Signal: {ma_signal} | Smart Money: {smart_money} | Forward P/E: {_f(metrics.get('forward_pe', pe), 1)}x | PEG: {_f(peg, 2)} | FCF: {_f(fcf, 1, '%')}
-- Debt/EBITDA: {_f(metrics.get('debt_ebitda', 'N/A'), 2)}x | Net Payout Yield: {_f(metrics.get('net_payout_yield_pct', 'N/A'), 2)}% 
+- RSI: {_f(rsi, 1) if rsi is not None else 'N/A'} | MA Signal: {ma_signal} | Smart Money: {smart_money} | Forward P/E: {_f(metrics.get('forward_pe', pe), 1)}x | PEG: {_f(peg, 2)} | FCF: {_f(fcf, 1, '%')}
+- Debt/EBITDA: {_f(metrics.get('debt_ebitda', 'N/A'), 2)}x | Net Payout Yield: {_f(metrics.get('net_payout_yield_pct', 'N/A'), 2)}%
+- Revenue Growth (YoY): {f"{float(metrics.get('revenue_growth') or 0) * 100:+.1f}%" if metrics.get('revenue_growth') is not None else 'N/A'} | EPS Growth (YoY): {f"{float(metrics.get('earnings_growth') or 0) * 100:+.1f}%" if metrics.get('earnings_growth') is not None else 'N/A'}
 - Earnings Surprise (last 2Q): {metrics.get('earnings_surprise_summary', 'N/A')}
 - Market Regime: {regime}
 
@@ -1392,9 +1393,10 @@ def compute_institutional_rating(
         p_trend_c = "#e74c3c"            # BEARISH or NEUTRAL
 
     # ── PILLAR 2: QUALITY ────────────────────────────────────────────────
-    if ai_score >= 70:   p_qual_c = "#00ffcc"
-    elif ai_score >= 55: p_qual_c = "#2ecc71"
-    elif ai_score >= 40: p_qual_c = "#f1c40f"
+    # v4.0 thresholds: scores shifted slightly lower due to momentum weight reduction
+    if ai_score >= 65:   p_qual_c = "#00ffcc"
+    elif ai_score >= 50: p_qual_c = "#2ecc71"
+    elif ai_score >= 38: p_qual_c = "#f1c40f"
     else:                p_qual_c = "#e74c3c"
 
     # ── PILLAR 3: VALUATION (Sector-Aware) ──────────────────────────────
@@ -1407,8 +1409,8 @@ def compute_institutional_rating(
 
     _val_expensive  = (pe_v > _pe_expensive_limit and pe_v > 0) or (peg_v > _peg_expensive_limit and peg_v > 0)
     _val_cheap      = (upside > 15) and (peg_v < _peg_cheap_limit or pe_v < _pe_cheap_limit) and pe_v > 0
-    _val_premium_ok = (upside > 8) and (ai_score >= 65) and (peg_v < 2.8 or pe_v < (55 if _is_growth else 35))
-    _val_compounder = (upside > 5) and (ai_score >= 55) and (not _val_expensive)
+    _val_premium_ok = (upside > 8) and (ai_score >= 60) and (peg_v < 2.8 or pe_v < (55 if _is_growth else 35))
+    _val_compounder = (upside > 5) and (ai_score >= 50) and (not _val_expensive)
     _val_fair       = (upside > 0) and (not _val_expensive)
 
     if _val_cheap:
@@ -2093,14 +2095,24 @@ losers = movers.sort_values('chg_24h', ascending=True).head(5)
 from etl.utils import compute_score, compute_score_details, get_macro_regime, apply_macro_adjustment
 
 latest_prices_reco = prices_full.sort_values('date').groupby('ticker').tail(1).copy()
-# Note: fct_daily_returns has no 'rsi' column — only merge columns that exist
-_merge_cols = ["ticker", "ma_signal", "price_close", "price_z_score"]
+# Pull RSI from fct_daily_returns (it exists there) alongside other momentum columns
+_merge_cols = ["ticker", "ma_signal", "price_close", "price_z_score", "rsi"]
 _merge_cols = [c for c in _merge_cols if c in latest_prices_reco.columns]
 reco_df = companies_full.merge(latest_prices_reco[_merge_cols], on="ticker", how="left")
 reco_df["upside_pct"] = (reco_df["target_mean_price"] / reco_df["price_close"] - 1) * 100
-reco_df["upside_pct"] = reco_df["upside_pct"].fillna(0).clip(-100, 200)  # Cap: stale targets (splits, FX issues) can cause absurd upside
-# RSI not in warehouse — use neutral default so other pillars score correctly
-reco_df["rsi"] = 50.0
+# ── Stale Target Detection ─────────────────────────────────────────────────
+# If absolute upside > 100% AND target deviates > 3x from current price
+# → Analyst target is likely stale (due to split, crash, or FX mismatch). Nullify it.
+_stale_mask = (
+    (reco_df["upside_pct"].abs() > 100) &
+    (
+        reco_df["avg_5y_price"].isna() |
+        ((reco_df["target_mean_price"] / reco_df["price_close"].replace(0, float("nan"))).abs() > 3)
+    )
+)
+reco_df.loc[_stale_mask, "upside_pct"] = float("nan")
+reco_df["upside_pct"] = reco_df["upside_pct"].fillna(0).clip(-100, 100)
+# RSI is now merged from warehouse. NaN = no data → utils.py will skip RSI scoring (0 pts, no bias).
 
 reco_df["score"] = reco_df.apply(compute_score, axis=1)
 
@@ -2161,10 +2173,9 @@ alert_count = len(hot_alerts)
 # ── GLOBAL KPI HEADER (Pure HTML Grid — Guaranteed Symmetry) ─────────────────
 macro = fetch_macro_data()
 
-# ── [NEW] MASTER TACTICAL REGIME CALCULATION ────────────────────────────────
-# We move the high-fidelity logic here so it's consistent across the whole app
-from etl.utils import get_macro_regime
-_macro_regime = get_macro_regime(macro)
+# ── MASTER TACTICAL REGIME CALCULATION ──────────────────────────────────────
+# _macro_regime is derived AFTER conf_score_global is computed (below).
+# This ensures both the UI label and score adjustment use the same source of truth.
 
 # Get raw macro values for scoring
 _vix_val = macro.get("VIX", {}).get("val", 20)
@@ -2195,38 +2206,80 @@ latest_breadth_global = breadth_ts_global.iloc[-1]["breadth_pct"] if not breadth
 conf_score_global = 0
 conf_reasons = []
 
+# ── 1. SPY TREND (Max 25 pts): Position vs MA50 + MA200 ────────────────────────
+# SPY above both MAs = full 25; above one = partial; below both = 0
 if latest_spy_global is not None:
-    if latest_spy_global["price_close"] > latest_spy_global["ma_50"]: 
-        conf_score_global += 25
-    else:
-        conf_reasons.append("SPY < MA50")
-        
-    if latest_spy_global["price_close"] > latest_spy_global["ma_200"]: 
-        conf_score_global += 25
-    else:
-        conf_reasons.append("SPY < MA200")
+    _above_ma50  = latest_spy_global["price_close"] > latest_spy_global["ma_50"]
+    _above_ma200 = latest_spy_global["price_close"] > latest_spy_global["ma_200"]
 
-if latest_breadth_global > 50: 
-    conf_score_global += 30
-else:
+    if _above_ma50 and _above_ma200:
+        conf_score_global += 25
+    elif _above_ma50 or _above_ma200:
+        conf_score_global += 12
+        conf_reasons.append("SPY below one MA")
+    else:
+        conf_reasons.append("SPY below MA50 & MA200")
+
+    # ── 2. SPY MOMENTUM (Max 10 pts): 5-day return (directional velocity) ────────
+    # Catches the case where SPY is above MA50 but actively rolling over.
+    if len(df_spy_global) >= 6:
+        _spy_5d_ret = (
+            float(df_spy_global["price_close"].iloc[-1]) /
+            float(df_spy_global["price_close"].iloc[-6]) - 1
+        ) * 100  # in %
+        import numpy as np
+        _spy_mom_pts = int(round(float(np.interp(_spy_5d_ret, [-3, -1, 0, 1.5, 3], [0, 2, 5, 8, 10]))))
+        conf_score_global += _spy_mom_pts
+        if _spy_5d_ret < -1:
+            conf_reasons.append(f"SPY 5d return {_spy_5d_ret:+.1f}%")
+    else:
+        conf_score_global += 5  # neutral if insufficient data
+
+# ── 3. MARKET BREADTH (Max 30 pts): % stocks above MA50 ────────────────────────
+# Gradient via np.interp — eliminates cliff effect at 50%
+# 30% breadth = panic (0pts), 50% = neutral (15pts), 70%+ = healthy (30pts)
+_breadth_pts = int(round(float(np.interp(latest_breadth_global, [25, 40, 50, 60, 75], [0, 10, 15, 22, 30]))))
+conf_score_global += _breadth_pts
+if latest_breadth_global < 40:
+    conf_reasons.append(f"Breadth Panic ({latest_breadth_global:.0f}%)")
+elif latest_breadth_global < 55:
     conf_reasons.append(f"Weak Breadth ({latest_breadth_global:.0f}%)")
 
-# 3. Volatility Awareness - VIX Explicit (10 pts)
-if _vix_val < 20:
-    conf_score_global += 10
-elif _vix_val < 28:
-    conf_score_global += 5
-    conf_reasons.append("VIX Elevated")
-else:
-    conf_reasons.append("VIX Panic (>28)")
+# ── 4. VIX (Max 10 pts): Fear gauge — gradient, panic threshold at 25 not 28 ───
+# Post-COVID norms: VIX>25 = institutional risk-off, VIX>35 = crisis
+_vix_pts = int(round(float(np.interp(_vix_val, [15, 20, 25, 30, 40], [10, 8, 4, 1, 0]))))
+conf_score_global += _vix_pts
+if _vix_val > 25:
+    conf_reasons.append(f"VIX Risk-Off ({_vix_val:.0f})")
+elif _vix_val > 20:
+    conf_reasons.append(f"VIX Elevated ({_vix_val:.0f})")
 
-# 4. Macro Stability - DXY/TNX Explicit (10 pts)
-if _dxy_pct < 0.3 and _tnx_chg < 0.05:
+# ── 5. MACRO STABILITY (Max 10 pts): DXY + Rates — 5-day rolling average ────────
+# Single-day DXY < 0.3% is too easy (near-always true).
+# Use 5-day cumulative DXY move to detect sustained dollar strength.
+try:
+    _dxy_data = prices_full[prices_full["ticker"] == "DX-Y.NYB"].sort_values("date").tail(6)
+    if len(_dxy_data) >= 2:
+        _dxy_5d_move = (
+            float(_dxy_data["price_close"].iloc[-1]) /
+            float(_dxy_data["price_close"].iloc[0]) - 1
+        ) * 100  # cumulative % over 5d
+    else:
+        _dxy_5d_move = _dxy_pct  # fallback to daily
+except Exception:
+    _dxy_5d_move = _dxy_pct
+
+_macro_ok = (_dxy_5d_move < 0.8) and (_tnx_chg < 0.08)
+if _macro_ok:
     conf_score_global += 10
+elif (_dxy_5d_move < 1.5) and (_tnx_chg < 0.12):
+    conf_score_global += 5
+    conf_reasons.append("Mild Macro Friction")
 else:
-    conf_reasons.append("Macro Friction (USD/Rates)")
+    conf_reasons.append(f"Macro Headwind (DXY 5d:{_dxy_5d_move:+.1f}%)")
 
 conf_reason_str = "All indicators bullish." if conf_score_global >= 90 else ", ".join(conf_reasons)
+
 
 # Master Labels
 if conf_score_global >= 75: 
@@ -2242,6 +2295,19 @@ else:
     regime, regime_ui_color = "BEARISH / CAUTION", "#e74c3c"
     advice = "Defensive posture required. Breadth is deteriorating or trend has failed. Focus on capital preservation."
 
+# ── Sync _macro_regime with UI regime (single source of truth) ───────────────
+# Maps the 4-state UI label to the 4-state scoring regime used by apply_macro_adjustment.
+_regime_to_macro = {
+    "STRONG BULLISH":    "RISK_ON",
+    "BULLISH":           "RISK_ON",
+    "NEUTRAL / SIDEWAYS": "NEUTRAL",
+    "BEARISH / CAUTION": "RISK_OFF",
+}
+_macro_regime = _regime_to_macro.get(regime, "NEUTRAL")
+# Override: if VIX is in INFLATION territory (yields rising + USD rising), flag it
+if (_tnx_chg > 0.05 and _dxy_pct > 0.1 and _vix_val < 25):
+    _macro_regime = "INFLATION_SHOCK"
+
 vix_val, vix_delta_html = "N/A", ""
 spy_val, spy_delta_html = "N/A", ""
 
@@ -2251,11 +2317,11 @@ if macro:
     tnx_chg = macro["US10Y"]["chg"]
 
     # ── MACRO-AWARE SCORE ADJUSTMENT ─────────────────────────────────────
-    # Now that we have live macro, apply sector-specific penalty/bonus to scores
-    _macro_regime = get_macro_regime(macro)
+    # Uses _macro_regime already derived from conf_score_global (synchronized above).
+    _vix_live = macro.get("VIX", {}).get("val", 20.0)
     if _macro_regime != "NEUTRAL":
         reco_df["score"] = reco_df.apply(
-            lambda r: apply_macro_adjustment(r["score"], r.get("sector", ""), _macro_regime), axis=1
+            lambda r: apply_macro_adjustment(r["score"], r.get("sector", ""), _macro_regime, vix=_vix_live), axis=1
         )
         # Recalculate market quality index with macro-adjusted scores
         valid_reco_m = reco_df[~reco_df['ticker'].isin(indices_list)].dropna(subset=['score', 'market_cap'])
@@ -2824,8 +2890,11 @@ if active_tab == "3. Qualitative Audit (AI)":
             
             target_p = meta.get('target_mean_price', 0)
             cur_p = df_deep['price_close'].iloc[-1]
-            upside = ((target_p / cur_p) - 1) * 100 if target_p > 0 else 0
-            upside = max(-100, min(200, upside))  # Cap: guard against stale targets (splits, FX mismatches)
+            upside = ((target_p / cur_p) - 1) * 100 if (target_p and cur_p) else 0
+            # Stale target detection: target > 3x current price → analyst target is outdated
+            if abs(upside) > 100 and cur_p > 0 and abs(target_p / cur_p) > 3:
+                upside = 0  # Treat as stale (reverse split, crash, FX mismatch)
+            upside = max(-100, min(100, upside))
             
             # --- SUMMARY STRIP (High Density) ---
             company_name = meta.get('company', deep_ticker)
@@ -2872,7 +2941,18 @@ if active_tab == "3. Qualitative Audit (AI)":
 
 
             st.markdown("<div style='margin-top:10px; padding:6px 12px; background:rgba(255,255,255,0.03); border-left:4px solid #3498db; color:#3498db; font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:1.5px;'>LAYER 1: STRUCTURAL CONTEXT</div>", unsafe_allow_html=True)
-            # ── TRADING CONTEXT (TOP of page) — 52-Week Range & Strategic Plan ─
+            # ── TRADING CONTEXT (TOP of page) — 52-Week Range & Strategic Plan ──
+            # v4.0 thresholds aligned with redistributed pillar weights
+            if ai_score >= 65:    ai_color, ai_icon = "#00ffcc", "🚀"
+            elif ai_score >= 50:  ai_color, ai_icon = "#2ecc71", "✅"
+            elif ai_score >= 38:  ai_color, ai_icon = "#f1c40f", "🟡"
+            else:                  ai_color, ai_icon = "#e74c3c", "⚠️"
+
+            # Quality tier badge
+            if ai_score >= 65:   p_qual, p_qual_c = "ELITE", "#00ffcc"
+            elif ai_score >= 50: p_qual, p_qual_c = "SOLID", "#2ecc71"
+            elif ai_score >= 38: p_qual, p_qual_c = "FAIR",  "#f1c40f"
+            else:                p_qual, p_qual_c = "WEAK",  "#e74c3c"
             # All tactical values computed by the shared helper (identical formula to Screener)
             _tm        = get_tactical_metrics(df_deep, cur_p, analyst_target=target_p)
             _s1        = _tm["s1"]
@@ -2949,8 +3029,8 @@ if active_tab == "3. Qualitative Audit (AI)":
 
             _val_expensive  = (_pe_v > _pe_expensive_limit and _pe_v > 0) or (_peg_v > _peg_expensive_limit and _peg_v > 0)
             _val_cheap      = (upside > 15) and (_peg_v < _peg_cheap_limit or _pe_v < _pe_cheap_limit) and _pe_v > 0
-            _val_premium_ok = (upside > 8) and (ai_score >= 65) and (_peg_v < 2.8 or _pe_v < (55 if _is_growth else 35))
-            _val_compounder = (upside > 5) and (ai_score >= 55) and (not _val_expensive)
+            _val_premium_ok = (upside > 8) and (ai_score >= 60) and (_peg_v < 2.8 or _pe_v < (55 if _is_growth else 35))
+            _val_compounder = (upside > 5) and (ai_score >= 50) and (not _val_expensive)
             _val_fair       = (upside > 0) and (not _val_expensive)
 
             if _val_cheap:
@@ -3145,7 +3225,11 @@ if active_tab == "3. Qualitative Audit (AI)":
 
             if st.button("Run Real-Time AI Risk Audit", type="primary", width="stretch"):
                 with st.spinner(f"Scanning news for {meta['company']}..."):
-                    llm_res = analyze_risk_with_llm(deep_ticker, meta['company'])
+                    # Build macro context string from live dashboard values
+                    _vix_str = f"{_vix_val:.1f}" if isinstance(_vix_val, (int, float)) else "N/A"
+                    _dxy_str = f"DXY {'+' if _dxy_pct >= 0 else ''}{_dxy_pct:.2f}%" if isinstance(_dxy_pct, (int, float)) else ""
+                    _llm_macro_ctx = f"{regime} | VIX={_vix_str} | {_dxy_str}".strip(" |")
+                    llm_res = analyze_risk_with_llm(deep_ticker, meta['company'], macro_context=_llm_macro_ctx)
                     if llm_res.get("error"):
                         st.error(f"NLP Error: {llm_res['error'][:80]}")
                     else:
@@ -3253,7 +3337,7 @@ if active_tab == "3. Qualitative Audit (AI)":
             # ── AI Risk Cockpit: 3-Column Premium Scorecard (Full-Width) ──
             if _uv_data:
                 _pulse_style = "border: 1px solid rgba(230,126,34,0.6); box-shadow: 0 0 15px rgba(230,126,34,0.15); border-left: 4px solid #e67e22;" if _is_conflict else "border: 1px solid rgba(255,255,255,0.08); border-left: 4px solid #444;"
-                _q_color = "#00ffcc" if _ai_score_snap >= 70 else "#f1c40f" if _ai_score_snap >= 45 else "#e74c3c"
+                _q_color = "#00ffcc" if _ai_score_snap >= 65 else "#f1c40f" if _ai_score_snap >= 50 else "#e74c3c"
                 _r_color = "#e74c3c" if _nlp_score >= 60 else "#f39c12" if _nlp_score >= 30 else "#2ecc71"
                 _s_color = "#00ffcc" if _nlp_sent == "Positive" else "#e74c3c" if _nlp_sent in ["Negative", "Critical"] else "#8899aa"
     
@@ -3404,8 +3488,9 @@ if active_tab == "3. Qualitative Audit (AI)":
                     "Profitability":   30 if _is_tech else 25,
                     "Fin. Health":     15,
                     "Net Yield":       5  if _is_tech else 10,
-                    "Momentum":        25,   # Fixed: engine caps Context & Momentum at 25 (was 20)
-                    "Analyst Est.":    5     # Fixed: engine caps Analyst Estimates at 5 (was 10)
+                    "Momentum":        15,   # v4.0: Context & Momentum cap reduced from 25 → 15
+                    "Analyst Est.":    10,   # v4.0: Analyst Estimates cap increased from 5 → 10
+                    "Rev. Growth":     5,    # v4.0: Revenue Consistency pillar (new)
                 }
                 _pillar_keys = {
                     "Valuation":       "Valuation",
@@ -3413,7 +3498,8 @@ if active_tab == "3. Qualitative Audit (AI)":
                     "Fin. Health":     "Financial Health",
                     "Net Yield":       "Net Payout Yield",
                     "Momentum":        "Context & Momentum",
-                    "Analyst Est.":    "Analyst Estimates"
+                    "Analyst Est.":    "Analyst Estimates",
+                    "Rev. Growth":     "Revenue Consistency",
                 }
                 _radar_labels = list(_max_pts.keys())
                 _radar_vals   = [
@@ -5747,19 +5833,19 @@ if active_tab == "2. Opportunity Radar":
     scan_presets = [
         "🔍 All Stock Universe",
         "──────────── 📈 OPPORTUNITY ────────────",
-        "🏆 Institutional Pulse (Quality > 75 & Bullish)",
+        "🏆 Institutional Pulse (Quality ≥ 70 & Bullish)",
         "📈 Trend Following (MA20 > MA50)",
         "💎 Deep Value (Z-Score < -2.0)",
         "📉 RSI Mean Reversion (Oversold < 35)",
         "🚀 Buy on Dip (Bullish + Oversold)",
         "⚡ Multi-Indicator Breakout (Bullish + RSI > 50)",
         "📈 Both Accelerating (EPS + Revenue QoQ, 2 qtrs > +10%)",
-        "🌱 GARP (Growth at Reasonable Price: PEG < 1.5 + Quality > 60)",
+        "🌱 GARP (Growth at Reasonable Price: PEG < 1.5 + Quality > 55)",
         "💰 High Quality Dividend (Yield > 2.5% + Quality > 65)",
         "🔥 Short Squeeze Watch (Short % > 15% + Bullish)",
         "──────────── ⛔ RISK / WARNING ────────────",
         "⚠️ Earnings Deterioration (EPS + Revenue QoQ, 2 qtrs < -10%)",
-        "⚠️ Structural Caution (Quality < 40 & Bearish)",
+        "⚠️ Structural Caution (Quality < 38 & Bearish)",
         "📉 Negative Momentum (MA20 < MA50)",
         "🔥 Overbought Alert (RSI > 65)",
         "🎈 Valuation Exhaustion (Z-Score > +2.0)",
@@ -5810,8 +5896,8 @@ if active_tab == "2. Opportunity Radar":
     if selected_sector != "🌍 All Sectors":
         f_df = f_df[f_df["Sector"] == selected_sector]
     if "Institutional Pulse" in scan_mode:
-        f_df = f_df[(f_df["Quality"] >= 75) & (f_df["Trend"] == "BULLISH")]
-        st.success("🏆 Institutional Pulse: Quality Score > 75 and Bullish Trend (Institutional Conviction)")
+        f_df = f_df[(f_df["Quality"] >= 70) & (f_df["Trend"] == "BULLISH")]
+        st.success("🏆 Institutional Pulse: Quality Score ≥ 70 (ELITE tier) and Bullish Trend (Institutional Conviction)")
     elif "Trend Following" in scan_mode:
         f_df = f_df[f_df["Trend"] == "BULLISH"]
         st.info("📈 Trend Following: Stocks in confirmed MA20 > MA50 bullish alignment")
@@ -5828,8 +5914,8 @@ if active_tab == "2. Opportunity Radar":
         f_df = f_df[(f_df["Trend"] == "BULLISH") & (f_df["RSI (14)"] > 50)]
         st.success("⚡ Breakout: Strong Momentum (Trend Bullish + RSI > 50)")
     elif "Structural Caution" in scan_mode:
-        f_df = f_df[(f_df["Quality"] < 40) & (f_df["Trend"] == "BEARISH")]
-        st.error("⚠️ Structural Caution: High Risk! Low Quality (Score < 40) + Confirmed Downtrend (MA20 < MA50)")
+        f_df = f_df[(f_df["Quality"] < 38) & (f_df["Trend"] == "BEARISH")]
+        st.error("⚠️ Structural Caution: High Risk! Low Quality (Score < 38 = WEAK tier) + Confirmed Downtrend (MA20 < MA50)")
     elif "Negative Momentum" in scan_mode:
         f_df = f_df[f_df["Trend"] == "BEARISH"]
         st.error("📉 Negative Momentum: Stocks in confirmed MA20 < MA50 bearish alignment. Avoid jumping in too early.")
@@ -5852,8 +5938,8 @@ if active_tab == "2. Opportunity Radar":
         f_df = f_df[(f_df["EPS Momentum"] == "Decelerating") & (f_df["Rev Momentum"] == "Decelerating")]
         st.error("⚠️ Earnings Deterioration: EPS & Revenue both declining QoQ > -10% for 2 consecutive quarters.")
     elif "GARP" in scan_mode:
-        f_df = f_df[(f_df["PEG"] > 0) & (f_df["PEG"] < 1.5) & (f_df["Quality"] > 60)]
-        st.success("🌱 GARP — Growth at a Reasonable Price: PEG < 1.5 + Quality > 60. Peter Lynch-style filter.")
+        f_df = f_df[(f_df["PEG"] > 0) & (f_df["PEG"] < 1.5) & (f_df["Quality"] > 55)]
+        st.success("🌱 GARP — Growth at a Reasonable Price: PEG < 1.5 + Quality > 55 (SOLID tier). Peter Lynch-style filter.")
     elif "High Quality Dividend" in scan_mode:
         f_df = f_df[(f_df["Yield (%)"] > 2.5) & (f_df["Quality"] > 65) & (f_df["Trend"] == "BULLISH")]
         st.success("💰 High Quality Dividend: Yield > 2.5% with strong fundamentals (Quality > 65) and confirmed uptrend. Income + quality.")
@@ -5941,12 +6027,12 @@ if active_tab == "2. Opportunity Radar":
     st.markdown("""
     <div style='margin-top:16px; padding:14px 18px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:10px;'>
         <div style='font-size:0.78rem; font-weight:700; color:#8899aa; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:10px;'>
-            Quality Score Methodology v3.0 — 6 Pillars, Max 100 Points
+            Quality Score Methodology v4.0 — 7 Pillars, Max 100 Points
         </div>
-        <div style='display:grid; grid-template-columns: repeat(6, 1fr); gap:10px;'>
+        <div style='display:grid; grid-template-columns: repeat(7, 1fr); gap:8px;'>
             <div style='background:rgba(52,152,219,0.08); border-left:3px solid #3498db; padding:8px 10px; border-radius:5px;'>
                 <div style='font-size:0.7rem; color:#3498db; font-weight:700;'>VALUATION</div>
-                <div style='font-size:0.65rem; color:#aaa; margin-top:3px;'>PEG · P/E · P/B · ROE bonus</div>
+                <div style='font-size:0.65rem; color:#aaa; margin-top:3px;'>PEG · P/E · P/B<br><span style='color:#f1c40f;'>ROE excluded (no double-count)</span></div>
                 <div style='font-size:1rem; font-weight:800; color:#fff;'>≤ 20 pts</div>
             </div>
             <div style='background:rgba(46,204,113,0.08); border-left:3px solid #2ecc71; padding:8px 10px; border-radius:5px;'>
@@ -5965,30 +6051,36 @@ if active_tab == "2. Opportunity Radar":
                 <div style='font-size:1rem; font-weight:800; color:#fff;'>≤ 10 pts</div>
             </div>
             <div style='background:rgba(0,210,255,0.08); border-left:3px solid #00d2ff; padding:8px 10px; border-radius:5px;'>
-                <div style='font-size:0.7rem; color:#00d2ff; font-weight:700;'>TECHNICAL TREND</div>
-                <div style='font-size:0.65rem; color:#aaa; margin-top:3px;'>MA Signal · RSI · Z-Score</div>
-                <div style='font-size:1rem; font-weight:800; color:#fff;'>≤ 25 pts</div>
+                <div style='font-size:0.7rem; color:#00d2ff; font-weight:700;'>MOMENTUM</div>
+                <div style='font-size:0.65rem; color:#aaa; margin-top:3px;'>MA Signal · RSI · Z-Score<br><span style='color:#f1c40f;'>Reduced 25→15 (tactical)</span></div>
+                <div style='font-size:1rem; font-weight:800; color:#fff;'>≤ 15 pts</div>
             </div>
             <div style='background:rgba(231,76,60,0.08); border-left:3px solid #e74c3c; padding:8px 10px; border-radius:5px;'>
                 <div style='font-size:0.7rem; color:#e74c3c; font-weight:700;'>ANALYST ESTIMATES</div>
-                <div style='font-size:0.65rem; color:#aaa; margin-top:3px;'>Upside % + Consensus</div>
+                <div style='font-size:0.65rem; color:#aaa; margin-top:3px;'>Upside % + Consensus<br><span style='color:#f1c40f;'>Increased 5→10 (high-signal)</span></div>
+                <div style='font-size:1rem; font-weight:800; color:#fff;'>≤ 10 pts</div>
+            </div>
+            <div style='background:rgba(0,255,160,0.08); border-left:3px solid #00ffa0; padding:8px 10px; border-radius:5px;'>
+                <div style='font-size:0.7rem; color:#00ffa0; font-weight:700;'>REV. CONSISTENCY</div>
+                <div style='font-size:0.65rem; color:#aaa; margin-top:3px;'>Rev. Growth + EPS Growth<br><span style='color:#f1c40f;'>New in v4.0</span></div>
                 <div style='font-size:1rem; font-weight:800; color:#fff;'>≤ 5 pts</div>
             </div>
         </div>
         <div style='margin-top:10px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:0.68rem;'>
             <div style='background:rgba(231,76,60,0.07); border-left:2px solid #e74c3c; padding:6px 10px; border-radius:4px; color:#ccc;'>
-                🚨 <b style='color:#e74c3c;'>Red Flag Penalties:</b>
-                Negative P/E &amp; no-growth (−10) · Debt/EBITDA &gt; 10 (−10) · Value Trap: Z &lt; −1.5 + Sell consensus (−5)
+                🚨 <b style='color:#e74c3c;'>Red Flag Penalties (v4.0):</b>
+                Pre-profit stagnant (−12) · Early-stage PE&lt;0 (−3) · D/EBITDA &gt; 12 (−15) · D/EBITDA 8–12 (−10) · Value Trap (−5) · High Beta (up to −5)
             </div>
             <div style='background:rgba(241,196,15,0.07); border-left:2px solid #f1c40f; padding:6px 10px; border-radius:4px; color:#ccc;'>
-                ⚡ <b style='color:#f1c40f;'>Beta Risk Adjustment (v3.0 NEW):</b>
-                High Beta &gt; 1.8 → penalty up to −5 · Low Beta &lt; 0.8 (non-tech) → bonus up to +5
+                🏷️ <b style='color:#f1c40f;'>Score Tiers (v4.0):</b>
+                ELITE ≥ 65 · SOLID ≥ 50 · FAIR ≥ 38 · WEAK &lt; 38 — Early Stage flag exempts pre-profit growth stocks from harsh PE penalty
             </div>
         </div>
         <div style='margin-top:6px; font-size:0.65rem; color:#556677;'>
-            Score is fully sector-aware — Tech growth stocks use different P/E bands &amp; profitability weights vs. Utilities/Financials. All thresholds use linear interpolation (np.interp) to eliminate cliff effects.
+            Score is fully sector-aware — Tech growth stocks use different P/E bands &amp; profitability weights vs. Utilities/Financials. All thresholds use linear interpolation (np.interp) to eliminate cliff effects. RSI uses real warehouse data (no default bias). P/B sector-adjusted for Financials.
         </div>
     </div>
+
     """, unsafe_allow_html=True)
 
     with st.expander("💡 Tactical Interpretation Guide"):
