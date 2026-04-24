@@ -34,10 +34,7 @@ Bảng này đóng vai trò làm trung tâm để lọc trên Screener.
 | `dividends_paid_yield_pct` | Tính toán | `(ABS(dividends_paid_ttm) / market_cap) * 100` |
 | `net_payout_yield_pct` | Tính toán | Tổng của Lợi suất mua lại và Lợi suất chi trả cổ tức. |
 | `fcf_margin` | Tính toán | `(free_cashflow / revenue_ttm) * 100` |
-| `fmi_rev_acceleration` | Tính toán | Tăng trưởng doanh thu QoQ kỳ hiện tại - Tăng trưởng QoQ quý trước. |
-| `fmi_eps_acceleration` | Tính toán | Tăng trưởng EPS QoQ kỳ hiện tại - Tăng trưởng QoQ quý trước. |
-| `fmi_margin_trend` | Tính toán | Tăng trưởng EPS YoY - Tăng trưởng Doanh thu YoY. <br> *(Giúp đánh giá Operating Leverage)* |
-| `fmi_quarters_of_growth` | Tính toán | Số quý gần nhất liên tiếp có tăng trưởng YoY của cả EPS và Doanh thu > 0%. |
+
 
 ### B. Bảng `marts.fct_daily_returns`
 
@@ -66,5 +63,5 @@ Một số chỉ số được tính động trên Streamlit qua hàm lập lị
 | Cột Dashboard | Nguồn | Cách tính toán / Công thức |
 | :--- | :--- | :--- |
 | `Quality Score (0-100)` | Tính toán | Điểm tổng hợp dựa trên ROE (>15=20đ), Biên lợi nhuận gộp (>40=20đ), Current Ratio (>1.5=15đ), Xếp hạng Nợ/Vốn (<1.0=15đ), Biên FCF (>10=15đ) và Tăng trưởng EPS dự phóng >0 (15đ). |
-| `FMI Score (0-100)` | Tính toán | Hệ thống xếp hạng Percentile từ các trường `fmi` ở layer Marts. |
+
 | `EPS Momentum` | Tính toán | Phân loại `Accelerating` nếu 2 quý gần nhất đều có tăng trưởng EPS QoQ > 10%, và `Decelerating` nếu < -10%. |

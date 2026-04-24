@@ -33,10 +33,7 @@ Cette table sert de pivot pour les filtres de notation sur l'interface (Screener
 | `buyback_yield_pct` | Calculé | `(buyback_ttm / market_cap) * 100` |
 | `net_payout_yield_pct` | Calculé | Rendement cumulé des rachats d'actions et la distribution de dividendes. |
 | `fcf_margin` | Calculé | `(free_cashflow / revenue_ttm) * 100` |
-| `fmi_rev_acceleration` | Calculé | Différence entre la croissance QoQ des revenus T(actuel) et T-1(précédent). |
-| `fmi_eps_acceleration` | Calculé | Différence entre la croissance QoQ du BPA (EPS) T(actuel) et T-1(précédent). |
-| `fmi_margin_trend` | Calculé | Croissance YoY du BPA - Croissance YoY des revenus (évalue le levier d'exploitation opérationnel). |
-| `fmi_quarters_of_growth` | Calculé | Nombre consécutif des derniers trimestres avec croissance positive du revenu et de l'EPS (YoY). |
+
 
 ### B. `marts.fct_daily_returns`
 
@@ -65,5 +62,5 @@ Les indicateurs de filtrage dynamiques calculés via l'application Python Stream
 | Colonne | Source | Calcul / Formule |
 | :--- | :--- | :--- |
 | `Quality Score (0-100)` | Calculé | Score composite évaluant les fondamentaux basé systématiquement sur la marge brute, ROE, FCF Margin et les ratios d'endettement. |
-| `FMI Score (0-100)` | Calculé | Classement ("Percentile") de normalisation de l'élan fondamental. |
+
 | `EPS Momentum` | Calculé | Marqué `Accelerating` si la croissance QoQ de l'EPS dépasse +10% sur les 2 derniers trimestres consécutifs. |

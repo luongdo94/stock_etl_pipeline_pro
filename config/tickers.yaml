@@ -855,7 +855,7 @@ tickers:
     name: Novo Nordisk A/S
     sector: Pharma
     region: EU
-  RHHVF:
+  "ROG.SW":
     name: Roche Holding AG
     sector: Pharma
     region: EU
@@ -3039,12 +3039,15 @@ tickers:
     name: ArcelorMittal
     sector: Basic Materials
     region: EU
-  6762.T:
+  "6762.T":
+    name: TDK Corporation
     sector: Technology
-    industry: Electronic Components
-  BESI.AS:
+    region: Asia
+  "BESI.AS":
+    name: BE Semiconductor
     sector: Technology
-    industry: Semiconductor Equipment & Materials
-  ACMR:
+    region: EU
+  "ACMR":
+    name: ACM Research
     sector: Technology
-    industry: Semiconductor Equipment & Materials
+    region: US

@@ -34,10 +34,7 @@ This table serves as the primary index for screener filtering.
 | `dividends_paid_yield_pct` | Calculated | `(ABS(dividends_paid_ttm) / market_cap) * 100` |
 | `net_payout_yield_pct` | Calculated | `buyback_yield_pct + dividends_paid_yield_pct` |
 | `fcf_margin` | Calculated | `(free_cashflow / revenue_ttm) * 100` (computed if missing from raw data) |
-| `fmi_rev_acceleration` | Calculated | Revenue QoQ Growth (Latest Quarter) - Revenue QoQ Growth (Prior Quarter). <br> *Example:* Q3 +15%, Q2 +5% -> Acceleration = +10%. |
-| `fmi_eps_acceleration` | Calculated | EPS QoQ Growth (Latest Quarter) - EPS QoQ Growth (Prior Quarter). |
-| `fmi_margin_trend` | Calculated | `eps_yoy_recent` (EPS YoY Growth) - `rev_yoy_recent` (Revenue YoY Growth). <br> *Tests operating leverage (EPS growing faster than revenue).* |
-| `fmi_quarters_of_growth` | Calculated | Number of consecutive recent quarters where both EPS and Revenue YoY growth were > 0%. |
+
 
 ### B. `marts.fct_daily_returns`
 
@@ -67,5 +64,5 @@ This table holds the daily time-series performance and all **Technical Indicator
 | Dashboard Column | Source | Calculation / Formula |
 | :--- | :--- | :--- |
 | `Quality Score (0-100)` | Calculated | Composite grading score based on financial ratios (ROE, Margins, Debt/Equity). |
-| `FMI Score (0-100)` | Calculated | Normalized ranking of fundamental growth parameters. |
+
 | `EPS Momentum` | Calculated | `Accelerating` if last 2 quarters of **QoQ** EPS growth > +10%. |
