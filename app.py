@@ -2098,7 +2098,7 @@ _merge_cols = ["ticker", "ma_signal", "price_close", "price_z_score"]
 _merge_cols = [c for c in _merge_cols if c in latest_prices_reco.columns]
 reco_df = companies_full.merge(latest_prices_reco[_merge_cols], on="ticker", how="left")
 reco_df["upside_pct"] = (reco_df["target_mean_price"] / reco_df["price_close"] - 1) * 100
-reco_df["upside_pct"] = reco_df["upside_pct"].fillna(0)
+reco_df["upside_pct"] = reco_df["upside_pct"].fillna(0).clip(-100, 200)  # Cap: stale targets (splits, FX issues) can cause absurd upside
 # RSI not in warehouse — use neutral default so other pillars score correctly
 reco_df["rsi"] = 50.0
 
@@ -2825,6 +2825,7 @@ if active_tab == "3. Qualitative Audit (AI)":
             target_p = meta.get('target_mean_price', 0)
             cur_p = df_deep['price_close'].iloc[-1]
             upside = ((target_p / cur_p) - 1) * 100 if target_p > 0 else 0
+            upside = max(-100, min(200, upside))  # Cap: guard against stale targets (splits, FX mismatches)
             
             # --- SUMMARY STRIP (High Density) ---
             company_name = meta.get('company', deep_ticker)
@@ -3011,9 +3012,9 @@ if active_tab == "3. Qualitative Audit (AI)":
                 "SELL / AVOID":        "#e74c3c",
             }
             act_color = _colour_map.get(act_str, _rating["action_color"])
-            # Override p_trend_c / p_val_c with engine values so colours are consistent
-            p_trend_c = _rating["p_trend_c"]
-            p_val_c   = _rating["p_val_c"]
+            # Override only p_val_c (valuation is always from the rating engine)
+            # p_trend_c is NOT overridden here — it is set correctly at lines 2920-2927
+            p_val_c = _rating["p_val_c"]
 
             # ── Action description text (context-aware) ──────────────────────
             if act_str == "STRONG BUY":
@@ -5749,7 +5750,7 @@ if active_tab == "2. Opportunity Radar":
         "🏆 Institutional Pulse (Quality > 75 & Bullish)",
         "📈 Trend Following (MA20 > MA50)",
         "💎 Deep Value (Z-Score < -2.0)",
-        "📉 RSI Mean Reversion (Oversold < 30)",
+        "📉 RSI Mean Reversion (Oversold < 35)",
         "🚀 Buy on Dip (Bullish + Oversold)",
         "⚡ Multi-Indicator Breakout (Bullish + RSI > 50)",
         "📈 Both Accelerating (EPS + Revenue QoQ, 2 qtrs > +10%)",
@@ -5760,7 +5761,7 @@ if active_tab == "2. Opportunity Radar":
         "⚠️ Earnings Deterioration (EPS + Revenue QoQ, 2 qtrs < -10%)",
         "⚠️ Structural Caution (Quality < 40 & Bearish)",
         "📉 Negative Momentum (MA20 < MA50)",
-        "🔥 Overbought Alert (> 70)",
+        "🔥 Overbought Alert (RSI > 65)",
         "🎈 Valuation Exhaustion (Z-Score > +2.0)",
         "⚔️ Exit on Strength (Bearish + Overbought)",
         "💔 Multi-Indicator Breakdown (Bearish + RSI < 50)"
@@ -5815,8 +5816,8 @@ if active_tab == "2. Opportunity Radar":
         f_df = f_df[f_df["Trend"] == "BULLISH"]
         st.info("📈 Trend Following: Stocks in confirmed MA20 > MA50 bullish alignment")
     elif "RSI Mean Reversion" in scan_mode:
-        f_df = f_df[f_df["RSI (14)"] < 30]
-        st.warning("📉 RSI Mean Reversion: Extremely Oversold (RSI < 30) candidates")
+        f_df = f_df[f_df["RSI (14)"] < 35]
+        st.warning("📉 RSI Mean Reversion: Oversold (RSI < 35) candidates — early accumulation zone")
     elif "Deep Value" in scan_mode:
         f_df = f_df[f_df["Z-Score"] < -2.0]
         st.success("💎 Deep Value: Prices at -2.0 Std Dev relative to 5Y mean (Historical Bargains)")
@@ -5833,8 +5834,8 @@ if active_tab == "2. Opportunity Radar":
         f_df = f_df[f_df["Trend"] == "BEARISH"]
         st.error("📉 Negative Momentum: Stocks in confirmed MA20 < MA50 bearish alignment. Avoid jumping in too early.")
     elif "Overbought Alert" in scan_mode:
-        f_df = f_df[f_df["RSI (14)"] > 70]
-        st.warning("🔥 Overbought Alert: Extremely Overbought (RSI > 70). High risk of price correction.")
+        f_df = f_df[f_df["RSI (14)"] > 65]
+        st.warning("🔥 Overbought Alert: Overbought (RSI > 65). Elevated risk of short-term pullback.")
     elif "Valuation Exhaustion" in scan_mode:
         f_df = f_df[f_df["Z-Score"] > 2.0]
         st.error("🎈 Valuation Exhaustion: Prices at +2.0 Std Dev relative to 5Y mean. Likely overvalued.")
@@ -5851,8 +5852,8 @@ if active_tab == "2. Opportunity Radar":
         f_df = f_df[(f_df["EPS Momentum"] == "Decelerating") & (f_df["Rev Momentum"] == "Decelerating")]
         st.error("⚠️ Earnings Deterioration: EPS & Revenue both declining QoQ > -10% for 2 consecutive quarters.")
     elif "GARP" in scan_mode:
-        f_df = f_df[(f_df["PEG"] > 0) & (f_df["PEG"] < 1.5) & (f_df["Quality"] > 60) & (f_df["FMI"] > 60)]
-        st.success("🌱 GARP — Growth at a Reasonable Price: PEG < 1.5 (not overvalued for growth rate) + Quality > 60 + FMI > 60. Peter Lynch-style filter.")
+        f_df = f_df[(f_df["PEG"] > 0) & (f_df["PEG"] < 1.5) & (f_df["Quality"] > 60)]
+        st.success("🌱 GARP — Growth at a Reasonable Price: PEG < 1.5 + Quality > 60. Peter Lynch-style filter.")
     elif "High Quality Dividend" in scan_mode:
         f_df = f_df[(f_df["Yield (%)"] > 2.5) & (f_df["Quality"] > 65) & (f_df["Trend"] == "BULLISH")]
         st.success("💰 High Quality Dividend: Yield > 2.5% with strong fundamentals (Quality > 65) and confirmed uptrend. Income + quality.")
@@ -5870,16 +5871,35 @@ if active_tab == "2. Opportunity Radar":
             min_score = st.slider("Min Quality Score", 0, 100, 0)
             rsi_range = st.slider("RSI Range", 0, 100, (0, 100))
         with rcol2:
-            max_pe = st.slider("Max Forward P/E", 0, 100, 100)
+            max_pe = st.slider("Max Forward P/E", 0, 200, 200)
             min_upside = st.slider("Min Analyst Upside (%)", -50, 100, -50)
-
+        with rcol3:
+            filter_trend = st.selectbox(
+                "Trend Filter",
+                options=["🌎 All Trends", "📈 BULLISH only", "📉 BEARISH only"],
+                key="custom_trend_filter"
+            )
+            filter_sm = st.selectbox(
+                "Smart Money",
+                options=["🌎 All", "🟢 Accumulation only", "🔴 Distribution only"],
+                key="custom_sm_filter"
+            )
 
     f_df = f_df[
         (f_df["Quality"] >= min_score) &
         (f_df["RSI (14)"].between(rsi_range[0], rsi_range[1])) &
-        (f_df["P/E (Fwd)"] <= max_pe) &
+        (f_df["P/E (Fwd)"].fillna(999) <= max_pe) &
         (f_df["Upside (%)"] >= min_upside)
     ]
+    if "BULLISH only" in filter_trend:
+        f_df = f_df[f_df["Trend"] == "BULLISH"]
+    elif "BEARISH only" in filter_trend:
+        f_df = f_df[f_df["Trend"] == "BEARISH"]
+    if "Accumulation only" in filter_sm:
+        f_df = f_df[f_df["Smart Money"].str.contains("ACCUMULATION", na=False)]
+    elif "Distribution only" in filter_sm:
+        f_df = f_df[f_df["Smart Money"].str.contains("DISTRIBUTION", na=False)]
+
 
     # ── Display Results ───────────────────────────────────────────────────────
     display_cols = ["Ticker", "Company", "Sector", "Action", "Quality", "Smart Money",
@@ -6155,7 +6175,7 @@ if active_tab == "4. Quantitative Forecast (ML)":
             df['obv_roc'] = df['obv_roc'].clip(-5.0, 5.0)
 
             features = [
-                'price_close', 'daily_return_pct',
+                'daily_return_pct', 'price_close',
                 'spy_ret', 'vix_ret',
                 'vol_surge', 'rsi', 'price_z_score',
                 'pe_ratio', 'roe', 'fcf_margin',
@@ -6167,12 +6187,12 @@ if active_tab == "4. Quantitative Forecast (ML)":
             from sklearn.preprocessing import MinMaxScaler
             scaler       = MinMaxScaler(feature_range=(-1, 1))
             data_scaled  = scaler.fit_transform(data)
-            price_scaler = MinMaxScaler(feature_range=(-1, 1))
-            price_scaler.fit(data[:, 0:1])
+            target_scaler = MinMaxScaler(feature_range=(-1, 1))
+            target_scaler.fit(data[:, 0:1])
 
             result = {
                 'data_scaled' : data_scaled,
-                'price_scaler': price_scaler,
+                'price_scaler': target_scaler,  # Keep key name for backwards compatibility, but it scales returns now
                 'features'    : features,
                 'data'        : data,
                 'df'          : df,
@@ -6305,7 +6325,9 @@ if active_tab == "4. Quantitative Forecast (ML)":
             y_base_inf   = last_seq_t[:, -1, 0].unsqueeze(1)
             preds_scaled = (model(last_seq_t) + y_base_inf).cpu().numpy().flatten()
         
-        lstm_predicted_prices = price_scaler.inverse_transform(preds_scaled.reshape(-1,1)).flatten()
+        lstm_predicted_returns = price_scaler.inverse_transform(preds_scaled.reshape(-1,1)).flatten()
+        last_price = data[-1, 1]
+        lstm_predicted_prices = last_price * np.cumprod(1 + lstm_predicted_returns / 100.0)
         
         # ── Raw ARIMA ──
         ts_raw = df['price_close'].values
@@ -6329,7 +6351,7 @@ if active_tab == "4. Quantitative Forecast (ML)":
             p_clamped = np.clip(p_raw, p_prev * (1 - dynamic_clamp), p_prev * (1 + dynamic_clamp))
             clamped_prices.append(p_clamped)
             
-        current_price = data[-1,0]
+        current_price = data[-1, 1]
         if np.isnan(ensemble_prices[-1]) or current_price==0: return None,None,None
         
         model.eval()
@@ -6424,14 +6446,14 @@ if active_tab == "4. Quantitative Forecast (ML)":
                 y_baseline_inf = last_seq[:, -1, 0].unsqueeze(1)
                 pred_scaled = (model(last_seq) + y_baseline_inf).cpu().numpy()[0]
 
-            # Inverse-transform only price column
-            price_scaler = MinMaxScaler(feature_range=(-1, 1))
-            price_scaler.fit(data[:, 0:1])
+            # Inverse-transform only return column
+            target_scaler = feat['price_scaler']
             full_pred = np.zeros((forecast_days, len(features)))
             full_pred[:, 0] = pred_scaled
-            forecast_raw = price_scaler.inverse_transform(full_pred[:, 0:1]).flatten()
+            forecast_returns = target_scaler.inverse_transform(full_pred[:, 0:1]).flatten()
 
-            last_price = data[-1, 0]
+            last_price = data[-1, 1]
+            forecast_raw = last_price * np.cumprod(1 + forecast_returns / 100.0)
             total_return = (forecast_raw[-1] / last_price - 1) if last_price > 0 else 0.0
 
             # ── v9.1: Real gradient attribution (not random) ──
@@ -6522,12 +6544,13 @@ if active_tab == "4. Quantitative Forecast (ML)":
                 y_baseline_p = last_seq_p[:, -1, 0].unsqueeze(1)
                 pred_scaled  = (model(last_seq_p) + y_baseline_p).cpu().numpy()[0]
 
-            # Inverse-transform price
+            # Inverse-transform price from returns
             full_pred_p    = np.zeros((forecast_days, len(features)))
             full_pred_p[:, 0] = pred_scaled
-            forecast_raw_p = price_scaler.inverse_transform(full_pred_p[:, 0:1]).flatten()
+            forecast_returns_p = price_scaler.inverse_transform(full_pred_p[:, 0:1]).flatten()
 
-            last_price_p = data[-1, 0]
+            last_price_p = data[-1, 1]
+            forecast_raw_p = last_price_p * np.cumprod(1 + forecast_returns_p / 100.0)
             total_return_p = (forecast_raw_p[-1] / last_price_p - 1) if last_price_p > 0 else 0.0
 
             # Gradient-based feature importance
@@ -6546,7 +6569,7 @@ if active_tab == "4. Quantitative Forecast (ML)":
             return None, 0.0, {}
 
     @st.cache_data(show_spinner="Smart Blend: Training all 3 AI Engines (LSTM + Transformer + PatchTST)...")
-    def train_predict_ensemble(df_ticker, lookback=90, forecast_days=30, sector_name=None, quality_score=50):
+    def train_predict_ensemble(df_ticker, lookback=90, forecast_days=30, sector_name=None, quality_score=50, regime="NEUTRAL"):
         """
         Performance-Weighted Ensemble: trains all 3 engines, evaluates each on the
         most recent holdout period (last forecast_days of known data), and blends
@@ -6577,8 +6600,13 @@ if active_tab == "4. Quantitative Forecast (ML)":
                     pred_s = mdl(inp).cpu().numpy().flatten()[:forecast_days]
                 fp = np.zeros((forecast_days, n_feat)); fp[:, 0] = pred_s
                 fa = np.zeros((forecast_days, n_feat)); fa[:, 0] = actual_s
-                pp = price_scaler.inverse_transform(fp[:, 0:1]).flatten()
-                ap = price_scaler.inverse_transform(fa[:, 0:1]).flatten()
+                pr_ret = price_scaler.inverse_transform(fp[:, 0:1]).flatten()
+                ar_ret = price_scaler.inverse_transform(fa[:, 0:1]).flatten()
+                
+                base_price = data[n_d - forecast_days - 1, 1]
+                pp = base_price * np.cumprod(1 + pr_ret / 100.0)
+                ap = base_price * np.cumprod(1 + ar_ret / 100.0)
+                
                 return float(np.sqrt(np.mean((pp - ap) ** 2))), float(np.mean(np.abs((ap - pp) / (np.abs(ap) + 1e-8))) * 100), float(1.0 if (pp[-1] > pp[0]) == (ap[-1] > ap[0]) else 0.0)
 
             def _infer(mdl):
@@ -6588,7 +6616,10 @@ if active_tab == "4. Quantitative Forecast (ML)":
                     y_base = last_x[:, -1, 0].unsqueeze(1)
                     pr = (mdl(last_x) + y_base).cpu().numpy().flatten()[:forecast_days]
                 fp = np.zeros((forecast_days, n_feat)); fp[:, 0] = pr
-                return price_scaler.inverse_transform(fp[:, 0:1]).flatten()
+                pr_ret = price_scaler.inverse_transform(fp[:, 0:1]).flatten()
+                base_price = data[-1, 1]
+                pp = base_price * np.cumprod(1 + pr_ret / 100.0)
+                return pp
 
             results = {}
             import time as _time
@@ -6640,10 +6671,15 @@ if active_tab == "4. Quantitative Forecast (ML)":
             except Exception: pass
 
             if not results: return None, 0.0, {}, {}
+            
+            # Boost PatchTST weight if in BULLISH regime
+            if "BULLISH" in regime and 'PatchTST' in results:
+                results['PatchTST']['rmse'] = results['PatchTST']['rmse'] / 1.2
+                
             inv_rmse = {k: 1.0 / max(v['rmse'], 0.01) for k, v in results.items()}; total_inv = sum(inv_rmse.values()); weights = {k: round(v / total_inv, 4) for k, v in inv_rmse.items()}
             blended = np.zeros(forecast_days)
             for k, v in results.items(): blended += weights[k] * v['path'][:forecast_days]
-            last_price_e = data[-1, 0]; total_return_e = (blended[-1] / last_price_e - 1) if last_price_e > 0 else 0.0
+            last_price_e = data[-1, 1]; total_return_e = (blended[-1] / last_price_e - 1) if last_price_e > 0 else 0.0
             feat_imp_e = {f: 0.0 for f in features}
             try:
                 last_seq_e = torch.FloatTensor(data_scaled[-lookback:]).unsqueeze(0).to(device)
@@ -6757,7 +6793,7 @@ if active_tab == "4. Quantitative Forecast (ML)":
             with st.spinner(f"Smart Blend: Training all 3 ML engines ({std_lookback}D Lookback)..."):
                 _ens = train_predict_ensemble(
                     df_fc, lookback=std_lookback, forecast_days=forecast_days,
-                    sector_name=sector_val, quality_score=drift_score)
+                    sector_name=sector_val, quality_score=drift_score, regime=regime)
             if _ens[0] is not None:
                 lstm_path, lstm_return, feat_imp, _em = _ens
                 st.session_state['ensemble_metrics'] = _em
