@@ -4960,8 +4960,153 @@ if active_tab == "7. Portfolio Builder":
             st.rerun()
         else:
             edited_df = st.session_state.portfolio_df.copy()
-        
-        # 3. WEIGHT & VALUE CALCULATION
+
+        # ── CIO BOARD MEETING (AI Portfolio Review) ──────────────────────────────
+        _pf_cohere_key = (
+            os.environ.get("COHERE_API_KEY", "")
+            or st.session_state.get("cohere_api_key", "")
+        )
+        if _pf_cohere_key:
+            _pf_lang_col, _pf_btn_col = st.columns([1, 4])
+            with _pf_lang_col:
+                _pf_language = st.selectbox("Language", ["English", "Vietnamese"], index=0, key="pf_review_lang", label_visibility="collapsed")
+            with _pf_btn_col:
+                _run_pf_review = st.button("🤖 Request CIO Portfolio Review", type="secondary", use_container_width=True, key="run_portfolio_review_btn")
+
+            if _run_pf_review:
+                from etl.llm_parser import analyze_portfolio_with_llm
+                # We need the calculated metrics — recalculate here since we're outside the heavy block
+                _pf_df = st.session_state.portfolio_df.copy()
+                _pf_df["_mv"] = _pf_df["Price (€)"] * _pf_df["Shares"]
+                _pf_df["_cost"] = _pf_df["Cost Basis (€)"] * _pf_df["Shares"]
+                _pf_df["_pnl_pct"] = (_pf_df["_mv"] - _pf_df["_cost"]) / _pf_df["_cost"].replace(0, float("nan")) * 100
+                _total_mv = _pf_df["_mv"].sum()
+                _total_cost = _pf_df["_cost"].sum()
+                _total_pnl_pct = (_total_mv - _total_cost) / _total_cost * 100 if _total_cost > 0 else 0
+
+                # Sector concentration
+                _pf_df["_w"] = _pf_df["_mv"] / _total_mv * 100 if _total_mv > 0 else 0
+                _sector_w = _pf_df.groupby("Sector")["_w"].sum()
+                _top_sector = _sector_w.idxmax() if not _sector_w.empty else "N/A"
+                _top_sector_w = float(_sector_w.max()) if not _sector_w.empty else 0
+
+                # Quality score from m_df['Quality'] — same source as Capital Allocation Grid display
+                # This ensures LLM sees the exact score the user sees in the portfolio table
+                _q_map = m_df.set_index("Ticker")["Quality"].to_dict() if "m_df" in dir() and not m_df.empty else {}
+
+                # Build positions list for the prompt
+                # ETF detection: 3-tier heuristic (order matters)
+                _ETF_KW = {"etf", "fund", "trust", "index", "ishares", "vanguard",
+                           "amundi", "lyxor", "xtrackers", "invesco", "spdr", "ucits"}
+                # Exchange suffixes that typically indicate non-US ETFs or foreign instruments
+                _EU_SUFFIXES = {".pa", ".as", ".l", ".de", ".mi", ".br", ".sw", ".ls", ".mc"}
+                _positions = []
+                for _, _pr in _pf_df.iterrows():
+                    _t = _pr.get("Ticker", "?")
+                    _company_str = str(_pr.get("Company", ""))
+                    _company_lc = _company_str.lower()
+                    _sector_raw = str(_pr.get("Sector", "N/A"))
+                    _no_db_data = _company_str in ("", _t, "N/A", "nan")  # company defaulted to ticker → no metadata in DB
+                    _has_eu_suffix = any(_t.lower().endswith(s) for s in _EU_SUFFIXES)
+
+                    _is_etf = (
+                        # Tier 1: company name has clear ETF keywords
+                        any(kw in _company_lc for kw in _ETF_KW)
+                        or
+                        # Tier 2: no DB metadata found AND sector is N/A → likely foreign ETF/instrument
+                        (_no_db_data and _sector_raw in ("N/A", "nan", "None", ""))
+                        or
+                        # Tier 3: sector N/A + European exchange suffix (ETFs dominate this space)
+                        (_sector_raw in ("N/A", "nan", "None", "") and _has_eu_suffix)
+                    )
+                    _positions.append({
+                        "ticker":        _t,
+                        "company":       _company_str if not _no_db_data else f"{_t} (ETF/Foreign)",
+                        "asset_type":    "ETF/Index Fund" if _is_etf else "Stock",
+                        "sector":        "Diversified (ETF)" if _is_etf else _sector_raw,
+                        "weight_pct":    round(float(_pr.get("_w", 0)), 1),
+                        "quality_score": round(float(_q_map.get(_t, 0)), 0),
+                        "pnl_pct":       round(float(_pr.get("_pnl_pct", 0) or 0), 1),
+                        "shares":        float(_pr.get("Shares", 0)),
+                        "price":         float(_pr.get("Price (€)", 0)),
+                    })
+
+
+
+                _pf_macro_ctx = f"{regime} | VIX={_vix_val:.1f}" if isinstance(_vix_val, (int, float)) else regime
+
+                # Recalculate risk metrics inline (they are computed LATER in the script scope)
+                _pf_tickers = _pf_df["Ticker"].tolist()
+                # Use prices_full so SPY (US) and ETFs (EU) share the same date universe
+                _pf_prices_sub = prices_full[prices_full["ticker"].isin(_pf_tickers)]
+                _pf_ret_matrix = (
+                    _pf_prices_sub
+                    .pivot(index="date", columns="ticker", values="daily_return_pct")
+                    # ffill: treat days with no trade (e.g. EU holiday) as 0% return, not missing
+                    .ffill()
+                    .fillna(0)
+                    .reindex(columns=_pf_tickers, fill_value=0)
+                    / 100
+                )
+                # Restrict to the user's selected horizon (same as global `prices`)
+                _pf_ret_matrix = _pf_ret_matrix[
+                    _pf_ret_matrix.index.isin(prices["date"].unique())
+                ]
+                _pf_weights = _pf_df.set_index("Ticker")["_w"].reindex(_pf_tickers).fillna(0).values / 100
+                _pf_port_daily = (_pf_ret_matrix * _pf_weights).sum(axis=1)
+                _pf_cum = (1 + _pf_port_daily).cumprod()
+                _rf = 0.04 / 252
+                _pf_excess = _pf_port_daily - _rf
+                _pf_sharpe = float((_pf_excess.mean() / _pf_excess.std()) * np.sqrt(252)) if _pf_excess.std() > 0 else 0
+                _pf_max_dd = float((_pf_cum / _pf_cum.cummax() - 1).min() * 100)
+                _pf_vol = float(_pf_port_daily.std() * np.sqrt(252) * 100)
+                _pf_var95 = float(np.percentile(_pf_port_daily, 5) * 100)
+                # Beta vs SPY — use prices_full (same source as return matrix) aligned to portfolio dates
+                _spy_sub = (
+                    prices_full[prices_full["ticker"] == "SPY"]
+                    .set_index("date")["daily_return_pct"]
+                    .reindex(_pf_port_daily.index)
+                    .ffill().fillna(0) / 100
+                )
+                _align = pd.concat([_pf_port_daily, _spy_sub], axis=1).dropna()
+                _pf_beta = float(_align.iloc[:,0].cov(_align.iloc[:,1]) / _align.iloc[:,1].var()) if (len(_align) > 30 and _align.iloc[:,1].var() > 0) else 1.0
+
+
+                _pf_payload = {
+                    "positions":          _positions,
+                    "total_value":        _total_mv,
+                    "pnl_pct":            _total_pnl_pct,
+                    "port_beta":          _pf_beta,
+                    "sharpe":             _pf_sharpe,
+                    "max_dd":             _pf_max_dd,
+                    "vol":                _pf_vol,
+                    "var_95":             _pf_var95,
+                    "top_sector":         _top_sector,
+                    "top_sector_weight":  _top_sector_w,
+                }
+
+                with st.spinner("CRO is reviewing your portfolio..."):
+                    _pf_report, _pf_prompt = analyze_portfolio_with_llm(
+                        _pf_cohere_key, _pf_payload,
+                        macro_context=_pf_macro_ctx,
+                        language=_pf_language,
+                    )
+                st.session_state["portfolio_cio_review"] = {
+                    "report": _pf_report,
+                    "prompt": _pf_prompt,
+                }
+                st.rerun()
+
+            # Display stored review if available
+            _stored_review = st.session_state.get("portfolio_cio_review")
+            if _stored_review and _stored_review.get("report"):
+                st.markdown("---")
+                render_header("cpu", "CIO Board Meeting — Portfolio Review", level="#####")
+                st.markdown(_stored_review["report"])
+                with st.expander("🔍 Debug: Raw Portfolio Review Prompt"):
+                    st.code(_stored_review.get("prompt", ""), language="markdown")
+
+
         edited_df["Market Value"] = edited_df["Price (€)"] * edited_df["Shares"]
         total_p_val = edited_df["Market Value"].sum()
     

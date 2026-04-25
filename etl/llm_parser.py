@@ -245,3 +245,154 @@ def analyze_risk_with_llm(
         default_result["error"] = str(e)[:120]
         default_result["key_insights"] = [f"API Error: {str(e)[:100]}"]
         return default_result
+
+
+# ── LLM Portfolio Review (CIO Board Meeting) ─────────────────────────────────
+PORTFOLIO_REVIEW_PROMPT = """You are the **Chief Risk Officer (CRO)** of a top-tier hedge fund chairing a monthly portfolio review session.
+
+You have received a complete snapshot of a client's equity portfolio. Your role is to identify structural vulnerabilities, macro misalignments, and provide decisive rebalancing guidance.
+
+## Portfolio Snapshot
+
+**Macro Environment:** {macro_context}
+
+**Portfolio-Level Risk Metrics:**
+- Total Market Value: €{total_value:,.0f}
+- Total Unrealized PnL: {pnl_pct:+.1f}%
+- Portfolio Beta (vs S&P 500): {port_beta:.2f}
+- Sharpe Ratio: {sharpe:.2f}
+- Max Drawdown: {max_dd:.1f}%
+- Annual Volatility: {vol:.1f}%
+- VaR (95%): {var_95:.2f}% (daily)
+- Largest Sector Exposure: {top_sector} ({top_sector_weight:.1f}% of portfolio)
+
+**Full Position-Level Data:**
+{positions_table}
+
+## Your Task
+Write a CIO Portfolio Review with FOUR sections. Total length: under 750 words.
+
+### 📡 Macro-Alignment Assessment
+Is this portfolio positioned correctly for the current macro regime? Assess Beta, sector mix, and volatility relative to the VIX and market regime. Flag any obvious misalignment (e.g., high-beta tech-heavy portfolio in a RISK-OFF environment).
+
+### 🔬 Structural Vulnerability Scan
+Identify the top 2-3 structural weaknesses:
+- Concentration risk (overweight positions or sectors)
+- Low-quality anchors (positions with poor Quality Score and negative PnL — deadweight)
+- Correlation traps (positions that appear diversified but likely move together)
+
+### 🗂️ Position Buckets
+Classify EVERY position from the data into exactly one of the four buckets below. Use a table-style format:
+
+**🏛️ Core Compounders** — High Quality Score (≥65), positive or stable PnL, structural competitive moat. These are long-term holds.
+| Ticker | Quality | PnL% | Weight% | Rationale |
+|--------|---------|------|---------|-----------|
+
+**🔄 Cyclical Beta** — Moderate Quality (40-65), performance tied to macro cycle (rates, commodities, GDP). Hold when regime is bullish, reduce in risk-off.
+| Ticker | Quality | PnL% | Weight% | Rationale |
+|--------|---------|------|---------|-----------|
+
+**🎲 Speculative Positions** — Low Quality (<40) OR early-stage/high-volatility growth plays. High upside but asymmetric tail risk.
+| Ticker | Quality | PnL% | Weight% | Rationale |
+|--------|---------|------|---------|-----------|
+
+**✂️ Trim Candidates** — Positions that should be reduced or exited: poor quality + negative PnL, excessive concentration, or thesis broken. Prioritized for capital redeployment.
+| Ticker | Quality | PnL% | Weight% | Exit Rationale |
+|--------|---------|------|---------|----------------|
+
+### ⚡ Rebalancing Directives (3 Actions)
+State exactly 3 concrete actions the portfolio manager should take. Be specific: name the ticker, the direction (reduce/increase/exit), and the rationale. Format as:
+1. **[ACTION] [TICKER]:** [Rationale with specific numbers]
+2. **[ACTION] [TICKER]:** [Rationale with specific numbers]
+3. **[ACTION] [TICKER]:** [Rationale with specific numbers]
+
+Rules: Your output MUST be written in {language}. Be decisive and institutional. Reference specific tickers and numbers from the data. Every position MUST appear in exactly one bucket — no omissions.
+**ETF/Index Fund Rule:** Positions marked as Type=ETF/Index Fund are inherently diversified vehicles (e.g., Nasdaq 100 ETF). They MUST NOT be flagged for concentration risk. In Position Buckets, classify them as Cyclical Beta or Core Compounders based on their macro role. Start each section header on its own line."""
+
+
+def analyze_portfolio_with_llm(
+    api_key: str,
+    portfolio_data: dict,
+    macro_context: str = "NEUTRAL | VIX=N/A",
+    language: str = "English",
+) -> tuple[str, str]:
+    """
+    CIO Board Meeting — AI Portfolio Review.
+    Analyzes the full portfolio snapshot and returns a structured risk report.
+
+    Args:
+        api_key: Cohere API key.
+        portfolio_data: Dict with keys: positions, total_value, pnl_pct, port_beta,
+                        sharpe, max_dd, vol, var_95, top_sector, top_sector_weight.
+        macro_context: Regime string, e.g. 'BEARISH | VIX=22.5'.
+        language: Output language for the report ('English' or 'Vietnamese').
+    Returns:
+        Tuple of (report_text, prompt_debug).
+    """
+    try:
+        import cohere
+        co = cohere.ClientV2(api_key=api_key)
+
+        # Build positions table string
+        _ETF_KEYWORDS = {"etf", "fund", "trust", "index", "ishares", "vanguard",
+                          "amundi", "lyxor", "xtrackers", "invesco", "spdr", "ucits"}
+        positions = []
+        for _pr in portfolio_data.get("positions", []):
+            _company_lc = str(_pr.get("company", "")).lower()
+            _sector_raw = str(_pr.get("sector", "N/A"))
+            _is_etf = (
+                _sector_raw in ("N/A", "nan", "None", "") and
+                any(kw in _company_lc for kw in _ETF_KEYWORDS)
+            )
+            positions.append({
+                "ticker": _pr.get("ticker", "?"),
+                "company": _pr.get("company", "N/A"),
+                "asset_type": "ETF/Index Fund" if _is_etf else "Stock",
+                "sector": "Diversified (ETF)" if _is_etf else _sector_raw,
+                "weight_pct": _pr.get("weight_pct", 0),
+                "quality_score": _pr.get("quality_score", "N/A"),
+                "pnl_pct": _pr.get("pnl_pct", 0),
+                "price": _pr.get("price", 0),
+            })
+
+        lines = ["Type           | Ticker | Company              | Sector             | Weight% | Quality | PnL%  | Price€"]
+        lines.append("-" * 110)
+        for p in positions:
+            lines.append(
+                f"{p['asset_type']:14} | {p['ticker']:6} | {p['company'][:20]:20} | "
+                f"{p['sector'][:18]:18} | {p['weight_pct']:5.1f}% | "
+                f"{str(p['quality_score']):7} | {p['pnl_pct']:+5.1f}% | "
+                f"€{p['price']:8.2f}"
+            )
+        positions_table = "\n".join(lines)
+
+        prompt = PORTFOLIO_REVIEW_PROMPT.format(
+            macro_context=macro_context,
+            total_value=portfolio_data.get("total_value", 0),
+            pnl_pct=portfolio_data.get("pnl_pct", 0),
+            port_beta=portfolio_data.get("port_beta", 1.0),
+            sharpe=portfolio_data.get("sharpe", 0),
+            max_dd=portfolio_data.get("max_dd", 0),
+            vol=portfolio_data.get("vol", 0),
+            var_95=portfolio_data.get("var_95", 0),
+            top_sector=portfolio_data.get("top_sector", "N/A"),
+            top_sector_weight=portfolio_data.get("top_sector_weight", 0),
+            positions_table=positions_table,
+            language=language,
+        )
+
+        response = co.chat(
+            model="command-r-plus-08-2024",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=1200,
+        )
+        return response.message.content[0].text, prompt
+
+    except Exception as e:
+        err = str(e)
+        if "invalid api key" in err.lower() or "unauthorized" in err.lower():
+            return "❌ **Invalid API Key.**", ""
+        elif "rate limit" in err.lower():
+            return "⏳ **Rate limit reached.** Please wait a moment.", ""
+        else:
+            return f"❌ **Portfolio Review Error:** {err[:120]}", ""
