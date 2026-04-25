@@ -12,6 +12,7 @@ import os
 import json
 import feedparser
 import urllib.parse
+from typing import Optional
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -67,7 +68,8 @@ def _fetch_recent_headlines(ticker: str, company_name: str, max_items: int = 12)
 # ── LLM Risk Analysis (Core Engine) ─────────────────────────────────────────
 RISK_AUDIT_PROMPT = """You are a **Chief Risk Officer (CRO)** at a top-tier investment bank.
 
-You will receive a list of recent news headlines about a specific public company.
+You will receive a list of recent news headlines about a specific public company,
+PLUS a Quantitative Snapshot from our internal scoring system.
 Your task is to assess hidden risks that standard financial ratios (P/E, ROE, etc.) CANNOT detect.
 
 **Current Macro Environment: {macro_context}**
@@ -75,31 +77,61 @@ Use this macro context to calibrate your risk assessment. In a RISK-OFF or BEARI
 weight downside risks more heavily. In a BULLISH / RISK-ON environment, consider whether
 the company is positioned to benefit from the current trend.
 
-Analyze the headlines and return your assessment as a **valid JSON object** with the following structure:
+**Quantitative Snapshot (Internal System):**
+- AI Quality Score: {quant_score}/100 (composite fundamental + momentum score)
+- RSI (14-day): {rsi} — momentum indicator; >70 = overbought, <30 = oversold
+- Z-Score (60-day): {z_score} — valuation vs history; >2 = stretched, <-2 = deep value
+- 52-Week Position: {w52_pos}% (0% = at 52W Low, 100% = at 52W High)
+- Smart Money Signal: {smart_money} (Accumulation = institutional buying, Distribution = selling)
+- Debt/EBITDA: {debt_ebitda}
+- Earnings Surprise (last 2Q): {earnings_surprise}
+
+Use this quantitative data to cross-validate against the news headlines.
+If the headlines are negative but the quant signals are strong (high score, accumulation),
+note this divergence explicitly. If both quant AND news are bearish, escalate the red_flag_score.
+
+Return your assessment as a **valid JSON object** with the following structure:
 {{
-    "red_flag_score": <int 0-100>,
+    "red_flag_score": <int 0-100, measures SEVERITY of tail risk — not just sentiment>,
+    "headline_sentiment_score": <int 0-100, pure tone measure: 0=very positive, 100=very negative>,
+    "confidence": <int 0-100, how confident you are given the quality and quantity of evidence>,
     "sentiment": "<Positive | Neutral | Negative | Critical>",
+    "risk_categories": ["<category1>", "<category2>"],
     "key_insights": [
-        "<Insight 1: A specific risk or positive signal you identified>",
-        "<Insight 2: Another finding>",
-        "<Insight 3: Another finding>"
+        "<Insight 1: specific risk or signal, cite the headline that supports it>",
+        "<Insight 2: cite the headline>",
+        "<Insight 3: cite the headline>"
     ],
-    "risk_category": "<None | Legal | Operational | Financial | Reputational | Geopolitical>",
+    "evidence_map": {{
+        "<Insight 1 short label>": "<exact or paraphrased headline that supports it>",
+        "<Insight 2 short label>": "<exact or paraphrased headline that supports it>",
+        "<Insight 3 short label>": "<exact or paraphrased headline that supports it>"
+    }},
     "recommendation": "<A one-sentence actionable recommendation for a portfolio manager>"
 }}
 
-Scoring Guide for red_flag_score:
-- 0-20: No material risks detected. Predominantly positive news.
-- 21-40: Minor concerns. Monitor but no action needed.
-- 41-60: Moderate risk. Headline-level concerns worth investigating (e.g., M&A rumors causing uncertainty or subsidiary stock drops).
-- 61-80: Significant risk. Potential legal, operational, or financial issues.
-- 81-100: Critical. Imminent threat to shareholder value (lawsuits, fraud, CEO departure).
+**Field definitions:**
+- `red_flag_score`: Measures the SEVERITY and MATERIALITY of risks to shareholder value. A short-term negative headline with no tail risk should score low (< 30), even if sentiment is negative. Reserve high scores (> 60) for structural, legal, or financial risks with real capital implications.
+- `headline_sentiment_score`: Pure emotional tone of the headlines. 0 = uniformly positive, 100 = uniformly negative. This is independent of whether the news creates actual investment risk.
+- `confidence`: Lower this if headlines are few (< 5), duplicated, vague, or contradictory. If information is insufficient or conflicting, say so in key_insights and set confidence < 50.
+- `risk_categories`: An array. A company can face multiple simultaneous risk types. Allowed values: "None", "Legal", "Operational", "Financial", "Reputational", "Geopolitical", "Macro".
+- `evidence_map`: Each insight MUST be grounded in at least one specific headline. Do not generate insights without evidence.
 
-CRITICAL INSTRUCTIONS:
+**Scoring Guide for red_flag_score (risk severity, not sentiment):**
+- 0-20: No material risks. Positive or neutral news with no structural threat.
+- 21-40: Minor concerns. Monitor but no capital action needed.
+- 41-60: Moderate risk. M&A uncertainty, margin pressure, regulatory inquiry — investigate further.
+- 61-80: Significant risk. Credible legal, operational, or financial issues with capital implications.
+- 81-100: Critical. Imminent threat: fraud, major lawsuit, insolvency signal, CEO departure under fire.
+
+**CRITICAL INSTRUCTIONS:**
 1. Return ONLY the JSON object. No markdown, no explanation, no code fences.
-2. DO NOT hallucinate or assume positive business strategies (e.g., 'fiber infrastructure', 'clean energy') unless explicitly mentioned in the provided headlines.
-3. If headlines show the stock or its subsidiary dropping due to M&A rumors, you MUST classify it as at least Moderate Risk (score > 40) and state the uncertainty.
-4. Factor in the macro environment: in RISK_OFF/BEARISH regimes, apply an additional 5-10 point premium to your red_flag_score if the company has exposure to cyclical headwinds.
+2. DO NOT hallucinate. Every insight in `key_insights` must appear in `evidence_map` with a supporting headline.
+3. Distinguish between SENTIMENT (temporary noise) and RISK (structural threat). A stock falling 5% on earnings miss is a sentiment event, not a red_flag risk, unless guidance was cut dramatically.
+4. M&A rumors: classify as Moderate Risk (score 40-55) by default, but adjust UP if the deal looks dilutive or financially strained, or DOWN if the deal looks strategically sound.
+5. Debt rule: if Debt/EBITDA > 4.0 AND news mentions rising rates or credit concerns, escalate risk_categories to include "Financial" and add +10 to red_flag_score.
+6. Macro regime: in RISK_OFF/BEARISH regimes, apply +5 to +10 to red_flag_score if the company is cyclically exposed.
+7. Insufficient data rule: if fewer than 5 headlines are available, or headlines are repetitive/vague, set confidence < 50 and note this explicitly in key_insights.
 
 IMPORTANT: Return ONLY the JSON object. No markdown, no explanation, no code fences.
 
@@ -108,7 +140,12 @@ Recent Headlines:
 {headlines}
 """
 
-def analyze_risk_with_llm(ticker: str, company_name: str, macro_context: str = "NEUTRAL | VIX=N/A") -> dict:
+def analyze_risk_with_llm(
+    ticker: str,
+    company_name: str,
+    macro_context: str = "NEUTRAL | VIX=N/A",
+    quant_context: Optional[dict] = None,
+) -> dict:
     """
     Main entry point for LLM Risk Audit.
     Returns a dict with red_flag_score, sentiment, key_insights, risk_category, recommendation.
@@ -117,13 +154,30 @@ def analyze_risk_with_llm(ticker: str, company_name: str, macro_context: str = "
     Args:
         ticker: Stock ticker symbol.
         company_name: Full company name.
-        macro_context: Regime string to inject into prompt, e.g. 'BEARISH / CAUTION | VIX=28.5 | DXY+0.4%'
+        macro_context: Regime string, e.g. 'BEARISH / CAUTION | VIX=28.5 | DXY+0.4%'
+        quant_context: Optional dict with keys: quant_score, rsi, z_score, w52_pos,
+                       smart_money, debt_ebitda, earnings_surprise.
     """
+    _q = quant_context or {}
+    prompt_quant = {
+        "quant_score":       _q.get("quant_score", "N/A"),
+        "rsi":               _q.get("rsi", "N/A"),
+        "z_score":           _q.get("z_score", "N/A"),
+        "w52_pos":           _q.get("w52_pos", "N/A"),
+        "smart_money":       _q.get("smart_money", "N/A"),
+        "debt_ebitda":       _q.get("debt_ebitda", "N/A"),
+        "earnings_surprise": _q.get("earnings_surprise", "N/A"),
+    }
+
     default_result = {
         "red_flag_score": 0,
+        "headline_sentiment_score": 50,
+        "confidence": 0,
         "sentiment": "N/A",
+        "risk_categories": ["None"],
+        "risk_category": "None",  # backward-compat for UI
         "key_insights": ["LLM analysis unavailable."],
-        "risk_category": "None",
+        "evidence_map": {},
         "recommendation": "Rely on quantitative scoring only.",
         "error": None,
     }
@@ -135,11 +189,12 @@ def analyze_risk_with_llm(ticker: str, company_name: str, macro_context: str = "
             default_result["key_insights"] = ["No recent news found for this ticker."]
             return default_result
 
-        # 2. Build prompt with macro context injected
+        # 2. Build prompt with macro + quant context injected
         headlines_text = "\n".join([f"- {h}" for h in headlines])
         prompt = RISK_AUDIT_PROMPT.format(
             company=company_name, ticker=ticker, headlines=headlines_text,
-            macro_context=macro_context
+            macro_context=macro_context,
+            **prompt_quant
         )
 
         # 3. Call Cohere
@@ -161,12 +216,18 @@ def analyze_risk_with_llm(ticker: str, company_name: str, macro_context: str = "
 
         result = json.loads(raw_text)
 
-        # Validate required keys
+        # Validate required keys with new schema
         result.setdefault("red_flag_score", 0)
+        result.setdefault("headline_sentiment_score", result.get("red_flag_score", 50))
+        result.setdefault("confidence", 70)
         result.setdefault("sentiment", "N/A")
+        result.setdefault("risk_categories", ["None"])
         result.setdefault("key_insights", [])
-        result.setdefault("risk_category", "None")
+        result.setdefault("evidence_map", {})
         result.setdefault("recommendation", "No recommendation.")
+        # Backward-compat: derive risk_category string from array for existing UI
+        cats = result["risk_categories"]
+        result["risk_category"] = " | ".join(cats) if cats else "None"
         result["error"] = None
         result["headlines_analyzed"] = len(headlines)
 

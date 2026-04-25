@@ -3240,7 +3240,44 @@ if active_tab == "3. Qualitative Audit (AI)":
                     _vix_str = f"{_vix_val:.1f}" if isinstance(_vix_val, (int, float)) else "N/A"
                     _dxy_str = f"DXY {'+' if _dxy_pct >= 0 else ''}{_dxy_pct:.2f}%" if isinstance(_dxy_pct, (int, float)) else ""
                     _llm_macro_ctx = f"{regime} | VIX={_vix_str} | {_dxy_str}".strip(" |")
-                    llm_res = analyze_risk_with_llm(deep_ticker, meta['company'], macro_context=_llm_macro_ctx)
+
+                    # Pre-compute enrichment fields needed for both quant_context and unified_metrics
+                    _es_for_llm = "N/A"
+                    if not earnings_surprise_full.empty:
+                        _es_tmp = earnings_surprise_full[
+                            earnings_surprise_full["ticker"] == deep_ticker
+                        ].sort_values("quarter_date", ascending=False).head(2)
+                        if not _es_tmp.empty:
+                            _es_parts = []
+                            for _, _er in _es_tmp.iterrows():
+                                _act = _er.get("eps_actual", None)
+                                _est = _er.get("eps_estimate", None)
+                                _pct = _er.get("surprise_pct", None)
+                                _pd  = str(_er.get("quarter_date", ""))[:7]
+                                if _act is not None and _est is not None:
+                                    _beat = "BEAT" if (_act > _est) else "MISS"
+                                    _es_parts.append(f"{_pd}: {_beat} ({'+' if _pct and _pct > 0 else ''}{round(_pct, 1) if _pct else 'N/A'}%)")
+                            _es_for_llm = " | ".join(_es_parts) if _es_parts else "N/A"
+
+                    _debt_ebitda_for_llm = "N/A"
+                    try:
+                        _ebitda_v = float(meta.get("ebitda") or 0)
+                        _debt_v   = float(meta.get("total_debt") or 0)
+                        if _ebitda_v > 0:
+                            _debt_ebitda_for_llm = round(_debt_v / _ebitda_v, 2)
+                    except Exception:
+                        pass
+
+                    _llm_quant_ctx = {
+                        "quant_score":       ai_score,
+                        "rsi":               round(float(meta_enriched.get("RSI (14)", 50)), 1),
+                        "z_score":           round(float(meta_enriched.get("Z-Score", 0)), 2),
+                        "w52_pos":           round(_w52_pos, 1),
+                        "smart_money":       p_sm,
+                        "debt_ebitda":       _debt_ebitda_for_llm,
+                        "earnings_surprise": _es_for_llm,
+                    }
+                    llm_res = analyze_risk_with_llm(deep_ticker, meta['company'], macro_context=_llm_macro_ctx, quant_context=_llm_quant_ctx)
                     if llm_res.get("error"):
                         st.error(f"NLP Error: {llm_res['error'][:80]}")
                     else:
@@ -3254,33 +3291,6 @@ if active_tab == "3. Qualitative Audit (AI)":
                             or st.session_state.get("cohere_api_key", "")
                         )
                         if _cohere_key_ra:
-
-                            # --- Earnings Surprise Summary (last 2 quarters) ---
-                            _es_for_llm = "N/A"
-                            if not earnings_surprise_full.empty:
-                                _es_tmp = earnings_surprise_full[
-                                    earnings_surprise_full["ticker"] == deep_ticker
-                                ].sort_values("quarter_date", ascending=False).head(2)
-                                if not _es_tmp.empty:
-                                    _es_parts = []
-                                    for _, _er in _es_tmp.iterrows():
-                                        _act = _er.get("eps_actual", None)
-                                        _est = _er.get("eps_estimate", None)
-                                        _pct = _er.get("surprise_pct", None)
-                                        _pd  = str(_er.get("quarter_date", ""))[:7]
-                                        if _act is not None and _est is not None:
-                                            _beat = "BEAT" if (_act > _est) else "MISS"
-                                            _es_parts.append(f"{_pd}: {_beat} ({'+' if _pct and _pct > 0 else ''}{round(_pct, 1) if _pct else 'N/A'}%)")
-                                    _es_for_llm = " | ".join(_es_parts) if _es_parts else "N/A"
-
-                            _debt_ebitda_for_llm = "N/A"
-                            try:
-                                _ebitda_v = float(meta.get("ebitda") or 0)
-                                _debt_v   = float(meta.get("total_debt") or 0)
-                                if _ebitda_v > 0:
-                                    _debt_ebitda_for_llm = round(_debt_v / _ebitda_v, 2)
-                            except Exception:
-                                pass
 
                             _unified_metrics = {
                                 **meta_enriched,
