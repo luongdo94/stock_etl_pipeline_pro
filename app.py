@@ -3356,7 +3356,10 @@ if active_tab == "3. Qualitative Audit (AI)":
                             }
                             with st.spinner("Synthesizing CIO Unified Verdict..."):
                                 _unified_report, _cio_prompt_debug = get_unified_verdict(_cohere_key_ra, _unified_metrics, llm_res, language=llm_language)
-                            _qs = int(ai_score) if str(ai_score).isdigit() else 0
+                            try:
+                                _qs = int(float(ai_score))
+                            except (ValueError, TypeError):
+                                _qs = 0
                             _ns = llm_res.get("red_flag_score", 0)
                             _nst = llm_res.get("sentiment", "Neutral")
                             _conflict = (
@@ -3603,7 +3606,7 @@ if active_tab == "3. Qualitative Audit (AI)":
                     polar=dict(
                         bgcolor="rgba(0,0,0,0)",
                         radialaxis=dict(
-                            visible=True, range=[0, 100],
+                            visible=True, range=[0, 100], autorange=False,
                             tickfont=dict(size=9, color="#666"),
                             gridcolor="rgba(255,255,255,0.06)",
                             linecolor="rgba(255,255,255,0.08)"

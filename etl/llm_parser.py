@@ -132,7 +132,11 @@ Return your assessment as a **valid JSON object** with the following structure:
 5. Debt rule: if Debt/EBITDA > 4.0 AND news mentions rising rates or credit concerns, escalate risk_categories to include "Financial" and add +10 to red_flag_score.
 6. Macro regime: in RISK_OFF/BEARISH regimes, apply +5 to +10 to red_flag_score if the company is cyclically exposed.
 7. Insufficient data rule: if fewer than 5 headlines are available, or headlines are repetitive/vague, set confidence < 50 and note this explicitly in key_insights.
-8. LANGUAGE: All text values in your JSON response (key_insights, evidence_map keys/values, recommendation) MUST be written in {language}. Do not change the JSON keys, only the values.
+8. Ignore quote pages, chart pages, duplicate headlines, and generic opinion pieces when scoring material risk or confidence.
+9. If more than 40% of headlines are generic bullish commentary, reduce confidence by 15-25 points.
+10. If stock is at or above 95% of 52-week range and price action is driven by sector sympathy rather than company news, add a valuation/crowding caution to key_insights.
+11. Do not treat bullish headlines as evidence of low risk unless they contain concrete facts such as guidance, orders, earnings, contracts, or regulatory outcomes.
+12. LANGUAGE: All text values in your JSON response (key_insights, evidence_map keys/values, recommendation) MUST be written in {language}. Do not change the JSON keys, only the values.
 
 IMPORTANT: Return ONLY the JSON object. No markdown, no explanation, no code fences.
 
