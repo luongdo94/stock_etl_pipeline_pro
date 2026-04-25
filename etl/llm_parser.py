@@ -267,6 +267,23 @@ You have received a complete snapshot of a client's equity portfolio. Your role 
 - Largest Sector Exposure: {top_sector} ({top_sector_weight:.1f}% of portfolio)
 
 **Full Position-Level Data:**
+
+*Signal Legend:*
+- **Quality (Q)**: Composite fundamental + technical score 0-100 (≥65 = Elite, 50-64 = Solid, <45 = Weak)
+- **PnL%**: Unrealized return since cost basis (recent price action — NOT a proxy for business quality)
+- **Z-Score**: Price deviation from 200-day mean. >+2 = extended/overbought; <-2 = oversold/deep value
+- **RSI**: Relative Strength 14-day. >70 = overbought; <30 = oversold
+- **MA200%**: % above/below 200-day moving average. Negative = below MA200 (bearish trend)
+- **SM (Smart Money)**: Institutional flow. ACCUMULATION = buying; DISTRIBUTION = selling
+- **Action**: Quant model signal (STRONG BUY / BUY / HOLD / REDUCE / SELL)
+- **UP%**: Analyst consensus price target upside from current price
+- **ROE%**: Return on Equity — profitability. >15% = strong
+- **FCF%**: Free Cash Flow Margin — cash generation quality. >15% = healthy
+- **EV/EB**: EV/EBITDA — enterprise valuation multiple. <12x = reasonable for mature companies
+- **P/E**: Forward P/E ratio. Context-dependent by sector
+- **D/EB**: Debt/EBITDA — leverage. >4x = elevated risk; <2x = conservative
+- **RevG%**: Revenue Growth YoY (most recent fiscal year). Measures top-line momentum
+
 {positions_table}
 
 ## Your Task
@@ -307,6 +324,19 @@ State exactly 3 concrete actions the portfolio manager should take. Be specific:
 3. **[ACTION] [TICKER]:** [Rationale with specific numbers]
 
 Rules: Your output MUST be written in {language}. Be decisive and institutional. Reference specific tickers and numbers from the data. Every position MUST appear in exactly one bucket — no omissions.
+
+**CRITICAL INVESTMENT PHILOSOPHY RULES — Read before writing any recommendation:**
+
+1. **PnL ≠ Quality.** Unrealized PnL% reflects recent PRICE ACTION, not business quality. A high-quality stock (Quality ≥ 65) that is down -15% PnL is likely a BUYING OPPORTUNITY caused by macro pressure or sector rotation — NOT a reason to sell. Do NOT recommend selling a position solely because PnL is negative.
+
+2. **Low PnL + High Quality = Accumulate, not Trim.** If Quality ≥ 65 and PnL is negative, the correct action is to HOLD or consider ADDING. Only recommend trimming a high-quality position if the portfolio is dangerously over-concentrated in that single name (Weight > 20% of portfolio).
+
+3. **Trim Candidates must have broken fundamentals.** A position belongs in ✂️ Trim Candidates ONLY if it meets at least TWO of: (a) Quality < 45, (b) negative PnL, (c) thesis broken by macro regime, (d) excessive concentration. A position with high quality but negative PnL is NOT a Trim Candidate.
+
+4. **Profitable ≠ Safe to add.** Do NOT recommend buying more of a position merely because PnL is positive. Positive PnL may indicate the stock is already overbought (high Z-score, stretched valuation). Base ADD recommendations on Quality Score and valuation, not recent performance.
+
+5. **Rebalancing Directives must be structurally driven** (concentration, macro misalignment, quality dispersion) — never momentum-driven (sell losers, buy winners).
+
 **ETF/Index Fund Rule:** Positions marked as Type=ETF/Index Fund are inherently diversified vehicles (e.g., Nasdaq 100 ETF). They MUST NOT be flagged for concentration risk. In Position Buckets, classify them as Cyclical Beta or Core Compounders based on their macro role. Start each section header on its own line."""
 
 
@@ -334,37 +364,33 @@ def analyze_portfolio_with_llm(
         co = cohere.ClientV2(api_key=api_key)
 
         # Build positions table string
-        _ETF_KEYWORDS = {"etf", "fund", "trust", "index", "ishares", "vanguard",
-                          "amundi", "lyxor", "xtrackers", "invesco", "spdr", "ucits"}
-        positions = []
-        for _pr in portfolio_data.get("positions", []):
-            _company_lc = str(_pr.get("company", "")).lower()
-            _sector_raw = str(_pr.get("sector", "N/A"))
-            _is_etf = (
-                _sector_raw in ("N/A", "nan", "None", "") and
-                any(kw in _company_lc for kw in _ETF_KEYWORDS)
-            )
-            positions.append({
-                "ticker": _pr.get("ticker", "?"),
-                "company": _pr.get("company", "N/A"),
-                "asset_type": "ETF/Index Fund" if _is_etf else "Stock",
-                "sector": "Diversified (ETF)" if _is_etf else _sector_raw,
-                "weight_pct": _pr.get("weight_pct", 0),
-                "quality_score": _pr.get("quality_score", "N/A"),
-                "pnl_pct": _pr.get("pnl_pct", 0),
-                "price": _pr.get("price", 0),
-            })
+        # Pass through all fields including new technical signals (already enriched by app.py)
+        positions = portfolio_data.get("positions", [])
 
-        lines = ["Type           | Ticker | Company              | Sector             | Weight% | Quality | PnL%  | Price€"]
-        lines.append("-" * 110)
-        for p in positions:
+        lines = ["# | Ticker | W% | Q | PnL% | Z | RSI | MA200% | SM | Action | UP% | ROE% | FCF% | EV/EB | P/E | D/EB | RevG%"]
+        lines.append("---")
+        for i, p in enumerate(positions, 1):
+            rev_g = f"{p.get('rev_growth_yoy'):+.1f}%" if p.get('rev_growth_yoy') is not None else "N/A"
             lines.append(
-                f"{p['asset_type']:14} | {p['ticker']:6} | {p['company'][:20]:20} | "
-                f"{p['sector'][:18]:18} | {p['weight_pct']:5.1f}% | "
-                f"{str(p['quality_score']):7} | {p['pnl_pct']:+5.1f}% | "
-                f"€{p['price']:8.2f}"
+                f"{i}. {p.get('ticker','?')} [{p.get('asset_type','Stock')}] "
+                f"W:{p.get('weight_pct',0):.1f}% "
+                f"Q:{p.get('quality_score','N/A')} "
+                f"PnL:{p.get('pnl_pct',0):+.1f}% "
+                f"Z:{p.get('z_score',0):+.2f} "
+                f"RSI:{p.get('rsi',50):.0f} "
+                f"MA200:{p.get('ma200_pct',0):+.1f}% "
+                f"SM:{p.get('smart_money','N/A')} "
+                f"ACT:{p.get('action','HOLD')} "
+                f"UP:{p.get('upside_pct',0):+.1f}% | "
+                f"ROE:{p.get('roe_pct',0):.1f}% "
+                f"FCF:{p.get('fcf_margin',0):.1f}% "
+                f"EV/EB:{p.get('ev_ebitda',0):.1f}x "
+                f"PE:{p.get('pe_fwd',0):.1f}x "
+                f"D/EB:{p.get('debt_ebitda',0):.2f}x "
+                f"RevG:{rev_g}"
             )
         positions_table = "\n".join(lines)
+
 
         prompt = PORTFOLIO_REVIEW_PROMPT.format(
             macro_context=macro_context,

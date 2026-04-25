@@ -288,12 +288,18 @@ State: **STRONG BUY / BUY / WATCH & ACCUMULATE / HOLD / REDUCE / AVOID**
 Include practical execution context (entry levels, targets, risk management) using the technical data.
 
 ### 📊 3-Scenario Valuation
-- **🐻 Bear Case (20%):** [Catalyst] → Target
-- **📈 Base Case (60%):** [Catalyst] → Target  
-- **🚀 Bull Case (20%):** [Catalyst] → Target
+**ANCHOR: Current Price = €{_f(price)} | Analyst Consensus Target = €{_f(target_p)}**
+Scenarios are expressed as absolute price targets AND % change from CURRENT PRICE (not from analyst target).
+
+- **🐻 Bear Case (20% probability):** [Downside catalyst] → Target: €[price] ([negative %] vs current) — Bear Case MUST be BELOW €{_f(price)}.
+- **📈 Base Case (60% probability):** [Expected trajectory] → Target: €[price] ([+/- %] vs current) — Base Case should be near analyst consensus.
+- **🚀 Bull Case (20% probability):** [Upside catalyst] → Target: €[price] ([positive %] vs current) — Bull Case should exceed analyst consensus.
+
+CRITICAL: If the macro regime is BEARISH or Risk-Off, the Bear Case catalyst MUST reflect that specific macro risk. Never show a Bear Case price above the current price of €{_f(price)}.
 
 ### ⚠️ Key Risks to Monitor
 3 concise bullet points on the most material risks.
+
 
 Rules: Your final output MUST be written in {language} (translate section headers too, but keep emojis). Be decisive. Reference specific numbers. Start each section header on its own line."""
 
@@ -2952,8 +2958,15 @@ if active_tab == "3. Qualitative Audit (AI)":
             meta_enriched['upside_pct'] = float(upside)
             
             # ── AI SCORING ────────────────────────────────────────────────────────
-            ai_score = compute_score(meta_enriched)
+            # Use m_df["Quality"] as the SINGLE canonical score source across all tabs.
+            # Fallback to compute_score(meta_enriched) only if ticker is missing from screener.
+            _m_quality_row = m_df[m_df["Ticker"] == deep_ticker]
+            if not _m_quality_row.empty:
+                ai_score = float(_m_quality_row.iloc[0]["Quality"])
+            else:
+                ai_score = compute_score(meta_enriched)
             ai_action = _action_map.get(deep_ticker, "HOLD / NEUTRAL")
+
             if ai_score >= 70:    ai_color, ai_icon = "#00ffcc", "🚀"
             elif ai_score >= 55:  ai_color, ai_icon = "#2ecc71", "✅"
             elif ai_score >= 35:  ai_color, ai_icon = "#f1c40f", "🟡"
@@ -3542,7 +3555,14 @@ if active_tab == "3. Qualitative Audit (AI)":
                 _radar_sd = compute_score_details(meta_enriched)
                 _radar_breakdown = _radar_sd.get("breakdown", {})
                 _sector_lc = meta.get("sector", "").lower() if meta.get("sector") else ""
-                _is_tech = any(s in _sector_lc for s in ["tech", "semi", "software", "cloud", "comm", "ai"])
+                _TECH_SECTORS = {
+                    "ai & data", "design software", "ecommerce", "fintech",
+                    "platform software", "semiconductor tools", "semiconductors", "technology",
+                    "consumer electronics", "cybersecurity", "data storage", "digital advertising",
+                    "enterprise hardware", "it services", "media & entertainment", "networking",
+                    "saas", "social media", "telecom",
+                }
+                _is_tech = _sector_lc in _TECH_SECTORS
                 _max_pts = {
                     "Valuation":       20,
                     "Profitability":   30 if _is_tech else 25,
@@ -4372,7 +4392,7 @@ if active_tab == "3. Qualitative Audit (AI)":
                     'fcf_margin':    meta.get('fcf_margin') or 0,
                     'upside_pct':    upside,
                     'return_1y_pct': _sel_1y_val,
-                    'quality_score': compute_score(sel_row),
+                    'quality_score': float(m_df.loc[m_df["Ticker"] == deep_ticker, "Quality"].iloc[0]) if not m_df[m_df["Ticker"] == deep_ticker].empty else compute_score(sel_row),
                     'is_selected':   True,
                 })
 
@@ -4390,7 +4410,7 @@ if active_tab == "3. Qualitative Audit (AI)":
                         'fcf_margin':    pr.get('fcf_margin') or 0,
                         'upside_pct':    pr.get('upside_pct', 0) or 0,
                         'return_1y_pct': float(_p1y.iloc[0]) if not _p1y.empty and pd.notnull(_p1y.iloc[0]) else None,
-                        'quality_score': compute_score(pr_score_input),
+                        'quality_score': float(m_df.loc[m_df["Ticker"] == pr["ticker"], "Quality"].iloc[0]) if not m_df[m_df["Ticker"] == pr["ticker"]].empty else compute_score(pr_score_input),
                         'is_selected':   False,
                     })
 
@@ -5019,17 +5039,54 @@ if active_tab == "7. Portfolio Builder":
                         # Tier 3: sector N/A + European exchange suffix (ETFs dominate this space)
                         (_sector_raw in ("N/A", "nan", "None", "") and _has_eu_suffix)
                     )
+                    # Pull technical signals from m_df (same source as screener)
+                    _m_row = m_df[m_df["Ticker"] == _t]
+                    _m = _m_row.iloc[0] if not _m_row.empty else {}
+                    _sm_raw = str(_m.get("Smart Money", "NEUTRAL"))
+                    # Strip emojis from Smart Money label
+                    _sm_clean = _sm_raw.replace("🟢 ", "").replace("🔴 ", "").replace("⚪ ", "").strip()
+                    _action_raw = str(_m.get("Action", "HOLD / NEUTRAL"))
+                    _action_clean = _action_raw.replace("💎 ", "").replace("🟢 ", "").replace("🔴 ", "").replace("🟠 ", "").replace("🟡 ", "").strip()
+                    # Revenue Growth YoY from annual_fin (2 most recent years)
+                    _rev_growth_yoy = None
+                    if "annual_fin" in dir() and not annual_fin.empty:
+                        _af = annual_fin[annual_fin["ticker"] == _t].sort_values("year", ascending=False)
+                        if len(_af) >= 2:
+                            try:
+                                _r0 = float(_af["revenue"].iloc[0])
+                                _r1 = float(_af["revenue"].iloc[1])
+                                if _r1 > 0:
+                                    _rev_growth_yoy = round((_r0 / _r1 - 1) * 100, 1)
+                            except Exception:
+                                _rev_growth_yoy = None
+
                     _positions.append({
-                        "ticker":        _t,
-                        "company":       _company_str if not _no_db_data else f"{_t} (ETF/Foreign)",
-                        "asset_type":    "ETF/Index Fund" if _is_etf else "Stock",
-                        "sector":        "Diversified (ETF)" if _is_etf else _sector_raw,
-                        "weight_pct":    round(float(_pr.get("_w", 0)), 1),
-                        "quality_score": round(float(_q_map.get(_t, 0)), 0),
-                        "pnl_pct":       round(float(_pr.get("_pnl_pct", 0) or 0), 1),
-                        "shares":        float(_pr.get("Shares", 0)),
-                        "price":         float(_pr.get("Price (€)", 0)),
+                        "ticker":         _t,
+                        "company":        _company_str if not _no_db_data else f"{_t} (ETF/Foreign)",
+                        "asset_type":     "ETF/Index Fund" if _is_etf else "Stock",
+                        "sector":         "Diversified (ETF)" if _is_etf else _sector_raw,
+                        "weight_pct":     round(float(_pr.get("_w", 0)), 1),
+                        "quality_score":  round(float(_q_map.get(_t, 0)), 0),
+                        "pnl_pct":        round(float(_pr.get("_pnl_pct", 0) or 0), 1),
+                        # Technical
+                        "z_score":        round(float(_pr.get("Z-Score", _m.get("Z-Score", 0)) or 0), 2),
+                        "rsi":            round(float(_pr.get("RSI (14)", _m.get("RSI (14)", 50)) or 50), 1),
+                        "ma200_pct":      round(float(_m.get("vs MA200 (%)", 0) or 0), 1),
+                        "smart_money":    _sm_clean,
+                        "action":         _action_clean,
+                        "upside_pct":     round(float(_m.get("Upside (%)", 0) or 0), 1),
+                        # Profitability
+                        "roe_pct":        round(float(_m.get("ROE (%)", 0) or 0), 1),
+                        "fcf_margin":     round(float(_m.get("FCF Margin (%)", 0) or 0), 1),
+                        # Valuation
+                        "ev_ebitda":      round(float(_m.get("EV/EBITDA", 0) or 0), 1),
+                        "pe_fwd":         round(float(_m.get("P/E (Fwd)", 0) or 0), 1),
+                        # Leverage & Growth
+                        "debt_ebitda":    round(float(_m.get("Debt/EBITDA", 0) or 0), 2),
+                        "rev_growth_yoy": _rev_growth_yoy,
+                        "price":          float(_pr.get("Price (€)", 0)),
                     })
+
 
 
 
