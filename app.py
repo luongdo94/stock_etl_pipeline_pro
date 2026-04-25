@@ -302,16 +302,16 @@ Rules: English only. Be decisive. Reference specific numbers. Start each section
             messages=[{"role": "user", "content": prompt}],
             max_tokens=1000,
         )
-        return response.message.content[0].text
+        return response.message.content[0].text, prompt
 
     except Exception as e:
         err = str(e)
         if "invalid api key" in err.lower() or "unauthorized" in err.lower():
-            return "❌ **Invalid API Key.** Please check your Cohere API Key."
+            return "❌ **Invalid API Key.** Please check your Cohere API Key.", ""
         elif "rate limit" in err.lower():
-            return "⏳ **Rate limit reached.** Please wait a moment and try again."
+            return "⏳ **Rate limit reached.** Please wait a moment and try again.", ""
         else:
-            return f"❌ **AI Engine Error:** {err}"
+            return f"❌ **AI Engine Error:** {err}", ""
 
 
 # ── MULTI-CURRENCY NORMALIZATION MATRIX (Target: EUR) ───────────────
@@ -3335,7 +3335,7 @@ if active_tab == "3. Qualitative Audit (AI)":
                                 "market_cap":           meta.get("market_cap"),
                             }
                             with st.spinner("Synthesizing CIO Unified Verdict..."):
-                                _unified_report = get_unified_verdict(_cohere_key_ra, _unified_metrics, llm_res)
+                                _unified_report, _cio_prompt_debug = get_unified_verdict(_cohere_key_ra, _unified_metrics, llm_res)
                             _qs = int(ai_score) if str(ai_score).isdigit() else 0
                             _ns = llm_res.get("red_flag_score", 0)
                             _nst = llm_res.get("sentiment", "Neutral")
@@ -3344,13 +3344,16 @@ if active_tab == "3. Qualitative Audit (AI)":
                                 (_qs < 45  and (_ns <= 25  and _nst == "Positive"))
                             )
                             st.session_state[f"unified_verdict_{deep_ticker}"] = {
-                                "report":        _unified_report,
-                                "nlp_insights":  llm_res.get("key_insights", []),
-                                "nlp_sentiment": _nst,
-                                "nlp_score":     _ns,
-                                "extracted_at":  datetime.now().strftime("%H:%M:%S"),
-                                "is_conflict":   _conflict,
-                                "ai_score_snap": _qs,
+                                "report":            _unified_report,
+                                "nlp_insights":      llm_res.get("key_insights", []),
+                                "nlp_sentiment":     _nst,
+                                "nlp_score":         _ns,
+                                "extracted_at":      datetime.now().strftime("%H:%M:%S"),
+                                "is_conflict":       _conflict,
+                                "ai_score_snap":     _qs,
+                                # Debug prompts for in-UI inspection
+                                "cio_prompt_debug":  _cio_prompt_debug,
+                                "risk_prompt_debug": llm_res.get("_prompt_debug", ""),
                             }
                             st.rerun()
 
@@ -3454,6 +3457,19 @@ if active_tab == "3. Qualitative Audit (AI)":
                     with st.expander("🧩 Raw Evidence: News Signals Analyzed"):
                         for insight in _show_insights:
                             st.markdown(f"- {insight}")
+
+                # ── DEBUG: Raw Prompts sent to Cohere ──────────────────────
+                _cio_p   = _uv_data.get("cio_prompt_debug", "")
+                _risk_p  = _uv_data.get("risk_prompt_debug", "")
+                if _cio_p or _risk_p:
+                    with st.expander("🔍 Debug: Raw Prompts Sent to Cohere"):
+                        if _risk_p:
+                            st.markdown("**📰 Stage 1 — Risk Audit Prompt (News Parser)**")
+                            st.code(_risk_p, language="markdown")
+                        if _cio_p:
+                            st.markdown("**🧠 Stage 2 — CIO Verdict Prompt (Unified Synthesis)**")
+                            st.code(_cio_p, language="markdown")
+
                 st.markdown("<br>", unsafe_allow_html=True)
 
             qual_col, quant_col = st.columns([1, 1])

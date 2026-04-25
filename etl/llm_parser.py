@@ -230,6 +230,7 @@ def analyze_risk_with_llm(
         result["risk_category"] = " | ".join(cats) if cats else "None"
         result["error"] = None
         result["headlines_analyzed"] = len(headlines)
+        result["_prompt_debug"] = prompt   # for in-UI debug expander
 
         return result
 
