@@ -893,6 +893,7 @@ def save_watchlist(df):
                 "invalidation_level": float(row.get("Invalidation Level", 0)) if pd.notna(row.get("Invalidation Level")) and row.get("Invalidation Level") else None,
                 "take_profit": float(row.get("Take Profit", 0)) if pd.notna(row.get("Take Profit")) and row.get("Take Profit") else None,
                 "next_earnings": str(row.get("Next Earnings", "TBD")),
+                "added_date": str(row.get("Added Date", "")) if pd.notna(row.get("Added Date")) and row.get("Added Date") else None,
             }
             records.append(record)
             
@@ -4551,9 +4552,9 @@ if active_tab == "6. Watchlist":
         st.markdown("### Active Candidates Pipeline")
         _w1, _w2, _w3, _w4 = st.columns(4)
         _w1.metric("Total Ideas", len(wl_df))
-        _w2.metric("Active (Triggered)", len(wl_df[wl_df["Status"].str.contains("ACTIVE")]))
-        _w3.metric("Pending", len(wl_df[wl_df["Status"].str.contains("PENDING")]))
-        _w4.metric("Invalidated", len(wl_df[wl_df["Status"].str.contains("INVALIDATED")]))
+        _w2.metric("Active (Triggered)", len(wl_df[wl_df["Status"].str.contains("ACTIVE", na=False)]))
+        _w3.metric("Pending", len(wl_df[wl_df["Status"].str.contains("PENDING", na=False)]))
+        _w4.metric("Invalidated", len(wl_df[wl_df["Status"].str.contains("INVALIDATED", na=False)]))
         st.markdown("---")
         
         # Interactive Editor
@@ -4588,7 +4589,9 @@ if active_tab == "6. Watchlist":
             
             if st.form_submit_button("💾 Synchronize Watchlist Changes", type="primary"):
                 try:
-                    save_watchlist(edited_df)
+                    # Filter out rows with empty Ticker (from dynamic row additions)
+                    clean_df = edited_df[edited_df["Ticker"].astype(str).str.strip() != ""]
+                    save_watchlist(clean_df)
                     st.success("✅ Watchlist synced successfully! Database updated.")
                     st.rerun()
                 except Exception as e:
@@ -4917,15 +4920,14 @@ if active_tab == "7. Portfolio Builder":
             edited_df["Weight (%)"] = (edited_df["Market Value"] / total_p_val) * 100
             weights = (edited_df["Market Value"] / total_p_val).values
             current_tickers = edited_df["Ticker"].tolist()
-            weights = (edited_df["Market Value"] / total_p_val).values
             n_assets = len(current_tickers)
     
             # ── 4. PERFORMANCE ENGINE (Weighted) ──
             # Use filtered 'prices' to follow the global date filter
             p_prices = prices[prices["ticker"].isin(current_tickers)]
             ret_matrix = p_prices.pivot(index="date", columns="ticker", values="daily_return_pct").fillna(0) / 100
-            # Ensure column order matches current_tickers for correct weighting
-            ret_matrix = ret_matrix[current_tickers]
+            # Reindex to match current_tickers; missing tickers get 0 return (no data in horizon)
+            ret_matrix = ret_matrix.reindex(columns=current_tickers, fill_value=0)
             
             # ── Pre-compute matrices for Optimizer & Analytics ──
             cov_matrix = ret_matrix.cov() * 252
@@ -4987,10 +4989,9 @@ if active_tab == "7. Portfolio Builder":
                 sel_bench_label = st.selectbox("Select Performance Benchmark", options=list(bench_options.keys()), index=0, key="bench_l1")
                 sel_bench_ticker = bench_options[sel_bench_label]
     
-                # Dynamically set initial investment so the simulation ENDS exactly at the current total market value.
-                # (since 'cum_return' is normalized to 1.0 at start, we calculate backwards from the endpoint)
-                current_cum_return = cum_returns.iloc[-1]
-                initial_investment = total_p_val / current_cum_return if current_cum_return > 0 else total_p_val
+                # Both portfolio and benchmark start from the same initial capital (total cost basis).
+                # This gives a fair apples-to-apples comparison of % growth from the same starting point.
+                initial_investment = total_cost_basis if total_cost_basis > 0 else total_p_val
                 
                 backtest_df = pd.DataFrame({'date': cum_returns.index, 'cum_return': cum_returns.values})
                 backtest_df["portfolio_value"] = backtest_df["cum_return"] * initial_investment
@@ -6260,7 +6261,7 @@ if active_tab == "4. Quantitative Forecast (ML)":
             clf = xgb.XGBClassifier(
                 n_estimators=150, max_depth=4, learning_rate=0.05,
                 subsample=0.8, colsample_bytree=0.8,
-                use_label_encoder=False, eval_metric="mlogloss",
+                eval_metric="mlogloss",
                 verbosity=0, tree_method="hist"
             )
             # Remap labels: -1→0, 0→1, 1→2 for XGBoost multi-class
@@ -6445,7 +6446,7 @@ if active_tab == "4. Quantitative Forecast (ML)":
             rh = _get_regime_history()
             if not rh.empty:
                 df = df.merge(rh, on='date', how='left')
-                df['regime_score'] = df['regime_score'].fillna(method='ffill').fillna(50)
+                df['regime_score'] = df['regime_score'].ffill().fillna(50)
             else:
                 df['regime_score'] = 50.0
 
@@ -6876,7 +6877,8 @@ if active_tab == "4. Quantitative Forecast (ML)":
                 mdl.eval()
                 with torch.no_grad():
                     inp = torch.FloatTensor(eval_x).unsqueeze(0).to(device)
-                    pred_s = mdl(inp).cpu().numpy().flatten()[:forecast_days]
+                    y_base_eval = inp[:, -1, 0].unsqueeze(1)  # Must match training residual logic
+                    pred_s = (mdl(inp) + y_base_eval).cpu().numpy().flatten()[:forecast_days]
                 fp = np.zeros((forecast_days, n_feat)); fp[:, 0] = pred_s
                 fa = np.zeros((forecast_days, n_feat)); fa[:, 0] = actual_s
                 pp = price_scaler.inverse_transform(fp[:, 0:1]).flatten()
@@ -7689,9 +7691,15 @@ def run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct,
     sharpe = ( (strategy_returns - 0.04/252).mean() / (strategy_returns.std() + 1e-9) ) * np.sqrt(252)
     max_dd = ((equity_curve - np.maximum.accumulate(equity_curve)) / np.maximum.accumulate(equity_curve)).min() * 100
     
-    trade_returns = strategy_returns[signal_changes == 1]
-    win_rate = (trade_returns > 0).sum() / max(len(trade_returns), 1) * 100
-    n_trades = int(signal_changes.sum() / 2)
+    # Win rate: computed per completed trade (BUY→SELL pair) from trade_log
+    completed_trades = [(t["PnL"]) for t in trade_log if t["Action"] == "🔴 SELL"]
+    if completed_trades:
+        # Parse "+3.5%" → 3.5, "-2.1%" → -2.1
+        pnl_values = [float(p.replace("%", "")) for p in completed_trades]
+        win_rate = sum(1 for p in pnl_values if p > 0) / len(pnl_values) * 100
+    else:
+        win_rate = 0.0
+    n_trades = len(completed_trades)
 
     return {
         "ticker": bt_ticker, "strategy": strategy_type,
@@ -7718,51 +7726,8 @@ if active_tab == "5. Backtest Lab":
         st.markdown("#### Trading Rule Configuration")
         _bt_options = [t for t in all_tickers if t not in ["^VIX","SPY","^GSPC","^DJI","^IXIC"]]
         
-        # Move Mode Toggle OUTSIDE the form to trigger immediate UI rerun for 'disabled' logic
-        bt_mode = st.radio("Simulation Mode", ["Single Strategy", "Find Best Strategy (Auto-Run All)"], index=0, horizontal=True)
-        
-        # --- Market Regime Integration ---
-        st.markdown(f"""
-        <div style='background:rgba(255,255,255,0.03); border:1px solid {regime_ui_color}; 
-                    border-radius:6px; padding:8px 12px; margin-bottom:12px;'>
-            <span style='font-size:0.75rem; color:#aaa; font-weight:700; text-transform:uppercase;'>Global Market Regime</span><br>
-            <span style='color:{regime_ui_color}; font-weight:900;'>{regime}</span>
-        </div>
-        """, unsafe_allow_html=True)
-        
-        _strat_options = [
-            "Institutional Quality Pulse (AI Score > 75)",
-            "Trend Following (MA20/50 Cross)", 
-            "RSI Mean Reversion (30/70)",
-            "Z-Score Mean Reversion (Deep Value)",
-            "Buy on Dip (Uptrend + Oversold)",
-            "Multi-Indicator Breakout (Price>MA50 + RSI>50)"
-        ]
-        
-        _rec_idx = 0
-        _rec_msg = ""
-        if "BEAR" in regime.upper() or "CAUTION" in regime.upper():
-            _rec_idx = 3 # Z-Score Mean Reversion
-            _rec_msg = "💡 **Regime Filter:** Z-Score or RSI Mean Reversion typically outperforms in sideways/volatile markets."
-        elif "NEUTRAL" in regime.upper() or "SIDEWAYS" in regime.upper():
-            _rec_idx = 2 # RSI Mean Reversion
-            _rec_msg = "💡 **Regime Filter:** Mean Reversion strategies are preferred during range-bound regimes."
-        elif "BULL" in regime.upper():
-            _rec_idx = 1 # Trend Following
-            _rec_msg = "💡 **Regime Filter:** Trend Following and Breakout strategies capture maximum upside in risk-on markets."
-            
-        if _rec_msg:
-            st.caption(_rec_msg)
-        
         with st.form("backtest_form"):
             bt_ticker = st.selectbox("Select Ticker to Backtest", options=_bt_options, format_func=format_ticker, key="bt_ticker_form")
-            
-            strategy_type = st.selectbox(
-                "Select Strategy (if Single) 🎯 Regime Aligned",
-                options=_strat_options,
-                index=_rec_idx,
-                disabled=(bt_mode != "Single Strategy")
-            )
             
             st.markdown("###### Risk Management")
             sl_col, tp_col = st.columns(2)
@@ -7773,7 +7738,7 @@ if active_tab == "5. Backtest Lab":
             initial_capital = st.number_input("Initial Capital (€)", 1000, 1_000_000, 10000, step=1000)
             tx_cost_v = st.slider("Transaction Cost (%)", 0.0, 1.0, 0.1, step=0.05)
             
-            run_backtest = st.form_submit_button("▶ Run Backtest", width="stretch", type="primary")
+            run_backtest = st.form_submit_button("▶ Run All Strategies & Find Best", width="stretch", type="primary")
 
     with bt_col2:
         if run_backtest and bt_ticker:
@@ -7784,34 +7749,26 @@ if active_tab == "5. Backtest Lab":
             # Filter bt_prices using the globally filtered 'prices' (respects Horizon sidebar)
             bt_prices = prices[prices["ticker"] == bt_ticker].sort_values("date").copy()
             
-            if bt_mode == "Single Strategy":
-                res = run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct, tx_cost_pct, initial_capital, reco_df)
-                if res:
-                    st.session_state["bt_results"] = res
-                    st.session_state["bt_leaderboard"] = None
-            else:
-                # AUTO-RUN ALL STRATEGIES
-                all_strats = [
-                    "Institutional Quality Pulse (AI Score > 75)",
-                    "Trend Following (MA20/50 Cross)", 
-                    "RSI Mean Reversion (30/70)",
-                    "Z-Score Mean Reversion (Deep Value)",
-                    "Buy on Dip (Uptrend + Oversold)",
-                    "Multi-Indicator Breakout (Price>MA50 + RSI>50)"
-                ]
-                results = []
-                progress_bar = st.progress(0)
-                for idx, s in enumerate(all_strats):
-                    progress_bar.progress((idx + 1) / len(all_strats), text=f"Simulating: {s}")
-                    r = run_backtest_simulation(bt_ticker, bt_prices, s, sl_pct, tp_pct, tx_cost_pct, initial_capital, reco_df)
-                    if r: results.append(r)
-                progress_bar.empty()
-                
-                if results:
-                    st.session_state["bt_leaderboard"] = results
-                    # Set the best one as current results for main metrics display
-                    best_res = max(results, key=lambda x: x["sharpe"])
-                    st.session_state["bt_results"] = best_res
+            all_strats = [
+                "Institutional Quality Pulse (AI Score > 75)",
+                "Trend Following (MA20/50 Cross)", 
+                "RSI Mean Reversion (30/70)",
+                "Z-Score Mean Reversion (Deep Value)",
+                "Buy on Dip (Uptrend + Oversold)",
+                "Multi-Indicator Breakout (Price>MA50 + RSI>50)"
+            ]
+            results = []
+            progress_bar = st.progress(0)
+            for idx, s in enumerate(all_strats):
+                progress_bar.progress((idx + 1) / len(all_strats), text=f"Simulating: {s}")
+                r = run_backtest_simulation(bt_ticker, bt_prices, s, sl_pct, tp_pct, tx_cost_pct, initial_capital, reco_df)
+                if r: results.append(r)
+            progress_bar.empty()
+            
+            if results:
+                st.session_state["bt_leaderboard"] = results
+                best_res = max(results, key=lambda x: x["sharpe"])
+                st.session_state["bt_results"] = best_res
 
         # ── RENDER RESULTS ────────────────────────────────────────────────────
         if "bt_results" in st.session_state and st.session_state["bt_results"]:
@@ -7883,7 +7840,7 @@ if active_tab == "5. Backtest Lab":
             with st.expander("📋 View Trade Log"):
                 st.dataframe(pd.DataFrame(r["trade_log"]), width="stretch", hide_index=True)
         else:
-            st.info("👈 Configure your trading rule on the left and click **Run Simulation** to start.")
+            st.info("👈 Configure your trading rule on the left and click **▶ Run All Strategies & Find Best** to start.")
 
 
 # ── TAB 8: SYSTEM METHODOLOGY ────────────────────────────────────────────────
