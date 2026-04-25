@@ -169,6 +169,17 @@ def get_unified_verdict(api_key: str, metrics: dict, nlp_result: dict) -> str:
         pe        = metrics.get("pe_ratio", "N/A")
         peg       = metrics.get("peg_ratio", "N/A")
         fcf       = metrics.get("fcf_margin", "N/A")
+        roe_raw   = metrics.get("roe", None)
+        roe_pct   = round(float(roe_raw) * 100, 1) if roe_raw is not None else None
+        op_margin = metrics.get("operating_margin", None)
+        op_margin_pct = round(float(op_margin) * 100, 1) if op_margin is not None else None
+        gross_margin = metrics.get("gross_margin", None)
+        gross_margin_pct = round(float(gross_margin) * 100, 1) if gross_margin is not None else None
+        ev_ebitda  = metrics.get("ev_to_ebitda", None)
+        # FCF Yield = Free Cash Flow / Market Cap
+        _fcf_abs   = metrics.get("free_cashflow", None)
+        _mktcap    = metrics.get("market_cap", None)
+        fcf_yield  = round(float(_fcf_abs) / float(_mktcap) * 100, 1) if _fcf_abs and _mktcap and float(_mktcap) > 0 else None
         regime    = metrics.get("market_regime", "NEUTRAL")
         target_p  = metrics.get("target_mean_price", "N/A")
         # Price structure data for TP/SL calculation
@@ -242,7 +253,9 @@ Your task: synthesize both and issue ONE definitive, actionable investment verdi
 - 52W Range: €{_f(low_52w)} – €{_f(high_52w)} | % from MA200: {pct_from_ma200} | 52W Position: {_f(metrics.get('w52_pos','N/A'), 0)}%
 - Technical Levels: S1=€{_f(support_s1)} | S2=€{_f(support_s2)} | R1=€{_f(resistance_r1)} | R2=€{_f(resistance_r2)} | Stop=€{_f(stop_loss_tech)}
 - Moving Averages: MA20=€{_f(ma20_cur)} | MA50=€{_f(ma50_cur)}
-- RSI: {_f(rsi, 1) if rsi is not None else 'N/A'} | MA Signal: {ma_signal} | Smart Money: {smart_money} | Forward P/E: {_f(metrics.get('forward_pe', pe), 1)}x | PEG: {_f(peg, 2)} | FCF: {_f(fcf, 1, '%')}
+- RSI: {_f(rsi, 1) if rsi is not None else 'N/A'} | MA Signal: {ma_signal} | Smart Money: {smart_money} | Forward P/E: {_f(metrics.get('forward_pe', pe), 1)}x | PEG: {_f(peg, 2)} | FCF Margin: {_f(fcf, 1, '%')}
+- Profitability: ROE: {f"{roe_pct:+.1f}%" if roe_pct is not None else 'N/A'} | Operating Margin: {f"{op_margin_pct:.1f}%" if op_margin_pct is not None else 'N/A'} | Gross Margin: {f"{gross_margin_pct:.1f}%" if gross_margin_pct is not None else 'N/A'}
+- Enterprise Valuation: EV/EBITDA: {f"{float(ev_ebitda):.1f}x" if ev_ebitda is not None else 'N/A'} | FCF Yield: {f"{fcf_yield:.1f}%" if fcf_yield is not None else 'N/A'}
 - Debt/EBITDA: {_f(metrics.get('debt_ebitda', 'N/A'), 2)}x | Net Payout Yield: {_f(metrics.get('net_payout_yield_pct', 'N/A'), 2)}%
 - Revenue Growth (YoY): {f"{float(metrics.get('revenue_growth') or 0) * 100:+.1f}%" if metrics.get('revenue_growth') is not None else 'N/A'} | EPS Growth (YoY): {f"{float(metrics.get('earnings_growth') or 0) * 100:+.1f}%" if metrics.get('earnings_growth') is not None else 'N/A'}
 - Earnings Surprise (last 2Q): {metrics.get('earnings_surprise_summary', 'N/A')}
@@ -3317,6 +3330,9 @@ if active_tab == "3. Qualitative Audit (AI)":
                                 "earnings_surprise_summary": _es_for_llm,
                                 "net_payout_yield_pct": float(meta.get("net_payout_yield_pct") or 0) or "N/A",
                                 "w52_pos":              round(_w52_pos, 1),
+                                # New: needed for FCF Yield computation in get_unified_verdict
+                                "free_cashflow":        meta.get("free_cashflow"),
+                                "market_cap":           meta.get("market_cap"),
                             }
                             with st.spinner("Synthesizing CIO Unified Verdict..."):
                                 _unified_report = get_unified_verdict(_cohere_key_ra, _unified_metrics, llm_res)
