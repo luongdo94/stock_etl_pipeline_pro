@@ -138,7 +138,7 @@ Rules: English only. Be direct and decisive. Reference specific data points. Und
             return f"\u274c **AI Engine Error:** {err}"
 
 
-def get_unified_verdict(api_key: str, metrics: dict, nlp_result: dict) -> str:
+def get_unified_verdict(api_key: str, metrics: dict, nlp_result: dict, language: str = "English") -> str:
     """
     Unified Alpha-Risk Intelligence — Chief Investment Officer (CIO) mode.
     Combines quantitative fundamentals + NLP news sentiment into one actionable verdict.
@@ -295,7 +295,7 @@ Include practical execution context (entry levels, targets, risk management) usi
 ### ⚠️ Key Risks to Monitor
 3 concise bullet points on the most material risks.
 
-Rules: English only. Be decisive. Reference specific numbers. Start each section header on its own line."""
+Rules: Your final output MUST be written in {language} (translate section headers too, but keep emojis). Be decisive. Reference specific numbers. Start each section header on its own line."""
 
         response = co.chat(
             model="command-r-plus-08-2024",
@@ -3247,7 +3247,14 @@ if active_tab == "3. Qualitative Audit (AI)":
                 _audit_time    = _uv_data.get("extracted_at", "")
                 _unified_report = _uv_data.get("report", "")
 
-            if st.button("Run Real-Time AI Risk Audit", type="primary", width="stretch"):
+            # UI: Language selector + Audit Button
+            col_lang, col_btn = st.columns([1, 4])
+            with col_lang:
+                llm_language = st.selectbox("Language", ["English", "Vietnamese"], index=0, label_visibility="collapsed")
+            with col_btn:
+                run_audit_btn = st.button("Run Real-Time AI Risk Audit", type="primary", use_container_width=True)
+
+            if run_audit_btn:
                 with st.spinner(f"Scanning news for {meta['company']}..."):
                     # Build macro context string from live dashboard values
                     _vix_str = f"{_vix_val:.1f}" if isinstance(_vix_val, (int, float)) else "N/A"
@@ -3290,7 +3297,7 @@ if active_tab == "3. Qualitative Audit (AI)":
                         "debt_ebitda":       _debt_ebitda_for_llm,
                         "earnings_surprise": _es_for_llm,
                     }
-                    llm_res = analyze_risk_with_llm(deep_ticker, meta['company'], macro_context=_llm_macro_ctx, quant_context=_llm_quant_ctx)
+                    llm_res = analyze_risk_with_llm(deep_ticker, meta['company'], macro_context=_llm_macro_ctx, quant_context=_llm_quant_ctx, language=llm_language)
                     if llm_res.get("error"):
                         st.error(f"NLP Error: {llm_res['error'][:80]}")
                     else:
@@ -3335,7 +3342,7 @@ if active_tab == "3. Qualitative Audit (AI)":
                                 "market_cap":           meta.get("market_cap"),
                             }
                             with st.spinner("Synthesizing CIO Unified Verdict..."):
-                                _unified_report, _cio_prompt_debug = get_unified_verdict(_cohere_key_ra, _unified_metrics, llm_res)
+                                _unified_report, _cio_prompt_debug = get_unified_verdict(_cohere_key_ra, _unified_metrics, llm_res, language=llm_language)
                             _qs = int(ai_score) if str(ai_score).isdigit() else 0
                             _ns = llm_res.get("red_flag_score", 0)
                             _nst = llm_res.get("sentiment", "Neutral")
