@@ -590,19 +590,16 @@ def load_quarterly_financials(
     conn: duckdb.DuckDBPyConnection,
     df: pd.DataFrame
 ):
-    """Load historical quarterly financials (upsert)."""
+    """Load historical quarterly financials (upsert — preserves history across ETL runs)."""
     if df.empty:
         logger.info("  ⚠️ No quarterly financials to load")
         return 0
-        
-    # Upsert: Delete existing dates for these tickers
-    tickers = df["ticker"].unique().tolist()
-    conn.execute("DELETE FROM raw.quarterly_financials WHERE ticker = ANY(?)", [tickers])
-    
+
     conn.register("df_tmp", df)
-    
+    # INSERT OR REPLACE uses PRIMARY KEY (ticker, date) — does NOT wipe historical rows
+    # that are absent from the current extract (e.g. 2022 data won't be deleted when 2025 is fetched)
     conn.execute("""
-        INSERT INTO raw.quarterly_financials (ticker, date, revenue, net_income, total_equity, eps, eps_diluted, _loaded_at)
+        INSERT OR REPLACE INTO raw.quarterly_financials (ticker, date, revenue, net_income, total_equity, eps, eps_diluted, _loaded_at)
         SELECT 
             ticker, 
             CAST(date AS DATE), 
@@ -615,7 +612,7 @@ def load_quarterly_financials(
         FROM df_tmp
     """)
     conn.unregister("df_tmp")
-    logger.info(f"✅ Loaded {len(df)} quarterly financial records → raw.quarterly_financials")
+    logger.info(f"✅ Upserted {len(df)} quarterly financial records → raw.quarterly_financials (history preserved)")
     return len(df)
 
 def perform_atomic_swap():

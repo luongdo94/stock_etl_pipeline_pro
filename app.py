@@ -283,19 +283,21 @@ One decisive paragraph (3-4 sentences). Final call referencing BOTH quantitative
 ### 💡 Signal Convergence Analysis
 One paragraph on the interplay between news sentiment and fundamentals. If diverging, state which side you trust more and why.
 
-### 🎯 Actionable Recommendation
-State: **STRONG BUY / BUY / WATCH & ACCUMULATE / HOLD / REDUCE / AVOID**
-Include practical execution context (entry levels, targets, risk management) using the technical data.
+### 🎯 Actionable Recommendation & Execution
+State: **STRONG BUY / BUY / ACCUMULATE / HOLD / WATCH / REDUCE / AVOID**
+CRITICAL LOGIC RULES:
+1. If the Base Case target is lower than the Current Price (€{_f(price)}), the verdict MUST be HOLD, WATCH, or REDUCE. Never BUY or ACCUMULATE.
+2. Only recommend ACCUMULATE/BUY if the Base Case Target is greater than or equal to the Current Price (€{_f(price)}).
+3. If AI Quality Score is < 50, DO NOT recommend a straight BUY or STRONG BUY. The maximum bullish verdict allowed is WATCH or ACCUMULATE. Institutional discipline requires high structural quality, not just cheap valuation or buybacks.
+4. Institutional Skepticism: Do not ignore cyclical or sector macro headwinds (e.g., China demand, EV transition, margin pressure) even if the News Red Flag Score is 0. A "clean" news feed does not negate underlying industry risks.
+5. Execution framework: Do not suggest buying at Technical Support (S1/S2) if they are unrealistically far (e.g. >15% below spot). If Support is too far, advise waiting for a meaningful pullback.
 
 ### 📊 3-Scenario Valuation
 **ANCHOR: Current Price = €{_f(price)} | Analyst Consensus Target = €{_f(target_p)}**
-Scenarios are expressed as absolute price targets AND % change from CURRENT PRICE (not from analyst target).
-
-- **🐻 Bear Case (20% probability):** [Downside catalyst] → Target: €[price] ([negative %] vs current) — Bear Case MUST be BELOW €{_f(price)}.
-- **📈 Base Case (60% probability):** [Expected trajectory] → Target: €[price] ([+/- %] vs current) — Base Case should be near analyst consensus.
-- **🚀 Bull Case (20% probability):** [Upside catalyst] → Target: €[price] ([positive %] vs current) — Bull Case should exceed analyst consensus.
-
-CRITICAL: If the macro regime is BEARISH or Risk-Off, the Bear Case catalyst MUST reflect that specific macro risk. Never show a Bear Case price above the current price of €{_f(price)}.
+Scenarios are expressed as absolute price targets AND % change from CURRENT PRICE. The 3 scenarios MUST be logically consistent:
+- **🐻 Bear Case (20% probability):** [Downside catalyst (e.g. multiple compression)] → Target: €[price] ([negative %] vs current). MUST be BELOW current price.
+- **📈 Base Case (60% probability):** [Expected trajectory (e.g. earnings confirm uplift but market cools)] → Target: €[price] ([+/- %] vs current). If this is negative, the tone MUST be cautious.
+- **🚀 Bull Case (20% probability):** [Upside catalyst (e.g. demand validation)] → Target: €[price] ([positive %] vs current). MUST be higher than Base Case.
 
 ### ⚠️ Key Risks to Monitor
 3 concise bullet points on the most material risks.
@@ -4069,12 +4071,19 @@ if active_tab == "3. Qualitative Audit (AI)":
                         else:
                             df_fin_q_plot['free_cash_flow'] = None
 
-                        # Calculate QoQ Growth locally to avoid NaN issues in DB
-                        # Calculate Growth manually to handle negative values properly: (New - Old) / abs(Old)
-                        df_fin_q_plot['rev_growth'] = (df_fin_q_plot['revenue'] - df_fin_q_plot['revenue'].shift(1)) / df_fin_q_plot['revenue'].shift(1).abs() * 100
-                        df_fin_q_plot['eps_growth'] = (df_fin_q_plot['eps'] - df_fin_q_plot['eps'].shift(1)) / df_fin_q_plot['eps'].shift(1).abs() * 100
+                        # Growth basis: YoY (shift 4) if enough history, else QoQ (shift 1) as fallback
+                        _n_quarters = len(df_fin_q_plot)
+                        _growth_shift = 4 if _n_quarters >= 5 else 1
+                        _growth_label = "YoY" if _growth_shift == 4 else "QoQ"
+
+                        def _safe_growth(series, n):
+                            prev = series.shift(n)
+                            return (series - prev) / prev.abs() * 100
+
+                        df_fin_q_plot['rev_growth'] = _safe_growth(df_fin_q_plot['revenue'], _growth_shift)
+                        df_fin_q_plot['eps_growth'] = _safe_growth(df_fin_q_plot['eps'], _growth_shift)
                         if 'free_cash_flow' in df_fin_q_plot.columns and df_fin_q_plot['free_cash_flow'].notna().any():
-                            df_fin_q_plot['fcf_growth'] = (df_fin_q_plot['free_cash_flow'] - df_fin_q_plot['free_cash_flow'].shift(1)) / df_fin_q_plot['free_cash_flow'].shift(1).abs() * 100
+                            df_fin_q_plot['fcf_growth'] = _safe_growth(df_fin_q_plot['free_cash_flow'], _growth_shift)
                         else:
                             df_fin_q_plot['fcf_growth'] = None
                         
@@ -4093,10 +4102,21 @@ if active_tab == "3. Qualitative Audit (AI)":
                                 # Create join keys
                                 _es_q["year"] = _es_q["quarter_date"].dt.year
                                 _es_q["quarter"] = _es_q["quarter_date"].dt.quarter
+                                # Pull eps_actual from same source as eps_estimate to avoid FX mismatch:
+                                # quarterly_financials.eps is FX-converted (USD→EUR) but eps_estimate is in USD
                                 df_fin_q_plot = df_fin_q_plot.merge(
-                                    _es_q[["year", "quarter", "eps_estimate", "surprise_pct"]],
+                                    _es_q[["year", "quarter", "eps_actual", "eps_estimate", "surprise_pct"]],
                                     on=["year", "quarter"], how="left"
                                 )
+                                # Use eps_actual from earnings_surprise for chart Y2 when available
+                                # (same currency basis as eps_estimate)
+                                df_fin_q_plot["eps_chart"] = df_fin_q_plot["eps_actual"].where(
+                                    df_fin_q_plot["eps_actual"].notna(), df_fin_q_plot["eps"]
+                                )
+                            else:
+                                df_fin_q_plot["eps_chart"] = df_fin_q_plot["eps"]
+                        else:
+                            df_fin_q_plot["eps_chart"] = df_fin_q_plot["eps"]
 
                         fig_fin_q = make_subplots(specs=[[{"secondary_y": True}]])
                         
@@ -4114,7 +4134,7 @@ if active_tab == "3. Qualitative Audit (AI)":
                                 marker_color="rgba(0, 204, 255, 0.6)",
                                 text=rev_text_q,
                                 textposition="outside",
-                                hovertemplate="<b>Quarter: %{x}</b><br>Revenue: €%{y:.2f}" + unit_q + "<br>QoQ Growth: %{text}<extra></extra>"
+                                hovertemplate="<b>Quarter: %{x}</b><br>Revenue: €%{y:.2f}" + unit_q + "<br>" + _growth_label + " Growth: %{text}<extra></extra>"
                             ),
                             secondary_y=False
                         )
@@ -4130,7 +4150,7 @@ if active_tab == "3. Qualitative Audit (AI)":
                                     marker_color="rgba(39, 174, 96, 0.75)",
                                     text=fcf_text_q,
                                     textposition="outside",
-                                    hovertemplate="<b>Period: %{x}</b><br>FCF: €%{y:.2f}" + unit_q + "<br>QoQ Growth: %{text}<extra></extra>"
+                                    hovertemplate="<b>Period: %{x}</b><br>FCF: €%{y:.2f}" + unit_q + "<br>" + _growth_label + " Growth: %{text}<extra></extra>"
                                 ),
                                 secondary_y=False
                             )
@@ -4139,11 +4159,11 @@ if active_tab == "3. Qualitative Audit (AI)":
                         fig_fin_q.add_trace(
                             go.Scatter(
                                 x=x_labels, 
-                                y=df_fin_q_plot['eps'], 
-                                name="Actual EPS (€)", 
+                                y=df_fin_q_plot['eps_chart'], 
+                                name="Actual EPS", 
                                 line=dict(color="orange", width=3), 
                                 mode="lines+markers",
-                                hovertemplate="<b>Quarter: %{x}</b><br>Actual EPS: €%{y:.2f}<br>QoQ Growth: %{text}<extra></extra>",
+                                hovertemplate="<b>Quarter: %{x}</b><br>Actual EPS: %{y:.2f}<br>" + _growth_label + " Growth: %{text}<extra></extra>",
                                 text=eps_text_q,
                             ),
                             secondary_y=True
@@ -4157,10 +4177,10 @@ if active_tab == "3. Qualitative Audit (AI)":
                                 go.Scatter(
                                     x=x_labels, 
                                     y=df_fin_q_plot['eps_estimate'], 
-                                    name="EPS Estimate (€)", 
+                                    name="EPS Estimate", 
                                     line=dict(color="rgba(189, 195, 199, 0.8)", width=2, dash="dash"), 
                                     mode="lines+markers",
-                                    hovertemplate="<b>Quarter: %{x}</b><br>Estimated EPS: €%{y:.2f}<br>Result: %{text}<extra></extra>",
+                                    hovertemplate="<b>Quarter: %{x}</b><br>EPS Estimate: %{y:.2f}<br>Result: %{text}<extra></extra>",
                                     text=surprise_text,
                                 ),
                                 secondary_y=True
@@ -4171,7 +4191,7 @@ if active_tab == "3. Qualitative Audit (AI)":
                             margin=dict(l=20, r=20, t=60, b=20),
                             hovermode="x unified",
                             barmode="group",
-                            title_text=f"📊 {deep_ticker} Quarterly Financial Performance (Revenue, FCF & EPS)",
+                            title_text=f"📊 {deep_ticker} Quarterly Financial Performance (Revenue, FCF & EPS) — Growth: {_growth_label}",
                             legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
                         )
                         
