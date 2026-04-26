@@ -291,35 +291,22 @@ You have received a complete snapshot of a client's equity portfolio. Your role 
 {positions_table}
 
 ## Your Task
-Write a CIO Portfolio Review with FOUR sections. Total length: under 750 words.
+Write a CIO Portfolio Review with FOUR sections.
+**CRITICAL CONCISENESS RULES:**
+1. Keep the first two sections (📡 and 🔬) EXTREMELY short.
+2. Max 2 sentences total for 📡 Macro-Alignment.
+3. Max 3 bullet points (1 short sentence each) for 🔬 Structural Vulnerability.
 
 ### 📡 Macro-Alignment Assessment
-Is this portfolio positioned correctly for the current macro regime? Assess Beta, sector mix, and volatility relative to the VIX and market regime. Flag any obvious misalignment (e.g., high-beta tech-heavy portfolio in a RISK-OFF environment).
+Assess Beta, sector mix, and volatility relative to the macro regime. (Max 2 sentences. Be brutally concise).
 
 ### 🔬 Structural Vulnerability Scan
-Identify the top 2-3 structural weaknesses:
-- Concentration risk (overweight positions or sectors)
-- Low-quality anchors (positions with poor Quality Score and negative PnL — deadweight)
-- Correlation traps (positions that appear diversified but likely move together)
+Identify the top 1-2 weaknesses (Concentration risk, Low-quality anchors, or Correlation traps). (Max 3 short bullet points total).
 
-### 🗂️ Position Buckets
-Classify EVERY position from the data into exactly one of the four buckets below. Use a table-style format:
-
-**🏛️ Core Compounders** — High Quality Score (≥65), positive or stable PnL, structural competitive moat. These are long-term holds.
-| Ticker | Quality | PnL% | Weight% | Rationale |
-|--------|---------|------|---------|-----------|
-
-**🔄 Cyclical Beta** — Moderate Quality (40-65), performance tied to macro cycle (rates, commodities, GDP). Hold when regime is bullish, reduce in risk-off.
-| Ticker | Quality | PnL% | Weight% | Rationale |
-|--------|---------|------|---------|-----------|
-
-**🎲 Speculative Positions** — Low Quality (<40) OR early-stage/high-volatility growth plays. High upside but asymmetric tail risk.
-| Ticker | Quality | PnL% | Weight% | Rationale |
-|--------|---------|------|---------|-----------|
-
-**✂️ Trim Candidates** — Positions that should be reduced or exited: poor quality + negative PnL, excessive concentration, or thesis broken. Prioritized for capital redeployment.
-| Ticker | Quality | PnL% | Weight% | Exit Rationale |
-|--------|---------|------|---------|----------------|
+### 🗂️ Actionable Position Highlights
+Do NOT list all positions or use tables. Highlight ONLY the Top 5-7 most critical positions that require the CIO's attention (e.g. your largest anchors, biggest concentration risks, or lowest quality laggards).
+Use short bullet points:
+- **[TICKER]** (W: X%, Q: Y, PnL: Z%): [1 sentence rationale]
 
 ### ⚡ Rebalancing Directives (3 Actions)
 State exactly 3 concrete actions the portfolio manager should take. Be specific: name the ticker, the direction (reduce/increase/exit), and the rationale. Format as:
@@ -327,7 +314,7 @@ State exactly 3 concrete actions the portfolio manager should take. Be specific:
 2. **[ACTION] [TICKER]:** [Rationale with specific numbers]
 3. **[ACTION] [TICKER]:** [Rationale with specific numbers]
 
-Rules: Your output MUST be written in {language}. Be decisive and institutional. Reference specific tickers and numbers from the data. Every position MUST appear in exactly one bucket — no omissions.
+Rules: Your output MUST be written in {language}. Be decisive and institutional. Reference specific tickers and numbers. Do not list more than 7 positions total in the highlights to keep the report concise.
 
 **CRITICAL INVESTMENT PHILOSOPHY RULES — Read before writing any recommendation:**
 
@@ -414,7 +401,7 @@ def analyze_portfolio_with_llm(
         response = co.chat(
             model="command-r-plus-08-2024",
             messages=[{"role": "user", "content": prompt}],
-            max_tokens=1200,
+            max_tokens=3500,
         )
         return response.message.content[0].text, prompt
 
@@ -426,3 +413,161 @@ def analyze_portfolio_with_llm(
             return "⏳ **Rate limit reached.** Please wait a moment.", ""
         else:
             return f"❌ **Portfolio Review Error:** {err[:120]}", ""
+
+
+# ── Structured Rebalance Directives (Step 1 of Simulate Rebalance) ────────────
+_REBALANCE_JSON_PROMPT = """\
+You are a Portfolio Manager at a quantitative hedge fund.
+Based on the portfolio review below, propose an optimized rebalancing of the portfolio.
+
+## Current Portfolio Positions
+{positions_table}
+
+## Portfolio Context
+- Macro Regime: {macro_context}
+- Top Sector Concentration: {top_sector} ({top_sector_weight:.1f}%)
+- Portfolio Sharpe: {sharpe:.2f} | Max Drawdown: {max_dd:.1f}% | Beta: {port_beta:.2f}
+
+## Your Task
+Return a JSON object with a "proposed_portfolio" key. The value is a list of objects, one per position.
+For each position, provide the RECOMMENDED number of shares to hold (0 = close the position).
+You may include NEW tickers only if they already exist in the current positions list.
+
+CRITICAL RULES:
+1. Base allocation on Quality Score and structural fundamentals — NOT on PnL or recent price momentum.
+2. High Quality (≥65) + negative PnL → Hold or Increase. Do NOT reduce due to losses.
+3. Low Quality (<45) + weak fundamentals → Reduce or Exit (target_shares = 0).
+4. Rebalancing must be driven by concentration risk, macro misalignment, or quality dispersion.
+5. Return ONLY the JSON object. No markdown, no explanation, no code fences.
+
+## JSON Schema (Return ONLY this structure):
+{{
+  "proposed_portfolio": [
+    {{"ticker": "TICKER_A", "target_shares": 100}},
+    {{"ticker": "TICKER_B", "target_shares": 50}},
+    ...
+  ],
+  "rationale": "One-sentence summary of the rebalancing logic."
+}}
+"""
+
+
+def get_rebalance_directives(
+    api_key: str,
+    portfolio_data: dict,
+    known_tickers: list[str],
+    macro_context: str = "NEUTRAL | VIX=N/A",
+) -> dict:
+    """
+    Step 1 & 2 of Simulate Rebalance plan:
+    Calls Cohere to produce a structured JSON rebalancing proposal.
+    Validates: target_shares > 0 rule, unique tickers, unknown ticker filtering.
+
+    Args:
+        api_key: Cohere API key.
+        portfolio_data: Same payload as analyze_portfolio_with_llm (must contain 'positions').
+        known_tickers: List of tickers available in the local price DB (for edge case filtering).
+        macro_context: Current macro regime string.
+    Returns:
+        Dict with keys: proposed_portfolio (list of {ticker, target_shares}),
+                        rationale (str), error (str, empty on success).
+    """
+    default = {"proposed_portfolio": [], "rationale": "", "error": ""}
+
+    try:
+        import cohere, json
+        co = cohere.ClientV2(api_key=api_key)
+
+        positions = portfolio_data.get("positions", [])
+        lines = []
+        for p in positions:
+            rev_g = f"{p.get('rev_growth_yoy'):+.1f}%" if p.get("rev_growth_yoy") is not None else "N/A"
+            lines.append(
+                f"{p.get('ticker','?')} [{p.get('asset_type','Stock')}] "
+                f"Shares:{p.get('shares', 0):.2f} "
+                f"W:{p.get('weight_pct', 0):.1f}% "
+                f"Q:{p.get('quality_score', 'N/A')} "
+                f"PnL:{p.get('pnl_pct', 0):+.1f}% "
+                f"Z:{p.get('z_score', 0):+.2f} "
+                f"RSI:{p.get('rsi', 50):.0f} "
+                f"SM:{p.get('smart_money', 'N/A')} "
+                f"ACT:{p.get('action', 'HOLD')} "
+                f"Q_score:{p.get('quality_score', 0)} "
+                f"RevG:{rev_g}"
+            )
+        positions_table = "\n".join(lines) if lines else "No positions."
+
+        prompt = _REBALANCE_JSON_PROMPT.format(
+            positions_table=positions_table,
+            macro_context=macro_context,
+            top_sector=portfolio_data.get("top_sector", "N/A"),
+            top_sector_weight=portfolio_data.get("top_sector_weight", 0),
+            sharpe=portfolio_data.get("sharpe", 0),
+            max_dd=portfolio_data.get("max_dd", 0),
+            port_beta=portfolio_data.get("port_beta", 1.0),
+        )
+
+        response = co.chat(
+            model="command-r-plus-08-2024",
+            messages=[{"role": "user", "content": prompt}],
+            max_tokens=3000,
+        )
+        raw = response.message.content[0].text.strip()
+
+        # Strip markdown fences if model returns them despite instructions
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+        parsed = json.loads(raw.strip())
+
+        proposed = parsed.get("proposed_portfolio", [])
+        rationale = parsed.get("rationale", "")
+
+        # ── Validation (Step 2) ──────────────────────────────────────────────
+        known_set = set(known_tickers)
+        seen_tickers: set[str] = set()
+        valid_positions = []
+        skipped = []
+
+        for item in proposed:
+            t = str(item.get("ticker", "")).strip().upper()
+            shares = item.get("target_shares", 0)
+
+            # 1. Unique ticker guard
+            if t in seen_tickers:
+                continue
+            seen_tickers.add(t)
+
+            # 2. Edge case: ticker not in local DB — skip and log
+            if t not in known_set:
+                skipped.append(t)
+                continue
+
+            # 3. shares must be a valid non-negative number
+            try:
+                shares = float(shares)
+                if shares < 0:
+                    shares = 0.0
+            except (ValueError, TypeError):
+                shares = 0.0
+
+            valid_positions.append({"ticker": t, "target_shares": shares})
+
+        if skipped:
+            rationale += f" [Note: {', '.join(skipped)} not found in local DB and were excluded.]"
+
+        return {
+            "proposed_portfolio": valid_positions,
+            "rationale": rationale,
+            "error": "",
+        }
+
+    except Exception as e:
+        err = str(e)
+        default["error"] = (
+            "Invalid API Key." if "invalid api key" in err.lower() or "unauthorized" in err.lower()
+            else "Rate limit reached." if "rate limit" in err.lower()
+            else f"AI Error: {err[:120]}"
+        )
+        return default
