@@ -446,12 +446,14 @@ def _create_marts(conn):
             c.inst_ownership,
             c.insider_ownership,
             c.free_cashflow,
-            -- ✅ FCF Margin Fallback: 1. Yahoo, 2. TTM Manual, 3. Annual Manual
+            -- ✅ FCF Margin Fallback: 1. Yahoo direct, 2. TTM from quarterly statements
+            -- NOTE: fallback #3 (hist_fcf / ann.revenue) was REMOVED — hist_fcf stores
+            -- raw local currency (e.g. JPY) but ann.revenue is FX-converted by ETL,
+            -- producing absurd margins (~1054%) for non-USD tickers like Daikin.
             ROUND(
                 COALESCE(
                     (c.free_cashflow / NULLIF(c.revenue_ttm, 0)) * 100,
-                    (fb.ttm_fcf / NULLIF(fb.ttm_revenue, 0)) * 100,
-                    (h.free_cash_flow / NULLIF(ann.revenue, 0)) * 100
+                    (fb.ttm_fcf / NULLIF(fb.ttm_revenue, 0)) * 100
                 ), 2
             ) AS fcf_margin,
             -- 🏆 EXPERT: Historical Baselines

@@ -95,7 +95,18 @@ def _guess_currency(ticker: str) -> str:
     if ".ST" in ticker: return "SEK"
     if ".HE" in ticker: return "EUR" # Finland
     if ".OL" in ticker: return "NOK"
+    if ".TW" in ticker: return "TWD"
     return "USD"
+
+def _safe_float(val):
+    """None-safe float cast — no FX conversion. Use for per-share metrics
+    (EPS, target price) that Yahoo already reports in local currency."""
+    if val is None or (isinstance(val, float) and pd.isna(val)):
+        return None
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return None
 
 def extract_stock_prices(
     tickers: dict = TICKERS,
@@ -421,13 +432,16 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
             "ebitda":          norm_val(financials.get('ebitda')),
             "gross_margin":    financials.get('grossMargins'),
             "operating_margin":financials.get('operatingMargins'),
-            "trailing_eps":    norm_val(stats.get('trailingEps')),
-            "forward_eps":     norm_val(stats.get('forwardEps')),
+            # ── Per-share & ratio metrics: Yahoo already reports in correct local currency.
+            # Do NOT apply norm_val() (FX multiplier) — that would double-convert.
+            "trailing_eps":    _safe_float(stats.get('trailingEps')),
+            "forward_eps":     _safe_float(stats.get('forwardEps')),
             "roe":             financials.get('returnOnEquity'),
             "free_cashflow":   norm_val(financials.get('freeCashflow')),
             "price_to_book":   stats.get('priceToBook'),
             "beta":            stats.get('beta'),
-            "target_mean_price": norm_val(financials.get('targetMeanPrice')),
+            # target_mean_price is analyst consensus in local currency — keep as-is
+            "target_mean_price": _safe_float(financials.get('targetMeanPrice')),
             "recommendation_key": financials.get('recommendationKey'),
             "peg_ratio":       stats.get('trailingPegRatio') or stats.get('pegRatio'),
             "price_to_sales":  summary.get('priceToSalesTrailing12Months'),
