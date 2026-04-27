@@ -4722,6 +4722,7 @@ if active_tab == "7. Portfolio Builder":
         "Select Tickers for Portfolio Construction", 
         stock_tickers, 
         default=st.session_state.portfolio_tickers, 
+        format_func=format_ticker,
         key=f"p_ticker_select_{_sel_version}"
     )
 
