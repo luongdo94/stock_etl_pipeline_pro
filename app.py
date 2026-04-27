@@ -4386,12 +4386,10 @@ if active_tab == "3. Qualitative Audit (AI)":
                     end_p   = grp.iloc[-1]["price_close"]
                     return (end_p / start_p - 1) * 100 if start_p and start_p > 0 else None
 
-                _1y_returns = (
-                    _prices_1y.groupby("ticker")
-                    .apply(_calc_1y_return, include_groups=False)
-                    .rename("return_1y_pct")
-                    .reset_index()
-                )
+                _1y_returns = pd.DataFrame([
+                    {"ticker": t, "return_1y_pct": _calc_1y_return(grp)}
+                    for t, grp in _prices_1y.groupby("ticker")
+                ])
 
                 # ── Build unified comparison rows ─────────────────────────────────
                 rows = []
