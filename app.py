@@ -170,16 +170,17 @@ def get_unified_verdict(api_key: str, metrics: dict, nlp_result: dict, language:
         peg       = metrics.get("peg_ratio", "N/A")
         fcf       = metrics.get("fcf_margin", "N/A")
         roe_raw   = metrics.get("roe", None)
-        roe_pct   = round(float(roe_raw) * 100, 1) if roe_raw is not None else None
+        roe_pct   = round(float(roe_raw) * 100, 1) if not pd.isna(roe_raw) and roe_raw is not None else None
         op_margin = metrics.get("operating_margin", None)
-        op_margin_pct = round(float(op_margin) * 100, 1) if op_margin is not None else None
+        op_margin_pct = round(float(op_margin) * 100, 1) if not pd.isna(op_margin) and op_margin is not None else None
         gross_margin = metrics.get("gross_margin", None)
-        gross_margin_pct = round(float(gross_margin) * 100, 1) if gross_margin is not None else None
+        gross_margin_pct = round(float(gross_margin) * 100, 1) if not pd.isna(gross_margin) and gross_margin is not None else None
         ev_ebitda  = metrics.get("ev_to_ebitda", None)
         # FCF Yield = Free Cash Flow / Market Cap
         _fcf_abs   = metrics.get("free_cashflow", None)
         _mktcap    = metrics.get("market_cap", None)
-        fcf_yield  = round(float(_fcf_abs) / float(_mktcap) * 100, 1) if _fcf_abs and _mktcap and float(_mktcap) > 0 else None
+        def _notna(v): return v is not None and not pd.isna(v)
+        fcf_yield  = round(float(_fcf_abs) / float(_mktcap) * 100, 1) if _notna(_fcf_abs) and _notna(_mktcap) and float(_mktcap) > 0 else None
         regime    = metrics.get("market_regime", "NEUTRAL")
         target_p  = metrics.get("target_mean_price", "N/A")
         # Price structure data for TP/SL calculation
@@ -3651,7 +3652,7 @@ if active_tab == "3. Qualitative Audit (AI)":
 
                 with kcol1:
                     st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Valuation & Size</div>", unsafe_allow_html=True)
-                    m_cap = meta.get('market_cap', 0)
+                    _mc = meta.get('market_cap'); m_cap = float(_mc) if not pd.isna(_mc) and _mc else 0.0
                     if m_cap >= 1e12: m_cap_txt = f"€{m_cap/1e12:.2f}T"
                     elif m_cap >= 1e9: m_cap_txt = f"€{m_cap/1e9:.1f}B"
                     else: m_cap_txt = f"€{m_cap/1e6:.0f}M"
@@ -4825,7 +4826,7 @@ if active_tab == "7. Portfolio Builder":
                     _owned = st.session_state.portfolio_shares.get(mt_ticker, 0)
                     st.caption(f"Available to sell: **{_owned:.4g}** shares")
                 else:
-                    mt_ticker = st.selectbox("Select Asset", _avail_tickers, key="mt_tick_sel")
+                    mt_ticker = st.selectbox("Select Asset", _avail_tickers, format_func=format_ticker, key="mt_tick_sel")
                 
             mt_shares = st.number_input("Shares", min_value=0.0001, value=1.0, step=1.0, key="mt_shares_input")
             
