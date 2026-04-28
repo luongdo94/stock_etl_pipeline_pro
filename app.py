@@ -1332,11 +1332,9 @@ def load_data():
     prices_f["date"] = pd.to_datetime(prices_f["date"])
     monthly_f["month"] = pd.to_datetime(monthly_f["month"])
     prices_f = prices_f.sort_values(['ticker', 'date'])
-    
+
     # Vectorized RSI (only for those missing it or to ensure consistency)
     prices_f['rsi'] = prices_f.groupby('ticker', group_keys=False).apply(lambda x: get_rsi_vectorized(x), include_groups=False)
-    
-
 
     return (
         prices_f, companies_f, monthly_f, annual_f, quarterly_f, earnings_calendar,
@@ -1344,49 +1342,81 @@ def load_data():
     )
 
 
-# ── ANALYTICS ENGINE: Global Screener Data ──────────────────────────────────
-@st.cache_data(ttl=3600)
+# ── ANALYTICS ENGINE: Smart Money Institutional Flow ────────────────────────
 def get_sm_spirit_unified_v2(df_raw: "pd.DataFrame") -> str:
     """
-    Standardized Institutional Flow Engine (v3.0).
-    
-    Method: OBV vs MA(21) — industry standard for institutional flow detection.
-    - ACCUMULATION: OBV is above its 21-day MA (institutions buying net)
-    - DISTRIBUTION: OBV is below its 21-day MA (institutions selling net)
-    
-    Uses last 126 trading days (~6 months) to avoid large-number bias in cumsum.
+    Standardized Institutional Flow Engine (v4.0).
+
+    Two-layer architecture:
+
+    Layer 1 — OBV Divergence (Priority):
+        Detects when OBV and price move in OPPOSITE directions over 20 days.
+        This is the highest-value signal: it catches institutional activity
+        that simple trend-following cannot see.
+        - OBV rising + Price falling  → Hidden Accumulation (institutions buying dips)
+        - OBV falling + Price rising  → Hidden Distribution (institutions selling into rallies)
+        A minimum magnitude filter (5% of avg daily volume × window) prevents
+        noise from triggering false divergence signals.
+
+    Layer 2 — OBV Trend vs MA(21) (Fallback):
+        Classic institutional flow: OBV above/below its 21-day MA.
+        Uses a 5-day consistency window to avoid whipsaws.
+        Applied only when no clear divergence is detected in Layer 1.
+
+    Priority: Divergence always overrides Trend when clearly detected.
+    Uses last 126 trading days (~6 months) to avoid cumsum large-number bias.
     """
     if df_raw is None or df_raw.empty or len(df_raw) < 30:
         return "NEUTRAL"
 
-    # 1. Standardize: sort, deduplicate, take last 126 trading days
+    # ── Prep ──────────────────────────────────────────────────────────────────
     df = df_raw[['date', 'price_close', 'volume']].copy()
     df = df.sort_values("date").drop_duplicates("date").tail(126).reset_index(drop=True)
-
-    # 2. Fill gaps
     df['price_close'] = df['price_close'].ffill().fillna(0)
     df['volume']      = df['volume'].fillna(0)
 
-    # 3. Compute OBV (Granville standard)
-    obv = (np.sign(df['price_close'].diff().fillna(0)) * df['volume']).cumsum()
-
-    # 4. OBV vs its 21-day simple moving average
+    # ── OBV (Granville standard) ───────────────────────────────────────────────
+    obv      = (np.sign(df['price_close'].diff().fillna(0)) * df['volume']).cumsum()
     obv_ma21 = obv.rolling(21).mean()
 
-    # 5. Signal: current OBV vs its MA
-    #    Require the last 5 days to consistently be above/below MA to avoid whipsaws
+    # ── LAYER 1: Divergence detection (20-day window) ─────────────────────────
+    window = min(20, len(df) - 1)
+    div_signal = "NONE"
+    if window >= 10:
+        price_20d_chg = float(df['price_close'].iloc[-1] - df['price_close'].iloc[-window])
+        obv_20d_chg   = float(obv.iloc[-1] - obv.iloc[-window])
+
+        # Magnitude guard: OBV move must exceed 5% of (avg daily volume × window)
+        # to filter out noise from low-volume days
+        avg_vol_20d = float(df['volume'].tail(window).mean())
+        min_obv_move = avg_vol_20d * 0.05 * window
+
+        price_dir = 1 if price_20d_chg > 0 else (-1 if price_20d_chg < 0 else 0)
+        obv_dir   = (1  if obv_20d_chg >  min_obv_move else
+                    (-1 if obv_20d_chg < -min_obv_move else 0))
+
+        if obv_dir == 1 and price_dir == -1:
+            div_signal = "ACCUMULATION"   # Hidden Accumulation: price ↓, OBV ↑
+        elif obv_dir == -1 and price_dir == 1:
+            div_signal = "DISTRIBUTION"   # Hidden Distribution: price ↑, OBV ↓
+
+    # Divergence takes priority — return immediately when clearly detected
+    if div_signal != "NONE":
+        return div_signal
+
+    # ── LAYER 2: OBV Trend vs MA(21) — fallback ───────────────────────────────
+    # Require 3 of the last 5 days consistently above/below MA to avoid whipsaws
     recent_obv    = obv.tail(5)
     recent_obv_ma = obv_ma21.tail(5)
-
-    above_count = (recent_obv > recent_obv_ma).sum()
-    below_count = (recent_obv < recent_obv_ma).sum()
+    above_count   = (recent_obv > recent_obv_ma).sum()
+    below_count   = (recent_obv < recent_obv_ma).sum()
 
     if above_count >= 3:
         return "ACCUMULATION"
     elif below_count >= 3:
         return "DISTRIBUTION"
-    else:
-        return "NEUTRAL"
+    return "NEUTRAL"
+
 
 
 def compute_institutional_rating(
