@@ -3087,3 +3087,103 @@ tickers:
     name: Credo Technology Group
     sector: Semiconductors
     region: US
+  "7735.T":
+    name: SCREEN Holdings
+    sector: Semiconductors
+    region: JP
+  "6525.T":
+    name: Kokusai Electric
+    sector: Semiconductors
+    region: JP
+  "6315.T":
+    name: Towa Corp
+    sector: Semiconductors
+    region: JP
+  "3711.TW":
+    name: ASE Technology Holding
+    sector: Semiconductors
+    region: Asia
+  "2303.TW":
+    name: UMC
+    sector: Semiconductors
+    region: Asia
+  "2379.TW":
+    name: Realtek
+    sector: Semiconductors
+    region: Asia
+  "3034.TW":
+    name: Novatek Microelectronics
+    sector: Semiconductors
+    region: Asia
+  "603501.SS":
+    name: OmniVision (Will Semi)
+    sector: Semiconductors
+    region: CN
+  "6723.T":
+    name: Renesas Electronics
+    sector: Semiconductors
+    region: JP
+  "2360.TW":
+    name: Chroma ATE
+    sector: Semiconductors
+    region: Asia
+  "6963.T":
+    name: ROHM
+    sector: Semiconductors
+    region: JP
+  "6504.T":
+    name: Fuji Electric
+    sector: Energy Specialty
+    region: JP
+  "3436.T":
+    name: SUMCO
+    sector: Basic Materials
+    region: JP
+  "4063.T":
+    name: Shin-Etsu Chemical
+    sector: Basic Materials
+    region: JP
+  "ASM.AS":
+    name: ASM International
+    sector: Semiconductors
+    region: EU
+  "AMS.SW":
+    name: ams-OSRAM
+    sector: Semiconductors
+    region: EU
+  "SOI.PA":
+    name: Soitec
+    sector: Semiconductors
+    region: EU
+  "WAF.DE":
+    name: Siltronic
+    sector: Semiconductors
+    region: EU
+  "MELE.BR":
+    name: Melexis
+    sector: Semiconductors
+    region: EU
+  "NOD.OL":
+    name: Nordic Semiconductor
+    sector: Semiconductors
+    region: EU
+  "TPRO.MI":
+    name: Technoprobe
+    sector: Semiconductors
+    region: EU
+  "MYCR.ST":
+    name: Mycronic
+    sector: Semiconductor Tools
+    region: EU
+  "AWE.L":
+    name: AlphaWave IP Group
+    sector: Semiconductors
+    region: EU
+  "SLR.MC":
+    name: Solaria
+    sector: Renewables
+    region: EU
+  "EDPR.LS":
+    name: EDP Renováveis
+    sector: Renewables
+    region: EU
