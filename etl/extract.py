@@ -440,8 +440,10 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
             "free_cashflow":   norm_val(financials.get('freeCashflow')),
             "price_to_book":   stats.get('priceToBook'),
             "beta":            stats.get('beta'),
-            # target_mean_price is analyst consensus in local currency — keep as-is
-            "target_mean_price": _safe_float(financials.get('targetMeanPrice')),
+            # target_mean_price is analyst consensus in local currency — must convert to EUR
+            # to be consistent with price_close (which is also stored in EUR after FX normalization).
+            # Keeping it as-is would cause massive upside distortion for JPY/TWD/CNY stocks.
+            "target_mean_price": norm_val(financials.get('targetMeanPrice')),
             "recommendation_key": financials.get('recommendationKey'),
             "peg_ratio":       stats.get('trailingPegRatio') or stats.get('pegRatio'),
             "price_to_sales":  summary.get('priceToSalesTrailing12Months'),

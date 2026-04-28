@@ -271,14 +271,18 @@ def get_smart_recovery_targets(conn: duckdb.DuckDBPyConnection) -> dict:
 
     # ── Earnings Season Smart Detection ───────────────────────────────────
     # Only target tickers that:
-    #   1. Reported yesterday/today OR are reporting in the next 2 days (narrow window)
+    #   1. Reported in the PAST 7 days (earnings_date <= TODAY — avoids pre-report fetches)
     #   2. Do NOT yet have earnings_surprise data loaded AFTER their report date
     #      (prevents re-fetching every day once we've already captured the result)
+    #
+    # ⚠️ IMPORTANT: Do NOT include future reporters (earnings_date > TODAY).
+    # Yahoo Finance won't have surprise data before the report — fetching them
+    # causes an infinite retry loop since they always return empty results.
     q_season = """
         SELECT ec.ticker
         FROM raw.earnings_calendar ec
-        WHERE ec.earnings_date BETWEEN (CURRENT_DATE - INTERVAL '1 days')
-                                   AND (CURRENT_DATE + INTERVAL '2 days')
+        WHERE ec.earnings_date BETWEEN (CURRENT_DATE - INTERVAL '7 days')
+                                   AND CURRENT_DATE
           -- Skip tickers where we already have fresh data captured after report date
           AND NOT EXISTS (
               SELECT 1 FROM raw.earnings_surprise es
@@ -297,6 +301,7 @@ def get_smart_recovery_targets(conn: duckdb.DuckDBPyConnection) -> dict:
             logger.info(f"   📅 Earnings Season: Prioritizing {added_count} active reporters (e.g., {season_tickers[:3]})")
     except Exception as e:
         logger.debug(f"Earnings season check skipped: {e}")
+
 
     return {
         "metadata": missing_meta,
