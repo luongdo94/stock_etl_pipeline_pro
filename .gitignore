@@ -20,6 +20,12 @@ dashboard.py
 logs/
 teraform/
 dashboard_v2/
+
+# Test and debug files
+debug_*.py
+fix_*.py
+test_*_manual.py
+
 # Databases (Data Warehouse)
 warehouse/*.duckdb
 !warehouse/stock_demo.duckdb
