@@ -263,10 +263,6 @@ def optimize_dataframe_memory(df: pd.DataFrame) -> pd.DataFrame:
     for col in df.columns:
         col_type = df[col].dtype
         
-        # Skip datetime columns
-        if col_type.name.startswith('datetime'):
-            continue
-        
         if col_type != object:
             c_min = df[col].min()
             c_max = df[col].max()
