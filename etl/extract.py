@@ -88,7 +88,7 @@ def _guess_currency(ticker: str) -> str:
     if ".CO" in ticker: return "DKK"
     if ".HK" in ticker: return "HKD"
     if any(ticker.endswith(s) for s in [".SS", ".SZ"]): return "CNY"
-    if any(ticker.endswith(s) for s in [".L", ".IL"]): return "GBP"
+    if any(ticker.endswith(s) for s in [".L", ".IL"]): return "GBp"  # UK stocks trade in pence
     if any(ticker.endswith(s) for s in [".TO", ".V"]): return "CAD"
     if ".AX" in ticker: return "AUD"
     if ".SW" in ticker: return "CHF"
@@ -306,7 +306,7 @@ def extract_stock_prices(
                     
                     # yfinance resolves GBpEUR=X to GBPEUR=X implicitly, which is the *pound* rate.
                     # We must use the pound rate but we need to divide the final pence price by 100.
-                    if fx_col is None and currency.upper() == "GBP":
+                    if fx_col is None and currency.upper() in ["GBP", "GBP"]:
                          fx_col = "GBPEUR=X" if "GBPEUR=X" in fx_data.columns else None
                          
                     if fx_col:
