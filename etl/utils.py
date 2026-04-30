@@ -314,19 +314,26 @@ def get_smart_recovery_targets(conn: duckdb.DuckDBPyConnection) -> dict:
 # and the ETL email report (Airflow). Any changes here propagate everywhere.
 
 def compute_score_details(row) -> dict:
-    """Institutional-Grade Categorized Quality Score v4.0 — 7 pillars, strictly 100 points.
+    """Institutional-Grade Categorized Quality Score v4.1 — Config-driven, 7 pillars.
 
+    v4.1 changes vs v4.0:
+    - All thresholds now loaded from config/scoring_rules.yaml
+    - Improved error handling with safe_float() fallbacks
+    - Better logging for debugging score calculations
+    - Maintains backward compatibility with v4.0 logic
+    
     v4.0 changes vs v3.1:
     - Context & Momentum: 25 → 15 pts (momentum is tactical, not structural quality)
     - Analyst Estimates:   5 → 10 pts (collective fundamental research is high-signal)
     - Revenue Consistency: NEW 5pt pillar (growth trajectory: rev_growth + earn_growth)
     - Early Stage flag: pre-profit growth stocks (RIVN, OKLO...) exempt from harsh PE penalty
-                        and receive partial Profitability credit for improving EPS trajectory
     - Red Flags strengthened: D/EBITDA threshold tightened (10→8), new 12+ tier (-15)
-    - Sell/Underperform consensus now deducts 2pts from Analyst Estimates
-    - P/B sector-adjusted for financials (v3.1 carry-over)
-    - ROE excluded from Valuation to prevent double-counting (v3.1 carry-over)
     """
+    from etl.config_manager import get_scoring_config
+    from etl.retry_utils import safe_float
+    
+    config = get_scoring_config()
+    
     categories = {
         "Valuation": 0,             # PEG, P/E, P/B            — Max 20
         "Profitability": 0,         # FCF Margin, ROE          — Max 25 (or 30 for Tech)
@@ -339,13 +346,9 @@ def compute_score_details(row) -> dict:
     }
 
     def get_num(key, default=None):
+        """Safe numeric extraction with fallback."""
         val = row.get(key)
-        if val is None or (isinstance(val, float) and np.isnan(val)):
-            return default
-        try:
-            return float(val)
-        except Exception:
-            return default
+        return safe_float(val, default if default is not None else 0.0)
 
     sector = str(row.get("sector", "")).lower()
 
@@ -388,13 +391,20 @@ def compute_score_details(row) -> dict:
     roe = get_num("roe", 0)
 
     # ── 1. VALUATION (Max 20) ────────────────────────────────────────────────────
+    val_cfg = config["valuation"]
+    
     if peg and peg > 0:
-        categories["Valuation"] += np.interp(peg, [0.8, 1.5, 2.5, 3.0], [12, 10, 4, 0])
+        categories["Valuation"] += np.interp(
+            peg, 
+            [val_cfg["peg_excellent"], val_cfg["peg_good"], val_cfg["peg_fair"], 3.0], 
+            [12, 10, 4, 0]
+        )
     elif is_early_stage:
         # Early stage: P/E is meaningless (negative). Reward fast revenue growth instead.
         categories["Valuation"] += np.interp(rev_growth * 100, [15, 30, 50, 80], [4, 8, 10, 12])
     else:
-        pe_bands = [20, 35, 50, 70] if is_tech_growth else [15, 22, 35, 50]
+        pe_bands = [val_cfg["pe_good"], val_cfg["pe_fair"], val_cfg["pe_poor"], 70] if is_tech_growth else \
+                   [val_cfg["pe_excellent"], 22, val_cfg["pe_fair"], val_cfg["pe_poor"]]
         if pe and pe > 0:
             categories["Valuation"] += np.interp(pe, pe_bands, [12, 8, 3, 0])
 
@@ -402,22 +412,44 @@ def compute_score_details(row) -> dict:
     if pb and pb > 0:
         if is_financial_utility:
             # Banks: P/B 1.0-1.8 is ideal; below 0.5 may signal distress (limited credit)
-            categories["Valuation"] += np.interp(pb, [0.5, 1.0, 1.8, 3.0, 5.0], [2, 8, 8, 4, 0])
+            pb_cfg = config["sector_adjustments"]
+            categories["Valuation"] += np.interp(
+                pb, 
+                [pb_cfg["financial_pb_low"], pb_cfg["financial_pb_ideal_low"], 
+                 pb_cfg["financial_pb_ideal_high"], 3.0, 5.0], 
+                [2, 8, 8, 4, 0]
+            )
         else:
-            categories["Valuation"] += np.interp(pb, [1.0, 3.5, 6.0, 10.0], [8, 6, 2, 0])
+            categories["Valuation"] += np.interp(
+                pb, 
+                [val_cfg["pb_excellent_value"], val_cfg["pb_excellent_tech"], 
+                 val_cfg["pb_good"], val_cfg["pb_fair"]], 
+                [8, 6, 2, 0]
+            )
 
     # ROE excluded from Valuation — lives in Profitability pillar only (no double-count).
     categories["Valuation"] = min(int(round(categories["Valuation"])), 20)
 
     # ── 2. PROFITABILITY (Max 25, or 30 for Tech) ────────────────────────────────
+    prof_cfg = config["profitability"]
     fcf = get_num("fcf_margin", 0) or 0
     earn_growth = get_num("earnings_growth", 0) or 0
 
     if fcf > 0:
-        categories["Profitability"] += np.interp(fcf, [0, 5, 12, 20, 30], [1, 6, 12, 15, 15])
+        categories["Profitability"] += np.interp(
+            fcf, 
+            [0, prof_cfg["fcf_margin_fair"], prof_cfg["fcf_margin_good"], 
+             prof_cfg["fcf_margin_excellent"], 30], 
+            [1, 6, 12, 15, 15]
+        )
 
     if roe:
-        categories["Profitability"] += np.interp(roe * 100, [5, 10, 18, 30], [0, 4, 8, 10])
+        categories["Profitability"] += np.interp(
+            roe * 100, 
+            [prof_cfg["roe_poor"] * 100, prof_cfg["roe_fair"] * 100, 
+             prof_cfg["roe_good"] * 100, prof_cfg["roe_excellent"] * 100], 
+            [0, 4, 8, 10]
+        )
 
     if is_tech_growth and fcf > 20:
         categories["Profitability"] += 5  # Exceptional tech FCF bonus
@@ -430,6 +462,7 @@ def compute_score_details(row) -> dict:
     categories["Profitability"] = min(int(round(categories["Profitability"])), cap)
 
     # ── 3. FINANCIAL HEALTH (Max 15) ─────────────────────────────────────────────
+    health_cfg = config["financial_health"]
     debt  = get_num("total_debt", 0) or 0
     ebitda = get_num("ebitda", 0)
     ratio  = debt / ebitda if ebitda and ebitda > 0 else 999
@@ -437,7 +470,12 @@ def compute_score_details(row) -> dict:
     if is_financial_utility:
         categories["Financial Health"] += np.interp(ratio, [0, 3, 6, 10, 15], [15, 15, 10, 5, 0])
     else:
-        categories["Financial Health"] += np.interp(ratio, [0, 2.5, 4.5, 7, 12], [15, 15, 8, 3, 0])
+        categories["Financial Health"] += np.interp(
+            ratio, 
+            [0, health_cfg["debt_ebitda_excellent"], health_cfg["debt_ebitda_good"], 
+             health_cfg["debt_ebitda_fair"], health_cfg["debt_ebitda_poor"]], 
+            [15, 15, 8, 3, 0]
+        )
 
     categories["Financial Health"] = min(int(round(categories["Financial Health"])), 15)
 
@@ -455,8 +493,7 @@ def compute_score_details(row) -> dict:
     categories["Net Payout Yield"] = int(round(raw_yield_score))
 
     # ── 5. CONTEXT & MOMENTUM (Max 15) — reduced from 25 ────────────────────────
-    # Momentum is tactical, not structural. Capped at 15 to prevent a bullish trend
-    # from masking fundamental weaknesses or overwhelming a fundamentally sound stock.
+    mom_cfg = config["momentum"]
     sig = str(row.get("ma_signal", "NEUTRAL")).upper()
     rsi = get_num("rsi", None)  # None = no RSI data: skip RSI scoring (no bias from default)
     z   = get_num("price_z_score", 0) or 0
@@ -466,15 +503,28 @@ def compute_score_details(row) -> dict:
 
     # RSI: scored only when real data is available (no default = no fabricated bonus)
     if rsi is not None:
-        if 35 <= rsi <= 60:
+        if mom_cfg["rsi_neutral_low"] <= rsi <= mom_cfg["rsi_neutral_high"]:
             categories["Context & Momentum"] += 5
-        elif rsi > 60:
-            categories["Context & Momentum"] += max(0, np.interp(rsi, [60, 75, 90], [4, 0, -2]))
+        elif rsi > mom_cfg["rsi_neutral_high"]:
+            categories["Context & Momentum"] += max(0, np.interp(
+                rsi, 
+                [mom_cfg["rsi_neutral_high"], mom_cfg["rsi_overbought"], 90], 
+                [4, 0, -2]
+            ))
         else:
-            categories["Context & Momentum"] += np.interp(rsi, [20, 35], [0, 3])
+            categories["Context & Momentum"] += np.interp(
+                rsi, 
+                [20, mom_cfg["rsi_neutral_low"]], 
+                [0, 3]
+            )
 
     # Z-Score: contrarian signal — oversold gets mild bonus, overbought gets penalty
-    categories["Context & Momentum"] += np.interp(z, [-3, -1.5, 0, 1.8, 3], [4, 4, 0, -2, -4])
+    categories["Context & Momentum"] += np.interp(
+        z, 
+        [-3, mom_cfg["z_score_deep_value"], mom_cfg["z_score_fair"], 
+         mom_cfg["z_score_expensive"], mom_cfg["z_score_bubble"]], 
+        [4, 4, 0, -2, -4]
+    )
 
     categories["Context & Momentum"] = max(0, min(int(round(categories["Context & Momentum"])), 15))
 
@@ -500,37 +550,38 @@ def compute_score_details(row) -> dict:
     categories["Analyst Estimates"] = max(0, min(int(round(categories["Analyst Estimates"])), 10))
 
     # ── 7. REVENUE CONSISTENCY (Max 5) — new in v4.0 ────────────────────────────
-    # Rewards companies with a consistent, multi-dimensional growth trajectory.
-    # Uses both revenue_growth (top-line) and earnings_growth (bottom-line).
-    if rev_growth > 0.15 and earn_growth > 0.10:
+    growth_cfg = config["growth"]
+    if rev_growth > growth_cfg["revenue_growth_good"] and earn_growth > growth_cfg["earnings_growth_fair"]:
         categories["Revenue Consistency"] = 5   # Accelerating: strong double-digit on both
-    elif rev_growth > 0.05 and earn_growth > -0.10:
+    elif rev_growth > growth_cfg["revenue_growth_fair"] and earn_growth > -0.10:
         categories["Revenue Consistency"] = 3   # Stable: moderate growth, losses not widening
     elif rev_growth > 0:
         categories["Revenue Consistency"] = 2   # At least top-line is growing
-    elif rev_growth < -0.05:
+    elif rev_growth < -growth_cfg["revenue_growth_fair"]:
         categories["Revenue Consistency"] = 0   # Declining revenue = no credit
     else:
         categories["Revenue Consistency"] = 1   # Flat but not deteriorating
 
     # ── 8. RED FLAGS (Instant penalties) — strengthened in v4.0 ─────────────────
+    flag_cfg = config["red_flags"]
+    
     if pe and pe < 0:
         if is_early_stage:
-            categories["Red Flags"] -= 3    # Pre-profit growth: minor flag (expected)
+            categories["Red Flags"] += flag_cfg["negative_pe_early_stage"]
         elif rev_growth * 100 > 25:
-            categories["Red Flags"] -= 5    # Unprofitable but high-growth: moderate flag
+            categories["Red Flags"] += flag_cfg["negative_pe_high_growth"]
         else:
-            categories["Red Flags"] -= 12  # Unprofitable + stagnant: serious flag
+            categories["Red Flags"] += flag_cfg["negative_pe_stagnant"]
 
     # Debt threshold tightened (10→8); new critical tier at D/EBITDA > 12
     if not is_financial_utility and ratio != 999:
-        if ratio > 12:
-            categories["Red Flags"] -= 15  # Debt crisis — potential solvency risk
+        if ratio > health_cfg["debt_ebitda_critical"]:
+            categories["Red Flags"] += flag_cfg["high_debt_critical"]
         elif ratio > 8:
-            categories["Red Flags"] -= 10  # High leverage — watch for refinancing risk
+            categories["Red Flags"] += flag_cfg["high_debt_moderate"]
 
     if z < -1.5 and ("sell" in consensus or "underperform" in consensus):
-        categories["Red Flags"] -= 5       # Value trap signal: price falling + analysts bearish
+        categories["Red Flags"] += flag_cfg["value_trap"]
 
     # Beta Risk Adjustment
     beta = get_num("beta", None)

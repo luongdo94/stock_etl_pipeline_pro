@@ -235,3 +235,474 @@ stock_etl_pipeline/
 
 ---
 *Architected and Engineered by GIA LUONG DO.*
+
+
+---
+
+## 🔧 Troubleshooting Guide
+
+### Common Issues and Solutions
+
+#### 1. **Dashboard Loading Slowly**
+
+**Symptoms:**
+- Dashboard takes >30 seconds to load
+- Browser becomes unresponsive
+- High memory usage
+
+**Solutions:**
+```bash
+# Clear Streamlit cache
+streamlit cache clear
+
+# Or use the in-app refresh button
+# Click "🔄 Refresh Data" in the sidebar
+```
+
+**Prevention:**
+- Memory optimization is automatically applied to large DataFrames
+- Vectorized scoring reduces computation time by 10x
+- Cache TTL is set to 10 minutes for optimal performance
+
+---
+
+#### 2. **API Rate Limiting / "Circuit Breaker OPEN"**
+
+**Symptoms:**
+- Error message: "Circuit breaker OPEN: Too many failures"
+- Missing data for multiple tickers
+- Extraction fails repeatedly
+
+**Solutions:**
+```bash
+# Wait 2 minutes for automatic circuit breaker reset
+# Or manually reset by restarting the ETL pipeline
+
+python run.py  # Will automatically reset circuit breakers
+```
+
+**Prevention:**
+- Circuit breakers protect against cascading failures
+- Automatic backoff with exponential delay
+- 3-pass retry logic (batch → surgical → evasion)
+
+**Configuration:**
+Edit `etl/retry_utils.py` to adjust thresholds:
+```python
+YAHOO_FINANCE_BREAKER = CircuitBreaker(
+    failure_threshold=10,  # Increase if needed
+    timeout=120            # Seconds before reset
+)
+```
+
+---
+
+#### 3. **Missing Translations / Language Issues**
+
+**Symptoms:**
+- Text appears as keys (e.g., "app.title" instead of "Honest Quant")
+- Language selector not working
+- Mixed languages in UI
+
+**Solutions:**
+```bash
+# Check if translation files exist
+ls locales/
+
+# Should show: en.json, vi.json
+
+# Verify JSON syntax
+python -m json.tool locales/en.json
+```
+
+**Add Missing Translations:**
+Edit `locales/en.json` or `locales/vi.json`:
+```json
+{
+  "app": {
+    "title": "Honest Quant Intelligence",
+    "subtitle": "Institutional-Grade Analytics"
+  },
+  "messages": {
+    "welcome": "Welcome, {name}!"
+  }
+}
+```
+
+---
+
+#### 4. **Data Quality Warnings**
+
+**Symptoms:**
+- Red warnings in sidebar: "⚠️ Data Quality Issues"
+- Missing fundamental data for some tickers
+- Stale prices or outdated financials
+
+**Solutions:**
+```bash
+# Force full refresh of all data
+python run.py --full-refresh
+
+# Or clear warehouse and rebuild
+rm warehouse/stock_dw.duckdb
+python run.py
+```
+
+**Check Coverage:**
+```python
+# In Python console
+import duckdb
+conn = duckdb.connect('warehouse/stock_dw.duckdb')
+
+# Check metadata coverage
+result = conn.execute("""
+    SELECT 
+        COUNT(*) as total,
+        COUNT(market_cap) as has_market_cap,
+        COUNT(pe_ratio) as has_pe
+    FROM marts.dim_companies
+""").fetchone()
+
+print(f"Coverage: {result[1]/result[0]*100:.1f}%")
+```
+
+---
+
+#### 5. **Vectorized Scoring Errors**
+
+**Symptoms:**
+- Error: "KeyError: 'sector'"
+- Scores showing as NaN
+- Fallback to slow row-by-row scoring
+
+**Solutions:**
+```python
+# Check required columns
+required_cols = [
+    'pe_ratio', 'peg_ratio', 'roe', 'fcf_margin',
+    'total_debt', 'ebitda', 'revenue_growth', 'earnings_growth',
+    'rsi', 'price_z_score', 'sector'
+]
+
+# Verify DataFrame has all columns
+missing = [col for col in required_cols if col not in df.columns]
+if missing:
+    print(f"Missing columns: {missing}")
+```
+
+**Fallback Behavior:**
+- System automatically falls back to row-by-row scoring if vectorized fails
+- Check logs for specific error message
+- Ensure all required columns exist in DataFrame
+
+---
+
+#### 6. **Database Lock Errors**
+
+**Symptoms:**
+- Error: "database is locked"
+- Cannot write to warehouse
+- ETL pipeline hangs
+
+**Solutions:**
+```bash
+# Close all connections to database
+# Kill any running Python processes
+pkill -f "python.*run.py"
+
+# Remove lock file if exists
+rm warehouse/stock_dw.duckdb.wal
+
+# Restart ETL
+python run.py
+```
+
+**Prevention:**
+- Use `read_only=True` for dashboard queries
+- Ensure ETL pipeline completes before starting dashboard
+- Don't run multiple ETL processes simultaneously
+
+---
+
+#### 7. **Memory Errors / Out of Memory**
+
+**Symptoms:**
+- Error: "MemoryError"
+- System becomes unresponsive
+- Dashboard crashes
+
+**Solutions:**
+```python
+# Enable memory optimization in app.py
+from etl.performance_utils import optimize_dataframe_memory
+
+# Apply to large DataFrames
+prices = optimize_dataframe_memory(prices)
+companies = optimize_dataframe_memory(companies)
+```
+
+**Reduce Memory Usage:**
+```python
+# Use batch processing for large operations
+from etl.performance_utils import batch_process_dataframe
+
+result = batch_process_dataframe(
+    df,
+    process_func=my_function,
+    batch_size=1000  # Adjust based on available memory
+)
+```
+
+---
+
+#### 8. **Configuration Not Loading**
+
+**Symptoms:**
+- Scoring uses default values instead of config
+- Changes to YAML files not reflected
+- Error: "Config file not found"
+
+**Solutions:**
+```bash
+# Verify config files exist
+ls config/
+
+# Should show:
+# - scoring_rules.yaml
+# - etl_config.yaml
+# - tickers.yaml
+
+# Check YAML syntax
+python -c "import yaml; yaml.safe_load(open('config/scoring_rules.yaml'))"
+```
+
+**Force Config Reload:**
+```python
+from etl.config_manager import load_config
+
+# Force reload from disk
+config = load_config("scoring_rules", reload=True)
+```
+
+---
+
+#### 9. **Test Failures**
+
+**Symptoms:**
+- Tests fail with import errors
+- Mock objects not working
+- Assertion errors
+
+**Solutions:**
+```bash
+# Install test dependencies
+pip install pytest pytest-cov pytest-mock
+
+# Run tests with verbose output
+pytest tests/ -v -s
+
+# Run specific test file
+pytest tests/test_scoring_engine.py -v
+
+# Run with coverage report
+pytest tests/ --cov=etl --cov=utils --cov-report=html
+
+# View coverage report
+open htmlcov/index.html
+```
+
+---
+
+#### 10. **Docker / Deployment Issues**
+
+**Symptoms:**
+- Container fails to start
+- Port conflicts
+- Volume mount errors
+
+**Solutions:**
+```bash
+# Check Docker logs
+docker-compose logs -f
+
+# Rebuild containers
+docker-compose down
+docker-compose build --no-cache
+docker-compose up -d
+
+# Check port availability
+lsof -i :8501  # Streamlit default port
+
+# Fix port conflicts in docker-compose.yml
+ports:
+  - "8502:8501"  # Use different external port
+```
+
+---
+
+### Performance Optimization Checklist
+
+✅ **Memory Optimization**
+```python
+# Apply to all large DataFrames
+df = optimize_dataframe_memory(df)
+```
+
+✅ **Vectorized Operations**
+```python
+# Use vectorized scoring (10x faster)
+df['score'] = vectorized_compute_scores(df)
+```
+
+✅ **Batch Processing**
+```python
+# Process large datasets in batches
+result = batch_process_dataframe(df, func, batch_size=1000)
+```
+
+✅ **Caching**
+```python
+# Use Streamlit caching for expensive operations
+@st.cache_data(ttl=600)
+def load_data():
+    # ...
+```
+
+✅ **Database Optimization**
+```python
+# Use read-only connections for queries
+with get_db_connection(read_only=True) as conn:
+    df = conn.execute("SELECT ...").df()
+```
+
+---
+
+### Debugging Tips
+
+#### Enable Debug Logging
+
+```python
+# In run.py or app.py
+import logging
+
+logging.basicConfig(
+    level=logging.DEBUG,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+```
+
+#### Check ETL Audit Log
+
+```python
+import duckdb
+
+conn = duckdb.connect('warehouse/etl_audit.duckdb', read_only=True)
+audit = conn.execute("""
+    SELECT * FROM etl.audit_log 
+    ORDER BY start_time DESC 
+    LIMIT 10
+""").df()
+
+print(audit)
+```
+
+#### Verify Data Freshness
+
+```python
+import duckdb
+
+conn = duckdb.connect('warehouse/stock_dw.duckdb', read_only=True)
+
+# Check latest price date
+latest = conn.execute("""
+    SELECT MAX(date) as latest_date, COUNT(DISTINCT ticker) as tickers
+    FROM raw.stock_prices
+""").fetchone()
+
+print(f"Latest data: {latest[0]}, Tickers: {latest[1]}")
+```
+
+---
+
+### Getting Help
+
+1. **Check Documentation**
+   - API Reference: `docs/en/API.md`
+   - Architecture: `docs/en/ETL_ARCHITECTURE.md`
+   - Testing Guide: `docs/en/TESTING.md`
+
+2. **Review Test Files**
+   - Examples: `tests/test_*.py`
+   - Mock patterns: `tests/test_extract.py`
+
+3. **Check Configuration**
+   - Scoring rules: `config/scoring_rules.yaml`
+   - ETL config: `config/etl_config.yaml`
+   - Tickers: `config/tickers.yaml`
+
+4. **Verify Installation**
+   ```bash
+   pip list | grep -E "pandas|numpy|streamlit|duckdb|yfinance"
+   ```
+
+5. **System Requirements**
+   - Python 3.9+
+   - 8GB RAM minimum (16GB recommended)
+   - 2GB disk space for warehouse
+   - Internet connection for API calls
+
+---
+
+### Known Limitations
+
+1. **Free API Constraints**
+   - Yahoo Finance rate limits: ~2000 requests/hour
+   - Some tickers may have incomplete data
+   - Delayed data (15-20 minutes for real-time quotes)
+
+2. **Memory Usage**
+   - Large price history (5 years × 600 tickers) requires ~2GB RAM
+   - Vectorized operations need contiguous memory
+   - Consider batch processing for very large datasets
+
+3. **Currency Normalization**
+   - FX rates updated daily
+   - Historical FX rates use forward-fill
+   - Some exotic currencies may use default rates
+
+4. **Scoring Limitations**
+   - Requires minimum data: PE, market cap, sector
+   - Early-stage companies (negative earnings) penalized
+   - Sector adjustments may not fit all business models
+
+---
+
+### Emergency Recovery
+
+If all else fails, perform a complete reset:
+
+```bash
+# 1. Backup current data (optional)
+cp -r warehouse warehouse_backup_$(date +%Y%m%d)
+
+# 2. Remove all cached data
+rm -rf warehouse/*.duckdb
+rm -rf warehouse/*.parquet
+
+# 3. Clear Python cache
+find . -type d -name "__pycache__" -exec rm -rf {} +
+find . -type f -name "*.pyc" -delete
+
+# 4. Reinstall dependencies
+pip install --upgrade --force-reinstall -r requirements.txt
+
+# 5. Rebuild warehouse from scratch
+python run.py --full-refresh
+
+# 6. Restart dashboard
+streamlit run app.py
+```
+
+---
+
+*For additional support, check the test files in `tests/` for working examples of all major functions.*

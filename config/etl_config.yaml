@@ -1,0 +1,30 @@
+# etl_config.yaml — ETL pipeline configuration
+
+extraction:
+  batch_size: 40              # Number of tickers per batch
+  max_workers: 8              # ThreadPoolExecutor workers
+  retry_attempts: 3           # Max retry attempts per ticker
+  backoff_base: 2.0           # Exponential backoff base (seconds)
+  request_delay: 1.0          # Delay between batches (seconds)
+
+incremental_load:
+  lookback_days_full: 1825        # 5 years for full refresh
+  lookback_days_incremental: 7    # 1 week for incremental
+  overlap_buffer_days: 2          # Overlap to handle timezone gaps
+
+refresh_intervals:
+  prices_hours: 0           # Always refresh prices
+  fundamentals_hours: 168   # 7 days (quarterly data, cashflows)
+  metadata_hours: 168       # 7 days (company info, analyst targets)
+  earnings_hours: 168       # 7 days (earnings calendar)
+
+coverage_thresholds:
+  metadata_min_pct: 0.95        # 95% coverage required for metadata
+  fundamentals_min_pct: 0.90    # 90% coverage required for fundamentals
+  earnings_min_pct: 0.95        # 95% coverage required for earnings
+
+data_quality:
+  min_price: 0.01               # Minimum valid price
+  max_pe_ratio: 1000            # Maximum valid P/E ratio
+  max_debt_ebitda: 50           # Maximum valid Debt/EBITDA
+  min_market_cap: 1_000_000     # Minimum market cap (€1M)
