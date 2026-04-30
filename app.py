@@ -1652,7 +1652,7 @@ def detect_swing_levels(ticker_prices: "pd.DataFrame", cur_p: float, lookback: i
 
 def get_tactical_metrics(ticker_prices: "pd.DataFrame", cur_p: float, analyst_target: float = 0.0) -> dict:
     """
-    Single source of truth for all short/mid-term tactical indicators.
+    Single source of truth for all tactical indicators across multiple timeframes.
     Called identically by the Screener, Deep Dive, and any future tab.
 
     Parameters:
@@ -1660,7 +1660,7 @@ def get_tactical_metrics(ticker_prices: "pd.DataFrame", cur_p: float, analyst_ta
                         used as rr_score target instead of technical high.
 
     Returns a dict containing:
-        rsi, s1, s2, r1, r2, stop_loss, tp1, tp2, rr, rr_score, w52_pos
+        rsi, s1, s2, s3, r1, r2, r3, stop_loss, tp1, tp2, rr, rr_score, w52_pos
     """
     # RSI
     if "rsi" in ticker_prices.columns and ticker_prices["rsi"].notna().any():
@@ -1672,17 +1672,38 @@ def get_tactical_metrics(ticker_prices: "pd.DataFrame", cur_p: float, analyst_ta
         rsi_series = 100 - (100 / (1 + gain / loss.replace(0, 1e-9)))
         rsi_val = float(rsi_series.iloc[-1]) if not rsi_series.empty else 50.0
 
-    # Support / Resistance using Swing High/Low + Volume
-    swing_levels = detect_swing_levels(ticker_prices, cur_p, lookback=60, window=5)
-    s1 = swing_levels["s1"]
-    s2 = swing_levels["s2"]
-    r1 = swing_levels["r1"]
-    r2 = swing_levels["r2"]
+    # Multi-timeframe Support / Resistance using Swing High/Low + Volume
+    # S1/R1: Short-term (20 days) - Tactical levels
+    swing_20d = detect_swing_levels(ticker_prices, cur_p, lookback=20, window=3)
+    s1 = swing_20d["s1"]
+    r1 = swing_20d["r1"]
+    
+    # S2/R2: Medium-term (60 days) - Intermediate levels
+    swing_60d = detect_swing_levels(ticker_prices, cur_p, lookback=60, window=5)
+    s2 = swing_60d["s1"]  # Use s1 from 60d as our s2
+    r2 = swing_60d["r1"]  # Use r1 from 60d as our r2
+    
+    # S3/R3: Long-term (252 days / 1 year) - Strategic levels
+    swing_252d = detect_swing_levels(ticker_prices, cur_p, lookback=252, window=7)
+    s3 = swing_252d["s1"]  # Use s1 from 252d as our s3
+    r3 = swing_252d["r1"]  # Use r1 from 252d as our r3
+    
+    # Ensure proper ordering: S3 < S2 < S1 < Current < R1 < R2 < R3
+    # If ordering is violated, adjust to maintain hierarchy
+    if s2 >= s1:
+        s2 = s1 * 0.98  # Force S2 to be 2% below S1
+    if s3 >= s2:
+        s3 = s2 * 0.97  # Force S3 to be 3% below S2
+    if r2 <= r1:
+        r2 = r1 * 1.02  # Force R2 to be 2% above R1
+    if r3 <= r2:
+        r3 = r2 * 1.03  # Force R3 to be 3% above R2
 
     # Derived levels
     stop_loss = s1 * 0.96
     tp1       = r1 * 1.05
     tp2       = r2  # Use R2 as secondary target
+    tp3       = r3  # Use R3 as tertiary target
 
     # Risk/Reward
     risk_dist    = cur_p - stop_loss
@@ -1708,11 +1729,14 @@ def get_tactical_metrics(ticker_prices: "pd.DataFrame", cur_p: float, analyst_ta
         "rsi":       rsi_val,
         "s1":        s1,
         "s2":        s2,
+        "s3":        s3,
         "r1":        r1,
         "r2":        r2,
+        "r3":        r3,
         "stop_loss": stop_loss,
         "tp1":       tp1,
         "tp2":       tp2,
+        "tp3":       tp3,
         "rr":        rr,           # display only
         "rr_score":  rr_score,     # feeds compute_institutional_rating
         "w52_pos":   w52_pos,
@@ -3146,8 +3170,10 @@ if active_tab == "3. Qualitative Audit (AI)":
             _tm        = get_tactical_metrics(df_deep, cur_p, analyst_target=target_p)
             _s1        = _tm["s1"]
             _s2        = _tm["s2"]
+            _s3        = _tm["s3"]
             _r1        = _tm["r1"]
             _r2        = _tm["r2"]
+            _r3        = _tm["r3"]
             _rsi_val   = _tm["rsi"]
             _ma_sig    = str(latest_tech.get("ma_signal", meta.get("ma_signal", "NEUTRAL")))
             _w52_pos   = _tm["w52_pos"]
@@ -3981,9 +4007,6 @@ if active_tab == "3. Qualitative Audit (AI)":
                 fig_tech.add_trace(go.Scatter(x=df_deep['date'], y=df_deep['ma_200'], name='MA200', line=dict(color='#E040FB', width=2.5)), row=1, col=1)
             
             # Support/Resistance → Scatter traces (appear in legend, not as annotations)
-            _s3  = df_deep["price_low"].tail(252).min()
-            _r3  = df_deep["price_high"].tail(252).max()
-
             dates_range = df_deep['date'].tolist()
             df_deep['rsi'] = df_deep['rsi'] if 'rsi' in df_deep.columns else _rsi_val  # RSI from get_tactical_metrics
             fig_tech.add_trace(go.Scatter(
@@ -3998,23 +4021,23 @@ if active_tab == "3. Qualitative Audit (AI)":
             ), row=1, col=1)
             fig_tech.add_trace(go.Scatter(
                 x=[dates_range[0], dates_range[-1]], y=[_s2, _s2],
-                name=f'S2 Support (50d)  €{_s2:.2f}', mode='lines',
+                name=f'S2 Support (60d)  €{_s2:.2f}', mode='lines',
                 line=dict(color='#27ae60', width=1.5, dash='dash'), opacity=0.7
             ), row=1, col=1)
             fig_tech.add_trace(go.Scatter(
                 x=[dates_range[0], dates_range[-1]], y=[_r2, _r2],
-                name=f'R2 Resistance (50d)  €{_r2:.2f}', mode='lines',
+                name=f'R2 Resistance (60d)  €{_r2:.2f}', mode='lines',
                 line=dict(color='#c0392b', width=1.5, dash='dash'), opacity=0.7
             ), row=1, col=1)
-            # 🛡️ MAJOR INSTITUTIONAL LEVELS (1-Year)
+            # 🛡️ MAJOR INSTITUTIONAL LEVELS (1-Year Swing)
             fig_tech.add_trace(go.Scatter(
                 x=[dates_range[0], dates_range[-1]], y=[_s3, _s3],
-                name=f'S3 Major Support (1Y)  €{_s3:.2f}', mode='lines',
+                name=f'S3 Major Support (252d)  €{_s3:.2f}', mode='lines',
                 line=dict(color='#1b5e20', width=2.5, dash='solid'), opacity=0.5
             ), row=1, col=1)
             fig_tech.add_trace(go.Scatter(
                 x=[dates_range[0], dates_range[-1]], y=[_r3, _r3],
-                name=f'R3 Major Resistance (1Y)  €{_r3:.2f}', mode='lines',
+                name=f'R3 Major Resistance (252d)  €{_r3:.2f}', mode='lines',
                 line=dict(color='#b71c1c', width=2.5, dash='solid'), opacity=0.5
             ), row=1, col=1)
             # 📈 AUTOMATED TRENDLINE (Linear Regression)
