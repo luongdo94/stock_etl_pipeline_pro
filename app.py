@@ -1558,6 +1558,98 @@ def compute_institutional_rating(
     }
 
 
+def detect_swing_levels(ticker_prices: "pd.DataFrame", cur_p: float, lookback: int = 60, window: int = 5) -> dict:
+    """
+    Detect support and resistance levels using Swing High/Low with volume confirmation.
+    
+    Parameters:
+        ticker_prices: DataFrame with OHLCV data
+        cur_p: Current price
+        lookback: Number of days to look back for swing points (default 60)
+        window: Window size for swing detection (default 5 = 2 days before + pivot + 2 days after)
+    
+    Returns:
+        dict with s1, s2, r1, r2 (or fallback to simple min/max if insufficient data)
+    """
+    df = ticker_prices.tail(lookback).copy()
+    
+    if len(df) < window * 2:
+        # Insufficient data - fallback to simple method
+        s1 = float(df["price_low"].min())
+        r1 = float(df["price_high"].max())
+        return {"s1": s1, "s2": s1 * 0.98, "r1": r1, "r2": r1 * 1.02}
+    
+    # Calculate average volume for weighting
+    avg_volume = df["volume"].mean()
+    
+    # Detect swing lows (potential support)
+    swing_lows = []
+    for i in range(window // 2, len(df) - window // 2):
+        window_slice = df.iloc[i - window // 2 : i + window // 2 + 1]
+        pivot_low = df.iloc[i]["price_low"]
+        
+        # Check if this is a local minimum
+        if pivot_low == window_slice["price_low"].min():
+            volume_weight = df.iloc[i]["volume"] / avg_volume if avg_volume > 0 else 1.0
+            swing_lows.append({
+                "price": pivot_low,
+                "index": i,
+                "volume_weight": volume_weight,
+                "distance_from_current": abs(pivot_low - cur_p)
+            })
+    
+    # Detect swing highs (potential resistance)
+    swing_highs = []
+    for i in range(window // 2, len(df) - window // 2):
+        window_slice = df.iloc[i - window // 2 : i + window // 2 + 1]
+        pivot_high = df.iloc[i]["price_high"]
+        
+        # Check if this is a local maximum
+        if pivot_high == window_slice["price_high"].max():
+            volume_weight = df.iloc[i]["volume"] / avg_volume if avg_volume > 0 else 1.0
+            swing_highs.append({
+                "price": pivot_high,
+                "index": i,
+                "volume_weight": volume_weight,
+                "distance_from_current": abs(pivot_high - cur_p)
+            })
+    
+    # Select best support levels (below current price, prioritize recent + high volume)
+    supports_below = [s for s in swing_lows if s["price"] < cur_p]
+    if supports_below:
+        # Sort by: recency (higher index) and volume weight
+        supports_below.sort(key=lambda x: (x["index"] * 0.6 + x["volume_weight"] * 0.4), reverse=True)
+        s1 = supports_below[0]["price"]
+        # S2 should be lower than S1
+        supports_below_s1 = [s for s in supports_below if s["price"] < s1 * 0.98]
+        s2 = supports_below_s1[0]["price"] if supports_below_s1 else s1 * 0.97
+    else:
+        # Fallback: use simple min
+        s1 = float(df["price_low"].min())
+        s2 = s1 * 0.97
+    
+    # Select best resistance levels (above current price, prioritize recent + high volume)
+    resistances_above = [r for r in swing_highs if r["price"] > cur_p]
+    if resistances_above:
+        # Sort by: recency and volume weight
+        resistances_above.sort(key=lambda x: (x["index"] * 0.6 + x["volume_weight"] * 0.4), reverse=True)
+        r1 = resistances_above[0]["price"]
+        # R2 should be higher than R1
+        resistances_above_r1 = [r for r in resistances_above if r["price"] > r1 * 1.02]
+        r2 = resistances_above_r1[0]["price"] if resistances_above_r1 else r1 * 1.03
+    else:
+        # Fallback: use simple max
+        r1 = float(df["price_high"].max())
+        r2 = r1 * 1.03
+    
+    return {
+        "s1": float(s1),
+        "s2": float(s2),
+        "r1": float(r1),
+        "r2": float(r2)
+    }
+
+
 def get_tactical_metrics(ticker_prices: "pd.DataFrame", cur_p: float, analyst_target: float = 0.0) -> dict:
     """
     Single source of truth for all short/mid-term tactical indicators.
@@ -1565,10 +1657,10 @@ def get_tactical_metrics(ticker_prices: "pd.DataFrame", cur_p: float, analyst_ta
 
     Parameters:
         analyst_target: Analyst consensus mean target price. When > cur_p meaningfully,
-                        used as rr_score target instead of 20-day technical high.
+                        used as rr_score target instead of technical high.
 
     Returns a dict containing:
-        rsi, s1, r1, stop_loss, tp1, rr, rr_score, w52_pos
+        rsi, s1, s2, r1, r2, stop_loss, tp1, tp2, rr, rr_score, w52_pos
     """
     # RSI
     if "rsi" in ticker_prices.columns and ticker_prices["rsi"].notna().any():
@@ -1580,13 +1672,17 @@ def get_tactical_metrics(ticker_prices: "pd.DataFrame", cur_p: float, analyst_ta
         rsi_series = 100 - (100 / (1 + gain / loss.replace(0, 1e-9)))
         rsi_val = float(rsi_series.iloc[-1]) if not rsi_series.empty else 50.0
 
-    # Support / Resistance (20-day window)
-    s1 = float(ticker_prices["price_low"].tail(20).min())
-    r1 = float(ticker_prices["price_high"].tail(20).max())
+    # Support / Resistance using Swing High/Low + Volume
+    swing_levels = detect_swing_levels(ticker_prices, cur_p, lookback=60, window=5)
+    s1 = swing_levels["s1"]
+    s2 = swing_levels["s2"]
+    r1 = swing_levels["r1"]
+    r2 = swing_levels["r2"]
 
     # Derived levels
     stop_loss = s1 * 0.96
     tp1       = r1 * 1.05
+    tp2       = r2  # Use R2 as secondary target
 
     # Risk/Reward
     risk_dist    = cur_p - stop_loss
@@ -1596,7 +1692,7 @@ def get_tactical_metrics(ticker_prices: "pd.DataFrame", cur_p: float, analyst_ta
     if analyst_target > cur_p * 1.01:
         rr_score_dist = analyst_target - cur_p
     else:
-        rr_score_dist = r1 - cur_p  # fallback: 20-day technical high
+        rr_score_dist = r1 - cur_p  # fallback: technical resistance
 
     rr_score = (rr_score_dist / risk_dist) if risk_dist > 0 else 0.0
     rr       = (rr_disp_dist  / risk_dist) if risk_dist > 0 else 0.0
@@ -1611,10 +1707,12 @@ def get_tactical_metrics(ticker_prices: "pd.DataFrame", cur_p: float, analyst_ta
     return {
         "rsi":       rsi_val,
         "s1":        s1,
+        "s2":        s2,
         "r1":        r1,
+        "r2":        r2,
         "stop_loss": stop_loss,
         "tp1":       tp1,
-        "tp2":       r1 * 1.15,    # secondary target (15% above resistance)
+        "tp2":       tp2,
         "rr":        rr,           # display only
         "rr_score":  rr_score,     # feeds compute_institutional_rating
         "w52_pos":   w52_pos,
@@ -3047,9 +3145,9 @@ if active_tab == "3. Qualitative Audit (AI)":
             # All tactical values computed by the shared helper (identical formula to Screener)
             _tm        = get_tactical_metrics(df_deep, cur_p, analyst_target=target_p)
             _s1        = _tm["s1"]
+            _s2        = _tm["s2"]
             _r1        = _tm["r1"]
-            _s2        = float(df_deep["price_low"].tail(50).min())
-            _r2        = float(df_deep["price_high"].tail(50).max())
+            _r2        = _tm["r2"]
             _rsi_val   = _tm["rsi"]
             _ma_sig    = str(latest_tech.get("ma_signal", meta.get("ma_signal", "NEUTRAL")))
             _w52_pos   = _tm["w52_pos"]
