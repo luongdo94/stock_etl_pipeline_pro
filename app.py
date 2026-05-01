@@ -6186,15 +6186,19 @@ if active_tab == "2. Opportunity Radar":
         "🔍 All Stock Universe",
         "──────────── 📈 OPPORTUNITY ────────────",
         "🏆 Institutional Pulse (Quality ≥ 70 & Bullish)",
-        "📈 Trend Following (MA20 > MA50)",
-        "💎 Deep Value (Z-Score < -2.0)",
-        "📉 RSI Mean Reversion (Oversold < 35)",
         "🚀 Buy on Dip (Bullish + Oversold)",
-        "⚡ Multi-Indicator Breakout (Bullish + RSI > 50)",
+        "🚀 Bullish Momentum (Trend + RSI > 50)",
         "📈 Both Accelerating (EPS + Revenue QoQ, 2 qtrs > +10%)",
         "🌱 GARP (Growth at Reasonable Price: PEG < 1.5 + Quality > 55)",
         "💰 High Quality Dividend (Yield > 2.5% + Quality > 65)",
         "🔥 Short Squeeze Watch (Short % > 15% + Bullish)",
+        "🎯 Smart Money Accumulation (Institutional Buying)",
+        "🔄 Mean Reversion Elite (Quality + Oversold)",
+        "⚡ Strong Breakout (MA200 + RSI 50-70)",
+        "💎 Contrarian Value (Bearish + Quality + Cheap)",
+        "🏰 Defensive Moat (Low Debt + High ROE + Dividend)",
+        "🌊 Oversold Reversal Setup (RSI + Smart Money)",
+        "📊 Balanced Growth (Quality + Growth + Reasonable PE)",
         "──────────── ⛔ RISK / WARNING ────────────",
         "⚠️ Earnings Deterioration (EPS + Revenue QoQ, 2 qtrs < -10%)",
         "⚠️ Structural Caution (Quality < 38 & Bearish)",
@@ -6202,7 +6206,8 @@ if active_tab == "2. Opportunity Radar":
         "🔥 Overbought Alert (RSI > 65)",
         "🎈 Valuation Exhaustion (Z-Score > +2.0)",
         "⚔️ Exit on Strength (Bearish + Overbought)",
-        "💔 Multi-Indicator Breakdown (Bearish + RSI < 50)"
+        "💔 Multi-Indicator Breakdown (Bearish + RSI < 50)",
+        "🚨 Distribution Warning (Smart Money Exiting)"
     ]
     
     # Initialize session state for scan mode if not exists
@@ -6250,21 +6255,12 @@ if active_tab == "2. Opportunity Radar":
     if "Institutional Pulse" in scan_mode:
         f_df = f_df[(f_df["Quality"] >= 70) & (f_df["Trend"] == "BULLISH")]
         st.success("🏆 Institutional Pulse: Quality Score ≥ 70 (ELITE tier) and Bullish Trend (Institutional Conviction)")
-    elif "Trend Following" in scan_mode:
-        f_df = f_df[f_df["Trend"] == "BULLISH"]
-        st.info("📈 Trend Following: Stocks in confirmed MA20 > MA50 bullish alignment")
-    elif "RSI Mean Reversion" in scan_mode:
-        f_df = f_df[f_df["RSI (14)"] < 35]
-        st.warning("📉 RSI Mean Reversion: Oversold (RSI < 35) candidates — early accumulation zone")
-    elif "Deep Value" in scan_mode:
-        f_df = f_df[f_df["Z-Score"] < -2.0]
-        st.success("💎 Deep Value: Prices at -2.0 Std Dev relative to 5Y mean (Historical Bargains)")
     elif "Buy on Dip" in scan_mode:
         f_df = f_df[(f_df["Trend"] == "BULLISH") & (f_df["RSI (14)"] < 40)]
         st.info("🚀 Buy on Dip: Bullish Trend with short-term RSI cooling (< 40)")
-    elif "Multi-Indicator Breakout" in scan_mode:
+    elif "Bullish Momentum" in scan_mode:
         f_df = f_df[(f_df["Trend"] == "BULLISH") & (f_df["RSI (14)"] > 50)]
-        st.success("⚡ Breakout: Strong Momentum (Trend Bullish + RSI > 50)")
+        st.success("🚀 Bullish Momentum: Strong uptrend (MA20 > MA50) with RSI > 50 confirming momentum strength")
     elif "Structural Caution" in scan_mode:
         f_df = f_df[(f_df["Quality"] < 38) & (f_df["Trend"] == "BEARISH")]
         st.error("⚠️ Structural Caution: High Risk! Low Quality (Score < 38 = WEAK tier) + Confirmed Downtrend (MA20 < MA50)")
@@ -6298,6 +6294,30 @@ if active_tab == "2. Opportunity Radar":
     elif "Short Squeeze Watch" in scan_mode:
         f_df = f_df[(f_df["Short %"] > 15) & (f_df["RSI (14)"] < 45) & (f_df["Trend"] == "BULLISH")]
         st.warning("🔥 Short Squeeze Watch: High short interest (> 15% of float) + oversold RSI + bullish trend reversal. High volatility, event-driven setup.")
+    elif "Smart Money Accumulation" in scan_mode:
+        f_df = f_df[(f_df["Smart Money"].str.contains("ACCUMULATION", na=False)) & (f_df["Quality"] >= 55) & (f_df["RSI (14)"] < 50)]
+        st.success("🎯 Smart Money Accumulation: Institutions actively buying + Quality ≥ 55 (SOLID tier) + RSI < 50 (not overbought). Follow the smart money.")
+    elif "Mean Reversion Elite" in scan_mode:
+        f_df = f_df[(f_df["Quality"] >= 65) & (f_df["RSI (14)"] < 35) & (f_df["Z-Score"] < -1.0)]
+        st.success("🔄 Mean Reversion Elite: High Quality (≥65 STRONG tier) + Oversold (RSI<35) + Below Mean (Z<-1.0). Elite assets on sale.")
+    elif "Strong Breakout" in scan_mode:
+        f_df = f_df[(f_df["vs MA200 (%)"] > 5) & (f_df["RSI (14)"].between(50, 70)) & (f_df["Trend"] == "BULLISH")]
+        st.success("⚡ Strong Breakout: Price > MA200 by 5%+ with healthy RSI (50-70) + confirmed uptrend. Riding the wave.")
+    elif "Contrarian Value" in scan_mode:
+        f_df = f_df[(f_df["Quality"] >= 60) & (f_df["Trend"] == "BEARISH") & (f_df["Z-Score"] < -1.5) & (f_df["PEG"] > 0) & (f_df["PEG"] < 1.2)]
+        st.warning("💎 Contrarian Value: High Quality (≥60) in downtrend + cheap valuation (Z<-1.5, PEG<1.2). Contrarian opportunity — wait for reversal signal before entry.")
+    elif "Defensive Moat" in scan_mode:
+        f_df = f_df[(f_df["Debt/EBITDA"] < 2.0) & (f_df["ROE (%)"] > 15) & (f_df["Yield (%)"] > 2.0) & (f_df["Quality"] >= 60)]
+        st.success("🏰 Defensive Moat: Low debt (<2x EBITDA) + High ROE (>15%) + Dividend (>2%) + Quality ≥60. Fortress balance sheet for all-weather portfolio.")
+    elif "Oversold Reversal Setup" in scan_mode:
+        f_df = f_df[(f_df["RSI (14)"] < 30) & (f_df["Smart Money"].str.contains("ACCUMULATION", na=False)) & (f_df["Quality"] >= 50)]
+        st.success("🌊 Oversold Reversal: Extreme oversold (RSI<30) + Smart Money buying + Quality ≥50. High probability bounce setup.")
+    elif "Balanced Growth" in scan_mode:
+        f_df = f_df[(f_df["Quality"].between(55, 75)) & (f_df["P/E (Fwd)"].between(15, 30)) & (f_df["ROE (%)"] > 12) & (f_df["Trend"] == "BULLISH")]
+        st.success("📊 Balanced Growth: Quality 55-75 (SOLID-STRONG) + PE 15-30x + ROE >12% + Bullish trend. Sustainable growth at fair price.")
+    elif "Distribution Warning" in scan_mode:
+        f_df = f_df[(f_df["Smart Money"].str.contains("DISTRIBUTION", na=False)) & (f_df["RSI (14)"] > 60) & (f_df["Quality"] < 55)]
+        st.error("🚨 Distribution Warning: Institutions selling + Overbought (RSI>60) + Weak Quality (<55). Strong exit signal.")
     elif "──" in scan_mode:
         # Just to catch the separator line if selected
         st.warning("Please select a valid screening preset.")
@@ -7647,7 +7667,7 @@ if active_tab == "4. Quantitative Forecast (ML)":
         # ── Conviction Score (4-Pillar: 0-4) ────────────────────────────────
         _conv_pts  = 0
         _conv_pts += 1 if _ai_upside >= 3 else 0
-        _conv_pts += 1 if sm_spirit == "Accumulation" else 0
+        _conv_pts += 1 if sm_spirit == "ACCUMULATION" else 0
         _conv_pts += 1 if avg_sent > 0.05 else 0
         _conv_pts += 1 if xgb_signal == "BUY" else 0
 
