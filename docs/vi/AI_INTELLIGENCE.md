@@ -18,10 +18,11 @@ AI được cung cấp bộ dữ liệu chuyên sâu bao gồm:
 - **Market Regime:** Bối cảnh thị trường chung (Bullish/Bearish/Neutral).
 
 ### Chỉ số Định tính (Qual NLP Results)
-Thông qua hàm `analyze_risk_with_llm`, AI quét 15 tiêu đề tin tức mới nhất từ Google News:
-- **Red Flag Score (0-100):** Đánh giá mức độ rủi ro tiềm ẩn từ tin tức.
-- **Sentiment:** Sắc thái tin tức (Tích cực, Tiêu cực, Critical).
-- **Risk Category:** Phân loại rủi ro (Pháp lý, Vận hành, Tài chính, Danh tiếng).
+Thông qua hàm `analyze_risk_with_llm()` trong `etl/llm_parser.py`, AI quét **15 tiêu đề tin tức mới nhất** từ **Google News**:
+- **Red Flag Score (0-100):** Đánh giá mức độ rủi ro tiềm ẩn từ tin tức (0 = không rủi ro, 100 = rủi ro nghiêm trọng).
+- **Sentiment:** Sắc thái tin tức (Positive, Negative, Neutral, Critical).
+- **Risk Category:** Phân loại rủi ro (Legal, Technical, Financial, Reputational, Regulatory, Operational).
+- **LLM Provider:** Cohere Command-R+ (Trial tier: giới hạn ~20 lượt gọi cao cấp/tháng).
 
 ---
 
@@ -55,7 +56,9 @@ Hệ thống được thiết kế để đưa ra 1 trong 6 hành động dứt 
 ## 5. Lưu ý cho Người vận hành
 - **CIO Persona:** AI được thiết kế để có tư duy phê phán, đôi khi nó có thể mâu thuẫn với công thức toán học nếu nó nhận thấy rủi ro tin tức quá lớn.
 - **Tần suất cập nhật:** Tin tức được quét thời gian thực tại thời điểm nhấn nút. Bản phân tích AI có hiệu lực tốt nhất cho phiên giao dịch hiện tại.
-- **Giới hạn API:** Hiện tại hệ thống đang sử dụng gói Trial của Cohere (khoảng 20 lượt gọi cao cấp mỗi tháng).
+- **Giới hạn API:** Hiện tại hệ thống đang sử dụng **Cohere Trial tier** (giới hạn khoảng **20 lượt gọi cao cấp mỗi tháng**). Để sử dụng production, nâng cấp lên Cohere Production tier để có lượt gọi không giới hạn.
+- **Nguồn tin tức:** Tiêu đề được lấy từ **Google News RSS feeds** thông qua thư viện `feedparser`, lọc theo độ liên quan và thời gian gần đây (7 ngày qua).
+- **Vị trí function:** `etl/llm_parser.py` → `analyze_risk_with_llm(ticker: str, company_name: str) -> dict`
 
 > [!IMPORTANT]
 > Khuyến nghị của AI chỉ mang tính tham khảo và hỗ trợ quyết định (Support Tool). Nhà đầu tư cần tự chịu trách nhiệm về các quyết định tài chính của mình.

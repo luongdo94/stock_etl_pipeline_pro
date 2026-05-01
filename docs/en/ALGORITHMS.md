@@ -36,16 +36,53 @@ This indicator represents the "intrinsic quality" of the market or a specific st
 A Market Cap-weighted average of all stocks in the Universe:
 `Market Quality Index = Σ(Quality Score * Market Cap) / Σ(Market Cap)`
 
-### 2.2. Individual Quality Score v3.0 (Scale of 100)
-Each stock is evaluated across 6 financial pillars:
-1.  **Valuation (20 pts):** Evaluates P/E, P/B, and PEG (Lower PEG preferred).
-2.  **Profitability (25-30 pts):** Focuses on FCF Margin and ROE.
-3.  **Financial Health (15 pts):** Debt/EBITDA ratio tailored to industry standards.
-4.  **Net Payout Yield (10 pts):** Total capital returned to shareholders (Dividends + Buybacks).
-5.  **Context & Momentum (25 pts):** Technical signals (MA), relative strength (RSI), and price deviation (Z-Score).
-6.  **Analyst Estimates (5 pts):** Implied upside and expert consensus.
+### 2.2. Individual Quality Score v4.1 (Scale of 100)
+Each stock is evaluated across **7 financial pillars** (config-driven from `config/scoring_rules.yaml`):
 
-**Red Flags (Penalties):** Heavy points deduction if P/E is negative, Debt/EBITDA > 10, or Beta is too high (>1.8).
+#### Pillar 1: Valuation (Max 20 pts)
+- **PEG Ratio:** Preferred < 1.5 (growth at reasonable price). Scores 0-12 pts.
+- **P/E Ratio:** Sector-adjusted bands (Tech: 15-35 ideal, Value: 10-22 ideal). Scores 0-12 pts.
+- **P/B Ratio:** Financials have different norms (1.0-1.8 ideal) vs. Tech/Industrial (< 3.0). Scores 0-8 pts.
+- **Early Stage Logic:** Pre-profit growth stocks (negative P/E + revenue growth > 15% + improving EPS) are exempt from harsh P/E penalties and scored on revenue acceleration instead.
+
+#### Pillar 2: Profitability (Max 25-30 pts)
+- **FCF Margin:** > 15% = excellent (15 pts), > 8% = good (12 pts), > 5% = fair (6 pts).
+- **ROE:** > 15% = excellent (10 pts), > 10% = good (8 pts), > 5% = fair (4 pts).
+- **Tech Bonus:** +5 pts if FCF > 20% (exceptional cash generation for tech/growth stocks).
+- **Early Stage Credit:** Partial profitability credit (0-7 pts) when losses are shrinking (positive earnings growth).
+- **Cap:** 30 pts for Tech/Growth sectors, 25 pts for others.
+
+#### Pillar 3: Financial Health (Max 15 pts)
+- **Debt/EBITDA Ratio:** < 2.0 = excellent (15 pts), < 4.0 = good (8 pts), > 8.0 = red flag territory.
+- **Sector-adjusted:** Financials/Utilities have higher tolerance (< 6.0 acceptable due to business model).
+
+#### Pillar 4: Net Payout Yield (Max 10 pts, Tech cap 5 pts)
+- **Dividend + Buyback Yield:** 4-6% = ideal (9-10 pts), 2.5-4% = good (6 pts), 1-2.5% = fair (3 pts).
+- **Tech Cap:** Growth stocks capped at 5 pts to avoid penalizing reinvestment strategies.
+
+#### Pillar 5: Context & Momentum (Max 15 pts) — **Reduced from 25 in v3.0**
+- **MA Signal:** Bullish = +8 pts, Neutral = +3 pts, Bearish = 0 pts.
+- **RSI:** 40-60 (neutral zone) = +5 pts, < 30 (oversold) = contrarian bonus (0-3 pts), > 70 (overbought) = penalty (0 to -2 pts).
+- **Z-Score:** < -1.5 (deep value) = +4 pts, > +2.0 (overheated) = -2 to -4 pts.
+
+#### Pillar 6: Analyst Estimates (Max 10 pts) — **Increased from 5 in v3.0**
+- **Upside Potential:** 30%+ = +5 pts, 15-30% = +4 pts, 5-15% = +2 pts, < 5% = +1 pt.
+- **Consensus Quality:** Strong Buy = +5 pts, Buy = +3 pts, Hold = +1 pt, Sell/Underperform = -2 pts.
+- **Rationale:** Collective analyst research reflects deep fundamental due diligence and is a high-signal indicator.
+
+#### Pillar 7: Revenue Consistency (Max 5 pts) — **NEW in v4.0**
+- **Accelerating:** Revenue growth > 15% + Earnings growth > 10% = 5 pts (strong double-digit growth on both).
+- **Stable:** Revenue growth > 5% + Earnings not declining = 3 pts (moderate growth, losses not widening).
+- **Positive:** Revenue growth > 0% = 2 pts (at least top-line is growing).
+- **Declining:** Revenue < -5% = 0 pts (no credit for shrinking business).
+
+#### Red Flags (Instant Penalties) — **Strengthened in v4.0**
+- **Negative P/E:** -3 pts (early stage with high growth), -8 pts (high growth but unprofitable), -15 pts (stagnant unprofitable).
+- **High Debt:** D/EBITDA > 8 = -5 pts, > 12 = -15 pts (critical distress signal). Threshold tightened from 10 in v3.0.
+- **Value Trap:** Z-Score < -1.5 + Sell consensus = -5 pts (cheap for a reason).
+- **Beta Risk:** > 1.8 = -1 to -5 pts (high volatility penalty), < 0.8 (non-tech) = +2 to +5 pts (defensive stability bonus).
+
+**Config-Driven Architecture:** All thresholds and weights are loaded from `config/scoring_rules.yaml`, enabling easy tuning without code changes. Improved error handling with safe fallbacks for missing data.
 
 ---
 

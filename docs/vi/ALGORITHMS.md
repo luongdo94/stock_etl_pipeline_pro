@@ -36,16 +36,53 @@ Chỉ số này đại diện cho "chất lượng nội tại" của thị trư
 Là giá trị trung bình có trọng số theo vốn hóa (Market Cap) của tất cả cổ phiếu trong Universe:
 `Market Quality Index = Σ(Quality Score * Market Cap) / Σ(Market Cap)`
 
-### 2.2. Individual Quality Score v3.0 (Thang điểm 100)
-Mỗi cổ phiếu được đánh giá qua 6 cột trụ tài chính (Pillars):
-1.  **Valuation (20đ):** Đánh giá P/E, P/B và PEG (Ưu tiên PEG thấp).
-2.  **Profitability (25-30đ):** Tập trung vào FCF Margin và ROE.
-3.  **Financial Health (15đ):** Tỉ lệ Nợ/EBITDA (Debt/EBITDA) theo đặc thù ngành.
-4.  **Net Payout Yield (10đ):** Tổng lợi nhuận trả cho cổ đông (Cổ tức + Mua lại cổ phiếu).
-5.  **Context & Momentum (25đ):** Tín hiệu kỹ thuật (MA), sức mạnh tương đối (RSI) và độ lệch giá (Z-Score).
-6.  **Analyst Estimates (5đ):** Mức tăng kỳ vọng (Upside) và đồng thuận từ chuyên gia.
+### 2.2. Individual Quality Score v4.1 (Thang điểm 100)
+Mỗi cổ phiếu được đánh giá qua **7 cột trụ tài chính** (config-driven từ `config/scoring_rules.yaml`):
 
-**Hình phạt (Red Flags):** Trừ điểm năng nếu P/E âm, Nợ/EBITDA > 10, hoặc Beta quá cao (>1.8).
+#### Cột trụ 1: Valuation (Tối đa 20 điểm)
+- **PEG Ratio:** Ưu tiên < 1.5 (tăng trưởng với giá hợp lý). Điểm 0-12.
+- **P/E Ratio:** Điều chỉnh theo ngành (Tech: 15-35 lý tưởng, Value: 10-22 lý tưởng). Điểm 0-12.
+- **P/B Ratio:** Ngành tài chính có chuẩn khác (1.0-1.8 lý tưởng) so với Tech/Công nghiệp (< 3.0). Điểm 0-8.
+- **Logic Early Stage:** Cổ phiếu tăng trưởng chưa có lãi (P/E âm + tăng trưởng doanh thu > 15% + EPS đang cải thiện) được miễn trừ hình phạt P/E và chấm điểm dựa trên tốc độ tăng trưởng doanh thu.
+
+#### Cột trụ 2: Profitability (Tối đa 25-30 điểm)
+- **FCF Margin:** > 15% = xuất sắc (15đ), > 8% = tốt (12đ), > 5% = khá (6đ).
+- **ROE:** > 15% = xuất sắc (10đ), > 10% = tốt (8đ), > 5% = khá (4đ).
+- **Tech Bonus:** +5 điểm nếu FCF > 20% (khả năng tạo tiền mặt đặc biệt cho tech/growth).
+- **Early Stage Credit:** Điểm khả năng sinh lời một phần (0-7đ) khi lỗ đang thu hẹp (tăng trưởng earnings dương).
+- **Giới hạn:** 30 điểm cho Tech/Growth, 25 điểm cho các ngành khác.
+
+#### Cột trụ 3: Financial Health (Tối đa 15 điểm)
+- **Debt/EBITDA:** < 2.0 = xuất sắc (15đ), < 4.0 = tốt (8đ), > 8.0 = vùng cảnh báo đỏ.
+- **Điều chỉnh ngành:** Tài chính/Tiện ích có ngưỡng chấp nhận cao hơn (< 6.0 chấp nhận được do mô hình kinh doanh).
+
+#### Cột trụ 4: Net Payout Yield (Tối đa 10 điểm, Tech giới hạn 5 điểm)
+- **Dividend + Buyback Yield:** 4-6% = lý tưởng (9-10đ), 2.5-4% = tốt (6đ), 1-2.5% = khá (3đ).
+- **Tech Cap:** Cổ phiếu tăng trưởng giới hạn 5 điểm để tránh phạt chiến lược tái đầu tư.
+
+#### Cột trụ 5: Context & Momentum (Tối đa 15 điểm) — **Giảm từ 25 trong v3.0**
+- **MA Signal:** Bullish = +8đ, Neutral = +3đ, Bearish = 0đ.
+- **RSI:** 40-60 (vùng trung lập) = +5đ, < 30 (quá bán) = bonus nghịch xu hướng (0-3đ), > 70 (quá mua) = phạt (0 đến -2đ).
+- **Z-Score:** < -1.5 (giá trị sâu) = +4đ, > +2.0 (quá nóng) = -2 đến -4đ.
+
+#### Cột trụ 6: Analyst Estimates (Tối đa 10 điểm) — **Tăng từ 5 trong v3.0**
+- **Upside Potential:** 30%+ = +5đ, 15-30% = +4đ, 5-15% = +2đ, < 5% = +1đ.
+- **Consensus Quality:** Strong Buy = +5đ, Buy = +3đ, Hold = +1đ, Sell/Underperform = -2đ.
+- **Lý do:** Nghiên cứu tập thể của các nhà phân tích phản ánh due diligence cơ bản sâu sắc và là tín hiệu chất lượng cao.
+
+#### Cột trụ 7: Revenue Consistency (Tối đa 5 điểm) — **MỚI trong v4.0**
+- **Tăng tốc:** Tăng trưởng doanh thu > 15% + Tăng trưởng earnings > 10% = 5đ (tăng trưởng hai chữ số mạnh mẽ trên cả hai).
+- **Ổn định:** Tăng trưởng doanh thu > 5% + Earnings không giảm = 3đ (tăng trưởng vừa phải, lỗ không mở rộng).
+- **Dương:** Tăng trưởng doanh thu > 0% = 2đ (ít nhất doanh thu đang tăng).
+- **Giảm:** Doanh thu < -5% = 0đ (không có điểm cho doanh nghiệp đang thu hẹp).
+
+#### Hình phạt (Red Flags) — **Tăng cường trong v4.0**
+- **P/E âm:** -3đ (early stage với tăng trưởng cao), -8đ (tăng trưởng cao nhưng chưa có lãi), -15đ (trì trệ và chưa có lãi).
+- **Nợ cao:** D/EBITDA > 8 = -5đ, > 12 = -15đ (tín hiệu khó khăn nghiêm trọng). Ngưỡng thắt chặt từ 10 trong v3.0.
+- **Value Trap:** Z-Score < -1.5 + Sell consensus = -5đ (rẻ vì có lý do).
+- **Beta Risk:** > 1.8 = -1 đến -5đ (phạt biến động cao), < 0.8 (non-tech) = +2 đến +5đ (bonus ổn định phòng thủ).
+
+**Kiến trúc Config-Driven:** Tất cả ngưỡng và trọng số được load từ `config/scoring_rules.yaml`, cho phép điều chỉnh dễ dàng mà không cần thay đổi code. Xử lý lỗi được cải thiện với fallback an toàn cho dữ liệu thiếu.
 
 ---
 

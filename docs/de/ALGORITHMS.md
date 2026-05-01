@@ -35,16 +35,53 @@ Dieser Index repräsentiert die "intrinsische Qualität" des Marktes oder einer 
 Alle Daten im System (Preise, Umsatz, Marktkapitalisierung) werden bereits im Extraktionsschritt der ETL-Pipeline in **Euro (EUR)** normalisiert.
 `Market Quality Index = Σ(Quality Score * Market Cap) / Σ(Market Cap)`
 
-### 2.2. Individual Quality Score v3.0 (100-Punkte-Skala)
-Jede Aktie wird anhand von 6 finanziellen Säulen (Pillars) bewertet:
-1.  **Valuation (20 Pkt):** Bewertung von KGV (P/E), KBV (P/B) und PEG (niedriges PEG bevorzugt).
-2.  **Profitability (25-30 Pkt):** Fokus auf FCF-Marge und ROE.
-3.  **Financial Health (15 Pkt):** Verhältnis Schulden/EBITDA basierend auf branchenspezifischen Merkmalen.
-4.  **Net Payout Yield (10 Pkt):** Gesamtrendite für Aktionäre (Dividenden + Aktienrückkäufe).
-5.  **Context & Momentum (25 Pkt):** Technische Signale (MA), relative Stärke (RSI) und Preisabweichung (Z-Score).
-6.  **Analyst Estimates (5 Pkt):** Erwartetes Kurspotenzial (Upside) und Expertenkonsens.
+### 2.2. Individual Quality Score v4.1 (100-Punkte-Skala)
+Jede Aktie wird anhand von **7 finanziellen Säulen** bewertet (config-driven aus `config/scoring_rules.yaml`):
 
-**Strafen (Red Flags):** Punktabzug bei negativem KGV, Schulden/EBITDA > 10 oder sehr hohem Beta (>1.8).
+#### Säule 1: Valuation (Max. 20 Punkte)
+- **PEG-Verhältnis:** Bevorzugt < 1.5 (Wachstum zu angemessenem Preis). Punkte 0-12.
+- **KGV (P/E):** Branchenangepasste Bänder (Tech: 15-35 ideal, Value: 10-22 ideal). Punkte 0-12.
+- **KBV (P/B):** Finanzwerte haben andere Normen (1.0-1.8 ideal) vs. Tech/Industrie (< 3.0). Punkte 0-8.
+- **Early-Stage-Logik:** Wachstumsaktien ohne Gewinn (negatives KGV + Umsatzwachstum > 15% + sich verbesserndes EPS) sind von harten KGV-Strafen befreit und werden stattdessen nach Umsatzbeschleunigung bewertet.
+
+#### Säule 2: Profitability (Max. 25-30 Punkte)
+- **FCF-Marge:** > 15% = ausgezeichnet (15 Pkt), > 8% = gut (12 Pkt), > 5% = fair (6 Pkt).
+- **ROE:** > 15% = ausgezeichnet (10 Pkt), > 10% = gut (8 Pkt), > 5% = fair (4 Pkt).
+- **Tech-Bonus:** +5 Punkte bei FCF > 20% (außergewöhnliche Cashgenerierung für Tech/Wachstumswerte).
+- **Early-Stage-Kredit:** Teilweise Rentabilitätspunkte (0-7 Pkt), wenn Verluste schrumpfen (positives Gewinnwachstum).
+- **Obergrenze:** 30 Punkte für Tech/Wachstumssektoren, 25 Punkte für andere.
+
+#### Säule 3: Financial Health (Max. 15 Punkte)
+- **Schulden/EBITDA:** < 2.0 = ausgezeichnet (15 Pkt), < 4.0 = gut (8 Pkt), > 8.0 = Risikozone.
+- **Branchenangepasst:** Finanzwerte/Versorger haben höhere Toleranz (< 6.0 akzeptabel aufgrund des Geschäftsmodells).
+
+#### Säule 4: Net Payout Yield (Max. 10 Punkte, Tech-Obergrenze 5 Punkte)
+- **Dividenden + Rückkaufrendite:** 4-6% = ideal (9-10 Pkt), 2.5-4% = gut (6 Pkt), 1-2.5% = fair (3 Pkt).
+- **Tech-Obergrenze:** Wachstumswerte auf 5 Punkte begrenzt, um Reinvestitionsstrategien nicht zu bestrafen.
+
+#### Säule 5: Context & Momentum (Max. 15 Punkte) — **Reduziert von 25 in v3.0**
+- **MA-Signal:** Bullish = +8 Pkt, Neutral = +3 Pkt, Bearish = 0 Pkt.
+- **RSI:** 40-60 (neutrale Zone) = +5 Pkt, < 30 (überverkauft) = konträrer Bonus (0-3 Pkt), > 70 (überkauft) = Strafe (0 bis -2 Pkt).
+- **Z-Score:** < -1.5 (tiefer Wert) = +4 Pkt, > +2.0 (überhitzt) = -2 bis -4 Pkt.
+
+#### Säule 6: Analyst Estimates (Max. 10 Punkte) — **Erhöht von 5 in v3.0**
+- **Kurspotenzial:** 30%+ = +5 Pkt, 15-30% = +4 Pkt, 5-15% = +2 Pkt, < 5% = +1 Pkt.
+- **Konsensqualität:** Strong Buy = +5 Pkt, Buy = +3 Pkt, Hold = +1 Pkt, Sell/Underperform = -2 Pkt.
+- **Begründung:** Kollektive Analystenforschung spiegelt tiefgreifende fundamentale Due Diligence wider und ist ein hochwertiger Indikator.
+
+#### Säule 7: Revenue Consistency (Max. 5 Punkte) — **NEU in v4.0**
+- **Beschleunigend:** Umsatzwachstum > 15% + Gewinnwachstum > 10% = 5 Pkt (starkes zweistelliges Wachstum bei beiden).
+- **Stabil:** Umsatzwachstum > 5% + Gewinne nicht rückläufig = 3 Pkt (moderates Wachstum, Verluste weiten sich nicht aus).
+- **Positiv:** Umsatzwachstum > 0% = 2 Pkt (zumindest wächst die Topline).
+- **Rückläufig:** Umsatz < -5% = 0 Pkt (keine Punkte für schrumpfendes Geschäft).
+
+#### Strafen (Red Flags) — **Verschärft in v4.0**
+- **Negatives KGV:** -3 Pkt (Early Stage mit hohem Wachstum), -8 Pkt (hohes Wachstum aber unrentabel), -15 Pkt (stagnierendes unrentables Geschäft).
+- **Hohe Verschuldung:** Schulden/EBITDA > 8 = -5 Pkt, > 12 = -15 Pkt (kritisches Notlagesignal). Schwelle verschärft von 10 in v3.0.
+- **Value Trap:** Z-Score < -1.5 + Sell-Konsens = -5 Pkt (billig aus gutem Grund).
+- **Beta-Risiko:** > 1.8 = -1 bis -5 Pkt (hohe Volatilitätsstrafe), < 0.8 (Nicht-Tech) = +2 bis +5 Pkt (defensiver Stabilitätsbonus).
+
+**Config-Driven-Architektur:** Alle Schwellenwerte und Gewichtungen werden aus `config/scoring_rules.yaml` geladen, was eine einfache Anpassung ohne Codeänderungen ermöglicht. Verbesserte Fehlerbehandlung mit sicheren Fallbacks für fehlende Daten.
 
 ---
 

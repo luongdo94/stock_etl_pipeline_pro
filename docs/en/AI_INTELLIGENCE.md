@@ -18,10 +18,11 @@ The AI is provided with a comprehensive set of "hard" data points:
 - **Market Regime:** The global market context (Bullish/Bearish/Neutral).
 
 ### Qualitative Intelligence (NLP Results)
-Via the `analyze_risk_with_llm` function, the system scans 15 recent headlines from Google News:
-- **Red Flag Score (0-100):** Assessed risk based on news content.
-- **Sentiment:** Overall tone (Positive, Negative, Critical).
-- **Risk Category:** Focused risk area (Legal, Technical, Financial, Reputational).
+Via the `analyze_risk_with_llm()` function in `etl/llm_parser.py`, the system scans **15 recent headlines** from **Google News**:
+- **Red Flag Score (0-100):** Assessed risk based on news content (0 = no risk, 100 = critical risk).
+- **Sentiment:** Overall tone (Positive, Negative, Neutral, Critical).
+- **Risk Category:** Focused risk area (Legal, Technical, Financial, Reputational, Regulatory, Operational).
+- **LLM Provider:** Cohere Command-R+ (Trial tier: ~20 high-fidelity calls/month limit).
 
 ---
 
@@ -55,7 +56,9 @@ The system is constrained to issue one of exactly six definitive actions:
 ## 5. Operational Notes
 - **CIO Persona:** The AI is designed with a critical mindset. It may contradict mathematical formulas if it perceives qualitative risks that the math cannot see.
 - **Refresh Frequency:** News is scanned in real-time when the button is pressed. The analysis is valid for the current trading context.
-- **API Limits:** The system currently utilizes the Cohere Trial tier (limited to approximately 20 high-fidelity calls per month).
+- **API Limits:** The system currently utilizes the **Cohere Trial tier** (limited to approximately **20 high-fidelity calls per month**). For production use, upgrade to Cohere Production tier for unlimited calls.
+- **News Source:** Headlines are fetched from **Google News RSS feeds** via the `feedparser` library, filtered for relevance and recency (last 7 days).
+- **Function Location:** `etl/llm_parser.py` → `analyze_risk_with_llm(ticker: str, company_name: str) -> dict`
 
 > [!IMPORTANT]
 > AI recommendations are for informational purposes only. They are a decision-support tool. Investors are responsible for their own financial decisions.

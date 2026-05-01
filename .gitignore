@@ -20,6 +20,7 @@ dashboard.py
 logs/
 teraform/
 dashboard_v2/
+.kiro
 
 # Test and debug files
 debug_*.py
