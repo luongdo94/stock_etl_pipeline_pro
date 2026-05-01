@@ -4889,13 +4889,7 @@ if active_tab == "7. Portfolio Builder":
         st.session_state['_portfolio_version'] = 0
 
     _sel_version = st.session_state.get('_portfolio_version', 0)
-    p_tickers = st.multiselect(
-        "Select Tickers for Portfolio Construction", 
-        stock_tickers, 
-        default=st.session_state.portfolio_tickers, 
-        format_func=format_ticker,
-        key=f"p_ticker_select_{_sel_version}"
-    )
+    p_tickers = st.session_state.portfolio_tickers
 
     # --- 2. Portfolio Management Tools (New Layout) ---
     tc1, tc2 = st.columns(2)
@@ -5060,17 +5054,7 @@ if active_tab == "7. Portfolio Builder":
                             st.toast(toast_msg)
                             st.rerun()
 
-    # Detect UI Selection Changes
-    if p_tickers != st.session_state.portfolio_tickers:
-        st.session_state.portfolio_tickers = p_tickers
-        # Retain old weights if ticker already existed, else initialize default 10 shares
-        new_shares = {}
-        new_cost = {}
-        for t in p_tickers:
-            new_shares[t] = st.session_state.portfolio_shares.get(t, 10.0)
-            new_cost[t] = st.session_state.portfolio_cost.get(t, 0.0)
-        st.session_state.portfolio_shares = new_shares
-        st.session_state.portfolio_cost = new_cost
+    p_tickers = st.session_state.portfolio_tickers
 
     if p_tickers:
         latest_prices = prices[prices["ticker"].isin(p_tickers)].groupby("ticker")["price_close"].last().to_dict()
@@ -5553,44 +5537,6 @@ if active_tab == "7. Portfolio Builder":
     
             st.markdown("<br>", unsafe_allow_html=True)
 
-            # ── FEAT 3: Performance Attribution (Waterfall Chart) ──
-            render_header("bar-chart-2", "Performance Attribution (PnL)", level="#####")
-            
-            if total_cost_basis > 0 and len(edited_df) > 0:
-                attr_df = edited_df.copy()
-                attr_df["Total Cost"] = attr_df["Cost Basis (€)"] * attr_df["Shares"]
-                attr_df["Unrealized PnL"] = attr_df["Market Value"] - attr_df["Total Cost"]
-                attr_df = attr_df.sort_values(by="Unrealized PnL", ascending=False)
-                
-                # Plotly Waterfall
-                fig_attr = go.Figure(go.Waterfall(
-                    name="PnL Attribution", orientation="v",
-                    measure=["relative"] * len(attr_df) + ["total"],
-                    x=attr_df["Ticker"].tolist() + ["TOTAL PnL"],
-                    textposition="outside",
-                    text=attr_df["Unrealized PnL"].apply(lambda x: f"{x:+,.0f}").tolist() + [f"{total_pnl:+,.0f}"],
-                    y=attr_df["Unrealized PnL"].tolist() + [0], # y-value for 'total' measure is automatic
-                    connector={"line":{"color":"rgba(255,255,255,0.2)", "dash":"dot"}},
-                    decreasing={"marker":{"color":"#e74c3c"}},
-                    increasing={"marker":{"color":"#2ecc71"}},
-                    totals={"marker":{"color":"#3498db"}}
-                ))
-                
-                fig_attr.update_layout(
-                    template="plotly_dark", height=450,
-                    margin=dict(l=0, r=0, t=10, b=0),
-                    yaxis_title="Unrealized PnL (€)",
-                    xaxis_title="",
-                    showlegend=False,
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    plot_bgcolor="rgba(0,0,0,0)",
-                )
-                fig_attr.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(255,255,255,0.05)')
-                st.plotly_chart(fig_attr, use_container_width=True)
-            else:
-                st.info("Performance Attribution requires at least 1 asset and a non-zero cost basis.")
-
-            st.markdown("---")
 
             # ═══════════════════════════════════════════════════════════════════
             # LAYER 2.5 · DIVIDEND & INCOME TRACKER
@@ -5697,36 +5643,7 @@ if active_tab == "7. Portfolio Builder":
                                        help_text="Nearest upcoming dividend payout date among regular payers (future dates only)")
                 
                 st.markdown("<br>", unsafe_allow_html=True)
-                
-                # ── Chart (Full Width) ──
-                render_header("bar-chart-2", "Dividend Yield by Asset", level="#####")
-                fig_div = go.Figure(go.Bar(
-                    x=div_df["Ticker"],
-                    y=div_df["Cur. Yield (%)"],
-                    marker=dict(
-                        color=div_df["Cur. Yield (%)"],
-                        colorscale="Teal",
-                        showscale=False,
-                    ),
-                    text=div_df["Cur. Yield (%)"].apply(lambda v: f"{v:.2f}%"),
-                    textposition="outside",
-                    hovertemplate=(
-                        "<b>%{x}</b><br>"
-                        "Cur. Yield: %{y:.2f}%<br>"
-                        "<extra></extra>"
-                    ),
-                ))
-                fig_div.update_layout(
-                    template="plotly_dark",
-                    height=300,
-                    margin=dict(l=0, r=0, t=10, b=0),
-                    yaxis_title="Yield (%)",
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    plot_bgcolor="rgba(0,0,0,0)",
-                )
-                st.plotly_chart(fig_div, use_container_width=True)
-                
-                st.markdown("<br>", unsafe_allow_html=True)
+
                 
                 # ── Table (Full Width) ──
                 render_header("list", "Income Breakdown", level="#####")
