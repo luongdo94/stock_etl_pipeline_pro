@@ -2,9 +2,9 @@ import logging, time, shutil, os, duckdb, traceback, uuid
 from logging.handlers import RotatingFileHandler
 import pandas as pd
 from pathlib import Path
-from etl.extract   import extract_stock_prices, extract_company_info, extract_historical_financials, extract_quarterly_financials, extract_cashflows, extract_historical_fcf, extract_quarterly_fcf, extract_earnings_calendar, extract_earnings_history
+from etl.extract   import extract_stock_prices, extract_company_info, extract_historical_financials, extract_quarterly_financials, extract_cashflows, extract_historical_fcf, extract_quarterly_fcf, extract_earnings_calendar, extract_earnings_history, extract_forward_estimates
 from etl.load      import get_connection, create_raw_schema, \
-                          load_stock_prices, load_company_info, load_historical_financials, load_quarterly_financials, load_cashflows, load_historical_fcf, load_quarterly_fcf, load_earnings_calendar, load_earnings_surprise, \
+                          load_stock_prices, load_company_info, load_historical_financials, load_quarterly_financials, load_cashflows, load_historical_fcf, load_quarterly_fcf, load_earnings_calendar, load_earnings_surprise, load_forward_estimates, \
                           perform_atomic_swap, DB_PATH, SHADOW_DB_PATH, AUDIT_DB_PATH
 from etl.transform import run_transforms
 from etl.utils     import get_last_price_dates, needs_full_refresh, needs_earnings_refresh, needs_fundamentals_refresh, needs_metadata_refresh, get_smart_recovery_targets
@@ -274,9 +274,10 @@ def run_pipeline(lookback_days: int = 1825, force_full: bool = False, fast_mode:
                 fcf_df        = extract_historical_fcf(tickers=fund_targets) if fund_targets else extract_historical_fcf()
                 fcf_q_df      = extract_quarterly_fcf(tickers=fund_targets) if fund_targets else extract_quarterly_fcf()
                 cashflow_df   = extract_cashflows(tickers=fund_targets) if fund_targets else extract_cashflows()
-                earnings_surprise_df = extract_earnings_history(tickers=fund_targets) if fund_targets else extract_earnings_history()
+                earnings_surprise_df  = extract_earnings_history(tickers=fund_targets) if fund_targets else extract_earnings_history()
+                forward_estimates_df  = extract_forward_estimates(tickers=fund_targets) if fund_targets else extract_forward_estimates()
             else:
-                quarterly_df, fcf_df, fcf_q_df, cashflow_df, earnings_surprise_df = pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+                quarterly_df, fcf_df, fcf_q_df, cashflow_df, earnings_surprise_df, forward_estimates_df = pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
 
             
             # Earnings Section (7d cycle)
@@ -319,6 +320,7 @@ def run_pipeline(lookback_days: int = 1825, force_full: bool = False, fast_mode:
             audit.rows_processed += load_quarterly_fcf(conn, fcf_q_df)
             audit.rows_processed += load_earnings_calendar(conn, earnings_df)
             audit.rows_processed += load_earnings_surprise(conn, earnings_surprise_df)
+            audit.rows_processed += load_forward_estimates(conn, forward_estimates_df)
             
             logger.info(f"   ⏱  Load: {time.time()-t0:.1f}s")
 

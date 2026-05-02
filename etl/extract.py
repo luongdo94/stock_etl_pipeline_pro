@@ -1408,12 +1408,173 @@ def extract_earnings_calendar(tickers: dict = None) -> pd.DataFrame:
     return pd.DataFrame(records) if records else pd.DataFrame(columns=["ticker", "earnings_date", "eps_avg", "rev_avg"])
 
 
+def extract_forward_estimates(tickers: dict = None) -> pd.DataFrame:
+    """
+    Extract analyst forward estimates (EPS & Revenue) for current/next quarter and year.
+    Uses yahooquery earningsTrend module — 3-pass pattern (batch → retry → evasion).
+
+    Returns one row per ticker with flattened columns:
+        - eps_est_{period}_avg/low/high/growth/n_analysts
+        - rev_est_{period}_avg/low/high/growth
+        - eps_trend_{period}_current/7d/30d/60d/90d
+        - eps_rev_{period}_up7d/up30d/down7d/down30d
+    Period suffixes: 0q (current quarter), 1q (next quarter), 0y (this year), 1y (next year).
+    """
+    if tickers is None:
+        tickers = get_equity_tickers()
+
+    if not tickers or not YQTicker:
+        return pd.DataFrame()
+
+    logger.info(f"🔭 FORWARD ESTIMATES: Fetching earningsTrend for {len(tickers)} equities...")
+    records = []
+    ticker_keys = sorted([
+        t for t in tickers.keys()
+        if not t.startswith('^') and t not in ['SPY']
+    ])
+    successful_tickers: set = set()
+
+    # Period tags as returned by Yahoo: current Q, next Q, this year, next year
+    _PERIODS = ["0q", "+1q", "0y", "+1y"]
+    _PERIOD_ALIAS = {"0q": "0q", "+1q": "1q", "0y": "0y", "+1y": "1y"}
+
+    def _parse_trend(ticker: str, raw: dict):
+        """Flatten earningsTrend payload for one ticker into a single record.
+
+        yahooquery get_modules("earningsTrend") returns raw[ticker] as the
+        earningsTrend object directly (keys: "trend", "defaultMethodology", "maxAge").
+        """
+        if not isinstance(raw, dict):
+            return None
+        # raw IS the earningsTrend object — "trend" is a direct key
+        trend_list = raw.get("trend", [])
+        if not trend_list:
+            return None
+
+        record: dict = {"ticker": ticker, "_extracted_at": datetime.now()}
+
+        for item in trend_list:
+            period = item.get("period", "")
+            if period not in _PERIODS:
+                continue
+            alias = _PERIOD_ALIAS[period]
+
+            ee = item.get("earningsEstimate", {}) or {}
+            re = item.get("revenueEstimate", {}) or {}
+            et = item.get("epsTrend", {}) or {}
+            er = item.get("epsRevisions", {}) or {}
+
+            # EPS Estimates
+            record[f"eps_est_{alias}_avg"]         = _safe_float(ee.get("avg"))
+            record[f"eps_est_{alias}_low"]         = _safe_float(ee.get("low"))
+            record[f"eps_est_{alias}_high"]        = _safe_float(ee.get("high"))
+            record[f"eps_est_{alias}_growth"]      = _safe_float(ee.get("growth"))
+            record[f"eps_est_{alias}_n_analysts"]  = ee.get("numberOfAnalysts")
+
+            # Revenue Estimates
+            record[f"rev_est_{alias}_avg"]         = _safe_float(re.get("avg"))
+            record[f"rev_est_{alias}_low"]         = _safe_float(re.get("low"))
+            record[f"rev_est_{alias}_high"]        = _safe_float(re.get("high"))
+            record[f"rev_est_{alias}_growth"]      = _safe_float(re.get("growth"))
+
+            # EPS Trend (revision history)
+            record[f"eps_trend_{alias}_current"]   = _safe_float(et.get("current"))
+            record[f"eps_trend_{alias}_7d_ago"]    = _safe_float(et.get("7daysAgo"))
+            record[f"eps_trend_{alias}_30d_ago"]   = _safe_float(et.get("30daysAgo"))
+            record[f"eps_trend_{alias}_60d_ago"]   = _safe_float(et.get("60daysAgo"))
+            record[f"eps_trend_{alias}_90d_ago"]   = _safe_float(et.get("90daysAgo"))
+
+            # EPS Revisions (upgrade/downgrade counts)
+            record[f"eps_rev_{alias}_up7d"]        = er.get("upLast7days")
+            record[f"eps_rev_{alias}_up30d"]       = er.get("upLast30days")
+            record[f"eps_rev_{alias}_down7d"]      = er.get("downLast7Days")
+            record[f"eps_rev_{alias}_down30d"]     = er.get("downLast30days")
+
+        # Only return if at least one period was parsed
+        if len(record) <= 2:
+            return None
+        return record
+
+    # ── PASS 1: BATCH FETCH ────────────────────────────────────────────────────
+    batch_size = 40
+    import time, random
+
+    for i in range(0, len(ticker_keys), batch_size):
+        batch = ticker_keys[i:i + batch_size]
+        logger.info(f"   🔭 Forward estimates batch {i // batch_size + 1}/{(len(ticker_keys) // batch_size) + 1}...")
+        try:
+            yq = YQTicker(batch, asynchronous=True)
+            raw_all = yq.get_modules("earningsTrend")
+            if not isinstance(raw_all, dict):
+                logger.warning(f"  ⚠️ Batch {i // batch_size + 1}: invalid response type.")
+                continue
+            for ticker in batch:
+                rec = _parse_trend(ticker, raw_all.get(ticker, {}))
+                if rec:
+                    records.append(rec)
+                    successful_tickers.add(ticker)
+        except Exception as e:
+            logger.warning(f"  ⚠️ Forward estimates batch {i // batch_size + 1} failed: {e}")
+
+        time.sleep(1.0 + random.random())
+
+    # ── PASS 2: SURGICAL RETRY ────────────────────────────────────────────────
+    failed = [t for t in ticker_keys if t not in successful_tickers]
+    if failed:
+        logger.info(f"🔄 PASS 2: Surgical Retry for {len(failed)} forward estimates...")
+        for ticker in failed:
+            waited = _backoff_sleep(attempt=1)
+            try:
+                yq = YQTicker(ticker, asynchronous=False)
+                raw_all = yq.get_modules("earningsTrend")
+                rec = _parse_trend(ticker, raw_all.get(ticker, {}) if isinstance(raw_all, dict) else {})
+                if rec:
+                    records.append(rec)
+                    successful_tickers.add(ticker)
+                    logger.info(f"   ✅ Recovered forward estimates (Pass 2): {ticker} (after {waited:.1f}s)")
+                else:
+                    logger.debug(f"   ↳ Pass 2 no data for {ticker}: empty earningsTrend")
+            except Exception as e:
+                logger.debug(f"   ↳ Pass 2 exception for {ticker}: {type(e).__name__}: {e}")
+
+    # ── PASS 3: ROBUST EVASION RESCUE ─────────────────────────────────────────
+    failed_p2 = [t for t in ticker_keys if t not in successful_tickers]
+    if failed_p2:
+        logger.info(f"🛡️ PASS 3: Evasion Rescue for {len(failed_p2)} stubborn forward estimates...")
+        for ticker in failed_p2:
+            waited = _backoff_sleep(attempt=2)
+            try:
+                session, _ = _make_evasion_session()
+                yq = YQTicker(ticker, asynchronous=False, session=session)
+                raw_all = yq.get_modules("earningsTrend")
+                rec = _parse_trend(ticker, raw_all.get(ticker, {}) if isinstance(raw_all, dict) else {})
+                if rec:
+                    records.append(rec)
+                    successful_tickers.add(ticker)
+                    logger.info(f"   🔥 RECOVERED forward estimates (Pass 3): {ticker} (after {waited:.1f}s)")
+                else:
+                    logger.warning(f"   ❌ Final Failure forward estimates for {ticker}: no earningsTrend data.")
+            except Exception as e:
+                logger.warning(f"   ❌ Pass 3 Error forward estimates for {ticker}: {type(e).__name__}: {e}")
+
+    logger.info(f"✅ Forward Estimates: {len(successful_tickers)}/{len(ticker_keys)} tickers successful, {len(records)} records.")
+    if not records:
+        return pd.DataFrame()
+    return pd.DataFrame(records)
+
+
 def extract_earnings_history(tickers: dict = None) -> pd.DataFrame:
     """
     Fetch historical EPS Actual vs Estimate (Earnings Surprise) for the last 4 quarters.
     Uses yahooquery's earning_history attribute.
+
+    All monetary amounts (eps_actual, eps_estimate, eps_difference) are normalised
+    to EUR using the same FX pre-fetch pattern as the rest of the ETL pipeline.
+    `surprise_pct` is a dimensionless ratio and is stored as-is.
+
     Returns DataFrame with columns:
-        ticker, quarter_date, eps_actual, eps_estimate, eps_difference, surprise_pct, currency, period
+        ticker, quarter_date, eps_actual, eps_estimate, eps_difference, surprise_pct,
+        currency, period, _extracted_at
     """
     if tickers is None:
         tickers = get_equity_tickers()
@@ -1425,6 +1586,55 @@ def extract_earnings_history(tickers: dict = None) -> pd.DataFrame:
     records = []
     ticker_keys = [t for t in tickers.keys() if not t.startswith("^")]
     successful_tickers = set()
+
+    # ── PRE-FETCH FX RATES (same pattern as extract_company_info) ─────────────
+    fx_rates: dict = {"EUR": 1.0}
+    unique_currencies = {"EUR"}
+    for t in ticker_keys:
+        unique_currencies.add(_guess_currency(t))
+
+    if len(unique_currencies) > 1:
+        fx_tkrs = [f"{c}EUR=X" for c in unique_currencies if c not in ("EUR", "GBp")]
+        # GBp (UK pence) → use GBPEUR=X, then divide by 100 at application time
+        if "GBp" in unique_currencies:
+            fx_tkrs.append("GBPEUR=X")
+        try:
+            import time as _time
+            fx_dl = yf.download(fx_tkrs, period="2d", progress=False)["Close"]
+            for c in unique_currencies:
+                if c == "EUR":
+                    continue
+                col = f"{c}EUR=X" if c != "GBp" else "GBPEUR=X"
+                try:
+                    if isinstance(fx_dl, pd.DataFrame) and col in fx_dl.columns:
+                        rate = float(fx_dl[col].dropna().iloc[-1])
+                    elif isinstance(fx_dl, pd.Series):
+                        rate = float(fx_dl.dropna().iloc[-1])
+                    else:
+                        rate = 1.0
+                    fx_rates[c] = rate
+                except Exception:
+                    fx_rates[c] = 1.0
+        except Exception as e:
+            logger.warning(f"  ⚠️ EarningsSurprise FX fetch failed: {e}. Defaulting to 1.0")
+
+    def _eur_rate(ticker_sym: str, reported_currency: str) -> float:
+        """Return multiplier to convert reported_currency → EUR."""
+        ccy = reported_currency.strip() if reported_currency else _guess_currency(ticker_sym)
+        if not ccy or ccy == "EUR":
+            return 1.0
+        if ccy == "GBp" or (ccy == "GBP" and ticker_sym.upper().endswith(".L")):
+            return fx_rates.get("GBp", fx_rates.get("GBP", 1.0)) / 100.0
+        return fx_rates.get(ccy, 1.0)
+
+    def _to_eur(val, rate: float):
+        """None-safe multiply."""
+        if val is None:
+            return None
+        try:
+            return float(val) * rate
+        except (TypeError, ValueError):
+            return None
 
     def process_history(df_raw, ticker_symbol):
         """Parse earning_history DataFrame for a single ticker."""
@@ -1439,14 +1649,16 @@ def extract_earnings_history(tickers: dict = None) -> pd.DataFrame:
                 quarter_date = pd.to_datetime(row.get("quarter")).date()
             except Exception:
                 continue
+            reported_ccy = str(row.get("currency") or "")
+            rate = _eur_rate(ticker_symbol, reported_ccy)
             records.append({
                 "ticker":         ticker_symbol,
                 "quarter_date":   quarter_date,
-                "eps_actual":     row.get("epsActual"),
-                "eps_estimate":   row.get("epsEstimate"),
-                "eps_difference": row.get("epsDifference"),
-                "surprise_pct":   row.get("surprisePercent"),
-                "currency":       row.get("currency", ""),
+                "eps_actual":     _to_eur(row.get("epsActual"),     rate),  # EUR
+                "eps_estimate":   _to_eur(row.get("epsEstimate"),   rate),  # EUR
+                "eps_difference": _to_eur(row.get("epsDifference"), rate),  # EUR
+                "surprise_pct":   row.get("surprisePercent"),               # dimensionless
+                "currency":       reported_ccy,   # keep original for audit
                 "period":         row.get("period", ""),
                 "_extracted_at":  datetime.now(),
             })

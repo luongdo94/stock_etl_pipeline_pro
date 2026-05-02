@@ -233,6 +233,89 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
             PRIMARY KEY (ticker, year, quarter)
         )
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS raw.forward_estimates (
+            ticker                  VARCHAR PRIMARY KEY,
+            -- Current Quarter (0q)
+            eps_est_0q_avg          DOUBLE,
+            eps_est_0q_low          DOUBLE,
+            eps_est_0q_high         DOUBLE,
+            eps_est_0q_growth       DOUBLE,
+            eps_est_0q_n_analysts   INTEGER,
+            rev_est_0q_avg          DOUBLE,
+            rev_est_0q_low          DOUBLE,
+            rev_est_0q_high         DOUBLE,
+            rev_est_0q_growth       DOUBLE,
+            eps_trend_0q_current    DOUBLE,
+            eps_trend_0q_7d_ago     DOUBLE,
+            eps_trend_0q_30d_ago    DOUBLE,
+            eps_trend_0q_60d_ago    DOUBLE,
+            eps_trend_0q_90d_ago    DOUBLE,
+            eps_rev_0q_up7d         INTEGER,
+            eps_rev_0q_up30d        INTEGER,
+            eps_rev_0q_down7d       INTEGER,
+            eps_rev_0q_down30d      INTEGER,
+            -- Next Quarter (1q)
+            eps_est_1q_avg          DOUBLE,
+            eps_est_1q_low          DOUBLE,
+            eps_est_1q_high         DOUBLE,
+            eps_est_1q_growth       DOUBLE,
+            eps_est_1q_n_analysts   INTEGER,
+            rev_est_1q_avg          DOUBLE,
+            rev_est_1q_low          DOUBLE,
+            rev_est_1q_high         DOUBLE,
+            rev_est_1q_growth       DOUBLE,
+            eps_trend_1q_current    DOUBLE,
+            eps_trend_1q_7d_ago     DOUBLE,
+            eps_trend_1q_30d_ago    DOUBLE,
+            eps_trend_1q_60d_ago    DOUBLE,
+            eps_trend_1q_90d_ago    DOUBLE,
+            eps_rev_1q_up7d         INTEGER,
+            eps_rev_1q_up30d        INTEGER,
+            eps_rev_1q_down7d       INTEGER,
+            eps_rev_1q_down30d      INTEGER,
+            -- This Year (0y)
+            eps_est_0y_avg          DOUBLE,
+            eps_est_0y_low          DOUBLE,
+            eps_est_0y_high         DOUBLE,
+            eps_est_0y_growth       DOUBLE,
+            eps_est_0y_n_analysts   INTEGER,
+            rev_est_0y_avg          DOUBLE,
+            rev_est_0y_low          DOUBLE,
+            rev_est_0y_high         DOUBLE,
+            rev_est_0y_growth       DOUBLE,
+            eps_trend_0y_current    DOUBLE,
+            eps_trend_0y_7d_ago     DOUBLE,
+            eps_trend_0y_30d_ago    DOUBLE,
+            eps_trend_0y_60d_ago    DOUBLE,
+            eps_trend_0y_90d_ago    DOUBLE,
+            eps_rev_0y_up7d         INTEGER,
+            eps_rev_0y_up30d        INTEGER,
+            eps_rev_0y_down7d       INTEGER,
+            eps_rev_0y_down30d      INTEGER,
+            -- Next Year (1y)
+            eps_est_1y_avg          DOUBLE,
+            eps_est_1y_low          DOUBLE,
+            eps_est_1y_high         DOUBLE,
+            eps_est_1y_growth       DOUBLE,
+            eps_est_1y_n_analysts   INTEGER,
+            rev_est_1y_avg          DOUBLE,
+            rev_est_1y_low          DOUBLE,
+            rev_est_1y_high         DOUBLE,
+            rev_est_1y_growth       DOUBLE,
+            eps_trend_1y_current    DOUBLE,
+            eps_trend_1y_7d_ago     DOUBLE,
+            eps_trend_1y_30d_ago    DOUBLE,
+            eps_trend_1y_60d_ago    DOUBLE,
+            eps_trend_1y_90d_ago    DOUBLE,
+            eps_rev_1y_up7d         INTEGER,
+            eps_rev_1y_up30d        INTEGER,
+            eps_rev_1y_down7d       INTEGER,
+            eps_rev_1y_down30d      INTEGER,
+            _extracted_at           TIMESTAMP,
+            _loaded_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     logger.info("✅ Raw schema created")
 
 
@@ -319,6 +402,31 @@ def load_earnings_surprise(
     """)
     conn.unregister("df_tmp")
     logger.info(f"✅ Loaded {len(df)} earnings surprise records → raw.earnings_surprise ({df['ticker'].nunique()} tickers)")
+    return len(df)
+
+
+def load_forward_estimates(
+    conn: duckdb.DuckDBPyConnection,
+    df: pd.DataFrame
+):
+    """Load analyst forward estimates (EPS & Revenue) — full replace per run.
+    One row per ticker; PRIMARY KEY = ticker.
+    """
+    if df.empty:
+        logger.info("  ⚠️ No forward estimates data to load — skipping")
+        return 0
+
+    # Upsert: replace rows for tickers we just fetched
+    tickers = df["ticker"].unique().tolist()
+    conn.execute("DELETE FROM raw.forward_estimates WHERE ticker = ANY(?)", [tickers])
+
+    conn.register("df_tmp", df)
+    # Build explicit column list from the DataFrame (excludes _loaded_at — has DEFAULT)
+    cols = [c for c in df.columns if c != "_loaded_at"]
+    col_list = ", ".join(cols)
+    conn.execute(f"INSERT INTO raw.forward_estimates ({col_list}) SELECT {col_list} FROM df_tmp")
+    conn.unregister("df_tmp")
+    logger.info(f"✅ Loaded {len(df)} forward estimate records → raw.forward_estimates ({len(tickers)} tickers)")
     return len(df)
 
 

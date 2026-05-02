@@ -551,4 +551,99 @@ def _create_marts(conn):
         ORDER BY 1, 2
     """)
     
+    # ── Analyst Forward Estimates Mart ────────────────────────────────────────
+    # Only create if raw data exists (table may not exist on first run before pipeline)
+    if _table_exists(conn, "raw", "forward_estimates"):
+        conn.execute("""
+            CREATE OR REPLACE TABLE marts.dim_forward_estimates AS
+            WITH latest_price AS (
+                -- One row per ticker: latest close price
+                SELECT ticker, price_close AS cur_price
+                FROM marts.fct_daily_returns
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) = 1
+            ),
+            fe AS (
+                SELECT * FROM raw.forward_estimates
+            )
+            SELECT
+                fe.ticker,
+
+                -- ── EPS Estimates ─────────────────────────────────────────────
+                fe.eps_est_0q_avg          AS eps_est_cur_q,
+                fe.eps_est_0q_growth       AS eps_growth_cur_q,
+                fe.eps_est_0q_n_analysts   AS n_analysts_cur_q,
+                fe.eps_est_1q_avg          AS eps_est_next_q,
+                fe.eps_est_1q_growth       AS eps_growth_next_q,
+                fe.eps_est_0y_avg          AS eps_est_cur_y,
+                fe.eps_est_0y_growth       AS eps_growth_cur_y,
+                fe.eps_est_0y_n_analysts   AS n_analysts_cur_y,
+                fe.eps_est_1y_avg          AS eps_est_next_y,
+                fe.eps_est_1y_growth       AS eps_growth_next_y,
+
+                -- ── Revenue Estimates ──────────────────────────────────────────
+                fe.rev_est_0y_avg          AS rev_est_cur_y,
+                fe.rev_est_0y_growth       AS rev_growth_cur_y,
+                fe.rev_est_1y_avg          AS rev_est_next_y,
+                fe.rev_est_1y_growth       AS rev_growth_next_y,
+
+                -- ── EPS Trend (30d revision delta) ────────────────────────────
+                -- Positive = analysts are raising estimates (bullish signal)
+                fe.eps_trend_0y_current    AS eps_trend_cur_y,
+                fe.eps_trend_0y_30d_ago    AS eps_trend_cur_y_30d,
+                ROUND(fe.eps_trend_0y_current - fe.eps_trend_0y_30d_ago, 4) AS eps_trend_delta_30d,
+
+                fe.eps_trend_1y_current    AS eps_trend_next_y,
+                fe.eps_trend_1y_30d_ago    AS eps_trend_next_y_30d,
+                ROUND(fe.eps_trend_1y_current - fe.eps_trend_1y_30d_ago, 4) AS eps_trend_delta_next_y,
+
+                -- ── EPS Revisions (30d sentiment) ─────────────────────────────
+                fe.eps_rev_0y_up30d        AS upgrades_30d,
+                fe.eps_rev_0y_down30d      AS downgrades_30d,
+                -- Net revision score: positive = more upgrades than downgrades
+                COALESCE(fe.eps_rev_0y_up30d, 0) - COALESCE(fe.eps_rev_0y_down30d, 0) AS net_revisions_30d,
+                -- Analyst conviction ratio (0-1: 1 = all upgrades, 0 = all downgrades)
+                CASE
+                    WHEN COALESCE(fe.eps_rev_0y_up30d, 0) + COALESCE(fe.eps_rev_0y_down30d, 0) = 0 THEN NULL
+                    ELSE ROUND(
+                        COALESCE(fe.eps_rev_0y_up30d, 0)::DOUBLE /
+                        (COALESCE(fe.eps_rev_0y_up30d, 0) + COALESCE(fe.eps_rev_0y_down30d, 0)),
+                    3)
+                END AS upgrade_ratio_30d,
+
+                -- ── Derived Valuation Metrics (requires current price) ─────────
+                p.cur_price,
+                -- NOTE: forward_pe intentionally NOT stored here.
+                -- cur_price is in EUR (normalised by ETL) but eps estimates
+                -- are in the ticker's native currency (USD for US stocks).
+                -- Dividing EUR ÷ USD would produce a systematically wrong ratio.
+                -- It is computed on-the-fly in app.py after FX conversion.
+
+                -- EPS Upside: % difference between consensus next-year EPS and trailing EPS
+                -- (purely relative ratio → currency-neutral, safe here)
+                CASE
+                    WHEN fe.eps_est_1y_avg IS NOT NULL AND fe.eps_est_0y_avg > 0
+                    THEN ROUND((fe.eps_est_1y_avg / fe.eps_est_0y_avg - 1) * 100, 2)
+                END AS eps_upside_1y_pct,
+
+                -- ── Revision Momentum Signal ──────────────────────────────────
+                -- 'POSITIVE'  : net upgrades > 2  in 30d (clear bullish momentum)
+                -- 'NEGATIVE'  : net downgrades > 2 in 30d (clear bearish signal)
+                -- 'NEUTRAL'   : mixed or insufficient revisions
+                CASE
+                    WHEN (COALESCE(fe.eps_rev_0y_up30d, 0) - COALESCE(fe.eps_rev_0y_down30d, 0)) >= 3 THEN 'POSITIVE'
+                    WHEN (COALESCE(fe.eps_rev_0y_up30d, 0) - COALESCE(fe.eps_rev_0y_down30d, 0)) <= -3 THEN 'NEGATIVE'
+                    ELSE 'NEUTRAL'
+                END AS revision_momentum,
+
+                fe._extracted_at,
+                fe._loaded_at
+
+            FROM fe
+            LEFT JOIN latest_price p USING (ticker)
+            WHERE fe.ticker IS NOT NULL
+        """)
+        logger.info("✅ Mart table created: dim_forward_estimates")
+    else:
+        logger.info("⏭️  dim_forward_estimates skipped — raw.forward_estimates not yet populated")
+    
     logger.info("✅ Mart tables created: fct_daily_returns, dim_companies, agg_monthly_performance, dim_annual_financials, dim_quarterly_financials")

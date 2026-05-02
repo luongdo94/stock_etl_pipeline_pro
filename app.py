@@ -328,17 +328,24 @@ Rules: Your final output MUST be written in {language} (translate section header
 
 # ── MULTI-CURRENCY NORMALIZATION MATRIX (Target: EUR) ───────────────
 
-@st.cache_data(ttl=1800, show_spinner="🌍 Fetching USD->EUR Rate...")
-def get_forex_rates(target="EUR"):
+@st.cache_data(ttl=1800, show_spinner="🌍 Fetching FX Rates...")
+def get_forex_rates(target="EUR", source="USD"):
+    """Returns the rate to convert `source` currency → `target` currency.
+    Handles GBp (pence) automatically: GBp → GBP → EUR."""
     import yfinance as yf
+    # GBp = UK pence = GBP/100
+    _gbp_pence = source.upper() in ("GBP", "GBX")
+    _src = "GBP" if source.upper() in ("GBP", "GBX") else source.upper()
+    if _src == target.upper():
+        return 0.01 if source.upper() in ("GBP", "GBX") else 1.0  # pence → EUR still needs /100
     try:
         import sys, os
         from contextlib import redirect_stdout, redirect_stderr
         with open(os.devnull, 'w') as devnull:
             with redirect_stdout(devnull), redirect_stderr(devnull):
-                df = yf.download(f"USD{target}=X", period="1d", progress=False, threads=False)["Close"]
-        rate = df.iloc[-1].item() if not df.empty else 1.0
-        return float(rate)
+                df = yf.download(f"{_src}{target}=X", period="5d", progress=False, threads=False)["Close"]
+        rate = float(df.dropna().iloc[-1].item()) if not df.dropna().empty else 1.0
+        return rate / 100.0 if source.upper() in ("GBP", "GBX") else rate
     except:
         return 1.0
 
@@ -4652,6 +4659,94 @@ if active_tab == "3. Qualitative Audit (AI)":
                         secondary_y=True
                     )
                     
+                    # ── Analyst EPS Forecast overlay (Annual) ──────────────────
+                    try:
+                        with get_db_connection() as _fe_conn2:
+                            _fe2 = _fe_conn2.execute(
+                                """SELECT eps_est_cur_y, eps_est_next_y,
+                                          eps_trend_delta_30d, eps_trend_delta_next_y,
+                                          upgrade_ratio_30d
+                                   FROM marts.dim_forward_estimates WHERE ticker = ?""",
+                                [deep_ticker]
+                            ).df()
+                        if not _fe2.empty:
+                            import datetime as _dt2
+                            _cy = _dt2.datetime.now().year
+                            _fe2r = _fe2.iloc[0]
+
+                            # FX normalisation: forecast native currency → EUR
+                            _ticker_ccy = str(meta.get("currency") or "USD")
+                            _fx_rate = get_forex_rates(target="EUR", source=_ticker_ccy)
+
+                            # Revision metrics (also in native currency → convert)
+                            _delta_cy = _fe2r.get("eps_trend_delta_30d")
+                            _delta_ny = _fe2r.get("eps_trend_delta_next_y")
+                            _up_ratio = _fe2r.get("upgrade_ratio_30d")
+                            _delta_cy_eur = float(_delta_cy) * _fx_rate if (_delta_cy is not None and pd.notnull(_delta_cy)) else None
+                            _delta_ny_eur = float(_delta_ny) * _fx_rate if (_delta_ny is not None and pd.notnull(_delta_ny)) else None
+                            _conviction  = round(float(_up_ratio) * 100, 0) if (_up_ratio is not None and pd.notnull(_up_ratio)) else None
+
+                            def _rev_arrow(d):
+                                """Return arrow+value string for on-chart label."""
+                                if d is None: return ""
+                                _a = "\u2191" if d > 0 else "\u2193"
+                                return f" {_a}{abs(d):.2f}"
+
+                            _fwd_x, _fwd_y, _fwd_cdata = [], [], []
+                            # Bridge from last historical EPS point
+                            if not df_fin_plot.empty:
+                                _last_hist = df_fin_plot.iloc[-1]
+                                _fwd_x.append(int(_last_hist["year"]))
+                                _fwd_y.append(float(_last_hist["eps"]))
+                                _fwd_cdata.append([float("nan"), float("nan")])
+                            for _yr_offset, _col, _delta_eur in [
+                                (0, "eps_est_cur_y",  _delta_cy_eur),
+                                (1, "eps_est_next_y", _delta_ny_eur)
+                            ]:
+                                _v = _fe2r.get(_col)
+                                if _v is not None and pd.notnull(_v):
+                                    _fwd_x.append(_cy + _yr_offset)
+                                    _fwd_y.append(float(_v) * _fx_rate)  # → EUR
+                                    _fwd_cdata.append([
+                                        _delta_eur if _delta_eur is not None else float("nan"),
+                                        _conviction if _conviction is not None else float("nan")
+                                    ])
+                            if len(_fwd_x) > 1:
+                                _fc_deltas = [_delta_cy_eur, _delta_ny_eur]
+                                _text_labels = [""] + [
+                                    f"Est \u20ac{_fwd_y[i+1]:.2f}{_rev_arrow(_fc_deltas[i])}"
+                                    for i in range(len(_fwd_x) - 1)
+                                ]
+                                fig_fin.add_trace(
+                                    go.Scatter(
+                                        x=_fwd_x, y=_fwd_y,
+                                        name="EPS Consensus Forecast",
+                                        line=dict(color="#9b59b6", width=2.5, dash="dash"),
+                                        mode="lines+markers+text",
+                                        marker=dict(size=9, symbol="diamond"),
+                                        text=_text_labels,
+                                        textposition="top center",
+                                        customdata=_fwd_cdata,
+                                        hovertemplate=(
+                                            "<b>Year: %{x}</b><br>"
+                                            "EPS Forecast: \u20ac%{y:.2f}<br>"
+                                            "30d Revision: %{customdata[0]:+.2f}<br>"
+                                            "Analyst Conviction: %{customdata[1]:.0f}% \u2191"
+                                            "<extra></extra>"
+                                        )
+                                    ),
+                                    secondary_y=True
+                                )
+                                fig_fin.add_vrect(
+                                    x0=_fwd_x[1] - 0.4, x1=_fwd_x[-1] + 0.4,
+                                    fillcolor="rgba(155,89,182,0.07)",
+                                    line_width=0,
+                                    annotation_text="Forecast", annotation_position="top left",
+                                    annotation_font=dict(size=10, color="#9b59b6")
+                                )
+                    except Exception:
+                        pass  # Silently skip if forward estimates not available
+
                     fig_fin.update_layout(
                         template="plotly_dark", height=500,
                         margin=dict(l=20, r=20, t=60, b=20),
@@ -4665,6 +4760,7 @@ if active_tab == "3. Qualitative Audit (AI)":
                     fig_fin.update_yaxes(title_text="Earnings Per Share (€)", secondary_y=True)
                     
                     st.plotly_chart(fig_fin, use_container_width=True)
+
 
 
                 else:
@@ -4721,16 +4817,16 @@ if active_tab == "3. Qualitative Audit (AI)":
                                 _es_q["year"] = _es_q["quarter_date"].dt.year
                                 _es_q["quarter"] = _es_q["quarter_date"].dt.quarter
                                 # Pull eps_actual from same source as eps_estimate to avoid FX mismatch:
-                                # quarterly_financials.eps is FX-converted (USD→EUR) but eps_estimate is in USD
+                                # quarterly_financials.eps is FX-converted (USD→EUR).
+                                # eps_actual from earnings_surprise is RAW USD — do NOT use it
+                                # as the chart Y value or it will mix currencies on the same axis.
+                                # We keep eps_actual/eps_estimate/surprise_pct only for hover tooltip.
                                 df_fin_q_plot = df_fin_q_plot.merge(
                                     _es_q[["year", "quarter", "eps_actual", "eps_estimate", "surprise_pct"]],
                                     on=["year", "quarter"], how="left"
                                 )
-                                # Use eps_actual from earnings_surprise for chart Y2 when available
-                                # (same currency basis as eps_estimate)
-                                df_fin_q_plot["eps_chart"] = df_fin_q_plot["eps_actual"].where(
-                                    df_fin_q_plot["eps_actual"].notna(), df_fin_q_plot["eps"]
-                                )
+                                # Always plot EUR-converted eps from quarterly_financials
+                                df_fin_q_plot["eps_chart"] = df_fin_q_plot["eps"]
                             else:
                                 df_fin_q_plot["eps_chart"] = df_fin_q_plot["eps"]
                         else:
@@ -4804,7 +4900,97 @@ if active_tab == "3. Qualitative Audit (AI)":
                                 secondary_y=True
                             )
                         
+                        # EPS QUARTERLY FORECAST (Analyst Consensus — CQ & NQ)
+                        try:
+                            with get_db_connection() as _fe_q_conn:
+                                _fe_q = _fe_q_conn.execute(
+                                    """SELECT eps_est_cur_q, eps_est_next_q,
+                                              eps_trend_delta_30d, upgrade_ratio_30d
+                                       FROM marts.dim_forward_estimates WHERE ticker = ?""",
+                                    [deep_ticker]
+                                ).df()
+                            if not _fe_q.empty:
+                                import datetime as _dtq
+                                _now = _dtq.datetime.now()
+                                _cur_q  = (_now.month - 1) // 3 + 1
+                                _cur_qy = _now.year
+                                _next_q = _cur_q + 1 if _cur_q < 4 else 1
+                                _next_qy = _cur_qy if _cur_q < 4 else _cur_qy + 1
+
+                                # FX normalisation: forecast native currency → EUR
+                                _ticker_ccy_q = str(meta.get("currency") or "USD")
+                                _fx_rate_q = get_forex_rates(target="EUR", source=_ticker_ccy_q)
+
+                                # Revision metrics for quarterly (CQ only; NQ has no separate delta)
+                                _fe_qr = _fe_q.iloc[0]
+                                _qdelta = _fe_qr.get("eps_trend_delta_30d")
+                                _qratio = _fe_qr.get("upgrade_ratio_30d")
+                                _qdelta_eur = float(_qdelta) * _fx_rate_q if (_qdelta is not None and pd.notnull(_qdelta)) else None
+                                _qconviction = round(float(_qratio) * 100, 0) if (_qratio is not None and pd.notnull(_qratio)) else None
+
+                                def _qarrow(d):
+                                    if d is None: return ""
+                                    _a = "\u2191" if d > 0 else "\u2193"
+                                    return f" {_a}{abs(d):.2f}"
+
+                                _fq_labels, _fq_vals, _fq_cdata = [], [], []
+                                if not df_fin_q_plot.empty:
+                                    _last_q_row = df_fin_q_plot.iloc[-1]
+                                    _fq_labels.append(f"{int(_last_q_row['year'])} Q{int(_last_q_row['quarter'])}")
+                                    _fq_vals.append(float(_last_q_row["eps_chart"]) if pd.notnull(_last_q_row["eps_chart"]) else None)
+                                    _fq_cdata.append([float("nan"), float("nan")])
+
+                                for _qlabel, _qcol, _qd_eur in [
+                                    ("CQ (est)", "eps_est_cur_q",  _qdelta_eur),   # Current fiscal quarter
+                                    ("NQ (est)", "eps_est_next_q", None),           # Next fiscal quarter
+                                ]:
+                                    _qv = _fe_qr.get(_qcol)
+                                    if _qv is not None and pd.notnull(_qv):
+                                        _fq_labels.append(_qlabel)
+                                        _fq_vals.append(float(_qv) * _fx_rate_q)  # → EUR
+                                        _fq_cdata.append([
+                                            _qd_eur if _qd_eur is not None else float("nan"),
+                                            _qconviction if _qconviction is not None else float("nan")
+                                        ])
+
+                                if len(_fq_labels) > 1 and any(v is not None for v in _fq_vals[1:]):
+                                    _fq_texts = [""] + [
+                                        f"Est \u20ac{_fq_vals[i]:.2f}{_qarrow(_fq_cdata[i][0]) if not pd.isnull(_fq_cdata[i][0]) else ''}"
+                                        if _fq_vals[i] is not None else ""
+                                        for i in range(1, len(_fq_labels))
+                                    ]
+                                    fig_fin_q.add_trace(
+                                        go.Scatter(
+                                            x=_fq_labels, y=_fq_vals,
+                                            name="EPS Quarterly Forecast",
+                                            line=dict(color="#9b59b6", width=2.5, dash="dash"),
+                                            mode="lines+markers+text",
+                                            marker=dict(size=10, symbol="diamond"),
+                                            text=_fq_texts,
+                                            textposition="top center",
+                                            customdata=_fq_cdata,
+                                            hovertemplate=(
+                                                "<b>Quarter: %{x}</b><br>"
+                                                "EPS Forecast: \u20ac%{y:.2f}<br>"
+                                                "30d Revision (CY): %{customdata[0]:+.2f}<br>"
+                                                "Analyst Conviction: %{customdata[1]:.0f}% \u2191"
+                                                "<extra></extra>"
+                                            )
+                                        ),
+                                        secondary_y=True
+                                    )
+                                    if len(_fq_labels) > 1:
+                                        fig_fin_q.add_vrect(
+                                            x0=_fq_labels[1], x1=_fq_labels[-1],
+                                            fillcolor="rgba(155,89,182,0.08)", line_width=0,
+                                            annotation_text="Forecast", annotation_position="top left",
+                                            annotation_font=dict(size=10, color="#9b59b6")
+                                        )
+                        except Exception:
+                            pass  # Skip silently if data not available
+
                         fig_fin_q.update_layout(
+
                             template="plotly_dark", height=500,
                             margin=dict(l=20, r=20, t=60, b=20),
                             hovermode="x unified",
@@ -6609,7 +6795,191 @@ if active_tab == "7. Portfolio Builder":
                 st.toast(f"Alert rule created for {a_ticker}!")
                 st.success(f"✅ Rule saved: If **{a_ticker} {a_metric}** is **{a_condition} {a_value}**, notify **{a_email}**.")
 
+
+# ── ANALYST EXPECTATIONS (inserted after form) ───────────────────────────────
+        st.markdown("---")
+        st.markdown("<div style='margin-top:10px; padding:6px 12px; background:rgba(255,255,255,0.03); border-left:4px solid #9b59b6; color:#9b59b6; font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:1.5px;'>🔭 LAYER 5: ANALYST EXPECTATIONS (FORWARD-LOOKING)</div>", unsafe_allow_html=True)
+
+        _fe_df = pd.DataFrame()
+        _fe_err_msg = ""
+        try:
+            with get_db_connection() as _fe_conn:
+                _fe_df = _fe_conn.execute("""
+                    SELECT * FROM marts.dim_forward_estimates WHERE ticker = ?
+                """, [deep_ticker]).df()
+        except Exception as _fe_err:
+            _fe_err_msg = str(_fe_err)
+
+        if _fe_df.empty:
+            if _fe_err_msg:
+                st.warning(f"⚠️ Forward estimates error: `{_fe_err_msg}`")
+            else:
+                st.info("🔭 No analyst estimates available for this ticker yet. Run the full ETL pipeline to populate forward estimates.")
+        else:
+            _fe = _fe_df.iloc[0]
+
+            def _fv(col, default=None):
+                v = _fe.get(col)
+                return float(v) if v is not None and pd.notnull(v) else default
+
+            # ── ROW 1: Forward Valuation KPIs ──────────────────────────────────
+            kc1, kc2, kc3, kc4, kc5 = st.columns(5)
+
+            # Forward P/E: computed on-the-fly — cur_price (EUR) ÷ eps_est_next_y (native→EUR)
+            # NOT read from DB because ETL stored it with a EUR/USD currency mismatch.
+            _fwd_pe = None
+            try:
+                _fe_ccy   = str(meta.get("currency") or "USD")
+                _fe_fxr   = get_forex_rates(target="EUR", source=_fe_ccy)
+                _eps_ny_eur = (_fv("eps_est_next_y") or 0) * _fe_fxr
+                _fe_price_eur = _fv("cur_price")   # already EUR from fct_daily_returns
+                if _eps_ny_eur and _eps_ny_eur > 0 and _fe_price_eur and _fe_price_eur > 0:
+                    _fwd_pe = round(_fe_price_eur / _eps_ny_eur, 2)
+            except Exception:
+                _fwd_pe = None
+
+            try: _trail_pe = float(meta.get("pe_ratio")) if pd.notnull(meta.get("pe_ratio")) else None
+            except: _trail_pe = None
+            _eps_g_cy  = _fv("eps_growth_cur_y")
+            _eps_g_ny  = _fv("eps_growth_next_y")
+            _rev_g_cy  = _fv("rev_growth_cur_y")
+            _rev_g_ny  = _fv("rev_growth_next_y")
+            _n_analysts     = _fv("n_analysts_cur_y")
+            _upgrades       = _fv("upgrades_30d")
+            _downgrades     = _fv("downgrades_30d")
+            _revision_momentum = _fe.get("revision_momentum", "NEUTRAL")
+
+            with kc1:
+                _pe_color  = "#2ecc71" if (_fwd_pe and _trail_pe and _fwd_pe < _trail_pe) else "#f1c40f"
+                _pe_str    = f"{_fwd_pe:.1f}x" if _fwd_pe else "N/A"
+                _delta_str = f"vs Trail {_trail_pe:.1f}x" if _trail_pe else ""
+                st.markdown(f"""
+                <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08);
+                            border-radius:8px; padding:12px; text-align:center;'>
+                    <div style='color:#8899aa; font-size:0.65rem; text-transform:uppercase;'>Forward P/E (NTM)</div>
+                    <div style='color:{_pe_color}; font-size:1.4rem; font-weight:900; font-family:monospace;'>{_pe_str}</div>
+                    <div style='color:#556677; font-size:0.65rem;'>{_delta_str}</div>
+                </div>""", unsafe_allow_html=True)
+
+            with kc2:
+                _epsg_color = "#2ecc71" if _eps_g_cy and _eps_g_cy > 0 else "#e74c3c"
+                st.markdown(f"""
+                <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08);
+                            border-radius:8px; padding:12px; text-align:center;'>
+                    <div style='color:#8899aa; font-size:0.65rem; text-transform:uppercase;'>EPS Growth (CY)</div>
+                    <div style='color:{_epsg_color}; font-size:1.4rem; font-weight:900; font-family:monospace;'>{f"{_eps_g_cy*100:+.1f}%" if _eps_g_cy is not None else "N/A"}</div>
+                    <div style='color:#556677; font-size:0.65rem;'>NTY: {f"{_eps_g_ny*100:+.1f}%" if _eps_g_ny is not None else "N/A"}</div>
+                </div>""", unsafe_allow_html=True)
+
+            with kc3:
+                _revg_color = "#2ecc71" if _rev_g_cy and _rev_g_cy > 0 else "#e74c3c"
+                st.markdown(f"""
+                <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08);
+                            border-radius:8px; padding:12px; text-align:center;'>
+                    <div style='color:#8899aa; font-size:0.65rem; text-transform:uppercase;'>Rev Growth (CY)</div>
+                    <div style='color:{_revg_color}; font-size:1.4rem; font-weight:900; font-family:monospace;'>{f"{_rev_g_cy*100:+.1f}%" if _rev_g_cy is not None else "N/A"}</div>
+                    <div style='color:#556677; font-size:0.65rem;'>NTY: {f"{_rev_g_ny*100:+.1f}%" if _rev_g_ny is not None else "N/A"}</div>
+                </div>""", unsafe_allow_html=True)
+
+            with kc4:
+                _mom_color = {"POSITIVE": "#2ecc71", "NEGATIVE": "#e74c3c", "NEUTRAL": "#f1c40f"}.get(_revision_momentum, "#f1c40f")
+                _mom_icon  = {"POSITIVE": "⬆️", "NEGATIVE": "⬇️", "NEUTRAL": "➡️"}.get(_revision_momentum, "➡️")
+                st.markdown(f"""
+                <div style='background:rgba(255,255,255,0.03); border:1px solid {_mom_color}44;
+                            border-radius:8px; padding:12px; text-align:center;'>
+                    <div style='color:#8899aa; font-size:0.65rem; text-transform:uppercase;'>Revision Signal</div>
+                    <div style='color:{_mom_color}; font-size:1.2rem; font-weight:900;'>{_mom_icon} {_revision_momentum}</div>
+                    <div style='color:#556677; font-size:0.65rem;'>{int(_upgrades or 0)}↑ / {int(_downgrades or 0)}↓ (30d)</div>
+                </div>""", unsafe_allow_html=True)
+
+            with kc5:
+                st.markdown(f"""
+                <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08);
+                            border-radius:8px; padding:12px; text-align:center;'>
+                    <div style='color:#8899aa; font-size:0.65rem; text-transform:uppercase;'>Analyst Coverage</div>
+                    <div style='color:#e8eaf6; font-size:1.4rem; font-weight:900; font-family:monospace;'>{int(_n_analysts) if _n_analysts else "N/A"}</div>
+                    <div style='color:#556677; font-size:0.65rem;'>analysts covering</div>
+                </div>""", unsafe_allow_html=True)
+
+            st.markdown("<div style='margin-top:14px;'></div>", unsafe_allow_html=True)
+
+            # ── ROW 2: Charts ────────────────────────────────────────────────────
+            ch_l, ch_r = st.columns([3, 2])
+
+            with ch_l:
+                _hist_eps = annual_fin[annual_fin["ticker"] == deep_ticker].sort_values("year")[["year", "eps"]].dropna()
+                import datetime as _dt
+                _cur_yr = _dt.datetime.now().year
+                _fwd_periods = []
+                for _lbl, _col, _offset in [("CY", "eps_est_cur_y", 0), ("NTY", "eps_est_next_y", 1)]:
+                    _v = _fv(_col)
+                    if _v is not None:
+                        _fwd_periods.append({"year": _cur_yr + _offset, "eps": _v})
+
+                fig_eps = go.Figure()
+                if not _hist_eps.empty:
+                    fig_eps.add_trace(go.Bar(
+                        x=_hist_eps["year"].tolist(), y=_hist_eps["eps"].tolist(),
+                        name="Historical EPS", marker_color="#3498db", opacity=0.85
+                    ))
+                if _fwd_periods:
+                    fig_eps.add_trace(go.Bar(
+                        x=[p["year"] for p in _fwd_periods], y=[p["eps"] for p in _fwd_periods],
+                        name="Consensus Estimate", marker_color="#9b59b6",
+                        opacity=0.75, marker_pattern_shape="/"
+                    ))
+                fig_eps.update_layout(
+                    template="plotly_dark", height=260,
+                    margin=dict(l=0, r=0, t=30, b=0),
+                    title=dict(text="EPS Trajectory (Historical + Consensus Forecast)",
+                               font=dict(size=12, color="#8899aa"), x=0),
+                    legend=dict(orientation="h", yanchor="bottom", y=1.0,
+                                xanchor="right", x=1, font=dict(size=10)),
+                    barmode="group", yaxis_title="EPS ($)",
+                    xaxis=dict(tickmode="linear", dtick=1)
+                )
+                st.plotly_chart(fig_eps, use_container_width=True)
+
+            with ch_r:
+                _up    = int(_upgrades or 0)
+                _down  = int(_downgrades or 0)
+                _total = _up + _down
+                _up_pct   = (_up / _total * 100) if _total > 0 else 0
+                _down_pct = (_down / _total * 100) if _total > 0 else 0
+                _eps_delta_30d = _fv("eps_trend_delta_30d")
+                _delta_color = "#2ecc71" if _eps_delta_30d and _eps_delta_30d > 0 else "#e74c3c"
+                _delta_sign  = "+" if _eps_delta_30d and _eps_delta_30d > 0 else ""
+
+                st.markdown(f"""
+                <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08);
+                            border-radius:8px; padding:16px; height:260px; box-sizing:border-box;'>
+                    <div style='color:#8899aa; font-size:0.7rem; font-weight:700;
+                                text-transform:uppercase; margin-bottom:14px;'>Analyst Revision Sentiment (30d)</div>
+                    <div style='display:flex; justify-content:space-between;
+                                font-size:0.72rem; color:#8899aa; margin-bottom:4px;'>
+                        <span>⬆️ Upgrades: <b style='color:#2ecc71;'>{_up}</b></span>
+                        <span>⬇️ Downgrades: <b style='color:#e74c3c;'>{_down}</b></span>
+                    </div>
+                    <div style='background:rgba(255,255,255,0.08); border-radius:4px;
+                                height:14px; overflow:hidden; display:flex;'>
+                        <div style='width:{_up_pct:.0f}%; background:#2ecc71; border-radius:4px 0 0 4px;'></div>
+                        <div style='width:{_down_pct:.0f}%; background:#e74c3c; border-radius:0 4px 4px 0;'></div>
+                    </div>
+                    <div style='margin-top:20px; border-top:1px solid rgba(255,255,255,0.07); padding-top:14px;'>
+                        <div style='color:#8899aa; font-size:0.65rem; text-transform:uppercase; margin-bottom:6px;'>EPS Estimate Drift (30d)</div>
+                        <div style='color:{_delta_color}; font-size:1.6rem; font-weight:900; font-family:monospace;'>
+                            {f"{_delta_sign}{_eps_delta_30d:+.3f}" if _eps_delta_30d is not None else "N/A"}
+                        </div>
+                        <div style='color:#556677; font-size:0.65rem; margin-top:2px;'>
+                            {"Analysts raising estimates ↑" if _eps_delta_30d and _eps_delta_30d > 0 else "Analysts cutting estimates ↓" if _eps_delta_30d and _eps_delta_30d < 0 else "Estimates stable"}
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
+
 # ── FEATURE 3: AI Price & Monte Carlo Forecasting ────────────────────────────
+
+
 
 
 
