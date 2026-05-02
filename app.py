@@ -3324,7 +3324,7 @@ if active_tab == "1. Market Regime":
             fig_spy.update_layout(
                 template="plotly_dark", height=500,
                 margin=dict(l=0, r=0, t=10, b=0),
-                yaxis_title="Price (USD)",
+                yaxis_title="Price (€)",  # FIX: SPY prices are normalized to EUR in line 404-408
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
             )
             st.plotly_chart(fig_spy, use_container_width=True)
