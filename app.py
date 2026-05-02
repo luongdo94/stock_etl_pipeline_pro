@@ -1650,18 +1650,21 @@ def compute_institutional_rating(
     sm_layer: str = "NONE"
 ) -> dict:
     """
-    Unified 6-Pillar Institutional Rating Engine (v14.0).
+    Unified 6-Pillar Institutional Rating Engine (v15.0).
     Used by BOTH Opportunity Radar Screener and Deep Dive tab to ensure
     consistent Action labels across the entire dashboard.
 
-    NEW in v14.0: Smart Money pillar now uses soft scoring based on strength:
-    - Strength < 40: 0 points (weak signal, ignore)
+    v15.0 anti-bias patch (2 changes):
+    1. Smart Money max points capped at ±1.0 (was ±1.25).
+       Previously SM had 25% overweight vs. all other pillars (each worth 1.0).
+       Now SM is a confirming signal, not a deciding vote.
+    2. STRONG BUY requires p_qual_c == "#00ffcc" (AI Score >= 65).
+       Strong dòng tiền alone cannot elevate a low-fundamental stock to top tier.
+
+    Smart Money soft scoring (v15.0):
+    - Strength < 40:  0 points (weak signal, ignore)
     - Strength 40-65: 0.5 points (moderate signal)
-    - Strength 65-80: 1.0 points (strong signal)
-    - Strength > 80: 1.25 points (very strong signal, bonus)
-    
-    This allows STRONG BUY to avoid weak OBV signals while rewarding
-    truly strong divergence patterns.
+    - Strength >= 65: 1.0 points (strong signal — hard cap, no overweight bonus)
 
     Returns:
         dict with keys:
@@ -1671,6 +1674,11 @@ def compute_institutional_rating(
             sm_label (str) — Smart Money display label with strength
     """
     # ── PILLAR 1: TECHNICAL TREND ──────────────────────────────────────────
+    # Known limitation: Golden Cross / Death Cross are lagging indicators (MA50 vs MA200).
+    # A portion of the move typically occurs before the cross is confirmed.
+    # TODO (future): Add EMA20 proximity check (price > EMA20) or volume-confirmed breakout
+    #   to filter false signals and allow earlier entry. Requires fct_daily_returns to
+    #   expose ema_20 and vol_vs_avg_20d columns from the transform layer.
     _ma_upper = ma_sig.upper() if ma_sig else ""
     if _ma_upper == "STRONG BULL" and latest_rsi < 70:
         p_trend_c = "#00ffcc"            # Golden Cross + RSI not overbought → strongest signal
@@ -1720,9 +1728,27 @@ def compute_institutional_rating(
         p_val_c = "#95a5a6"
 
     # ── PILLAR 4: RISK (52-Week Position) ───────────────────────────────
-    if w52_pos > 80:   p_risk_c = "#e74c3c"
-    elif w52_pos < 20: p_risk_c = "#2ecc71"
-    else:              p_risk_c = "#f1c40f"
+    # CANSLIM Breakout Exception: near 52-week high is a BUY signal — not a risk —
+    # when confirmed by STRONG BULL trend (MA alignment) + institutional accumulation (SM).
+    # Per O'Neil CANSLIM methodology: stocks breaking to new highs on volume are leaders,
+    # not laggards. Penalizing them here would systematically exclude momentum leaders.
+    # Requires 3 concurrent conditions to avoid false positives:
+    #   1. w52_pos > 80  — price near 52-week high
+    #   2. STRONG BULL trend — MA50 > MA200 with positive spread (confirms structural uptrend)
+    #   3. SM ACCUMULATION — institutional buying detected (volume proxy for CANSLIM criterion)
+    _is_canslim_breakout = (
+        w52_pos > 80 and
+        _ma_upper == "STRONG BULL" and
+        sm_status.upper() == "ACCUMULATION"
+    )
+    if _is_canslim_breakout:
+        p_risk_c = "#3498db"    # Breakout — neutral-positive, not a penalty
+    elif w52_pos > 80:
+        p_risk_c = "#e74c3c"    # Near-high without confirmation — elevated risk
+    elif w52_pos < 20:
+        p_risk_c = "#2ecc71"    # Deep in range — strong support, low downside risk
+    else:
+        p_risk_c = "#f1c40f"    # Mid-range — watch and wait
 
     # ── PILLAR 5: CONVICTION (Risk / Reward) ────────────────────────────
     if rr > 2.5:   p_conv_c = "#00ffcc"
@@ -1736,14 +1762,10 @@ def compute_institutional_rating(
     sm_label = "NEUTRAL"
     
     if sm_signal == "ACCUMULATION":
-        if sm_strength >= 80:
-            sm_points = 1.25  # Very strong accumulation (bonus)
+        if sm_strength >= 65:
+            sm_points = 1.0   # Strong accumulation — hard cap ±1.0 (v15.0)
             sm_label = "ACCUMULATION_STRONG"
-            p_sm_c = "#00ffcc"
-        elif sm_strength >= 65:
-            sm_points = 1.0   # Strong accumulation
-            sm_label = "ACCUMULATION_STRONG"
-            p_sm_c = "#2ecc71"
+            p_sm_c = "#00ffcc" if sm_strength >= 80 else "#2ecc71"
         elif sm_strength >= 40:
             sm_points = 0.5   # Moderate accumulation
             sm_label = "ACCUMULATION_WEAK"
@@ -1752,16 +1774,12 @@ def compute_institutional_rating(
             sm_points = 0.0   # Weak signal, ignore
             sm_label = "ACCUMULATION_WEAK"
             p_sm_c = "#95a5a6"
-    
+
     elif sm_signal == "DISTRIBUTION":
-        if sm_strength >= 80:
-            sm_points = -1.25  # Very strong distribution (penalty)
+        if sm_strength >= 65:
+            sm_points = -1.0   # Strong distribution — hard cap ±1.0 (v15.0)
             sm_label = "DISTRIBUTION_STRONG"
-            p_sm_c = "#c0392b"
-        elif sm_strength >= 65:
-            sm_points = -1.0   # Strong distribution
-            sm_label = "DISTRIBUTION_STRONG"
-            p_sm_c = "#e74c3c"
+            p_sm_c = "#c0392b" if sm_strength >= 80 else "#e74c3c"
         elif sm_strength >= 40:
             sm_points = -0.5   # Moderate distribution
             sm_label = "DISTRIBUTION_WEAK"
@@ -1770,7 +1788,7 @@ def compute_institutional_rating(
             sm_points = 0.0    # Weak signal, ignore
             sm_label = "DISTRIBUTION_WEAK"
             p_sm_c = "#95a5a6"
-    
+
     else:  # NEUTRAL
         sm_points = 0.0
         sm_label = "NEUTRAL"
@@ -1790,16 +1808,17 @@ def compute_institutional_rating(
         (1 if p_conv_c  in ["#2ecc71", "#00ffcc"] else 0)
     )
     
-    # Add Smart Money soft points (can be -1.25 to +1.25)
+    # Add Smart Money soft points (can be -1.0 to +1.0, capped since v15.0)
     pts += sm_points
-    
-    # Total possible: 5.0 (binary) + 1.25 (SM bonus) = 6.25
-    # Adjusted thresholds:
-    # - STRONG BUY: >= 5.0 (was >= 5, now requires strong SM or all other pillars)
-    # - BUY: >= 3.5 (was >= 3, slightly higher bar)
-    # - SELL: Strong distribution can push below 2.0
-    
-    if pts >= 5.0 and p_qual_c != "#e74c3c":
+
+    # Total possible: 5.0 (binary) + 1.0 (SM) = 6.0
+    # Thresholds (v15.0):
+    # - STRONG BUY: >= 5.0 AND AI Quality must be top-tier (#00ffcc = ai_score >= 65)
+    #   SM alone cannot elevate a weak-fundamental stock to top tier
+    # - BUY: >= 3.5 with trend not bearish
+    # - SELL: triggered by weak quality + low pts, or strong distribution
+
+    if pts >= 5.0 and p_qual_c == "#00ffcc":
         action_label, action_color = "STRONG BUY",          "#00ffcc"
     elif pts >= 3.5 and p_trend_c != "#e74c3c":
         action_label, action_color = "BUY / ACCUMULATE",    "#2ecc71"
@@ -8133,21 +8152,21 @@ if active_tab == "4. Quantitative Forecast (ML)":
         elif _conv_pts >= 2 and _sig_rr >= 1.0:
             _sig_verdict, _sig_color, _sig_badge = "BUY / ACCUMULATE", "#2ecc71", "MODERATE CONVICTION"
             _sig_desc = (f"2+ pillars constructive. Target €{_ai_target:.2f} ({_ai_upside:+.1f}%), "
-                         f"Smart Money: {sm_spirit}, XGBoost: {xgb_signal} ({xgb_conf*100:.0f}%). "
+                         f"Smart Money: {sm_signal}, XGBoost: {xgb_signal} ({xgb_conf*100:.0f}%). "
                          f"R/R {_sig_rr:.1f}x — partial position entry supported.")
         elif _ai_upside <= -3:
             _sig_verdict, _sig_color, _sig_badge = "REDUCE / HEDGE", "#e74c3c", "BEARISH SIGNAL"
             _sig_desc = (f"Model projects {_ai_upside:.1f}% downside to €{_ai_target:.2f}. "
-                         f"Smart Money: {sm_spirit}, XGBoost: {xgb_signal}. "
+                         f"Smart Money: {sm_signal}, XGBoost: {xgb_signal}. "
                          f"Reduce exposure or hedge until price stabilizes above €{_ai_stop:.2f}.")
         elif _conv_pts == 0:
             _sig_verdict, _sig_color, _sig_badge = "AVOID / WAIT", "#e74c3c", "NO CONVICTION"
-            _sig_desc = (f"All 4 pillars negative: Upside {_ai_upside:+.1f}%, Smart Money {sm_spirit}, "
+            _sig_desc = (f"All 4 pillars negative: Upside {_ai_upside:+.1f}%, Smart Money {sm_signal}, "
                          f"sentiment {sent_label}, XGBoost {xgb_signal}. Stay flat.")
         else:
             _sig_verdict, _sig_color, _sig_badge = "NEUTRAL / MONITOR", "#f1c40f", "MIXED SIGNALS"
             _sig_desc = (f"Conflicting signals: Projects {_ai_upside:+.1f}% to €{_ai_target:.2f}. "
-                         f"XGBoost: {xgb_signal} ({xgb_conf*100:.0f}%), Smart Money: {sm_spirit}. "
+                         f"XGBoost: {xgb_signal} ({xgb_conf*100:.0f}%), Smart Money: {sm_signal}. "
                          f"Monitor for confluence before entry.")
 
         # ── Reasoning pills ─────────────────────────────────────────────────

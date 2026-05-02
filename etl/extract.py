@@ -407,8 +407,14 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
 
         # Determine currency and FX rate
         currency = financials.get('financialCurrency') or summary.get('currency') or _guess_currency(ticker)
-        effective_fx_rate = fx_rates.get(currency, 1.0)
-        
+        # GBp (UK pence) fix: Yahoo reports financials in pence for *.L tickers,
+        # but our FX table only has GBPEUR=X (pounds). Use the pound rate and divide by 100.
+        _is_gbp_pence = (currency == "GBp") or (ticker.upper().endswith(".L") and currency in ("GBp", "GBP"))
+        if _is_gbp_pence:
+            effective_fx_rate = fx_rates.get("GBP", fx_rates.get("GBp", 1.0)) / 100.0
+        else:
+            effective_fx_rate = fx_rates.get(currency, 1.0)
+
         def norm_val(val):
             if val is None or (isinstance(val, (float, int)) and pd.isna(val)): return None
             try: return float(val) * effective_fx_rate
