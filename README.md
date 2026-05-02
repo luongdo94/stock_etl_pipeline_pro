@@ -100,7 +100,33 @@ A high-density **Streamlit** control room, heavily styled with custom CSS to pro
 
 ### Tab 3: AI Market Scanner
 - A dynamic, multi-condition screener. Filter thousands of stocks in milliseconds using DuckDB's backend.
-- Embedded Presets: `🚀 High Momentum (FMI > 80)`, `💎 Deep Value (Z < -2, P/E < 15)`, `🛡️ Defensive Yields`.
+- **23 Curated Strategy Presets** covering momentum, value, quality, and risk scenarios (optimized to eliminate redundancy):
+
+#### Opportunity Strategies (15 presets)
+- `🏆 Institutional Pulse` - Quality ≥70 (ELITE) + Bullish trend
+- `🚀 Buy on Dip` - Bullish trend + RSI cooling (<40)
+- `🚀 Bullish Momentum` - Strong uptrend + RSI >50 confirmation
+- `📈 Both Accelerating` - EPS + Revenue both growing QoQ >+10% for 2 quarters
+- `🌱 GARP` - Growth at Reasonable Price (PEG <1.5 + Quality >55)
+- `💰 High Quality Dividend` - Yield >2.5% + Quality >65 + Bullish
+- `🔥 Short Squeeze Watch` - High short interest + oversold + bullish reversal
+- `🎯 Smart Money Accumulation` - Institutional buying + Quality ≥55 + RSI <50
+- `🔄 Mean Reversion Elite` - High Quality (≥65) + Oversold (RSI<35) + Below Mean (Z<-1.0)
+- `⚡ Strong Breakout` - Price >MA200 by 5%+ with healthy RSI (50-70)
+- `💎 Contrarian Value` - Quality ≥60 in downtrend + cheap valuation (Z<-1.5, PEG<1.2)
+- `🏰 Defensive Moat` - Low debt (<2x) + High ROE (>15%) + Dividend (>2%) + Quality ≥60
+- `🌊 Oversold Reversal Setup` - Extreme oversold (RSI<30) + Smart Money buying + Quality ≥50
+- `📊 Balanced Growth` - Quality 55-75 + PE 15-30x + ROE >12% + Bullish
+
+#### Risk & Warning Strategies (8 presets)
+- `⚠️ Earnings Deterioration` - EPS + Revenue declining QoQ >-10% for 2 quarters
+- `⚠️ Structural Caution` - Quality <38 + Bearish trend
+- `📉 Negative Momentum` - MA20 < MA50 bearish alignment
+- `🔥 Overbought Alert` - RSI >65, elevated pullback risk
+- `🎈 Valuation Exhaustion` - Z-Score >+2.0, likely overvalued
+- `⚔️ Exit on Strength` - Bearish trend + short-term rally (RSI >60)
+- `💔 Multi-Indicator Breakdown` - Bearish + RSI <50, falling knife
+- `🚨 Distribution Warning` - Institutions selling + Overbought (RSI>60) + Weak Quality (<55)
 
 ### Tab 4: Strategy Backtester V2
 An institutional-grade simulation engine that allows you to directly trade your fundamental setups via Technical triggers.

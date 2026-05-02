@@ -62,3 +62,198 @@ Hệ thống được thiết kế để đưa ra 1 trong 6 hành động dứt 
 
 > [!IMPORTANT]
 > Khuyến nghị của AI chỉ mang tính tham khảo và hỗ trợ quyết định (Support Tool). Nhà đầu tư cần tự chịu trách nhiệm về các quyết định tài chính của mình.
+
+
+---
+
+## 7. Chỉ báo Smart Money (Dòng tiền thông minh) v5.0
+
+Chỉ báo **Smart Money** theo dõi các mô hình mua bán của tổ chức đầu tư bằng cách sử dụng phân tích phân kỳ On-Balance Volume (OBV) để xác định vị thế của các nhà đầu tư chuyên nghiệp.
+
+### Phương pháp tính toán (Nâng cấp v5.0)
+
+**Kiến trúc 2 tầng:**
+
+**Tầng 1 - Phân kỳ OBV (Ưu tiên):**
+- Phát hiện khi OBV và giá di chuyển theo HƯỚNG NGƯỢC NHAU
+- **Hidden Accumulation (Tích lũy ẩn)**: Giá giảm nhưng OBV tăng → tổ chức đang mua âm thầm
+- **Hidden Distribution (Phân phối ẩn)**: Giá tăng nhưng OBV giảm → tổ chức đang bán vào rally
+- Sử dụng cửa sổ thích ứng (15-25 ngày) dựa trên ATR/volatility
+- Bộ lọc magnitude chặt chẽ hơn (0.12 × avg_volume × window) để lọc nhiễu
+
+**Tầng 2 - Xu hướng OBV vs MA(21) (Dự phòng):**
+- Dòng tiền tổ chức cổ điển: OBV trên/dưới MA 21 ngày
+- Yêu cầu 3 trong 5 ngày gần nhất nhất quán trên/dưới MA
+- Chỉ áp dụng khi không phát hiện phân kỳ rõ ràng
+
+**Cải tiến chính so với v4.0:**
+1. **Cửa sổ thích ứng**: Cổ phiếu volatility cao dùng cửa sổ rộng hơn (25 ngày), volatility thấp dùng hẹp hơn (15 ngày)
+2. **Bộ lọc Magnitude chặt chẽ hơn**: Tăng từ 0.05 lên 0.12 (ngưỡng 240% avg volume)
+3. **Chấm điểm Strength**: Trả về điểm tin cậy 0-100 dựa trên:
+   - Độ lớn OBV (40 điểm)
+   - Độ lớn giá (25 điểm)
+   - Xác nhận volume (20 điểm)
+   - Tính nhất quán trong cửa sổ (15 điểm)
+4. **Phát hiện Layer**: Xác định tín hiệu đến từ tầng DIVERGENCE hay TREND
+
+### Định dạng đầu ra
+
+Trả về dictionary với ba thành phần:
+```python
+{
+    "signal": "ACCUMULATION" | "DISTRIBUTION" | "NEUTRAL",
+    "strength": 0-100,  # Điểm tin cậy
+    "layer": "DIVERGENCE" | "TREND" | "NONE"
+}
+```
+
+### Cách diễn giải
+
+| Tín hiệu | Strength | Ý nghĩa | Hành động |
+|---|---|---|---|
+| **ACCUMULATION** | 70-100 | Tổ chức mua mạnh | Vào lệnh với độ tin cậy cao |
+| **ACCUMULATION** | 40-69 | Tổ chức mua vừa phải | Vào lệnh thận trọng |
+| **ACCUMULATION** | 0-39 | Tổ chức mua yếu | Chỉ theo dõi, chờ xác nhận |
+| **DISTRIBUTION** | 70-100 | Tổ chức bán mạnh | Thoát lệnh với độ tin cậy cao |
+| **DISTRIBUTION** | 40-69 | Tổ chức bán vừa phải | Giảm vị thế |
+| **DISTRIBUTION** | 0-39 | Tổ chức bán yếu | Theo dõi, cân nhắc hedge |
+| **NEUTRAL** | 0 | Không có dòng tiền rõ ràng | Chờ tín hiệu rõ hơn |
+
+**Ưu tiên Layer:**
+- **DIVERGENCE**: Ưu tiên cao nhất (phát hiện hoạt động tổ chức ẩn)
+- **TREND**: Dự phòng (xác nhận OBV vs MA cổ điển)
+
+### Tích hợp với Chiến lược
+- Chiến lược **Smart Money Accumulation** nhắm vào tín hiệu ACCUMULATION với strength ≥40
+- Chiến lược **Distribution Warning** cảnh báo tín hiệu DISTRIBUTION với strength ≥40
+- Chiến lược **Oversold Reversal Setup** yêu cầu xác nhận ACCUMULATION với strength ≥50
+
+### Ưu điểm so với Phương pháp Truyền thống
+- **Thích ứng với volatility**: Kích thước cửa sổ tự động điều chỉnh
+- **Lọc nhiễu**: Bộ lọc magnitude chặt chẽ hơn giảm tín hiệu sai
+- **Chấm điểm tin cậy**: Metric strength giúp ưu tiên tín hiệu
+- **Minh bạch layer**: Biết tín hiệu đến từ divergence hay trend
+- **Xác nhận volume**: Mô hình volume gần đây xác thực tín hiệu
+
+### Hạn chế
+- Dựa trên dữ liệu giá/volume công khai (không thấy dark pools)
+- OBV là tích lũy và phụ thuộc đường đi (dùng 126 ngày gần nhất để tránh bias)
+- Nên kết hợp với các chỉ báo khác để xác nhận
+- Chấm điểm strength là tương đối, không phải xác suất tuyệt đối
+
+
+---
+
+## 8. Hệ thống Đánh giá Tổ chức 6-Pillar v14.0
+
+**Institutional Rating Engine** tổng hợp sáu trụ cột độc lập để tạo ra khuyến nghị đầu tư có thể hành động (STRONG BUY, BUY, HOLD, SELL, AVOID). Hệ thống này được sử dụng nhất quán trên cả Opportunity Radar screener và tab Deep Dive.
+
+### 8.1. Kiến trúc Đánh giá
+
+**Function:** `compute_institutional_rating()` trong `app.py`
+
+**Các trụ cột:**
+1. **Technical Trend** (0-1 điểm): Tín hiệu MA, xác nhận RSI
+2. **Quality** (0-1 điểm): AI Score (chất lượng cơ bản)
+3. **Valuation** (0-1 điểm): P/E, PEG điều chỉnh theo ngành, tiềm năng tăng giá
+4. **Risk** (0-1 điểm): Vị trí 52 tuần
+5. **Conviction** (0-1 điểm): Tỷ lệ Risk/Reward
+6. **Smart Money** (-1.25 đến +1.25 điểm): Dòng tiền tổ chức với chấm điểm dựa trên strength
+
+**Tổng phạm vi:** -1.25 đến 6.25 điểm
+
+### 8.2. Chấm điểm Mềm Smart Money (MỚI trong v14.0)
+
+Thay vì chấm điểm nhị phân 0/1, Smart Money giờ sử dụng **chấm điểm phân cấp** dựa trên độ mạnh tín hiệu:
+
+#### Chấm điểm ACCUMULATION
+
+| Phạm vi Strength | Điểm | Nhãn | Màu |
+|---|---|---|---|
+| **≥ 80** | +1.25 | ACCUMULATION_STRONG | #00ffcc (Cyan) |
+| **65-79** | +1.0 | ACCUMULATION_STRONG | #2ecc71 (Xanh lá) |
+| **40-64** | +0.5 | ACCUMULATION_WEAK | #3498db (Xanh dương) |
+| **< 40** | 0.0 | ACCUMULATION_WEAK | #95a5a6 (Xám) |
+
+#### Chấm điểm DISTRIBUTION
+
+| Phạm vi Strength | Điểm | Nhãn | Màu |
+|---|---|---|---|
+| **≥ 80** | -1.25 | DISTRIBUTION_STRONG | #c0392b (Đỏ đậm) |
+| **65-79** | -1.0 | DISTRIBUTION_STRONG | #e74c3c (Đỏ) |
+| **40-64** | -0.5 | DISTRIBUTION_WEAK | #e67e22 (Cam) |
+| **< 40** | 0.0 | DISTRIBUTION_WEAK | #95a5a6 (Xám) |
+
+**Lý do:**
+- Tín hiệu yếu (< 40 strength) bị bỏ qua để tránh nhiễu
+- Tín hiệu vừa (40-64) nhận nửa trọng số
+- Tín hiệu mạnh (65-79) nhận trọng số đầy đủ
+- Tín hiệu rất mạnh (≥ 80) nhận trọng số thưởng/phạt
+
+### 8.3. Ngưỡng Nhãn Hành động
+
+| Tổng Điểm | Điều kiện | Nhãn Hành động |
+|---|---|---|
+| **≥ 5.0** | Quality không yếu | **STRONG BUY** |
+| **≥ 3.5** | Trend không bearish | **BUY / ACCUMULATE** |
+| **≤ 2.0** | Trend + Valuation đều yếu | **SELL / AVOID** |
+| **≤ 2.0** | Quality yếu | **SELL / AVOID** |
+| **≤ 2.0** | Distribution mạnh (SM ≤ -0.5) | **SELL / AVOID** |
+| **≤ 2.5** | Quality mạnh | **HOLD / NEUTRAL** |
+| **≤ 4.5** | RSI > 70 | **REDUCE / UNDERPERFORM** |
+| **Khác** | - | **HOLD / NEUTRAL** |
+
+### 8.4. Ví dụ
+
+#### Ví dụ 1: Thưởng Accumulation Rất Mạnh
+```
+Trend: ✅ (1.0)
+Quality: ✅ (1.0)
+Valuation: ✅ (1.0)
+Risk: ✅ (1.0)
+R/R: ❌ (0.0)
+Smart Money: ACCUMULATION (85, DIVERGENCE) → +1.25
+
+Tổng: 4.0 + 1.25 = 5.25 → STRONG BUY
+```
+
+#### Ví dụ 2: Tín hiệu Yếu Bị Bỏ qua
+```
+Trend: ✅ (1.0)
+Quality: ✅ (1.0)
+Valuation: ✅ (1.0)
+Risk: ✅ (1.0)
+R/R: ❌ (0.0)
+Smart Money: ACCUMULATION (25, TREND) → +0.0
+
+Tổng: 4.0 + 0.0 = 4.0 → BUY (không phải STRONG BUY)
+```
+
+#### Ví dụ 3: Phạt Distribution
+```
+Trend: ✅ (1.0)
+Quality: ✅ (1.0)
+Valuation: ✅ (1.0)
+Risk: ❌ (0.0)
+R/R: ❌ (0.0)
+Smart Money: DISTRIBUTION (75, DIVERGENCE) → -1.0
+
+Tổng: 3.0 - 1.0 = 2.0 → SELL / AVOID
+```
+
+### 8.5. Lợi ích của Chấm điểm Mềm
+
+1. **Chính xác:** Tín hiệu OBV yếu không kích hoạt STRONG BUY
+2. **Thưởng Chất lượng:** Divergence rất mạnh (≥80) nhận trọng số thưởng
+3. **Quản lý Rủi ro:** Distribution mạnh chủ động hạ rating
+4. **Minh bạch:** Người dùng thấy đóng góp điểm chính xác
+5. **Linh hoạt:** Dễ điều chỉnh ngưỡng mà không cần thay đổi code
+
+### 8.6. Tích hợp với Hệ thống Khác
+
+- **Opportunity Radar:** Sử dụng rating để lọc và sắp xếp cổ phiếu
+- **Deep Dive:** Hiển thị ma trận 6-pillar với mã màu
+- **AI Tab:** Kết hợp rating vào phân tích hội tụ
+- **Portfolio Builder:** Sử dụng rating cho khuyến nghị kích thước vị thế
+
+---

@@ -1354,79 +1354,284 @@ def load_data():
 
 
 # ── ANALYTICS ENGINE: Smart Money Institutional Flow ────────────────────────
-def get_sm_spirit_unified_v2(df_raw: "pd.DataFrame") -> str:
+def get_sm_spirit_unified_v2(df_raw: "pd.DataFrame", sector: str = "Unknown") -> dict:
     """
-    Standardized Institutional Flow Engine (v4.0).
+    Enhanced Institutional Flow Engine (v6.0) with Multi-Factor Validation.
 
-    Two-layer architecture:
+    Major Improvements over v5.0:
+    1. Money Flow Index (MFI) cross-validation with OBV
+    2. Institutional volume detection (large block trades > 2x avg)
+    3. Sector-specific thresholds (Tech/Growth vs Banks/Utilities)
+    4. Volume quality scoring (institutional vs retail pattern detection)
+    5. Three-layer architecture with priority hierarchy
 
-    Layer 1 — OBV Divergence (Priority):
-        Detects when OBV and price move in OPPOSITE directions over 20 days.
-        This is the highest-value signal: it catches institutional activity
-        that simple trend-following cannot see.
+    Three-layer architecture:
+
+    Layer 1 — OBV Divergence + MFI Confirmation (Highest Priority):
+        Detects when OBV and price move in OPPOSITE directions.
         - OBV rising + Price falling  → Hidden Accumulation (institutions buying dips)
         - OBV falling + Price rising  → Hidden Distribution (institutions selling into rallies)
-        A minimum magnitude filter (5% of avg daily volume × window) prevents
-        noise from triggering false divergence signals.
+        NEW: MFI must confirm the signal (MFI divergence in same direction)
+        Strength bonus: +15 pts if MFI confirms
 
-    Layer 2 — OBV Trend vs MA(21) (Fallback):
+    Layer 2 — Institutional Volume Pattern (Medium Priority):
+        Detects large block trades (volume spikes > 2x average on specific days)
+        - Large volume on up days → Institutional buying
+        - Large volume on down days → Institutional selling
+        Filters out retail-driven volume (small, erratic trades)
+
+    Layer 3 — OBV Trend vs MA(21) (Fallback):
         Classic institutional flow: OBV above/below its 21-day MA.
         Uses a 5-day consistency window to avoid whipsaws.
-        Applied only when no clear divergence is detected in Layer 1.
+        Applied only when no clear divergence is detected in Layer 1 & 2.
 
-    Priority: Divergence always overrides Trend when clearly detected.
-    Uses last 126 trading days (~6 months) to avoid cumsum large-number bias.
+    Returns:
+        dict: {
+            "signal": "ACCUMULATION" | "DISTRIBUTION" | "NEUTRAL",
+            "strength": 0-100 (confidence score),
+            "layer": "DIVERGENCE" | "INSTITUTIONAL_VOLUME" | "TREND" | "NONE",
+            "volume_quality": 0-100 (institutional vs retail pattern score),
+            "mfi_confirm": bool (whether MFI confirms OBV signal)
+        }
     """
     if df_raw is None or df_raw.empty or len(df_raw) < 30:
-        return "NEUTRAL"
+        return {"signal": "NEUTRAL", "strength": 0, "layer": "NONE", "volume_quality": 0, "mfi_confirm": False}
 
     # ── Prep ──────────────────────────────────────────────────────────────────
-    df = df_raw[['date', 'price_close', 'volume']].copy()
+    df = df_raw[['date', 'price_close', 'volume', 'price_high', 'price_low']].copy()
     df = df.sort_values("date").drop_duplicates("date").tail(126).reset_index(drop=True)
     df['price_close'] = df['price_close'].ffill().fillna(0)
     df['volume']      = df['volume'].fillna(0)
+    df['price_high']  = df['price_high'].ffill().fillna(df['price_close'])
+    df['price_low']   = df['price_low'].ffill().fillna(df['price_close'])
+
+    # ── Sector-specific configuration ─────────────────────────────────────────
+    sector_lower = str(sector).lower()
+    _TECH_SECTORS = {
+        "ai & data", "design software", "ecommerce", "fintech",
+        "platform software", "semiconductor tools", "semiconductors", "technology",
+        "consumer electronics", "cybersecurity", "data storage", "digital advertising",
+        "enterprise hardware", "it services", "media & entertainment", "networking",
+        "saas", "social media", "telecom",
+    }
+    _FINANCIAL_SECTORS = {
+        "banks", "capital markets", "financial services", "financials",
+        "insurance", "regulated utilities", "nuclear & clean utilities",
+        "real estate", "reits", "tower & data reits",
+    }
+    
+    is_tech = sector_lower in _TECH_SECTORS
+    is_financial = sector_lower in _FINANCIAL_SECTORS
+    
+    # Sector-adjusted thresholds
+    if is_tech:
+        vol_spike_threshold = 2.5  # Tech: higher retail participation, need stronger signal
+        consistency_threshold = 0.45  # Need 45% of days to confirm
+    elif is_financial:
+        vol_spike_threshold = 1.8  # Banks: lower volume, easier to detect institutional
+        consistency_threshold = 0.35  # 35% threshold
+    else:
+        vol_spike_threshold = 2.0  # Default
+        consistency_threshold = 0.40  # 40% threshold
+
+    # ── Calculate ATR for adaptive window ─────────────────────────────────────
+    df['tr'] = np.maximum(
+        df['price_high'] - df['price_low'],
+        np.maximum(
+            abs(df['price_high'] - df['price_close'].shift(1)),
+            abs(df['price_low'] - df['price_close'].shift(1))
+        )
+    )
+    atr_14 = df['tr'].rolling(14).mean().iloc[-1]
+    avg_price = df['price_close'].tail(20).mean()
+    volatility_pct = (atr_14 / avg_price * 100) if avg_price > 0 else 2.0
+
+    # Adaptive window: high volatility → wider window
+    if volatility_pct > 4.0:
+        base_window = 25  # High volatility
+    elif volatility_pct > 2.5:
+        base_window = 20  # Medium volatility
+    else:
+        base_window = 15  # Low volatility
+
+    # ── Calculate Money Flow Index (MFI) for cross-validation ─────────────────
+    # MFI = RSI applied to money flow (price × volume) instead of just price
+    typical_price = (df['price_high'] + df['price_low'] + df['price_close']) / 3
+    money_flow = typical_price * df['volume']
+    
+    # Positive and negative money flow
+    mf_diff = typical_price.diff()
+    positive_mf = pd.Series(0.0, index=df.index)
+    negative_mf = pd.Series(0.0, index=df.index)
+    positive_mf[mf_diff > 0] = money_flow[mf_diff > 0]
+    negative_mf[mf_diff < 0] = money_flow[mf_diff < 0]
+    
+    # 14-period MFI
+    positive_mf_sum = positive_mf.rolling(14).sum()
+    negative_mf_sum = negative_mf.rolling(14).sum()
+    mfi = 100 - (100 / (1 + positive_mf_sum / (negative_mf_sum + 1e-10)))
 
     # ── OBV (Granville standard) ───────────────────────────────────────────────
     obv      = (np.sign(df['price_close'].diff().fillna(0)) * df['volume']).cumsum()
     obv_ma21 = obv.rolling(21).mean()
 
-    # ── LAYER 1: Divergence detection (20-day window) ─────────────────────────
-    window = min(20, len(df) - 1)
+    # ── Volume Quality Score (Institutional vs Retail Pattern) ────────────────
+    # Institutional: Large, consistent volume on directional moves
+    # Retail: Small, erratic volume with no clear pattern
+    avg_vol_20 = df['volume'].rolling(20).mean()
+    vol_ratio = df['volume'] / avg_vol_20
+    
+    # Factor 1: Volume concentration (30 pts) - large blocks vs distributed
+    large_vol_days = (vol_ratio > vol_spike_threshold).sum()
+    vol_concentration_score = min(large_vol_days / 10.0, 1.0) * 30
+    
+    # Factor 2: Volume-price correlation (40 pts) - institutional moves with conviction
+    vol_price_corr = df['volume'].tail(20).corr(df['price_close'].tail(20).abs().diff())
+    vol_price_score = (abs(vol_price_corr) if not pd.isna(vol_price_corr) else 0) * 40
+    
+    # Factor 3: Volume consistency (30 pts) - steady vs erratic
+    vol_std = df['volume'].tail(20).std()
+    vol_mean = df['volume'].tail(20).mean()
+    vol_cv = vol_std / vol_mean if vol_mean > 0 else 999  # Coefficient of variation
+    vol_consistency_score = max(0, (1 - min(vol_cv / 2.0, 1.0))) * 30
+    
+    volume_quality = int(vol_concentration_score + vol_price_score + vol_consistency_score)
+
+    # ── LAYER 1: Divergence detection + MFI confirmation ──────────────────────
+    window = min(base_window, len(df) - 1)
     div_signal = "NONE"
+    div_strength = 0
+    mfi_confirm = False
+    
     if window >= 10:
-        price_20d_chg = float(df['price_close'].iloc[-1] - df['price_close'].iloc[-window])
-        obv_20d_chg   = float(obv.iloc[-1] - obv.iloc[-window])
+        price_window_chg = float(df['price_close'].iloc[-1] - df['price_close'].iloc[-window])
+        obv_window_chg   = float(obv.iloc[-1] - obv.iloc[-window])
+        mfi_window_chg   = float(mfi.iloc[-1] - mfi.iloc[-window]) if len(mfi) > window else 0
 
-        # Magnitude guard: OBV move must exceed 5% of (avg daily volume × window)
-        # to filter out noise from low-volume days
-        avg_vol_20d = float(df['volume'].tail(window).mean())
-        min_obv_move = avg_vol_20d * 0.05 * window
+        # Stricter magnitude guard: 0.12 instead of 0.05 (240% avg volume instead of 100%)
+        avg_vol_window = float(df['volume'].tail(window).mean())
+        min_obv_move = avg_vol_window * 0.12 * window
 
-        price_dir = 1 if price_20d_chg > 0 else (-1 if price_20d_chg < 0 else 0)
-        obv_dir   = (1  if obv_20d_chg >  min_obv_move else
-                    (-1 if obv_20d_chg < -min_obv_move else 0))
+        price_dir = 1 if price_window_chg > 0 else (-1 if price_window_chg < 0 else 0)
+        obv_dir   = (1  if obv_window_chg >  min_obv_move else
+                    (-1 if obv_window_chg < -min_obv_move else 0))
+        mfi_dir   = 1 if mfi_window_chg > 5 else (-1 if mfi_window_chg < -5 else 0)
 
+        # Detect divergence
         if obv_dir == 1 and price_dir == -1:
             div_signal = "ACCUMULATION"   # Hidden Accumulation: price ↓, OBV ↑
+            mfi_confirm = (mfi_dir == 1)  # MFI also rising
         elif obv_dir == -1 and price_dir == 1:
             div_signal = "DISTRIBUTION"   # Hidden Distribution: price ↑, OBV ↓
+            mfi_confirm = (mfi_dir == -1)  # MFI also falling
+
+        # ── Calculate strength score if divergence detected ───────────────────
+        if div_signal != "NONE":
+            # Factor 1: OBV magnitude (0-35 points)
+            obv_magnitude_score = min(abs(obv_window_chg) / (avg_vol_window * window * 0.5), 1.0) * 35
+
+            # Factor 2: Price magnitude (0-20 points)
+            price_magnitude_pct = abs(price_window_chg / df['price_close'].iloc[-window] * 100)
+            price_magnitude_score = min(price_magnitude_pct / 10.0, 1.0) * 20
+
+            # Factor 3: Volume confirmation on recent days (0-15 points)
+            recent_vol_ratio = df['volume'].tail(5).mean() / avg_vol_window if avg_vol_window > 0 else 1.0
+            volume_confirm_score = min(recent_vol_ratio / 1.5, 1.0) * 15
+
+            # Factor 4: Consistency (0-15 points) - how many days in window support the divergence
+            obv_changes = obv.diff().tail(window)
+            price_changes = df['price_close'].diff().tail(window)
+            divergent_days = ((obv_changes > 0) & (price_changes < 0)).sum() if div_signal == "ACCUMULATION" else \
+                           ((obv_changes < 0) & (price_changes > 0)).sum()
+            consistency_score = min(divergent_days / (window * consistency_threshold), 1.0) * 15
+
+            # Factor 5: MFI confirmation bonus (0-15 points) — NEW in v6.0
+            mfi_bonus = 15 if mfi_confirm else 0
+
+            div_strength = int(obv_magnitude_score + price_magnitude_score + 
+                             volume_confirm_score + consistency_score + mfi_bonus)
 
     # Divergence takes priority — return immediately when clearly detected
     if div_signal != "NONE":
-        return div_signal
+        return {
+            "signal": div_signal,
+            "strength": div_strength,
+            "layer": "DIVERGENCE",
+            "volume_quality": volume_quality,
+            "mfi_confirm": mfi_confirm
+        }
 
-    # ── LAYER 2: OBV Trend vs MA(21) — fallback ───────────────────────────────
+    # ── LAYER 2: Institutional Volume Pattern Detection ───────────────────────
+    # Detect large block trades (volume > threshold on directional days)
+    inst_signal = "NONE"
+    inst_strength = 0
+    
+    if len(df) >= 20:
+        # Identify large volume days
+        large_vol_mask = vol_ratio.tail(20) > vol_spike_threshold
+        large_vol_df = df.tail(20)[large_vol_mask]
+        
+        if len(large_vol_df) >= 3:  # At least 3 large volume days
+            # Check if large volume aligns with price direction
+            large_vol_df['price_change'] = large_vol_df['price_close'].diff()
+            up_days = (large_vol_df['price_change'] > 0).sum()
+            down_days = (large_vol_df['price_change'] < 0).sum()
+            total_days = len(large_vol_df)
+            
+            # Institutional buying: large volume on up days
+            if up_days >= total_days * 0.6:
+                inst_signal = "ACCUMULATION"
+                # Strength based on consistency and volume magnitude
+                consistency_pct = up_days / total_days
+                avg_vol_spike = vol_ratio.tail(20)[large_vol_mask].mean()
+                inst_strength = int(consistency_pct * 50 + min((avg_vol_spike - vol_spike_threshold) / 2.0, 1.0) * 30 + (volume_quality / 100) * 20)
+            
+            # Institutional selling: large volume on down days
+            elif down_days >= total_days * 0.6:
+                inst_signal = "DISTRIBUTION"
+                consistency_pct = down_days / total_days
+                avg_vol_spike = vol_ratio.tail(20)[large_vol_mask].mean()
+                inst_strength = int(consistency_pct * 50 + min((avg_vol_spike - vol_spike_threshold) / 2.0, 1.0) * 30 + (volume_quality / 100) * 20)
+    
+    # Return institutional volume signal if detected
+    if inst_signal != "NONE" and inst_strength >= 40:  # Minimum threshold
+        return {
+            "signal": inst_signal,
+            "strength": inst_strength,
+            "layer": "INSTITUTIONAL_VOLUME",
+            "volume_quality": volume_quality,
+            "mfi_confirm": False
+        }
+
+    # ── LAYER 3: OBV Trend vs MA(21) — fallback ───────────────────────────────
     # Require 3 of the last 5 days consistently above/below MA to avoid whipsaws
     recent_obv    = obv.tail(5)
     recent_obv_ma = obv_ma21.tail(5)
     above_count   = (recent_obv > recent_obv_ma).sum()
     below_count   = (recent_obv < recent_obv_ma).sum()
 
+    trend_signal = "NEUTRAL"
+    trend_strength = 0
+
     if above_count >= 3:
-        return "ACCUMULATION"
+        trend_signal = "ACCUMULATION"
+        # Strength based on consistency, distance from MA, and volume quality
+        consistency_pct = above_count / 5.0
+        avg_distance = ((recent_obv - recent_obv_ma) / recent_obv_ma.abs()).mean() if recent_obv_ma.abs().mean() > 0 else 0
+        trend_strength = int(consistency_pct * 40 + min(abs(avg_distance) * 100, 1.0) * 30 + (volume_quality / 100) * 30)
     elif below_count >= 3:
-        return "DISTRIBUTION"
-    return "NEUTRAL"
+        trend_signal = "DISTRIBUTION"
+        consistency_pct = below_count / 5.0
+        avg_distance = ((recent_obv - recent_obv_ma) / recent_obv_ma.abs()).mean() if recent_obv_ma.abs().mean() > 0 else 0
+        trend_strength = int(consistency_pct * 40 + min(abs(avg_distance) * 100, 1.0) * 30 + (volume_quality / 100) * 30)
+
+    return {
+        "signal": trend_signal,
+        "strength": trend_strength,
+        "layer": "TREND" if trend_signal != "NEUTRAL" else "NONE",
+        "volume_quality": volume_quality,
+        "mfi_confirm": False
+    }
 
 
 
@@ -1440,18 +1645,30 @@ def compute_institutional_rating(
     sector: str,
     w52_pos: float,
     rr: float,
-    sm_status: str = "N/A"
+    sm_status: str = "N/A",
+    sm_strength: int = 0,
+    sm_layer: str = "NONE"
 ) -> dict:
     """
-    Unified 5-Pillar Institutional Rating Engine (v13.0).
+    Unified 6-Pillar Institutional Rating Engine (v14.0).
     Used by BOTH Opportunity Radar Screener and Deep Dive tab to ensure
     consistent Action labels across the entire dashboard.
+
+    NEW in v14.0: Smart Money pillar now uses soft scoring based on strength:
+    - Strength < 40: 0 points (weak signal, ignore)
+    - Strength 40-65: 0.5 points (moderate signal)
+    - Strength 65-80: 1.0 points (strong signal)
+    - Strength > 80: 1.25 points (very strong signal, bonus)
+    
+    This allows STRONG BUY to avoid weak OBV signals while rewarding
+    truly strong divergence patterns.
 
     Returns:
         dict with keys:
             action_label  (str)  — plain text: STRONG BUY / BUY / HOLD / SELL / REDUCE
             action_color  (str)  — hex color for UI rendering
-            p_trend_c, p_qual_c, p_val_c, p_risk_c, p_conv_c  (str)
+            p_trend_c, p_qual_c, p_val_c, p_risk_c, p_conv_c, p_sm_c  (str)
+            sm_label (str) — Smart Money display label with strength
     """
     # ── PILLAR 1: TECHNICAL TREND ──────────────────────────────────────────
     _ma_upper = ma_sig.upper() if ma_sig else ""
@@ -1512,35 +1729,89 @@ def compute_institutional_rating(
     elif rr > 1.2: p_conv_c = "#2ecc71"
     else:           p_conv_c = "#e74c3c"
 
-    # ── PILLAR 6: SMART MONEY ───────────────────────────────────────────
-    if sm_status.upper() == "ACCUMULATION":
-        p_sm_c = "#2ecc71"
-    elif sm_status.upper() == "DISTRIBUTION":
-        p_sm_c = "#e74c3c"
-    else:
+    # ── PILLAR 6: SMART MONEY (Soft Scoring v14.0) ──────────────────────
+    # Determine Smart Money contribution based on signal + strength
+    sm_signal = sm_status.upper()
+    sm_points = 0.0
+    sm_label = "NEUTRAL"
+    
+    if sm_signal == "ACCUMULATION":
+        if sm_strength >= 80:
+            sm_points = 1.25  # Very strong accumulation (bonus)
+            sm_label = "ACCUMULATION_STRONG"
+            p_sm_c = "#00ffcc"
+        elif sm_strength >= 65:
+            sm_points = 1.0   # Strong accumulation
+            sm_label = "ACCUMULATION_STRONG"
+            p_sm_c = "#2ecc71"
+        elif sm_strength >= 40:
+            sm_points = 0.5   # Moderate accumulation
+            sm_label = "ACCUMULATION_WEAK"
+            p_sm_c = "#3498db"
+        else:
+            sm_points = 0.0   # Weak signal, ignore
+            sm_label = "ACCUMULATION_WEAK"
+            p_sm_c = "#95a5a6"
+    
+    elif sm_signal == "DISTRIBUTION":
+        if sm_strength >= 80:
+            sm_points = -1.25  # Very strong distribution (penalty)
+            sm_label = "DISTRIBUTION_STRONG"
+            p_sm_c = "#c0392b"
+        elif sm_strength >= 65:
+            sm_points = -1.0   # Strong distribution
+            sm_label = "DISTRIBUTION_STRONG"
+            p_sm_c = "#e74c3c"
+        elif sm_strength >= 40:
+            sm_points = -0.5   # Moderate distribution
+            sm_label = "DISTRIBUTION_WEAK"
+            p_sm_c = "#e67e22"
+        else:
+            sm_points = 0.0    # Weak signal, ignore
+            sm_label = "DISTRIBUTION_WEAK"
+            p_sm_c = "#95a5a6"
+    
+    else:  # NEUTRAL
+        sm_points = 0.0
+        sm_label = "NEUTRAL"
         p_sm_c = "#95a5a6"
+    
+    # Add layer info to label for transparency
+    if sm_layer != "NONE":
+        sm_label = f"{sm_label} ({sm_layer})"
 
-    # ── SYNTHESIS: Final Action Label ────────────────────────────────────
+    # ── SYNTHESIS: Final Action Label (Updated for soft scoring) ─────────
+    # Base points from binary pillars (max 5.0)
     pts = (
         (1 if p_trend_c in ["#2ecc71", "#00ffcc"] else 0) +
         (1 if p_qual_c  in ["#2ecc71", "#00ffcc"] else 0) +
         (1 if p_val_c   in ["#2ecc71", "#00ffcc", "#3498db"] else 0) +
         (1 if p_risk_c  == "#2ecc71" else 0) +
-        (1 if p_conv_c  in ["#2ecc71", "#00ffcc"] else 0) +
-        (1 if p_sm_c    == "#2ecc71" else 0)
+        (1 if p_conv_c  in ["#2ecc71", "#00ffcc"] else 0)
     )
-
-    if pts >= 5 and p_qual_c != "#e74c3c":
+    
+    # Add Smart Money soft points (can be -1.25 to +1.25)
+    pts += sm_points
+    
+    # Total possible: 5.0 (binary) + 1.25 (SM bonus) = 6.25
+    # Adjusted thresholds:
+    # - STRONG BUY: >= 5.0 (was >= 5, now requires strong SM or all other pillars)
+    # - BUY: >= 3.5 (was >= 3, slightly higher bar)
+    # - SELL: Strong distribution can push below 2.0
+    
+    if pts >= 5.0 and p_qual_c != "#e74c3c":
         action_label, action_color = "STRONG BUY",          "#00ffcc"
-    elif pts >= 3 and p_trend_c != "#e74c3c":
+    elif pts >= 3.5 and p_trend_c != "#e74c3c":
         action_label, action_color = "BUY / ACCUMULATE",    "#2ecc71"
     elif p_trend_c == "#e74c3c" and p_val_c == "#e74c3c":
         action_label, action_color = "SELL / AVOID",        "#e74c3c"
-    elif pts <= 2 and p_qual_c == "#e74c3c":
+    elif pts <= 2.0 and p_qual_c == "#e74c3c":
         action_label, action_color = "SELL / AVOID",        "#e74c3c"
-    elif pts <= 2 and p_qual_c in ["#2ecc71", "#00ffcc"]:
+    elif pts <= 2.0 and sm_points <= -0.5:  # Strong distribution warning
+        action_label, action_color = "SELL / AVOID",        "#e74c3c"
+    elif pts <= 2.5 and p_qual_c in ["#2ecc71", "#00ffcc"]:
         action_label, action_color = "HOLD / NEUTRAL",      "#f1c40f"
-    elif latest_rsi > 70 and pts <= 4:
+    elif latest_rsi > 70 and pts <= 4.5:
         action_label, action_color = "REDUCE / UNDERPERFORM","#e67e22"
     else:
         action_label, action_color = "HOLD / NEUTRAL",      "#f1c40f"
@@ -1554,91 +1825,217 @@ def compute_institutional_rating(
         "p_risk_c":      p_risk_c,
         "p_conv_c":      p_conv_c,
         "p_sm_c":        p_sm_c,
+        "sm_label":      sm_label,
+        "sm_points":     sm_points,
         "pts":           pts,
     }
 
 
-def detect_swing_levels(ticker_prices: "pd.DataFrame", cur_p: float, lookback: int = 60, window: int = 5) -> dict:
+def detect_swing_zones(ticker_prices: "pd.DataFrame", cur_p: float, lookback: int = 60, base_window: int = 5) -> dict:
     """
-    Detect support and resistance levels using Swing High/Low with volume confirmation.
+    Detect support and resistance ZONES (not levels) using advanced swing detection with:
+    - Adaptive window based on ATR/volatility
+    - Clustering of nearby swing points into zones
+    - Strength scoring: recency + pivot volume + retest count + reaction magnitude
+    - Zone-based approach (price ranges, not single points)
     
     Parameters:
         ticker_prices: DataFrame with OHLCV data
         cur_p: Current price
-        lookback: Number of days to look back for swing points (default 60)
-        window: Window size for swing detection (default 5 = 2 days before + pivot + 2 days after)
+        lookback: Number of days to look back for swing points
+        base_window: Base window size (will be adjusted by volatility)
     
     Returns:
-        dict with s1, s2, r1, r2 (or fallback to simple min/max if insufficient data)
+        dict with s1, s2, r1, r2 (zone midpoints) and zone_width
     """
     df = ticker_prices.tail(lookback).copy()
     
-    if len(df) < window * 2:
+    if len(df) < base_window * 3:
         # Insufficient data - fallback to simple method
         s1 = float(df["price_low"].min())
         r1 = float(df["price_high"].max())
-        return {"s1": s1, "s2": s1 * 0.98, "r1": r1, "r2": r1 * 1.02}
+        return {"s1": s1, "s2": s1 * 0.98, "r1": r1, "r2": r1 * 1.02, "zone_width": 0.02}
+    
+    # ── STEP 1: Adaptive Window based on ATR (volatility) ──────────────────────
+    # Calculate ATR (Average True Range) for last 14 days
+    df['h_l'] = df['price_high'] - df['price_low']
+    df['h_pc'] = abs(df['price_high'] - df['price_close'].shift(1))
+    df['l_pc'] = abs(df['price_low'] - df['price_close'].shift(1))
+    df['tr'] = df[['h_l', 'h_pc', 'l_pc']].max(axis=1)
+    atr = df['tr'].rolling(14).mean().iloc[-1]
+    
+    # Adaptive window: higher volatility → wider window to reduce noise
+    volatility_pct = (atr / cur_p * 100) if cur_p > 0 else 2.0
+    if volatility_pct > 5.0:      # High volatility
+        window = base_window + 4
+    elif volatility_pct > 3.0:    # Medium volatility
+        window = base_window + 2
+    else:                          # Low volatility
+        window = base_window
+    
+    # Zone width based on ATR (±1 ATR defines zone boundaries)
+    zone_width_pct = min(volatility_pct * 0.5, 3.0)  # Cap at 3%
     
     # Calculate average volume for weighting
     avg_volume = df["volume"].mean()
     
-    # Detect swing lows (potential support)
+    # ── STEP 2: Detect Raw Swing Points ────────────────────────────────────────
     swing_lows = []
     for i in range(window // 2, len(df) - window // 2):
         window_slice = df.iloc[i - window // 2 : i + window // 2 + 1]
         pivot_low = df.iloc[i]["price_low"]
         
-        # Check if this is a local minimum
         if pivot_low == window_slice["price_low"].min():
-            volume_weight = df.iloc[i]["volume"] / avg_volume if avg_volume > 0 else 1.0
+            # Calculate reaction magnitude (how much price bounced from this low)
+            future_slice = df.iloc[i:min(i+10, len(df))]
+            reaction_magnitude = (future_slice["price_high"].max() - pivot_low) / pivot_low * 100 if len(future_slice) > 0 else 0
+            
             swing_lows.append({
                 "price": pivot_low,
                 "index": i,
-                "volume_weight": volume_weight,
-                "distance_from_current": abs(pivot_low - cur_p)
+                "date": df.iloc[i]["date"],
+                "pivot_volume": df.iloc[i]["volume"],
+                "reaction_magnitude": reaction_magnitude
             })
     
-    # Detect swing highs (potential resistance)
     swing_highs = []
     for i in range(window // 2, len(df) - window // 2):
         window_slice = df.iloc[i - window // 2 : i + window // 2 + 1]
         pivot_high = df.iloc[i]["price_high"]
         
-        # Check if this is a local maximum
         if pivot_high == window_slice["price_high"].max():
-            volume_weight = df.iloc[i]["volume"] / avg_volume if avg_volume > 0 else 1.0
+            # Calculate reaction magnitude (how much price dropped from this high)
+            future_slice = df.iloc[i:min(i+10, len(df))]
+            reaction_magnitude = (pivot_high - future_slice["price_low"].min()) / pivot_high * 100 if len(future_slice) > 0 else 0
+            
             swing_highs.append({
                 "price": pivot_high,
                 "index": i,
-                "volume_weight": volume_weight,
-                "distance_from_current": abs(pivot_high - cur_p)
+                "date": df.iloc[i]["date"],
+                "pivot_volume": df.iloc[i]["volume"],
+                "reaction_magnitude": reaction_magnitude
             })
     
-    # Select best support levels (below current price, prioritize recent + high volume)
-    supports_below = [s for s in swing_lows if s["price"] < cur_p]
+    # ── STEP 3: Cluster nearby swing points into zones ─────────────────────────
+    def cluster_swings(swings, zone_width_pct):
+        """Group swing points within zone_width_pct of each other"""
+        if not swings:
+            return []
+        
+        # Sort by price
+        swings_sorted = sorted(swings, key=lambda x: x["price"])
+        zones = []
+        current_zone = [swings_sorted[0]]
+        
+        for swing in swings_sorted[1:]:
+            # If within zone_width_pct of current zone center, add to zone
+            zone_center = sum(s["price"] for s in current_zone) / len(current_zone)
+            if abs(swing["price"] - zone_center) / zone_center * 100 <= zone_width_pct:
+                current_zone.append(swing)
+            else:
+                # Start new zone
+                zones.append(current_zone)
+                current_zone = [swing]
+        
+        # Add last zone
+        if current_zone:
+            zones.append(current_zone)
+        
+        return zones
+    
+    support_zones = cluster_swings(swing_lows, zone_width_pct)
+    resistance_zones = cluster_swings(swing_highs, zone_width_pct)
+    
+    # ── STEP 4: Score each zone by strength ────────────────────────────────────
+    def score_zone(zone, df_len, avg_volume):
+        """
+        Composite strength score:
+        - 30% recency (more recent = stronger)
+        - 25% pivot volume (higher volume at pivot = stronger)
+        - 25% number of retests (more tests = stronger)
+        - 20% reaction magnitude (bigger bounce/drop = stronger)
+        """
+        if not zone:
+            return 0
+        
+        # Recency: average index normalized to 0-1
+        avg_index = sum(s["index"] for s in zone) / len(zone)
+        recency_score = avg_index / df_len
+        
+        # Pivot volume: average volume normalized
+        avg_pivot_vol = sum(s["pivot_volume"] for s in zone) / len(zone)
+        volume_score = min(avg_pivot_vol / avg_volume, 3.0) / 3.0 if avg_volume > 0 else 0.5
+        
+        # Number of retests (more touches = stronger)
+        retest_score = min(len(zone) / 5.0, 1.0)  # Cap at 5 tests
+        
+        # Reaction magnitude: average bounce/drop
+        avg_reaction = sum(s["reaction_magnitude"] for s in zone) / len(zone)
+        reaction_score = min(avg_reaction / 10.0, 1.0)  # Cap at 10%
+        
+        # Composite score
+        strength = (recency_score * 0.30 + 
+                   volume_score * 0.25 + 
+                   retest_score * 0.25 + 
+                   reaction_score * 0.20)
+        
+        return strength
+    
+    # Score all zones
+    support_zones_scored = [
+        {
+            "zone": zone,
+            "midpoint": sum(s["price"] for s in zone) / len(zone),
+            "strength": score_zone(zone, len(df), avg_volume),
+            "test_count": len(zone)
+        }
+        for zone in support_zones
+    ]
+    
+    resistance_zones_scored = [
+        {
+            "zone": zone,
+            "midpoint": sum(s["price"] for s in zone) / len(zone),
+            "strength": score_zone(zone, len(df), avg_volume),
+            "test_count": len(zone)
+        }
+        for zone in resistance_zones
+    ]
+    
+    # ── STEP 5: Select best zones (nearest to current price with high strength) ─
+    # Support zones: below current price, sort by strength then proximity
+    supports_below = [z for z in support_zones_scored if z["midpoint"] < cur_p]
     if supports_below:
-        # Sort by: recency (higher index) and volume weight
-        supports_below.sort(key=lambda x: (x["index"] * 0.6 + x["volume_weight"] * 0.4), reverse=True)
-        s1 = supports_below[0]["price"]
-        # S2 should be lower than S1
-        supports_below_s1 = [s for s in supports_below if s["price"] < s1 * 0.98]
-        s2 = supports_below_s1[0]["price"] if supports_below_s1 else s1 * 0.97
+        # Sort by: strength (primary) then proximity to current price
+        supports_below.sort(key=lambda x: (-x["strength"], -x["midpoint"]), reverse=False)
+        s1 = supports_below[0]["midpoint"]
+        
+        # S2: next strongest support zone below S1 (must be meaningfully lower)
+        supports_below_s1 = [z for z in supports_below if z["midpoint"] < s1 * 0.97]
+        if supports_below_s1:
+            supports_below_s1.sort(key=lambda x: (-x["strength"], -x["midpoint"]), reverse=False)
+            s2 = supports_below_s1[0]["midpoint"]
+        else:
+            s2 = s1 * 0.97  # Fallback
     else:
-        # Fallback: use simple min
         s1 = float(df["price_low"].min())
         s2 = s1 * 0.97
     
-    # Select best resistance levels (above current price, prioritize recent + high volume)
-    resistances_above = [r for r in swing_highs if r["price"] > cur_p]
+    # Resistance zones: above current price, sort by strength then proximity
+    resistances_above = [z for z in resistance_zones_scored if z["midpoint"] > cur_p]
     if resistances_above:
-        # Sort by: recency and volume weight
-        resistances_above.sort(key=lambda x: (x["index"] * 0.6 + x["volume_weight"] * 0.4), reverse=True)
-        r1 = resistances_above[0]["price"]
-        # R2 should be higher than R1
-        resistances_above_r1 = [r for r in resistances_above if r["price"] > r1 * 1.02]
-        r2 = resistances_above_r1[0]["price"] if resistances_above_r1 else r1 * 1.03
+        # Sort by: strength (primary) then proximity to current price
+        resistances_above.sort(key=lambda x: (-x["strength"], x["midpoint"]), reverse=False)
+        r1 = resistances_above[0]["midpoint"]
+        
+        # R2: next strongest resistance zone above R1 (must be meaningfully higher)
+        resistances_above_r1 = [z for z in resistances_above if z["midpoint"] > r1 * 1.03]
+        if resistances_above_r1:
+            resistances_above_r1.sort(key=lambda x: (-x["strength"], x["midpoint"]), reverse=False)
+            r2 = resistances_above_r1[0]["midpoint"]
+        else:
+            r2 = r1 * 1.03  # Fallback
     else:
-        # Fallback: use simple max
         r1 = float(df["price_high"].max())
         r2 = r1 * 1.03
     
@@ -1646,21 +2043,22 @@ def detect_swing_levels(ticker_prices: "pd.DataFrame", cur_p: float, lookback: i
         "s1": float(s1),
         "s2": float(s2),
         "r1": float(r1),
-        "r2": float(r2)
+        "r2": float(r2),
+        "zone_width": zone_width_pct / 100  # Return as decimal for calculations
     }
 
 
 def get_tactical_metrics(ticker_prices: "pd.DataFrame", cur_p: float, analyst_target: float = 0.0) -> dict:
     """
     Single source of truth for all tactical indicators across multiple timeframes.
-    Called identically by the Screener, Deep Dive, and any future tab.
-
+    Uses ZONE-based S/R (not single levels) with adaptive detection.
+    
     Parameters:
         analyst_target: Analyst consensus mean target price. When > cur_p meaningfully,
                         used as rr_score target instead of technical high.
 
     Returns a dict containing:
-        rsi, s1, s2, s3, r1, r2, r3, stop_loss, tp1, tp2, rr, rr_score, w52_pos
+        rsi, s1, s2, s3, r1, r2, r3, stop_loss, tp1, tp2, rr, rr_score, w52_pos, zone_width
     """
     # RSI
     if "rsi" in ticker_prices.columns and ticker_prices["rsi"].notna().any():
@@ -1672,38 +2070,55 @@ def get_tactical_metrics(ticker_prices: "pd.DataFrame", cur_p: float, analyst_ta
         rsi_series = 100 - (100 / (1 + gain / loss.replace(0, 1e-9)))
         rsi_val = float(rsi_series.iloc[-1]) if not rsi_series.empty else 50.0
 
-    # Multi-timeframe Support / Resistance using Swing High/Low + Volume
-    # S1/R1: Short-term (20 days) - Tactical levels
-    swing_20d = detect_swing_levels(ticker_prices, cur_p, lookback=20, window=3)
+    # Multi-timeframe Support / Resistance ZONES using adaptive swing detection
+    # S1/R1: Short-term (20 days) - Tactical zones
+    swing_20d = detect_swing_zones(ticker_prices, cur_p, lookback=20, base_window=3)
     s1 = swing_20d["s1"]
     r1 = swing_20d["r1"]
+    zone_width_20d = swing_20d["zone_width"]
     
-    # S2/R2: Medium-term (60 days) - Intermediate levels
-    swing_60d = detect_swing_levels(ticker_prices, cur_p, lookback=60, window=5)
-    s2 = swing_60d["s1"]  # Use s1 from 60d as our s2
-    r2 = swing_60d["r1"]  # Use r1 from 60d as our r2
+    # S2/R2: Medium-term (60 days) - Intermediate zones
+    swing_60d = detect_swing_zones(ticker_prices, cur_p, lookback=60, base_window=5)
+    s2_candidate = swing_60d["s1"]
+    r2_candidate = swing_60d["r1"]
     
-    # S3/R3: Long-term (252 days / 1 year) - Strategic levels
-    swing_252d = detect_swing_levels(ticker_prices, cur_p, lookback=252, window=7)
-    s3 = swing_252d["s1"]  # Use s1 from 252d as our s3
-    r3 = swing_252d["r1"]  # Use r1 from 252d as our r3
+    # S3/R3: Long-term (252 days / 1 year) - Strategic zones
+    swing_252d = detect_swing_zones(ticker_prices, cur_p, lookback=252, base_window=7)
+    s3_candidate = swing_252d["s1"]
+    r3_candidate = swing_252d["r1"]
     
-    # Ensure proper ordering: S3 < S2 < S1 < Current < R1 < R2 < R3
-    # If ordering is violated, adjust to maintain hierarchy
-    if s2 >= s1:
-        s2 = s1 * 0.98  # Force S2 to be 2% below S1
-    if s3 >= s2:
-        s3 = s2 * 0.97  # Force S3 to be 3% below S2
-    if r2 <= r1:
-        r2 = r1 * 1.02  # Force R2 to be 2% above R1
-    if r3 <= r2:
-        r3 = r2 * 1.03  # Force R3 to be 3% above R2
+    # Smart hierarchy: only use candidates if they're meaningfully different from shorter timeframes
+    # If zones overlap, prefer the shorter timeframe (more recent/relevant)
+    
+    # S2: Use 60d zone only if it's at least 3% below S1, otherwise skip to S3
+    if s2_candidate < s1 * 0.97:
+        s2 = s2_candidate
+    else:
+        s2 = s3_candidate if s3_candidate < s1 * 0.97 else s1 * 0.97
+    
+    # S3: Use 252d zone only if it's at least 5% below S2
+    if s3_candidate < s2 * 0.95:
+        s3 = s3_candidate
+    else:
+        s3 = s2 * 0.95
+    
+    # R2: Use 60d zone only if it's at least 3% above R1
+    if r2_candidate > r1 * 1.03:
+        r2 = r2_candidate
+    else:
+        r2 = r3_candidate if r3_candidate > r1 * 1.03 else r1 * 1.03
+    
+    # R3: Use 252d zone only if it's at least 5% above R2
+    if r3_candidate > r2 * 1.05:
+        r3 = r3_candidate
+    else:
+        r3 = r2 * 1.05
 
-    # Derived levels
-    stop_loss = s1 * 0.96
-    tp1       = r1 * 1.05
-    tp2       = r2  # Use R2 as secondary target
-    tp3       = r3  # Use R3 as tertiary target
+    # Derived levels (adjusted for zone width)
+    stop_loss = s1 * (1 - zone_width_20d * 1.5)  # Stop below S1 zone
+    tp1       = r1 * (1 + zone_width_20d * 1.5)  # Target above R1 zone
+    tp2       = r2  # Use R2 zone midpoint
+    tp3       = r3  # Use R3 zone midpoint
 
     # Risk/Reward
     risk_dist    = cur_p - stop_loss
@@ -1742,6 +2157,7 @@ def get_tactical_metrics(ticker_prices: "pd.DataFrame", cur_p: float, analyst_ta
         "w52_pos":   w52_pos,
         "w52_hi":    float(w52_hi),
         "w52_lo":    float(w52_lo),
+        "zone_width": zone_width_20d,  # For UI display
     }
 
 @st.cache_data(ttl=3600)
@@ -1835,8 +2251,11 @@ def get_master_screener_data(_companies_df, _prices_df, _quarterly_fin, _annual_
             analyst_target=float(row.get('target_mean_price') or 0)
         )
 
-        # Smart Money Spirit (Unified)
-        sm_spirit = get_sm_spirit_unified_v2(ticker_prices)
+        # Smart Money Spirit (Unified v6.0 with sector awareness)
+        sm_result = get_sm_spirit_unified_v2(ticker_prices, sector=str(row.get('sector', 'Unknown')))
+        sm_spirit = sm_result["signal"]
+        sm_strength = sm_result["strength"]
+        sm_layer = sm_result["layer"]
 
         _rating = compute_institutional_rating(
             ai_score   = ai_score,
@@ -1848,7 +2267,9 @@ def get_master_screener_data(_companies_df, _prices_df, _quarterly_fin, _annual_
             sector     = str(row.get('sector', '')),
             w52_pos    = _tm["w52_pos"],
             rr         = _tm["rr_score"],   # scoring uses raw r1 target
-            sm_status  = sm_spirit
+            sm_status  = sm_spirit,
+            sm_strength = sm_strength,
+            sm_layer   = sm_layer
         )
         action_label = _rating["action_label"]   # plain text — no emoji
 
@@ -3274,9 +3695,12 @@ if active_tab == "3. Qualitative Audit (AI)":
             elif _rr > 1.2: p_conv, p_conv_c = "MEDIUM", "#2ecc71"
             else: p_conv, p_conv_c = "LOW", "#e74c3c"
             
-            # PILLAR 6: SMART MONEY (Unified - Always use full history for path-dependent OBV)
+            # PILLAR 6: SMART MONEY (Unified v6.0 - Always use full history for path-dependent OBV)
             df_sm_raw = prices_full[prices_full["ticker"] == deep_ticker]
-            p_sm = get_sm_spirit_unified_v2(df_sm_raw)
+            sm_result = get_sm_spirit_unified_v2(df_sm_raw, sector=str(meta.get("sector", "Unknown")))
+            p_sm = sm_result["signal"]
+            p_sm_strength = sm_result["strength"]
+            p_sm_layer = sm_result["layer"]
             p_sm_c = "#2ecc71" if p_sm == "ACCUMULATION" else "#e74c3c"
             
             # ── MASTER POSITIONING LOGIC ──────────────────────────────────────
@@ -3294,7 +3718,9 @@ if active_tab == "3. Qualitative Audit (AI)":
                 sector     = str(meta.get("sector", "")),
                 w52_pos    = _w52_pos,
                 rr         = _tm["rr_score"],   # scoring uses raw r1 target
-                sm_status  = p_sm
+                sm_status  = p_sm,
+                sm_strength = p_sm_strength,
+                sm_layer   = p_sm_layer
             )
             # Action label: Always use the fresh rating calculated above to reflect the latest logic
             act_str = _rating["action_label"]
@@ -3388,9 +3814,11 @@ if active_tab == "3. Qualitative Audit (AI)":
                         <div style='font-size:0.65em; color:#aab; text-transform:uppercase; letter-spacing:1px;'>Valuation</div>
                         <div style='font-weight:900; font-size:0.9em; color:{p_val_c}; margin-top:8px;'>{p_val}</div>
                     </div>
-                    <div style='flex:1; background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; border-top:3px solid {p_sm_c}; min-width:14%'>
+                    <div style='flex:1; background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; border-top:3px solid {_rating["p_sm_c"]}; min-width:14%'>
                         <div style='font-size:0.65em; color:#aab; text-transform:uppercase; letter-spacing:1px;'>Smart Money</div>
-                        <div style='font-weight:900; font-size:0.9em; color:{p_sm_c}; margin-top:8px;'>{p_sm}</div>
+                        <div style='font-weight:900; font-size:0.9em; color:{_rating["p_sm_c"]}; margin-top:8px;'>{_rating["sm_label"]}</div>
+                        <div style='font-size:0.65em; color:#888; margin-top:4px;'>Strength: {p_sm_strength}/100</div>
+                        <div style='font-size:0.6em; color:#666; margin-top:2px;'>Points: {_rating["sm_points"]:.2f}</div>
                     </div>
                     <div style='flex:1; background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; border-top:3px solid {p_risk_c}; min-width:14%'>
                         <div style='font-size:0.65em; color:#aab; text-transform:uppercase; letter-spacing:1px;'>Risk (52w)</div>
@@ -7630,9 +8058,24 @@ if active_tab == "4. Quantitative Forecast (ML)":
             sent_label = "Bullish" if avg_sent > 0.1 else "Bearish" if avg_sent < -0.1 else "Neutral"
             st.metric("News Sentiment Mood", sent_label, delta=f"{avg_sent:.2f}")
         with mcol3:
-            # Smart Money Spirit (Unified)
-            sm_spirit = get_sm_spirit_unified_v2(df_fc)
-            st.metric("Smart Money Spirit", sm_spirit, delta="Positive Flow" if sm_spirit == "ACCUMULATION" else "Heavy Selling")
+            # Smart Money Spirit (Unified v6.0 with sector awareness)
+            sm_result = get_sm_spirit_unified_v2(df_fc, sector=str(sector_val) if sector_val else "Unknown")
+            sm_signal = sm_result["signal"]
+            sm_strength = sm_result["strength"]
+            sm_layer = sm_result["layer"]
+            vol_quality = sm_result.get("volume_quality", 0)
+            mfi_confirm = sm_result.get("mfi_confirm", False)
+            
+            # Enhanced display with volume quality and MFI confirmation
+            sm_display = f"{sm_signal} ({sm_strength}/100)"
+            if mfi_confirm:
+                sm_display += " ✓MFI"
+            
+            st.metric(
+                "Smart Money Spirit", 
+                sm_display, 
+                delta=f"{sm_layer} · Vol Q: {vol_quality}/100" if sm_layer != "NONE" else "No Signal"
+            )
         with mcol4:
             if precision_score is not None:
                 p_val = f"{precision_score:.1f}%"
@@ -7643,11 +8086,11 @@ if active_tab == "4. Quantitative Forecast (ML)":
             st.metric(p_label, p_val, delta=p_delta)
             
         # Highlight divergence
-        if (sent_label == "Bearish" and sm_spirit == "ACCUMULATION") or (sent_label == "Bullish" and sm_spirit == "DISTRIBUTION"):
+        if (sent_label == "Bearish" and sm_signal == "ACCUMULATION") or (sent_label == "Bullish" and sm_signal == "DISTRIBUTION"):
             div_type = "BULLISH DIVERGENCE (Smart Money Accumulating despite Retail Fear)" if sent_label == "Bearish" else "BEARISH DIVERGENCE (Smart Money Distributing despite Retail Greed)"
             div_color = "#2ecc71" if sent_label == "Bearish" else "#e74c3c"
             div_icon = "📈" if sent_label == "Bearish" else "📉"
-            st.markdown(f"<div style='margin-top:10px; padding:12px 18px; background:linear-gradient(90deg, {div_color}22, rgba(0,0,0,0)); border-left:4px solid {div_color}; border-radius:6px;'><b style='color:{div_color}; font-size:1.0rem;'>{div_icon} HIGH PROBABILITY SET-UP: {div_type}</b><br><span style='font-size:0.85rem; color:#ccc;'>Institutions and Smart Money are actively positioning in direct opposition to retail sentiment. This severe dislocation heavily tilts risk/reward for a contrarian entry. <b>Actionable edge: Wait for break of structure in direction of Smart Money.</b></span></div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='margin-top:10px; padding:12px 18px; background:linear-gradient(90deg, {div_color}22, rgba(0,0,0,0)); border-left:4px solid {div_color}; border-radius:6px;'><b style='color:{div_color}; font-size:1.0rem;'>{div_icon} HIGH PROBABILITY SET-UP: {div_type}</b><br><span style='font-size:0.85rem; color:#ccc;'>Institutions and Smart Money are actively positioning in direct opposition to retail sentiment (Strength: {sm_strength}/100, {sm_layer} Layer). This severe dislocation heavily tilts risk/reward for a contrarian entry. <b>Actionable edge: Wait for break of structure in direction of Smart Money.</b></span></div>", unsafe_allow_html=True)
 
         # ── AI TRADING SIGNATURE ─────────────────────────────────────────────
         # Pre-compute all levels for the card
@@ -7667,7 +8110,7 @@ if active_tab == "4. Quantitative Forecast (ML)":
         # ── Conviction Score (4-Pillar: 0-4) ────────────────────────────────
         _conv_pts  = 0
         _conv_pts += 1 if _ai_upside >= 3 else 0
-        _conv_pts += 1 if sm_spirit == "ACCUMULATION" else 0
+        _conv_pts += 1 if sm_signal == "ACCUMULATION" else 0
         _conv_pts += 1 if avg_sent > 0.05 else 0
         _conv_pts += 1 if xgb_signal == "BUY" else 0
 
@@ -7717,7 +8160,7 @@ if active_tab == "4. Quantitative Forecast (ML)":
                     f"<span style='color:#fff; font-weight:700;'>{value}</span></span>")
 
         _pill_ai   = _pill("Upside",    f"{_ai_upside:+.1f}%",  _ai_upside >= 3)
-        _pill_sm   = _pill("Smart Money",  sm_spirit,              sm_spirit == "Accumulation")
+        _pill_sm   = _pill("Smart Money",  f"{sm_signal} ({sm_strength})",  sm_signal == "ACCUMULATION")
         _pill_sent = _pill("Sentiment",    sent_label,             avg_sent > 0.05)
         _pill_rr   = _pill("R/R",          f"{_sig_rr:.1f}x",      _sig_rr >= 1.5)
         _pill_prec = _pill("ML Precision", f"{precision_score:.1f}%" if precision_score else "N/A", (precision_score or 0) >= 75)

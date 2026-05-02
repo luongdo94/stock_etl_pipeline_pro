@@ -122,11 +122,213 @@ Hệ thống kết hợp **Conviction Score** VÀ **R/R** để đưa ra Verdict
 
 ---
 
-## 5. Portfolio Optimization Strategies (Chiến lược tối ưu hóa danh mục)
+## 5. Phát hiện Hỗ trợ & Kháng cự Dựa trên Vùng (Zone-Based S/R) v2.0
+
+Hệ thống sử dụng phương pháp **dựa trên vùng (zone-based)** để xác định các mức hỗ trợ và kháng cự, nhận thức rằng S/R trong thị trường thực là **phạm vi giá** (vùng) chứ không phải các điểm chính xác.
+
+### 5.1. Triết lý cốt lõi: Vùng vs. Mức
+
+**Phương pháp Truyền thống (Đã bỏ):**
+- Hỗ trợ/Kháng cự là các điểm giá đơn lẻ (ví dụ: S1 = $95.00)
+- Kích thước window cố định bất kể biến động
+- Quyền trọng đơn giản: recency + volume
+
+**Phương pháp Hiện đại dựa trên Vùng (v2.0):**
+- Hỗ trợ/Kháng cự là **phạm vi giá** (ví dụ: S1 zone = $94.50-$95.50)
+- **Window thích ứng** dựa trên ATR/biến động
+- **Gộp nhóm (clustering)** các điểm swing gần nhau
+- **Chấm điểm sức mạnh** đa yếu tố
+
+### 5.2. Điều chỉnh kích thước Window theo ATR
+
+Kích thước window tự động điều chỉnh dựa trên biến động của cổ phiếu (ATR):
+
+```python
+volatility_pct = (ATR_14 / current_price) × 100
+
+if volatility_pct > 5.0:      # Biến động cao
+    window = base_window + 4
+elif volatility_pct > 3.0:    # Biến động trung bình  
+    window = base_window + 2
+else:                          # Biến động thấp
+    window = base_window
+```
+
+**Lý do:** Cổ phiếu biến động mạnh cần window rộng hơn để lọc noise; cổ phiếu ổn định dùng window hẹp hơn để chính xác hơn.
+
+### 5.3. Phát hiện Điểm Swing (Swing Point Detection)
+
+**Swing Low (Ứng viên Hỗ trợ):**
+- Đáy giá là **cực tiểu cục bộ** trong window của nó
+- Ví dụ (window=5): Ngày 3 là swing low nếu `low[3] < min(low[1], low[2], low[4], low[5])`
+
+**Swing High (Ứng viên Kháng cự):**
+- Đỉnh giá là **cực đại cục bộ** trong window của nó
+- Ví dụ (window=5): Ngày 3 là swing high nếu `high[3] > max(high[1], high[2], high[4], high[5])`
+
+### 5.4. Thuật toán Gộp nhóm (Clustering)
+
+Các điểm swing gần nhau được gộp thành các vùng:
+
+1. Sắp xếp tất cả điểm swing theo giá
+2. Nhóm các điểm trong phạm vi `±zone_width_pct` của nhau
+3. Tính điểm giữa vùng là trung bình của tất cả điểm trong cụm
+
+**Ví dụ:**
+```
+Swing lows: 94.80, 95.20, 95.10, 98.50
+Độ rộng vùng: ±1.0%
+
+Kết quả:
+- Vùng 1: [94.80, 95.20, 95.10] → điểm giữa = 95.03
+- Vùng 2: [98.50] → điểm giữa = 98.50
+```
+
+### 5.5. Chấm điểm Sức mạnh Vùng (Công thức Tổng hợp)
+
+Mỗi vùng nhận điểm sức mạnh (0-1) dựa trên **4 yếu tố**:
+
+```
+Strength = (Recency × 0.30) + 
+           (Pivot Volume × 0.25) + 
+           (Retest Count × 0.25) + 
+           (Reaction Magnitude × 0.20)
+```
+
+#### Yếu tố 1: Recency - Mức độ gần đây (30%)
+- Điểm swing gần đây hơn = tín hiệu mạnh hơn
+- Chuẩn hóa bằng vị trí trong lookback window: `avg_index / window_length`
+
+#### Yếu tố 2: Pivot Volume - Khối lượng tại pivot (25%)
+- Khối lượng cao tại điểm swing = vùng mạnh hơn
+- Chuẩn hóa: `avg_pivot_volume / avg_volume` (giới hạn 3.0)
+
+#### Yếu tố 3: Retest Count - Số lần test lại (25%)
+- Nhiều lần test vùng = xác nhận mạnh hơn
+- Công thức: `min(test_count / 5.0, 1.0)` (giới hạn 5 lần test)
+
+#### Yếu tố 4: Reaction Magnitude - Độ lớn phản ứng (20%)
+- Phản ứng giá lớn hơn = vùng mạnh hơn
+- Hỗ trợ: đo lường % bounce từ đáy
+- Kháng cự: đo lượng % giảm từ đỉnh
+- Công thức: `min(reaction_pct / 10.0, 1.0)` (giới hạn 10%)
+
+**Ví dụ:**
+```
+Vùng tại $95.00:
+- 3 swing lows (gần nhất 40 ngày trước)
+- Khối lượng trung bình: 2.5× trung bình hàng ngày
+- 3 lần retest
+- Phản ứng trung bình: 8%
+
+Strength = (0.67 × 0.30) + (0.83 × 0.25) + (0.60 × 0.25) + (0.80 × 0.20)
+         = 0.201 + 0.208 + 0.150 + 0.160
+         = 0.719 (Vùng mạnh)
+```
+
+### 5.6. Kiến trúc Đa khung thời gian
+
+Hệ thống tính toán các vùng trên 3 khung thời gian:
+
+| Cấp độ | Khung thời gian | Lookback | Window cơ bản | Mục đích |
+|---|---|---|---|---|
+| **S1/R1** | Ngắn hạn | 20 ngày | 3 ngày | Giao dịch chiến thuật (intraday đến swing) |
+| **S2/R2** | Trung hạn | 60 ngày | 5 ngày | Giao dịch vị thế (tuần đến tháng) |
+| **S3/R3** | Dài hạn | 252 ngày | 7 ngày | Đầu tư chiến lược (quý đến năm) |
+
+### 5.7. Chọn lọc Hierarchy Thông minh
+
+**Phương pháp Cũ (Đã bỏ):**
+- Ép S2 = S1 × 0.98 nếu S2 ≥ S1 (điều chỉnh nhân tạo)
+- Ép R2 = R1 × 1.02 nếu R2 ≤ R1
+
+**Phương pháp Mới (v2.0):**
+- Chỉ dùng S2 nếu nó **khác biệt đáng kể** (≥3% dưới S1)
+- Chỉ dùng S3 nếu nó **khác biệt đáng kể** (≥5% dưới S2)
+- Nếu các vùng chồng lấn, **bỏ qua level đó** thay vì ép giá trị nhân tạo
+
+**Lý do:** Giữ nguyên tính toàn vẹn của các vùng được phát hiện; tránh "bẻ cong" cấu trúc thị trường thực.
+
+### 5.8. Tính toán các mức Giao dịch
+
+Từ điểm giữa vùng, hệ thống tính các mức giao dịch thực tế:
+
+```python
+# Stop loss nhận biết vùng (dưới vùng S1)
+stop_loss = S1 × (1 - zone_width × 1.5)
+
+# Target nhận biết vùng (trên vùng R1)
+TP1 = R1 × (1 + zone_width × 1.5)
+
+# Target phụ dùng điểm giữa vùng
+TP2 = R2
+TP3 = R3
+```
+
+### 5.9. Tính toán Risk/Reward
+
+```python
+risk_distance = current_price - stop_loss
+reward_distance = TP1 - current_price
+
+R/R Ratio = reward_distance / risk_distance
+```
+
+**Diễn giải:**
+- **R/R ≥ 2.5:** Cơ hội bất đối xứng (Tin cậy cao)
+- **R/R 1.2-2.5:** Setup chấp nhận được (Tin cậy trung bình)
+- **R/R < 1.2:** Setup bất lợi (Tin cậy thấp)
+
+### 5.10. Ví dụ Thực tế
+
+**Cổ phiếu: AAPL, Giá hiện tại: $175.00**
+
+**Bước 1: Phát hiện Điểm Swing (lookback 20 ngày)**
+- ATR = $3.50 → Biến động = 2.0% → Window = 3 (biến động thấp)
+- Tìm thấy 4 swing lows: $172.50, $173.00, $172.80, $168.00
+
+**Bước 2: Gộp thành Vùng**
+- Độ rộng vùng = 1.0% (dựa trên ATR)
+- Vùng 1: [$172.50, $173.00, $172.80] → điểm giữa = $172.77
+- Vùng 2: [$168.00] → điểm giữa = $168.00
+
+**Bước 3: Chấm điểm Vùng**
+- Vùng 1 strength: 0.82 (3 tests, khối lượng cao, bounce 4%)
+- Vùng 2 strength: 0.45 (1 test, khối lượng trung bình, bounce 2%)
+
+**Bước 4: Chọn Vùng Tốt nhất**
+- S1 = $172.77 (Vùng 1 - strength cao nhất, gần giá nhất)
+
+**Bước 5: Tính các mức Giao dịch**
+- Stop Loss = $172.77 × (1 - 0.01 × 1.5) = $170.18
+- TP1 = $178.50 (Vùng R1)
+- R/R = ($178.50 - $175.00) / ($175.00 - $170.18) = 0.73 (Thấp - chờ entry tốt hơn)
+
+### 5.11. Ưu điểm so với Phương pháp Truyền thống
+
+| Khía cạnh | Truyền thống | Zone-Based v2.0 |
+|---|---|---|
+| **Độ chính xác** | Điểm đơn (không thực tế) | Phạm vi giá (thực tế) |
+| **Thích ứng** | Window cố định | Window theo ATR |
+| **Xác nhận** | Quyền trọng volume đơn giản | Điểm sức mạnh 4 yếu tố |
+| **Gộp nhóm** | Không (noise) | Gộp các điểm gần nhau |
+| **Hierarchy** | Ép buộc điều chỉnh | Chọn lọc thông minh |
+| **Stop Loss** | % cố định | Nhận biết vùng biên |
+
+### 5.12. Ghi chú Triển khai
+
+- **Hàm:** `detect_swing_zones()` trong `app.py`
+- **Được gọi bởi:** `get_tactical_metrics()` cho tất cả tabs (Screener, Deep Dive, Portfolio)
+- **Caching:** Kết quả được cache theo ticker để tránh tính toán lặp lại
+- **Fallback:** Nếu dữ liệu không đủ (<15 ngày), dùng min/max đơn giản
+
+---
+
+## 6. Portfolio Optimization Strategies (Chiến lược tối ưu hóa danh mục)
 
 Hệ thống cung cấp 3 chiến lược tối ưu hóa trong tab **Portfolio Builder**, cho phép nhà đầu tư tùy chỉnh theo khẩu vị rủi ro và mục tiêu đa dạng hóa.
 
-### 5.1. Max Sharpe (Markowitz MVO)
+### 6.1. Max Sharpe (Markowitz MVO)
 - **Nguyên lý:** Dựa trên **Lý thuyết Danh mục Hiện đại (MPT)**, tìm bộ tỷ trọng ($w$) sao cho tối đa hóa **Sharpe Ratio**:
   $$\text{Sharpe Ratio} = \frac{R_p - R_f}{\sigma_p}$$
 - **Đặc điểm:** Tập trung vốn vào các mã có hiệu quả sử dụng rủi ro tốt nhất (lợi nhuận cao trên mỗi đơn vị biến động).
@@ -152,7 +354,7 @@ Hệ thống cung cấp 3 chiến lược tối ưu hóa trong tab **Portfolio B
 
 ---
 
-## 6. Các mô hình dự báo tham chiếu
+## 7. Các mô hình dự báo tham chiếu
 Hệ thống sử dụng tổ hợp (Ensemble) các kiến trúc deep learning:
 - **LSTM (v7.2):** Tối ưu cho tính chu kỳ và ổn định temporal.
 - **Transformer (v8.0):** Tối ưu cho việc nhận diện hoa văn (pattern) biến động mạnh.
@@ -160,29 +362,29 @@ Hệ thống sử dụng tổ hợp (Ensemble) các kiến trúc deep learning:
 
 ---
 
-## 7. Portfolio Performance & Risk Metrics
+## 8. Portfolio Performance & Risk Metrics
 
 Các chỉ số đo lường sức khỏe danh mục trong tab **Portfolio Builder**.
 
-### 7.1. Weighted Return (Lợi nhuận theo trọng số)
+### 8.1. Weighted Return (Lợi nhuận theo trọng số)
 Lợi nhuận thực tế của toàn bộ danh mục dựa trên tỷ trọng phân bổ vốn:
 $$R_p = \sum_{i=1}^{n} w_i R_i$$
 Trong đó $w_i$ là tỷ trọng và $R_i$ là lợi nhuận của cổ phiếu $i$.
 
-### 7.2. Annual Vol (Annualized Volatility - Biến động năm)
+### 8.2. Annual Vol (Annualized Volatility - Biến động năm)
 Đo lường mức độ rủi ro hệ thống thông qua độ lệch chuẩn của lợi nhuận:
 $$\sigma_{annual} = \sigma_{daily} \times \sqrt{252}$$
 Chỉ số này càng cao, danh mục càng biến động mạnh.
 
-### 7.3. Value at Risk (VaR 95%)
+### 8.3. Value at Risk (VaR 95%)
 Mức lỗ tối đa dự kiến trong 1 ngày với độ tin cậy 95%. Nếu VaR là -2%, nghĩa là trong điều kiện bình thường, có 95% khả năng danh mục sẽ không lỗ quá 2% trong một ngày.
 
-### 7.4. Conditional Value at Risk (CVaR / Expected Shortfall)
+### 8.4. Conditional Value at Risk (CVaR / Expected Shortfall)
 Số lỗ trung bình trong các kịch bản "xấu nhất" (thuộc nhóm 5% ngoài ngưỡng VaR). CVaR trả lời cho câu hỏi: *"Nếu thị trường sụp đổ cực đoan, tôi sẽ lỗ trung bình bao nhiêu?"*
 
 ---
 
-## 8. Unified Alpha-Risk Intelligence Hub
+## 9. Unified Alpha-Risk Intelligence Hub
 Hệ thống AI tiên tiến tích hợp trong tab **Deep Dive**, làm nhiệm vụ đối soát và hợp nhất dữ liệu (Convergence Analysis).
 
 - **Mục tiêu:** Tổng hợp dữ liệu định lượng (Metrics) và định tính (News NLP) để đưa ra khuyến nghị hành động dứt khoát.

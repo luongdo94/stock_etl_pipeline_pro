@@ -121,29 +121,231 @@ Das System kombiniert den **Conviction Score** UND das **R/R-Verhältnis**, um d
 
 ---
 
-## 5. Portfolio-Optimierungsstrategien
+## 5. Zonenbasierte Unterstützungs- & Widerstandserkennung v2.0
+
+Das System verwendet einen fortschrittlichen **zonenbasierten Ansatz** zur Identifizierung von Unterstützungs- und Widerstandsniveaus und erkennt an, dass S/R in realen Märkten **Preisbereiche** (Zonen) und nicht einzelne präzise Punkte sind.
+
+### 5.1. Kernphilosophie: Zonen vs. Niveaus
+
+**Traditioneller Ansatz (Veraltet):**
+- Unterstützung/Widerstand als einzelne Preispunkte (z.B. S1 = 95,00 €)
+- Feste Fenstergrößen unabhängig von der Volatilität
+- Einfache Gewichtung nach Aktualität + Volumen
+
+**Moderner zonenbasierter Ansatz (v2.0):**
+- Unterstützung/Widerstand als **Preisbereiche** (z.B. S1-Zone = 94,50-95,50 €)
+- **Adaptives Fenster** basierend auf ATR/Volatilität
+- **Clustering** nahegelegener Swing-Punkte
+- **Multifaktor-Stärkebewertung**
+
+### 5.2. Adaptive Fenstergrößen
+
+Die Fenstergröße passt sich automatisch an die Aktienvolatilität (ATR) an:
+
+```python
+volatility_pct = (ATR_14 / current_price) × 100
+
+if volatility_pct > 5.0:      # Hohe Volatilität
+    window = base_window + 4
+elif volatility_pct > 3.0:    # Mittlere Volatilität  
+    window = base_window + 2
+else:                          # Niedrige Volatilität
+    window = base_window
+```
+
+**Begründung:** Hochvolatile Aktien erfordern breitere Fenster zur Rauschfilterung; stabile Aktien verwenden schmalere Fenster für Präzision.
+
+### 5.3. Swing-Punkt-Erkennung
+
+**Swing Low (Unterstützungskandidat):**
+- Ein Preistief, das das **lokale Minimum** innerhalb seines Fensters ist
+- Beispiel (Fenster=5): Tag 3 ist Swing Low, wenn `low[3] < min(low[1], low[2], low[4], low[5])`
+
+**Swing High (Widerstandskandidat):**
+- Ein Preishoch, das das **lokale Maximum** innerhalb seines Fensters ist
+- Beispiel (Fenster=5): Tag 3 ist Swing High, wenn `high[3] > max(high[1], high[2], high[4], high[5])`
+
+### 5.4. Clustering-Algorithmus
+
+Nahegelegene Swing-Punkte werden zu Zonen zusammengefasst:
+
+1. Sortiere alle Swing-Punkte nach Preis
+2. Gruppiere Punkte innerhalb von `±zone_width_pct` voneinander
+3. Berechne Zonenmittelpunkt als Durchschnitt aller Punkte im Cluster
+
+**Beispiel:**
+```
+Swing Lows: 94,80 €, 95,20 €, 95,10 €, 98,50 €
+Zonenbreite: ±1,0%
+
+Ergebnis:
+- Zone 1: [94,80, 95,20, 95,10] → Mittelpunkt = 95,03 €
+- Zone 2: [98,50] → Mittelpunkt = 98,50 €
+```
+
+### 5.5. Zonenstärke-Bewertung (Composite-Formel)
+
+Jede Zone erhält einen Stärkewert (0-1) basierend auf **4 Faktoren**:
+
+```
+Stärke = (Aktualität × 0,30) + 
+         (Pivot-Volumen × 0,25) + 
+         (Retest-Anzahl × 0,25) + 
+         (Reaktionsstärke × 0,20)
+```
+
+#### Faktor 1: Aktualität (30%)
+- Neuere Swing-Punkte = stärkeres Signal
+- Normalisiert nach Position im Rückblickfenster: `avg_index / window_length`
+
+#### Faktor 2: Pivot-Volumen (25%)
+- Höheres Volumen am Swing-Punkt = stärkere Zone
+- Normalisiert: `avg_pivot_volume / avg_volume` (begrenzt auf 3,0)
+
+#### Faktor 3: Retest-Anzahl (25%)
+- Mehr Tests der Zone = stärkere Validierung
+- Formel: `min(test_count / 5.0, 1.0)` (begrenzt auf 5 Tests)
+
+#### Faktor 4: Reaktionsstärke (20%)
+- Größerer Preissprung/Ablehnung = stärkere Zone
+- Unterstützung: misst % Sprung vom Tief
+- Widerstand: misst % Fall vom Hoch
+- Formel: `min(reaction_pct / 10.0, 1.0)` (begrenzt auf 10%)
+
+**Beispiel:**
+```
+Zone bei 95,00 €:
+- 3 Swing Lows (jüngster vor 40 Tagen)
+- Durchschnittsvolumen: 2,5× Tagesvolumen
+- 3 Retests
+- Durchschnittlicher Sprung: 8%
+
+Stärke = (0,67 × 0,30) + (0,83 × 0,25) + (0,60 × 0,25) + (0,80 × 0,20)
+       = 0,201 + 0,208 + 0,150 + 0,160
+       = 0,719 (Starke Zone)
+```
+
+### 5.6. Multi-Timeframe-Architektur
+
+Das System berechnet Zonen über 3 Zeitrahmen:
+
+| Ebene | Zeitrahmen | Rückblick | Basis-Fenster | Zweck |
+|---|---|---|---|---|
+| **S1/R1** | Kurzfristig | 20 Tage | 3 Tage | Taktischer Handel (Intraday bis Swing) |
+| **S2/R2** | Mittelfristig | 60 Tage | 5 Tage | Positionshandel (Wochen bis Monate) |
+| **S3/R3** | Langfristig | 252 Tage | 7 Tage | Strategisches Investieren (Quartale bis Jahre) |
+
+### 5.7. Intelligente Hierarchieauswahl
+
+**Alte Methode (Veraltet):**
+- Erzwinge S2 = S1 × 0,98 wenn S2 ≥ S1 (künstliche Anpassung)
+- Erzwinge R2 = R1 × 1,02 wenn R2 ≤ R1
+
+**Neue Methode (v2.0):**
+- Verwende S2 nur, wenn es **bedeutend unterschiedlich** ist (≥3% unter S1)
+- Verwende S3 nur, wenn es **bedeutend unterschiedlich** ist (≥5% unter S2)
+- Bei überlappenden Zonen **überspringe diese Ebene** statt künstliche Werte zu erzwingen
+
+**Begründung:** Bewahrt die Integrität erkannter Zonen; vermeidet "Verbiegen" realer Marktstrukturen.
+
+### 5.8. Abgeleitete Handelsniveaus
+
+Aus Zonenmittelpunkten berechnet das System handelbare Niveaus:
+
+```python
+# Zonenbasierter Stop Loss (unter S1-Zonengrenze)
+stop_loss = S1 × (1 - zone_width × 1,5)
+
+# Zonenbasiertes Ziel (über R1-Zonengrenze)
+TP1 = R1 × (1 + zone_width × 1,5)
+
+# Sekundäre Ziele verwenden Zonenmittelpunkte
+TP2 = R2
+TP3 = R3
+```
+
+### 5.9. Risiko/Rendite-Berechnung
+
+```python
+risk_distance = current_price - stop_loss
+reward_distance = TP1 - current_price
+
+R/R-Verhältnis = reward_distance / risk_distance
+```
+
+**Interpretation:**
+- **R/R ≥ 2,5:** Asymmetrische Chance (Hohe Überzeugung)
+- **R/R 1,2-2,5:** Akzeptables Setup (Mittlere Überzeugung)
+- **R/R < 1,2:** Ungünstiges Setup (Niedrige Überzeugung)
+
+### 5.10. Praktisches Beispiel
+
+**Aktie: AAPL, Aktueller Preis: 175,00 €**
+
+**Schritt 1: Swing-Punkte erkennen (20-Tage-Rückblick)**
+- ATR = 3,50 € → Volatilität = 2,0% → Fenster = 3 (niedrige Vol)
+- 4 Swing Lows gefunden: 172,50 €, 173,00 €, 172,80 €, 168,00 €
+
+**Schritt 2: In Zonen clustern**
+- Zonenbreite = 1,0% (basierend auf ATR)
+- Zone 1: [172,50, 173,00, 172,80] → Mittelpunkt = 172,77 €
+- Zone 2: [168,00] → Mittelpunkt = 168,00 €
+
+**Schritt 3: Zonen bewerten**
+- Zone 1 Stärke: 0,82 (3 Tests, hohes Volumen, 4% Sprung)
+- Zone 2 Stärke: 0,45 (1 Test, mittleres Volumen, 2% Sprung)
+
+**Schritt 4: Beste Zone auswählen**
+- S1 = 172,77 € (Zone 1 - höchste Stärke, nächste zum Preis)
+
+**Schritt 5: Handelsniveaus berechnen**
+- Stop Loss = 172,77 € × (1 - 0,01 × 1,5) = 170,18 €
+- TP1 = 178,50 € (R1-Zone)
+- R/R = (178,50 - 175,00) / (175,00 - 170,18) = 0,73 (Niedrig - auf besseren Einstieg warten)
+
+### 5.11. Vorteile gegenüber traditionellen Methoden
+
+| Aspekt | Traditionell | Zonenbasiert v2.0 |
+|---|---|---|
+| **Präzision** | Einzelner Punkt (unrealistisch) | Preisbereich (realistisch) |
+| **Anpassungsfähigkeit** | Festes Fenster | ATR-adaptives Fenster |
+| **Validierung** | Einfache Volumengewichtung | 4-Faktor-Stärkebewertung |
+| **Clustering** | Keines (Rauschen) | Fasst nahe Punkte zusammen |
+| **Hierarchie** | Erzwungene Anpassung | Intelligente Auswahl |
+| **Stop Loss** | Willkürlicher % | Zonengrenzen-bewusst |
+
+### 5.12. Implementierungshinweise
+
+- **Funktion:** `detect_swing_zones()` in `app.py`
+- **Aufgerufen von:** `get_tactical_metrics()` für alle Tabs (Screener, Deep Dive, Portfolio)
+- **Caching:** Ergebnisse pro Ticker gecacht zur Vermeidung redundanter Berechnungen
+- **Fallback:** Bei unzureichenden Daten (<15 Tage) Rückfall auf einfaches Min/Max
+
+---
+
+## 6. Portfolio-Optimierungsstrategien
 
 Das System bietet drei Optimierungsstrategien im Tab **Portfolio Builder** an, die es Anlegern ermöglichen, die Kapitalallokation basierend auf Risikoneigung und Diversifikationszielen anzupassen.
 
-### 5.1. Max Sharpe (Markowitz MVO)
+### 6.1. Max Sharpe (Markowitz MVO)
 - **Prinzip:** Basierend auf der **Modernen Portfoliotheorie (MPT)** sucht das System nach den Gewichtungen ($w$), die die **Sharpe-Ratio** maximieren:
   $$\text{Sharpe-Ratio} = \frac{R_p - R_f}{\sigma_p}$$
 - **Merkmale:** Konzentriert das Kapital auf die Vermögenswerte mit der besten risikobereinigten Rendite (hohe Rendite pro Risikoeinheit).
 - **Eignung:** Für Anleger, die maximale Rendite anstreben und eine höhere Konzentration in Top-Performern akzeptieren.
 
-### 5.2. Risikoparität (Risk Parity)
+### 6.2. Risikoparität (Risk Parity)
 - **Prinzip:** Allokiert das Kapital so, dass jeder Vermögenswert einen **gleichen Risikobeitrag** zum Gesamtportfolio leistet. Das System löst das Optimierungsproblem:
   $$\min \sum_{i=1}^{n} (RC_i - \frac{1}{n})^2$$
   Wobei der Risikobeitrag ($RC_i$) definiert ist als: $RC_i = \frac{w_i (\Sigma w)_i}{\sqrt{w^T \Sigma w}}$
 - **Merkmale:** Vermögenswerte mit hoher Volatilität erhalten weniger Kapital; stabilere Werte erhalten mehr Kapital.
 - **Eignung:** Defensive Portfolios, die auf Stabilität und Diversifikation über Risikofaktoren hinweg setzen (ähnlich dem "All Weather" Ansatz).
 
-### 5.3. Gleichgewichtung (Equal Weight - 1/N)
+### 6.3. Gleichgewichtung (Equal Weight - 1/N)
 - **Prinzip:** Das Kapital wird gleichmäßig auf tất cả các mã verteilt: $w_i = \frac{1}{n}$.
 - **Merkmale:** Maximale Diversifikation, keine Abhängigkeit von Schätzungen über zukünftige Renditen oder Volatilitäten.
 - **Eignung:** Anleger, die Schätzfehler vermeiden wollen und an eine langfristige Outperformance durch maximale Streuung glauben.
 
-### 5.4. Systembeschränkungen (System Constraints)
+### 6.4. Systembeschränkungen (System Constraints)
 Um Realismus und Sicherheit zu gewährleisten, unterliegen tất cả các mã Modelle folgenden Regeln:
 1.  **Vollinvestition (Full Investment):** $\sum w_i = 100\%$.
 2.  **Konzentrationslimit (Concentration Cap):** Keine Aktie darf mehr als **40 %** ausmachen (für MVO/RP).
@@ -151,7 +353,7 @@ Um Realismus und Sicherheit zu gewährleisten, unterliegen tất cả các mã M
 
 ---
 
-## 6. Referenz-Prognosemodelle
+## 7. Referenz-Prognosemodelle
 Das System verwendet ein Ensemble von Deep-Learning-Architekturen:
 - **LSTM (v7.2):** Optimiert für Zyklizität und zeitliche Stabilität.
 - **Transformer (v8.0):** Optimiert für die Erkennung von Mustern bei hoher Volatilität.
@@ -159,29 +361,29 @@ Das System verwendet ein Ensemble von Deep-Learning-Architekturen:
 
 ---
 
-## 7. Portfolio Performance & Risiko-Kennzahlen
+## 8. Portfolio Performance & Risiko-Kennzahlen
 
 Die Kennzahlen zur Bewertung der Portfolio-Gesundheit im Tab **Portfolio Builder**.
 
-### 7.1. Weighted Return (Gewichtete Rendite)
+### 8.1. Weighted Return (Gewichtete Rendite)
 Die tatsächliche Rendite des gesamten Portfolios basierend auf der Kapitalallokation:
 $$R_p = \sum_{i=1}^{n} w_i R_i$$
 Wobei $w_i$ das Gewicht und $R_i[t]$ die Rendite der Aktie $i$ ist.
 
-### 7.2. Annual Vol (Annualisierte Volatilität)
+### 8.2. Annual Vol (Annualisierte Volatilität)
 Ein Maß für das systematische Risiko durch die Standardabweichung der Renditen:
 $$\sigma_{annual} = \sigma_{daily} \times \sqrt{252}$$
 Ein höherer Wert deutet auf stärkere Kursschwankungen hin.
 
-### 7.3. Value at Risk (VaR 95%)
+### 8.3. Value at Risk (VaR 95%)
 Der erwartete maximale Verlust an einem Tag mit einer Konfidenz von 95 %. Ein VaR von -2 % bedeutet, dass unter normalen Marktbedingungen eine 95 %ige Wahrscheinlichkeit besteht, dass das Portfolio an einem Tag nicht mehr als 2 % verliert.
 
-### 7.4. Conditional Value at Risk (CVaR / Expected Shortfall)
+### 8.4. Conditional Value at Risk (CVaR / Expected Shortfall)
 Der durchschnittliche Verlust in den extremsten Szenarien (die restlichen 5 % außerhalb der VaR-Schwelle). CVaR beantwortet die Frage: *"Wie viel verliere ich im Durchschnitt, wenn ein extremer Markteinbruch eintritt?"*
 
 ---
 
-## 8. Unified Alpha-Risk Intelligence Hub
+## 9. Unified Alpha-Risk Intelligence Hub
 Ein fortschrittliches KI-System, das im Tab **Deep Dive** integriert ist und für den Datenabgleich sowie die Konsolidierung zuständig ist (Konvergenzanalyse).
 
 - **Ziel:** Kombination von quantitativen Daten (Metriken) und qualitativen Daten (News NLP), um eine definitive Handlungsempfehlung zu geben.
