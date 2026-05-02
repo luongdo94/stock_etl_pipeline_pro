@@ -54,6 +54,11 @@ Thực hiện ngay trong **Airflow Task `validate`**, trước khi dữ liệu t
 - **Tự động sửa lỗi (Auto-Repair):** Hệ thống tích hợp logic phát hiện "Lỗ hổng chỉ số". Mọi cổ phiếu (Equity) bị thiếu ROE hoặc FCF sẽ bị bộ máy Smart Recovery đánh dấu và ưu tiên tải lại báo cáo tài chính ngay trong lần chạy tiếp theo để thực hiện tính toán dự phòng.
 - **Lợi ích:** Tiết kiệm tối đa tài nguyên API và đảm bảo Dashboard luôn đầy đủ thông tin phân định mức độ an toàn của cổ phiếu.
 
+### 🛡️ Bình đẳng Địa lý (Đã sửa tháng 5/2026)
+- **Lỗi trước đây:** Cổ phiếu Châu Âu và Châu Á bị lọc nhầm khỏi quá trình trích xuất dữ liệu quý dựa trên giả định sai rằng các thị trường này chỉ báo cáo nửa năm một lần.
+- **Sửa chữa:** Đã loại bỏ bộ lọc phân biệt địa lý (`NON_QUARTERLY_SUFFIXES`) khỏi `etl/utils.py`. Tất cả cổ phiếu giờ được xử lý bình đẳng bất kể hậu tố sàn giao dịch (`.PA`, `.DE`, `.L`, `.T`, `.HK`, v.v.).
+- **Tác động:** Khôi phục tính toàn vẹn dữ liệu cho 200+ cổ phiếu EU/Châu Á, đảm bảo so sánh công bằng giữa các thị trường.
+
 ---
 
 ## 4. Cơ chế Xử lý Lỗi (Failure Handling)

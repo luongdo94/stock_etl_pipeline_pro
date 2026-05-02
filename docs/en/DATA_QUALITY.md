@@ -53,6 +53,11 @@ What sets this system apart is its ability to self-recover data when facing API 
 - **Rule:** The system only re-downloads fundamental data (Cashflows, Revenue, etc.) if the current cache is older than 72 hours **OR** if the total warehouse coverage drops below **95%**.
 - **Benefit:** Maximizes API quota efficiency and significantly reduces the risk of IP blocks.
 
+### 🛡️ Geographic Equality (Fixed May 2026)
+- **Previous Bug:** European and Asian stocks were incorrectly filtered from quarterly data extraction based on a false assumption that these markets only report semi-annually.
+- **Fix:** Removed geographic discrimination filter (`NON_QUARTERLY_SUFFIXES`) from `etl/utils.py`. All equity stocks now receive equal treatment regardless of exchange suffix (`.PA`, `.DE`, `.L`, `.T`, `.HK`, etc.).
+- **Impact:** Restored data integrity for 200+ EU/Asia stocks, ensuring fair cross-market comparison.
+
 ---
 
 ## 4. Failure Handling

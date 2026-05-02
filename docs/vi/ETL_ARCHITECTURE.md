@@ -25,6 +25,7 @@ Hệ thống tạo một bản sao "bóng" của cơ sở dữ liệu sản xu�
     - **Tầng 1 (Cấp tốc - 24h):** Dữ liệu Giá và Chỉ số kỹ thuật. Luôn được cập nhật hàng ngày.
     - **Tầng 2 (Chiến thuật - 7 ngày):** Báo cáo tài chính Quý, Dòng tiền (FCF) và Lịch lợi nhuận.
     - **Tầng 3 (Chiến lược - 30 ngày):** Hồ sơ doanh nghiệp (Ngành, Lĩnh vực) và Báo cáo tài chính Năm.
+- **Bao phủ Toàn cầu:** Tất cả cổ phiếu được xử lý bình đẳng bất kể vị trí địa lý. Hệ thống trích xuất dữ liệu quý cho thị trường Mỹ, Châu Âu và Châu Á mà không phân biệt (đã sửa tháng 5/2026 — trước đây cổ phiếu EU/Châu Á bị lọc nhầm).
 - **Normalize:** Tự động lấy tỷ giá FX (ví dụ: `USDEUR=X`) để quy đổi mọi giá trị về đồng Euro.
 
 ### Bước 2: Validate (Kiểm tra dữ liệu thô)

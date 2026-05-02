@@ -23,6 +23,7 @@ Das System erstellt eine "Schattenkopie" (Shadow Copy) der Produktionsdatenbank.
     - **Tier 1 (Täglich - 24h):** Kursdaten und technische Indikatoren. Werden immer aktualisiert.
     - **Tier 2 (Taktisch - 7 Tage):** Quartalszahlen, Free Cash Flow (FCF) und Earnings-Kalender.
     - **Tier 3 (Strategisch - 30 Tage):** Unternehmens-Stammdaten (Sektoren, Industrien) und historische Jahresberichte.
+- **Globale Marktabdeckung:** Alle Aktien werden unabhängig vom geografischen Standort gleich behandelt. Das System extrahiert Quartalsdaten für US-, europäische und asiatische Märkte ohne Diskriminierung (behoben Mai 2026 — zuvor wurden EU/Asien-Aktien fälschlicherweise gefiltert).
 - **Normalisierung:** Ruft automatisch Live-Wechselkurse ab (z. B. `USDEUR=X`), um alle Werte bei der Aufnahme direkt in Euro zu normalisieren.
 
 ### Schritt 2: Validierung

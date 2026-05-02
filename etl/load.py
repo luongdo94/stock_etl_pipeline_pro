@@ -420,6 +420,15 @@ def load_forward_estimates(
     tickers = df["ticker"].unique().tolist()
     conn.execute("DELETE FROM raw.forward_estimates WHERE ticker = ANY(?)", [tickers])
 
+    # ── SANITIZE DATA TYPES ──────────────────────────────────────────────────
+    # YahooQuery sometimes returns '{}' or other strings for empty numeric fields.
+    # We force all columns except categorical ones to numeric (NaN) to avoid 
+    # DuckDB conversion errors during INSERT.
+    cols_to_fix = [c for c in df.columns if c not in ["ticker", "_extracted_at", "_loaded_at"]]
+    for col in cols_to_fix:
+        df[col] = pd.to_numeric(df[col], errors='coerce')
+    # ─────────────────────────────────────────────────────────────────────────
+
     conn.register("df_tmp", df)
     # Build explicit column list from the DataFrame (excludes _loaded_at — has DEFAULT)
     cols = [c for c in df.columns if c != "_loaded_at"]

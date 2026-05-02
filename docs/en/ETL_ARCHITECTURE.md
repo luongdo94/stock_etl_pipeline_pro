@@ -25,6 +25,7 @@ The system creates a "shadow" copy of the production database. All new write ope
     - **Tier 1 (High Velocity - 24h):** Price data and technical indicators. Always updated daily.
     - **Tier 2 (Tactical - 7 Days):** Quarterly financials, Free Cash Flow (FCF), and Earnings calendars.
     - **Tier 3 (Strategic - 30 Days):** Company metadata (Sectors, Industries) and Historical Annual financials.
+- **Global Market Coverage:** All equity stocks are processed equally regardless of geographic location. The system extracts quarterly data for US, European, and Asian markets without discrimination (fixed May 2026 — previously EU/Asia stocks were incorrectly filtered).
 - **Normalize:** Automatically fetches live FX rates (e.g., `USDEUR=X`) to normalize all values to Euro at ingestion.
 
 ### Step 2: Validate
