@@ -7357,17 +7357,24 @@ if active_tab == "4. Quantitative Forecast (ML)":
         X_t = torch.FloatTensor(np.array(X)).to(device)
         y_t = torch.FloatTensor(np.array(y)).to(device)
         
-        # 🛡️ TEMPORAL FEATURE DECAY
-        decay_weights = torch.exp(torch.linspace(-0.5, 0, lookback)).to(device).view(1, lookback, 1)
-        X_t = X_t * decay_weights
+        # 🛡️ TEMPORAL FEATURE DECAY (v7.3: Consistent train/inference)
+        # Create decay function to ensure same transformation in training and inference
+        def apply_temporal_decay(X_tensor, lookback_len, device):
+            """Apply exponential temporal decay: recent data gets higher weight"""
+            decay = torch.exp(torch.linspace(-0.5, 0, lookback_len)).to(device).view(1, lookback_len, 1)
+            return X_tensor * decay
+        
+        X_t = apply_temporal_decay(X_t, lookback, device)
         
         ticker_id    = df_ticker['ticker'].iloc[0] if not df_ticker.empty else "unknown"
         MODEL_VERSION = f"v7_direct_{forecast_days}"
         if "optuna_cache" not in st.session_state or st.session_state.get("optuna_version") != MODEL_VERSION:
             st.session_state.optuna_cache = {}; st.session_state.optuna_version = MODEL_VERSION
             
-        if ticker_id in st.session_state.optuna_cache:
-            best = st.session_state.optuna_cache[ticker_id]
+        # FIX: Cache key must include forecast_days and lookback to avoid collision
+        cache_key = f"{ticker_id}_{forecast_days}_{lookback}"
+        if cache_key in st.session_state.optuna_cache:
+            best = st.session_state.optuna_cache[cache_key]
         else:
             hpo_split = int(len(X_t)*0.8)
             X_hpo, y_hpo = X_t[:hpo_split], y_t[:hpo_split]
@@ -7398,7 +7405,7 @@ if active_tab == "4. Quantitative Forecast (ML)":
                 study = optuna.create_study(direction="minimize")
                 study.optimize(objective, n_trials=5, timeout=10) # Optimized: 5 trials, 10s
                 best = study.best_params; best['epochs']=80
-                st.session_state.optuna_cache[ticker_id] = best
+                st.session_state.optuna_cache[cache_key] = best
         
         # ── Final Training (v7.2: Direct Multi-step Architecture) ──
         model = StockLSTM(input_size=len(features), hidden_size=best['hidden_size'], num_layers=best['num_layers'], output_size=forecast_days).to(device)
@@ -7416,10 +7423,10 @@ if active_tab == "4. Quantitative Forecast (ML)":
                 o = model(X_b) + y_baseline
                 l_core = cr(o, y_b)
                 
-                # Multi-step Directional Penalty
+                # Multi-step Directional Penalty (v7.3: Increased weight 0.5 → 1.5)
                 pred_diff = o - y_baseline
                 true_diff = y_b - y_baseline
-                penalty = torch.mean(torch.clamp(-pred_diff * true_diff, min=0)) * 0.5
+                penalty = torch.mean(torch.clamp(-pred_diff * true_diff, min=0)) * 1.5
                 
                 l = l_core + penalty
                 l.backward()
@@ -7431,11 +7438,11 @@ if active_tab == "4. Quantitative Forecast (ML)":
             prev_loss = l_val
             import time; time.sleep(0.005) # Micro-yield
             
-        # ── INFERENCE (v7.2: Single Shot Direct) ──
+        # ── INFERENCE (v7.3: Single Shot Direct with Consistent Decay) ──
         model.eval()
         last_seq = data_scaled[-lookback:].copy()
         last_seq_t = torch.FloatTensor(last_seq).unsqueeze(0).to(device)
-        last_seq_t = last_seq_t * decay_weights # Apply temporal decay
+        last_seq_t = apply_temporal_decay(last_seq_t, lookback, device)  # Same decay as training
         with torch.no_grad():
             y_base_inf   = last_seq_t[:, -1, 0].unsqueeze(1)
             preds_scaled = (model(last_seq_t) + y_base_inf).cpu().numpy().flatten()
@@ -7786,11 +7793,22 @@ if active_tab == "4. Quantitative Forecast (ML)":
             except Exception: pass
 
             if not results: return None, 0.0, {}, {}
-            # ── Regime-Aware Weighting (Fix 2) ──────────────────────────────────
+            
+            # ── Regime-Aware Weighting with Minimum Threshold (v11.1) ──────────
             # Base: inverse-RMSE weighting
+            best_rmse = min(v['rmse'] for v in results.values())
             inv_rmse = {k: 1.0 / max(v['rmse'], 0.01) for k, v in results.items()}
+            
+            # FIX: Filter out models with RMSE > 2x best model (too poor quality)
+            inv_rmse = {k: v for k, v in inv_rmse.items() 
+                       if results[k]['rmse'] <= 2.0 * best_rmse}
+            
+            if not inv_rmse:  # Fallback if all models filtered out
+                inv_rmse = {k: 1.0 / max(v['rmse'], 0.01) for k, v in results.items()}
+            
             total_inv = sum(inv_rmse.values())
             weights = {k: v / total_inv for k, v in inv_rmse.items()}
+            
             # Regime boost: data-driven from model_performance_log analysis
             #   BULLISH/STRONG BULLISH → PatchTST wins 42.3% of time → +15% boost
             #   BEARISH/CAUTION       → Transformer & LSTM tied → +10% Transformer boost
@@ -7799,6 +7817,7 @@ if active_tab == "4. Quantitative Forecast (ML)":
                 weights["PatchTST"] *= 1.15
             elif "BEARISH" in _cur_regime or "CAUTION" in _cur_regime:
                 if "Transformer" in weights: weights["Transformer"] *= 1.10
+            
             # Renormalize
             _total_w = sum(weights.values())
             weights = {k: round(v / _total_w, 4) for k, v in weights.items()}
@@ -7968,7 +7987,13 @@ if active_tab == "4. Quantitative Forecast (ML)":
         rss_url = f"https://news.google.com/rss/search?q={_q_fc}&hl=en-US&gl=US&ceid=US:en"
         feed = feedparser.parse(rss_url)
         titles = [entry.get("title", "").split(" - ")[0] for entry in feed.entries[:10]]
-        avg_sent = analyze_sentiment_finbert(titles) if titles else 0
+        
+        # FIX: Add warning when no news found
+        if not titles:
+            st.warning(f"⚠️ No recent news found for {company_val}. Sentiment defaulted to neutral (0.0).")
+            avg_sent = 0
+        else:
+            avg_sent = analyze_sentiment_finbert(titles)
         
         # 4. Monte Carlo Simulation (AI-Enhanced & Dynamic Volatility)
         returns = df_fc["daily_return_pct"].dropna() / 100
@@ -7988,16 +8013,15 @@ if active_tab == "4. Quantitative Forecast (ML)":
         
         # ── Phase 7: Monte Carlo GARCH(1,1) (Volatility Clustering) ───────────
         try:
-            # Fit GARCH(1,1) to captured historical returns (using 500-day window)
-            # Scaling by 100 for numerical stability in the solver
-            garch_data = returns.tail(500) * 100
-            am = arch_model(garch_data, vol='Garch', p=1, q=1, dist='Normal', rescale=False)
+            # FIX: Use rescale=True to let arch_model handle scaling automatically
+            # This eliminates manual scaling bugs and improves numerical stability
+            am = arch_model(returns.tail(500), vol='Garch', p=1, q=1, dist='Normal', rescale=True)
             res = am.fit(disp='off')
             
             # Forecast volatility term structure for the horizon
             forecasts = res.forecast(horizon=forecast_days)
-            # Variance -> Std Dev, and rescale back from percent
-            sigma_forecast = np.sqrt(forecasts.variance.values[-1, :]) / 100.0
+            # Variance -> Std Dev (rescale=True handles units automatically)
+            sigma_forecast = np.sqrt(forecasts.variance.values[-1, :])
             
             # Ensure no zero/nan vol (fallback to long-term avg)
             sigma_forecast = np.nan_to_num(sigma_forecast, nan=sigma_long_term)
