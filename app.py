@@ -2710,7 +2710,7 @@ if not prices_full.empty:
         current_universe = sorted([t for t in all_tickers if t not in indices])
 
 
-st.sidebar.markdown("<br>", unsafe_allow_html=True)
+
 if st.sidebar.button("🔄 Refresh Data", width="stretch", type="secondary", help="Clear cache & reload from warehouse"):
     st.cache_data.clear()
     st.toast("🚀 Refreshing Intelligence...", icon="✅")
@@ -3033,33 +3033,9 @@ if macro:
         gold_sema = "🛡️ Safe Haven Flow" if _gold_p >= 0.5 else ("↗️ Gold Rising" if _gold_p > 0 else ("↘️ Gold Falling" if _gold_p > -0.5 else "📉 Liquidation"))
 
         _macro_sidebar_placeholder.markdown(f"""
-        <div class='sb-section-label'>Live Macro Pulse</div>
+        <div class='sb-section-label'>Economic Fundamentals</div>
         
-        <!-- Market Indicators -->
-        <div class='sb-macro-row' style='display:block;'>
-            <div style='display:flex; justify-content:space-between; align-items:center;'>
-                <span class='sb-macro-label'>SPY</span>
-                <span class='sb-macro-val'>€{_spy_v:.2f}</span>
-                {_sb_delta(_spy_p)}
-            </div>
-            <div style='font-size:0.55rem; color:#8899aa; text-align:right; margin-top:2px; text-transform:uppercase;'>{spy_sema}</div>
-        </div>
-        <div class='sb-macro-row' style='display:block;'>
-            <div style='display:flex; justify-content:space-between; align-items:center;'>
-                <span class='sb-macro-label'>VIX</span>
-                <span class='sb-macro-val'>{_vix_v:.2f}</span>
-                {_sb_delta(_vix_p, invert=True)}
-            </div>
-            <div style='font-size:0.55rem; color:#8899aa; text-align:right; margin-top:2px; text-transform:uppercase;'>{vix_sema}</div>
-        </div>
-        <div class='sb-macro-row' style='display:block;'>
-            <div style='display:flex; justify-content:space-between; align-items:center;'>
-                <span class='sb-macro-label'>DXY</span>
-                <span class='sb-macro-val'>{_dxy_v:.2f}</span>
-                {_sb_delta(_dxy_p, invert=True)}
-            </div>
-            <div style='font-size:0.55rem; color:#8899aa; text-align:right; margin-top:2px; text-transform:uppercase;'>{dxy_sema}</div>
-        </div>
+        <!-- Yield Curve -->
         <div style='display:flex; gap:6px; margin-bottom:6px;'>
             <div class='sb-macro-row' style='flex:1; margin-bottom:0;'>
                 <div class='sb-macro-label' style='font-size:0.55rem;'>US10Y</div>
@@ -3074,23 +3050,6 @@ if macro:
                     <span class='sb-macro-val' style='font-size:0.7rem; color:{"#2ecc71" if _spread_v > 0 else "#e74c3c"}'>{_spread_v:.2f}%</span>
                 </div>
             </div>
-        </div>
-
-        <div class='sb-macro-row' style='display:block;'>
-            <div style='display:flex; justify-content:space-between; align-items:center;'>
-                <span class='sb-macro-label'>CRUDE OIL</span>
-                <span class='sb-macro-val'>${_oil_v:.2f}</span>
-                {_sb_delta(_oil_p, invert=True)}
-            </div>
-            <div style='font-size:0.55rem; color:#8899aa; text-align:right; margin-top:2px; text-transform:uppercase;'>{oil_sema}</div>
-        </div>
-        <div class='sb-macro-row' style='display:block;'>
-            <div style='display:flex; justify-content:space-between; align-items:center;'>
-                <span class='sb-macro-label'>GOLD</span>
-                <span class='sb-macro-val'>${_gold_v:.2f}</span>
-                {_sb_delta(_gold_p)}
-            </div>
-            <div style='font-size:0.55rem; color:#8899aa; text-align:right; margin-top:2px; text-transform:uppercase;'>{gold_sema}</div>
         </div>
         
         <!-- Economic Fundamentals (Unified Style) -->
@@ -3242,15 +3201,44 @@ risk_return = monthly.groupby("ticker").agg(
 # ── LAYER 6: MAIN TAB EXECUTION ──────────────────────────────────────────────
 # define tab labels in Decision Stage workflow order
 tab_labels = [
-    "1. Market Regime",        # Strategic Overview
-    "2. Opportunity Radar",    # Market Scanner
-    "3. Qualitative Audit (AI)", # Single Stock Deep Dive
-    "4. Quantitative Forecast (ML)", # Predictive Suite
-    "5. Backtest Lab",         # Strategy Backtest
-    "6. Watchlist",            # Watchlist / Kanban
-    "7. Portfolio Builder",    # Portfolio Management
-    "8. System Methodology"    # Methodology Docs
+    "1. Market Regime",             # Strategic Overview
+    "2. Opportunity Radar",         # Market Scanner
+    "3. Qualitative Audit (AI)",    # Single Stock Deep Dive
+    "4. Quantitative Forecast (ML)",# Predictive Suite
+    "5. Backtest Lab",              # Strategy Backtest
+    "6. Watchlist",                 # Watchlist / Kanban
+    "7. Portfolio Builder",         # Portfolio Management
+    "8. System Methodology",        # Methodology Docs
 ]
+
+# ── TICKER TAPE (Live Scrolling) ────────────────────────────────────────────
+import streamlit.components.v1 as _tv_comp_tape
+_tv_comp_tape.html("""
+<div class="tradingview-widget-container">
+  <div class="tradingview-widget-container__widget"></div>
+  <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-ticker-tape.js" async>
+  {
+    "symbols": [
+      {"proName": "FOREXCOM:SPXUSD", "title": "S&P 500"},
+      {"proName": "FOREXCOM:NSXUSD", "title": "NASDAQ 100"},
+      {"proName": "FX_IDC:EURUSD",   "title": "EUR/USD"},
+      {"proName": "BITSTAMP:BTCUSD", "title": "Bitcoin"},
+      {"description": "VIX",     "proName": "CBOE:VIX"},
+      {"description": "Gold",    "proName": "TVC:GOLD"},
+      {"description": "Oil",     "proName": "TVC:USOIL"},
+      {"description": "DXY",     "proName": "TVC:DXY"},
+      {"description": "DAX",     "proName": "XETR:DAX"},
+      {"description": "Nikkei",  "proName": "TVC:NI225"}
+    ],
+    "showSymbolLogo": true,
+    "isTransparent": true,
+    "displayMode": "adaptive",
+    "colorTheme": "dark",
+    "locale": "en"
+  }
+  </script>
+</div>
+""", height=55)
 
 # To REALLY fix the jumping issue while keeping the modern 'Pills' UI, 
 # we use Streamlit's native st.pills with session_state binding.
@@ -3274,27 +3262,63 @@ if active_tab == "1. Market Regime":
     # ── [STEP 2] 6-BLOCK GRID LAYOUT ─────────────────────────────────────────
     # Note: Logic (Step 1) has been moved to global dashboard level for consistency
     
-    # ROW 1: HEADERS
-    m1, m2 = st.columns(2)
-    with m1:
-        st.markdown(f"""
-        <div style='background:rgba(255,255,255,0.03); padding:20px; border-radius:10px; border-left:5px solid {regime_ui_color};'>
-            <span style='color:#8899aa; font-size:0.8rem; font-weight:700; text-transform:uppercase;'>Current Market Regime</span>
-            <div style='color:{regime_ui_color}; font-size:2.2rem; font-weight:900;'>{regime}</div>
+    # ── MARKET PULSE (Global Heatmap & Macro Calendar) ───────────────────────
+    import streamlit.components.v1 as _mp_comp
+    render_header("pulse", "Market Pulse — Global Heatmap & Macro Calendar", level="###")
+    st.markdown("<p style='color:#667788; font-size:0.82rem;'>Real-time global market heat, cross-asset performance and upcoming economic events that may trigger volatility.</p>", unsafe_allow_html=True)
+
+    pulse_c1, pulse_c2 = st.columns([3, 2])
+
+    with pulse_c1:
+        st.markdown("#### 🌍 S&P 500 Sector Heatmap")
+        _mp_comp.html("""
+        <!-- TradingView Market Heatmap Widget -->
+        <div class="tradingview-widget-container" style="height:500px; width:100%">
+          <div class="tradingview-widget-container__widget" style="height:500px; width:100%"></div>
+          <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-stock-heatmap.js" async>
+          {
+            "exchanges": [],
+            "dataSource": "SPX500",
+            "grouping": "sector",
+            "blockSize": "market_cap_basic",
+            "blockColor": "change",
+            "locale": "en",
+            "symbolUrl": "",
+            "colorTheme": "dark",
+            "hasTopBar": true,
+            "isDataSetEnabled": true,
+            "isZoomEnabled": true,
+            "hasSymbolTooltip": true,
+            "isMonoSize": false,
+            "width": "100%",
+            "height": "500"
+          }
+          </script>
         </div>
-        """, unsafe_allow_html=True)
-    with m2:
-        st.markdown(f"""
-        <div style='background:rgba(255,255,255,0.03); padding:20px; border-radius:10px; border-right:5px solid #3498db;'>
-            <span style='color:#8899aa; font-size:0.8rem; font-weight:700; text-transform:uppercase;'>Trend Confidence Score</span>
-            <div style='display:flex; align-items:baseline; gap:15px; flex-wrap:wrap;'>
-                <div style='color:#fff; font-size:2.2rem; font-weight:900;'>{conf_score_global}%</div>
-                <div style='color:#e74c3c; font-size:0.75rem; font-style:italic;'>{ '🚨 ' + conf_reason_str if conf_score_global < 50 else '⚠️ ' + conf_reason_str if conf_score_global < 100 else '✅ ' + conf_reason_str }</div>
-            </div>
+        """, height=520)
+
+    with pulse_c2:
+        st.markdown("#### 📅 Economic Calendar")
+        _mp_comp.html("""
+        <!-- TradingView Economic Calendar Widget -->
+        <div class="tradingview-widget-container" style="height:500px; width:100%">
+          <div class="tradingview-widget-container__widget" style="height:500px; width:100%"></div>
+          <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-events.js" async>
+          {
+            "colorTheme": "dark",
+            "isTransparent": true,
+            "width": "100%",
+            "height": "500",
+            "locale": "en",
+            "importanceFilter": "0,1",
+            "countryFilter": "us,eu,gb,jp,cn,de,fr"
+          }
+          </script>
         </div>
-        """, unsafe_allow_html=True)
-        
-    st.markdown("<br>", unsafe_allow_html=True)
+        """, height=520)
+
+    st.markdown("---")
+
 
     # ROW 2: PRIMARY CHARTS
     # Filter SPY and breadth to the selected time horizon
@@ -3362,100 +3386,66 @@ if active_tab == "1. Market Regime":
         else:
             st.info("Calculating breadth history... run pipeline if empty.")
 
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # ROW 3: HEATMAP & STANCE
-    b1, b2 = st.columns(2)
-    with b1:
-        render_header("globe", "Sector Intelligence")
-        
-        # ── SECTOR HEATMAP: period_return tied to selected time horizon ──────
-        # Use prices (time-filtered) for p_perf
-        p_perf = prices.sort_values('date').groupby('ticker')['price_close'].agg(['first', 'last']).reset_index()
-        p_perf['first'] = pd.to_numeric(p_perf['first'], errors='coerce').replace(0, 0.001).fillna(0.001)
-        p_perf['last']  = pd.to_numeric(p_perf['last'],  errors='coerce').fillna(0.001)
-        p_perf['period_return'] = (p_perf['last'] / p_perf['first'] - 1) * 100
-
-        # INNER JOIN: only tickers with data in the selected period.
-        # Use companies_full (not reco_df) to avoid stale period_return columns.
-        tree_df = companies_full[['ticker', 'company', 'sector', 'region', 'market_cap']].merge(
-            p_perf[['ticker', 'period_return']], on='ticker', how='inner'
-        )
-        # Exclude benchmark indices from heatmap
-        tree_df = tree_df[~tree_df['ticker'].isin(["^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"])]
-        tree_df['period_return'] = pd.to_numeric(tree_df['period_return'], errors='coerce')
-        tree_df['period_return'] = tree_df['period_return'].replace([float('inf'), float('-inf')], 0).fillna(0)
-        tree_df = tree_df.dropna(subset=['sector', 'ticker'])
-        tree_df['cap_bn'] = pd.to_numeric(tree_df['market_cap'], errors='coerce') / 1e9
-        tree_df['cap_bn'] = tree_df['cap_bn'].fillna(0.001).replace(0, 0.001)
-        
-        p_max = max(abs(tree_df['period_return'].min()), abs(tree_df['period_return'].max()), 5)
-
-        # Mini-summary
-        if not tree_df.empty and 'sector' in tree_df.columns:
-            sector_agg = tree_df.groupby('sector')['period_return'].mean().sort_values(ascending=False)
-            if len(sector_agg) >= 2:
-                leaders = ", ".join(sector_agg.head(2).index.tolist())
-                laggards = ", ".join(sector_agg.tail(2).index.tolist())
-                st.markdown(f"""
-                <div style='background:rgba(255,255,255,0.03); padding:10px 15px; border-radius:8px; border-left:3px solid #f1c40f; margin-bottom:12px; font-size:0.85rem;'>
-                    <b>Leaders:</b> <span style='color:#2ecc71;'>{leaders}</span> | <b>Laggards:</b> <span style='color:#e74c3c;'>{laggards}</span>
-                </div>
-                """, unsafe_allow_html=True)
-
-        sec_tabs = st.tabs(["Heatmap", "Top Sectors", "Top Movers"])
-        
-        with sec_tabs[0]:
-            # ... (Heatmap code)
-            tree_df['return_str'] = tree_df['period_return'].apply(
-                lambda x: f"{x:+.2f}%" if pd.notnull(x) else ""
-            )
-            tree_df['Region'] = tree_df['region'].fillna('Unknown').str.upper()
-            
-            tree_df['color_group'] = tree_df['period_return'].apply(lambda x: 'Positive' if x >= 0 else 'Negative')
-            
-            fig_tree = px.treemap(
-                tree_df, path=[px.Constant("Global"), 'Region', 'sector', 'ticker'], values='cap_bn',
-                color='color_group', 
-                color_discrete_map={'Positive': '#2ecc71', 'Negative': '#e74c3c'},
-                template="plotly_dark", height=600,
-                custom_data=['return_str', 'Region']
-            )
-            fig_tree.update_traces(
-                texttemplate="%{label}<br>%{customdata[0]}",
-                textfont=dict(size=12),
-                hovertemplate="<b>%{label}</b><br>Region: %{customdata[1]}<br>Mkt Cap: €%{value:.1f}B<br>Return: %{customdata[0]}<extra></extra>"
-            )
-            fig_tree.update_layout(margin=dict(l=0, r=0, b=0, t=30))
-            st.plotly_chart(fig_tree, use_container_width=True)
-            
-        with sec_tabs[1]:
-            if not tree_df.empty and 'sector' in tree_df.columns:
-                s_df = sector_agg.reset_index()
-                s_df['color_group'] = s_df['period_return'].apply(lambda x: 'Positive' if x >= 0 else 'Negative')
-                fig_sec = px.bar(s_df, x='period_return', y='sector', orientation='h', 
-                                 color='color_group', 
-                                 color_discrete_map={'Positive': '#2ecc71', 'Negative': '#e74c3c'},
-                                 template="plotly_dark", height=600)
-                fig_sec.update_traces(texttemplate='%{x:.2f}%', textposition='outside')
-                fig_sec.update_layout(showlegend=False, margin=dict(r=20, b=0), yaxis={'categoryorder':'total ascending', 'title': None, 'tickmode': 'linear'})
-                st.plotly_chart(fig_sec, use_container_width=True)
-            
-        with sec_tabs[2]:
-            if not tree_df.empty:
-                top_stocks = tree_df.nlargest(10, 'period_return')
-                bot_stocks = tree_df.nsmallest(10, 'period_return')
-                movers = pd.concat([top_stocks, bot_stocks]).sort_values('period_return', ascending=True)
-                fig_movers = px.bar(movers, x='period_return', y='ticker', orientation='h', 
-                                    color='color_group', 
-                                    color_discrete_map={'Positive': '#2ecc71', 'Negative': '#e74c3c'},
-                                    template="plotly_dark", height=600)
-                fig_movers.update_traces(texttemplate='%{x:.2f}%', textposition='outside')
-                fig_movers.update_layout(showlegend=False, margin=dict(r=40, b=0), yaxis={'categoryorder':'total ascending', 'title': None, 'tickmode': 'linear', 'dtick': 1})
-                st.plotly_chart(fig_movers, use_container_width=True)
 
 
-    with b2:
+
+    
+    # Bottom Row: Global Performance & Stance
+    bot_c1, bot_c2 = st.columns([2, 1])
+    
+    with bot_c1:
+        st.markdown("#### 📈 Global Cross-Asset Performance (YTD)")
+        _mp_comp.html("""
+        <!-- TradingView Market Overview (Full) Widget -->
+        <div class="tradingview-widget-container" style="height:400px; width:100%">
+          <div class="tradingview-widget-container__widget" style="height:400px; width:100%"></div>
+          <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-market-overview.js" async>
+          {
+            "colorTheme": "dark",
+            "dateRange": "YTD",
+            "showChart": true,
+            "locale": "en",
+            "isTransparent": true,
+            "width": "100%",
+            "height": "400",
+            "tabs": [
+              {
+                "title": "US Indices",
+                "symbols": [
+                  {"s": "FOREXCOM:SPXUSD", "d": "S&P 500"},
+                  {"s": "FOREXCOM:NSXUSD", "d": "Nasdaq 100"},
+                  {"s": "CBOE:VIX",        "d": "VIX"},
+                  {"s": "TVC:DJI",         "d": "Dow Jones"}
+                ],
+                "originalTitle": "US Indices"
+              },
+              {
+                "title": "Europe",
+                "symbols": [
+                  {"s": "XETR:DAX",          "d": "DAX"},
+                  {"s": "EURONEXT:CAC40",    "d": "CAC 40"},
+                  {"s": "INDEX:SX5E",        "d": "STOXX 50"},
+                  {"s": "TVC:FTSE100",       "d": "FTSE 100"}
+                ],
+                "originalTitle": "Europe"
+              },
+              {
+                "title": "Macro",
+                "symbols": [
+                  {"s": "TVC:GOLD",   "d": "Gold"},
+                  {"s": "TVC:USOIL", "d": "Oil WTI"},
+                  {"s": "TVC:DXY",   "d": "Dollar Index"},
+                  {"s": "FX:EURUSD", "d": "EUR/USD"}
+                ],
+                "originalTitle": "Macro"
+              }
+            ]
+          }
+          </script>
+        </div>
+        """, height=420)
+
+    with bot_c2:
         render_header("package", "Portfolio Stance & Tactical Guide")
         
         # Stance card content
@@ -3474,9 +3464,18 @@ if active_tab == "1. Market Regime":
             
         st.markdown(f"""
         <div style='background:rgba(20,30,45,0.7); border:1px solid rgba(255,255,255,0.1); border-radius:12px; padding:25px; height:400px;'>
-            <div style='margin-bottom:15px;'>
-                <span style='color:#8899aa; font-size:0.75rem; font-weight:700;'>STRATEGIC BIAS</span>
-                <div style='color:#fff; font-size:1.4rem; font-weight:800;'>{stance}</div>
+            <div style='margin-bottom:15px; display:flex; justify-content:space-between; align-items:center;'>
+                <div>
+                    <span style='color:#8899aa; font-size:0.75rem; font-weight:700;'>STRATEGIC BIAS</span>
+                    <div style='color:#fff; font-size:1.4rem; font-weight:800;'>{stance}</div>
+                </div>
+                <div style='text-align:right;'>
+                    <span style='color:#8899aa; font-size:0.75rem; font-weight:700;'>CONFIDENCE</span>
+                    <div style='color:#3498db; font-size:1.4rem; font-weight:800;'>{conf_score_global}%</div>
+                </div>
+            </div>
+            <div style='font-size:0.75rem; font-style:italic; color:#cfd8dc; margin-bottom:15px; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:10px;'>
+                { '🚨 ' + conf_reason_str if conf_score_global < 50 else '⚠️ ' + conf_reason_str if conf_score_global < 100 else '✅ ' + conf_reason_str }
             </div>
             <div style='display:flex; gap:20px; margin-bottom:20px;'>
                 <div style='flex:1;'>
@@ -3500,8 +3499,6 @@ if active_tab == "1. Market Regime":
             </div>
         </div>
         """, unsafe_allow_html=True)
-
-    st.markdown("---")
 
 
 
@@ -4728,6 +4725,38 @@ if active_tab == "3. Qualitative Audit (AI)":
                       </script>
                     </div>
                     """, height=340)
+
+                # Cross-Asset Comparison (Relative Strength vs Benchmark)
+                st.markdown("<div style='margin-top:12px; color:#667788; font-size:0.75rem; font-weight:700; text-transform:uppercase; letter-spacing:0.08em;'>📊 Relative Strength vs Key Benchmarks</div>", unsafe_allow_html=True)
+                _cross_symbols = [[tv_symbol, "Primary"], ["FOREXCOM:SPXUSD", "S&P 500"], ["FOREXCOM:NSXUSD", "Nasdaq 100"], ["XETR:DAX", "DAX"]]
+                components.html(f"""
+                <!-- TradingView Symbol Compare Widget -->
+                <div class="tradingview-widget-container" style="height:200px;">
+                  <div class="tradingview-widget-container__widget"></div>
+                  <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-symbol-overview.js" async>
+                  {{
+                    "symbols": {json.dumps(_cross_symbols)},
+                    "chartOnly": true,
+                    "width": "100%",
+                    "height": "200",
+                    "locale": "en",
+                    "colorTheme": "dark",
+                    "isTransparent": true,
+                    "showVolume": false,
+                    "showMA": false,
+                    "hideDateRanges": false,
+                    "hideMarketStatus": true,
+                    "hideSymbolLogo": true,
+                    "scalePosition": "right",
+                    "scaleMode": "Percentage",
+                    "chartType": "line",
+                    "lineWidth": 2,
+                    "lineType": 0,
+                    "dateRanges": ["1m|1D", "3m|1D", "12m|1W", "60m|1M"]
+                  }}
+                  </script>
+                </div>
+                """, height=210)
 
             # --- HISTORICAL FUNDAMENTAL TRENDS (Dual Axis) ---
             st.markdown("---")
@@ -9435,3 +9464,5 @@ st.sidebar.markdown("---")
 # 
 # csv_prices = prices.to_csv(index=False).encode('utf-8')
 # st.sidebar.download_button("🔽 Download Price History", data=csv_prices, file_name="price_history.csv", mime="text/csv")
+
+

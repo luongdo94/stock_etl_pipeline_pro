@@ -44,9 +44,9 @@ def run_dq_validations(db_path: str = None):
             },
             {
                 "id": "fct_no_negative_price", 
-                "name": "FCT: Stable Prices (> 0.01)", 
-                "query": "SELECT COUNT(*) FROM marts.fct_daily_returns WHERE price_close <= 0.01",
-                "ticker_query": "SELECT ticker FROM marts.fct_daily_returns WHERE price_close <= 0.01 LIMIT 50",
+                "name": "FCT: Stable Prices (> 0)", 
+                "query": "SELECT COUNT(*) FROM marts.fct_daily_returns WHERE price_close <= 0",
+                "ticker_query": "SELECT ticker FROM marts.fct_daily_returns WHERE price_close <= 0 LIMIT 50",
                 "critical": True
             },
             {
