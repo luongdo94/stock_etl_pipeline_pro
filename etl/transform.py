@@ -16,12 +16,12 @@ def _table_exists(conn: duckdb.DuckDBPyConnection, schema: str, table: str) -> b
     except Exception:
         return False
 
-def run_transforms(conn: duckdb.DuckDBPyConnection):
+def run_transforms(conn: duckdb.DuckDBPyConnection, active_tickers: list = None):
     """
     Run all transform layers in order:
     raw -> staging -> intermediate -> marts
     """
-    _create_staging(conn)
+    _create_staging(conn, active_tickers)
     _create_intermediate(conn)
     _create_marts(conn)
     
@@ -31,14 +31,24 @@ def run_transforms(conn: duckdb.DuckDBPyConnection):
 
 
 
-def _create_staging(conn):
+def _create_staging(conn, active_tickers=None):
     """
     STAGING: Clean + validate raw data.
     Naming: stg_{source}_{entity}
     """
     conn.execute("CREATE SCHEMA IF NOT EXISTS staging")
     
-    conn.execute("""
+    # Create temp table for active tickers to filter out "dead" tickers dynamically
+    if active_tickers:
+        # DuckDB needs a list of tuples for executemany, or we can just construct a pandas dataframe
+        import pandas as pd
+        df_active = pd.DataFrame({"ticker": active_tickers})
+        conn.execute("CREATE OR REPLACE TEMP TABLE active_tickers AS SELECT * FROM df_active")
+        active_filter = "AND ticker IN (SELECT ticker FROM active_tickers)"
+    else:
+        active_filter = ""
+    
+    conn.execute(f"""
         CREATE OR REPLACE VIEW staging.stg_stock_prices AS
         SELECT
             date,
@@ -57,16 +67,17 @@ def _create_staging(conn):
             CASE WHEN volume = 0 THEN TRUE ELSE FALSE END AS _is_zero_volume,
             _extracted_at
         FROM raw.stock_prices
-        -- Filter out invalid rows
+        -- Filter out invalid rows and inactive/dead tickers
         WHERE close > 0
           AND volume > 0
           AND date IS NOT NULL
           AND ticker IS NOT NULL
+          {active_filter}
         -- DEDUPLICATION: Take the most recent extraction for each ticker/date pair
         QUALIFY ROW_NUMBER() OVER (PARTITION BY date, ticker ORDER BY _extracted_at DESC) = 1
     """)
     
-    conn.execute("""
+    conn.execute(f"""
         CREATE OR REPLACE VIEW staging.stg_company_info AS
         SELECT
             ticker,
@@ -118,10 +129,11 @@ def _create_staging(conn):
             END AS cap_category
         FROM raw.company_info
         WHERE ticker IS NOT NULL
+          {active_filter}
         -- DEDUPLICATION: Take the most recent metadata for each ticker
         QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY _extracted_at DESC) = 1
     """)
-    conn.execute("""
+    conn.execute(f"""
         CREATE OR REPLACE VIEW staging.stg_historical_financials AS
         SELECT
             ticker,
@@ -132,10 +144,11 @@ def _create_staging(conn):
         FROM raw.historical_financials
         WHERE ticker IS NOT NULL
           AND eps IS NOT NULL
+          {active_filter}
         -- DEDUPLICATION: Handle overlapping annual periods
         QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker, year ORDER BY _loaded_at DESC) = 1
     """)
-    conn.execute("""
+    conn.execute(f"""
         CREATE OR REPLACE VIEW staging.stg_cashflows AS
         SELECT
             ticker,
@@ -143,6 +156,7 @@ def _create_staging(conn):
             COALESCE(dividends_paid_ttm, 0)   AS dividends_paid_ttm
         FROM raw.cashflows
         WHERE ticker IS NOT NULL
+          {active_filter}
         -- DEDUPLICATION: Take the most recent payout data
         QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY _loaded_at DESC) = 1
     """) if _table_exists(conn, "raw", "cashflows") else None

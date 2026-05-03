@@ -69,7 +69,171 @@ def load_tickers_config():
         logger.warning(f"⚠️ Failed to load tickers config: {e}. Using empty config.")
         return {}
 
-TICKERS = load_tickers_config()
+# --- TRADINGVIEW AUTO-DISCOVERY ---
+def fetch_dynamic_tv_tickers(base_tickers=None):
+    if base_tickers is None:
+        base_tickers = {}
+    
+    import requests
+    tv_presets = {
+        "value_stocks": {
+            "filters": [
+                {"left": "market_cap_basic", "operation": "greater", "right": 500000000},
+                {"left": "price_earnings_ttm", "operation": "less", "right": 15},
+                {"left": "price_earnings_ttm", "operation": "greater", "right": 0},
+                {"left": "price_book_ratio", "operation": "less", "right": 1.5},
+                {"left": "price_book_ratio", "operation": "greater", "right": 0},
+                {"left": "dividend_yield_recent", "operation": "greater", "right": 2}
+            ],
+            "sort": {"sortBy": "price_earnings_ttm", "sortOrder": "asc"}
+        },
+        "growth_at_reasonable_price": {
+            "filters": [
+                {"left": "market_cap_basic", "operation": "greater", "right": 500000000},
+                {"left": "earnings_per_share_yoy_growth_ttm", "operation": "greater", "right": 15},
+                {"left": "total_revenue_yoy_growth_ttm", "operation": "greater", "right": 10},
+                {"left": "price_earnings_ttm", "operation": "less", "right": 25},
+                {"left": "price_earnings_ttm", "operation": "greater", "right": 0}
+            ],
+            "sort": {"sortBy": "earnings_per_share_yoy_growth_ttm", "sortOrder": "desc"}
+        },
+        "breakout_momentum": {
+            "filters": [
+                {"left": "market_cap_basic", "operation": "greater", "right": 500000000},
+                {"left": "volume", "operation": "greater", "right": 1000000},
+                {"left": "SMA50", "operation": "greater", "right": "SMA200"},
+                {"left": "close", "operation": "greater", "right": "SMA50"},
+                {"left": "RSI", "operation": "greater", "right": 60},
+                {"left": "RSI", "operation": "less", "right": 75}
+            ],
+            "sort": {"sortBy": "RSI", "sortOrder": "desc"}
+        },
+        "quality_compounders": {
+            "filters": [
+                {"left": "market_cap_basic", "operation": "greater", "right": 1000000000},
+                {"left": "return_on_invested_capital", "operation": "greater", "right": 15},
+                {"left": "return_on_equity", "operation": "greater", "right": 20},
+                {"left": "operating_margin", "operation": "greater", "right": 15},
+                {"left": "debt_to_equity", "operation": "less", "right": 0.5}
+            ],
+            "sort": {"sortBy": "return_on_invested_capital", "sortOrder": "desc"}
+        },
+        "high_yield_dividend": {
+            "filters": [
+                {"left": "market_cap_basic", "operation": "greater", "right": 1000000000},
+                {"left": "dividend_yield_recent", "operation": "greater", "right": 4},
+                {"left": "payout_ratio", "operation": "less", "right": 60},
+                {"left": "payout_ratio", "operation": "greater", "right": 0},
+                {"left": "total_revenue_yoy_growth_ttm", "operation": "greater", "right": 0}
+            ],
+            "sort": {"sortBy": "dividend_yield_recent", "sortOrder": "desc"}
+        }
+    }
+    
+    global_markets = ["america", "vietnam", "uk", "germany", "france", "japan", "hongkong", "china", "australia", "canada", "india", "brazil", "taiwan", "korea"]
+    
+    prefix_map = {
+        "NASDAQ": "", "NYSE": "", "AMEX": "", "OTC": "",
+        "XETR": ".DE", "FWB": ".DE", "DUS": ".DE", "MUN": ".DE", "TRADEGATE": ".DE", "BER": ".DE", "GETTEX": ".DE",
+        "LSE": ".L", "HOSE": ".VN", "HNX": ".VN", "UPCOM": ".VN",
+        "TSE": ".T", "FSE": ".F", "EURONEXT": ".PA", "PAR": ".PA",
+        "ASX": ".AX", "TSX": ".TO", "TSXV": ".V", "CSE": ".CN",
+        "HKEX": ".HK", "SSE": ".SS", "SZSE": ".SZ", "NSE": ".NS", "BSE": ".BO",
+        "BMFBOVESPA": ".SA", "TWSE": ".TW", "TPEX": ".TWO", "KRX": ".KS", "KOSDAQ": ".KQ"
+    }
+
+    dynamic_tickers = {}
+    
+    import re
+    def normalize_name(n):
+        if not n: return ""
+        n = re.sub(r'[^\w\s]', '', n.lower())
+        for suffix in ["inc", "corp", "corporation", "ltd", "limited", "company", "co", "plc", "nv", "sa", "ag"]:
+            n = re.sub(fr'\b{suffix}\b', '', n)
+        return re.sub(r'\s+', ' ', n).strip()
+
+    # Pre-populate seen_names to avoid fetching aliases of existing companies
+    seen_names = set()
+    for meta in base_tickers.values():
+        clean_name = normalize_name(meta.get("name", ""))
+        if len(clean_name) > 3:
+            seen_names.add(clean_name)
+        
+    url = "https://scanner.tradingview.com/global/scan"
+    
+    for preset_name, preset_data in tv_presets.items():
+        payload = {
+            "filter": preset_data["filters"],
+            "options": {"lang": "en"},
+            "markets": global_markets,
+            "symbols": {"query": {"types": ["stock"]}, "tickers": []},
+            "columns": ["name", "description", "sector", "country", "exchange"],
+            "sort": preset_data["sort"],
+            "range": [0, 20]
+        }
+        
+        try:
+            r = requests.post(url, json=payload, timeout=10)
+            data = r.json()
+            for d in (data.get('data') or []):
+                tv_symbol = d['s']
+                parts = tv_symbol.split(':')
+                if len(parts) < 2: continue
+                exchange = parts[0]
+                raw_ticker = parts[1]
+                
+                f = d['d']
+                name = f[1]
+                
+                # Exclude duplicate companies (e.g. cross-listed)
+                clean_name = normalize_name(name)
+                
+                # Exclude preferred stocks / depositary shares explicitly by name
+                name_lower = name.lower()
+                if any(x in name_lower for x in ["preferred", "pfd", "depositary share", "warrant", "right"]):
+                    continue
+                    
+                # Check if this clean_name starts with any seen_name or vice versa
+                if any(clean_name.startswith(sn) or sn.startswith(clean_name) for sn in seen_names):
+                    continue
+                    
+                seen_names.add(clean_name)
+                
+                # Determine Yahoo Finance ticker
+                suffix = prefix_map.get(exchange, None)
+                if suffix is None:
+                    # Skip unknown/obscure exchanges
+                    continue
+                    
+                yf_ticker = f"{raw_ticker}{suffix}"
+                
+                # Clean up weird tickers with spaces or invalid characters
+                if " " in yf_ticker or "/" in yf_ticker or "-" in raw_ticker:
+                    continue
+                    
+                dynamic_tickers[yf_ticker] = {
+                    "name": name,
+                    "sector": f[2] if f[2] else "N/A",
+                    "region": f[3] if len(f)>3 and f[3] else "Global",
+                    "discovery_source": f"TV_{preset_name.upper()}"
+                }
+        except Exception as e:
+            logger.warning(f"⚠️ Failed to fetch TV tickers for {preset_name}: {e}")
+            
+    logger.info(f"🔮 TV Auto-Discovery found {len(dynamic_tickers)} unique dynamic tickers globally.")
+    return dynamic_tickers
+
+def get_combined_tickers():
+    base_tickers = load_tickers_config()
+    try:
+        dynamic = fetch_dynamic_tv_tickers(base_tickers)
+        # Merge them (base takes precedence to prevent overwriting known config)
+        return {**dynamic, **base_tickers}
+    except Exception as e:
+        logger.error(f"⚠️ Error during TV auto-discovery: {e}")
+        return base_tickers
+
+TICKERS = get_combined_tickers()
 
 def get_equity_tickers(tickers_pool: dict = TICKERS) -> dict:
     """

@@ -105,28 +105,41 @@ class TestSmartMoneyAnalysis:
         df = pd.DataFrame({
             'date': dates,
             'price_close': np.cumsum(np.random.randn(150)) + 100,
-            'volume': np.random.randint(1000000, 5000000, 150)
+            'volume': np.random.randint(1000000, 5000000, 150),
+            'price_high': np.cumsum(np.random.randn(150)) + 102,
+            'price_low': np.cumsum(np.random.randn(150)) + 98
         })
         
         from app import get_sm_spirit_unified_v2
         
         result = get_sm_spirit_unified_v2(df)
         
-        assert result in ["ACCUMULATION", "DISTRIBUTION", "NEUTRAL"]
+        assert isinstance(result, dict)
+        assert "signal" in result
+        assert "strength" in result
+        assert "layer" in result
+        assert result["signal"] in ["ACCUMULATION", "DISTRIBUTION", "NEUTRAL"]
+        assert 0 <= result["strength"] <= 100
+        assert result["layer"] in ["DIVERGENCE", "TREND", "NONE"]
     
     def test_smart_money_with_insufficient_data(self):
         """Test Smart Money with insufficient data."""
         df = pd.DataFrame({
             'date': pd.date_range('2024-04-01', periods=10),
             'price_close': [100] * 10,
-            'volume': [1000000] * 10
+            'volume': [1000000] * 10,
+            'price_high': [102] * 10,
+            'price_low': [98] * 10
         })
         
         from app import get_sm_spirit_unified_v2
         
         result = get_sm_spirit_unified_v2(df)
         
-        assert result == "NEUTRAL"
+        assert isinstance(result, dict)
+        assert result["signal"] == "NEUTRAL"
+        assert result["strength"] == 0
+        assert result["layer"] == "NONE"
 
 
 class TestRSICalculation:

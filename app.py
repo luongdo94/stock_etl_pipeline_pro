@@ -4568,7 +4568,166 @@ if active_tab == "3. Qualitative Audit (AI)":
             )
             fig_tech.update_yaxes(title_text="Price (€)", row=1, col=1)
             fig_tech.update_yaxes(title_text="RSI", row=2, col=1, range=[0, 100])
-            st.plotly_chart(fig_tech, use_container_width=True)
+            tech_tab_2, tech_tab_1 = st.tabs(["📈 Interactive TradingView", "📊 AI Technical Master"])
+            
+            with tech_tab_1:
+                st.plotly_chart(fig_tech, use_container_width=True)
+                
+            with tech_tab_2:
+                import streamlit.components.v1 as components
+                def get_tv_symbol(t):
+                    if t.endswith(".L"):   return f"LSE:{t[:-2]}"
+                    if t.endswith(".DE"):  return f"XETR:{t[:-3]}"
+                    if t.endswith(".T"):   return f"TSE:{t[:-2]}"
+                    if t.endswith(".PA"):  return f"EURONEXT:{t[:-3]}"
+                    if t.endswith(".AS"):  return f"EURONEXT:{t[:-3]}"
+                    if t.endswith(".MI"):  return f"MIL:{t[:-3]}"
+                    if t.endswith(".SW"):  return f"SWX:{t[:-3]}"
+                    if t.endswith(".MC"):  return f"BME:{t[:-3]}"
+                    if t.endswith(".HK"):  return f"HKEX:{t[:-3]}"
+                    if t.endswith(".KS"):  return f"KRX:{t[:-3]}"
+                    if t.endswith(".KQ"):  return f"KOSDAQ:{t[:-3]}"
+                    if t.endswith(".SS"):  return f"SSE:{t[:-3]}"
+                    if t.endswith(".SZ"):  return f"SZSE:{t[:-3]}"
+                    if t.endswith(".AX"):  return f"ASX:{t[:-3]}"
+                    if t.endswith(".TO"):  return f"TSX:{t[:-3]}"
+                    if t.endswith(".VN"):  return f"HOSE:{t[:-3]}"
+                    return f"NASDAQ:{t}" if not ":" in t else t
+
+                tv_symbol = get_tv_symbol(deep_ticker)
+
+                # Smart Money badge above chart
+                _sm_color = "#2ecc71" if p_sm == "ACCUMULATION" else "#e74c3c"
+                _sm_icon  = "📈" if p_sm == "ACCUMULATION" else "📉"
+                _sm_badge_html = f"""
+                <div style="display:flex; gap:10px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
+                    <span style="background:{_sm_color}22; border:1px solid {_sm_color}; color:{_sm_color};
+                                 padding:4px 12px; border-radius:20px; font-size:0.82rem; font-weight:700;">
+                        {_sm_icon} Smart Money: {p_sm} ({p_sm_strength})
+                    </span>
+                    <span style="background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.12); color:#aaa;
+                                 padding:4px 12px; border-radius:20px; font-size:0.82rem;">
+                        Layer: {p_sm_layer}
+                    </span>
+                    <span style="color:#888; font-size:0.75rem; margin-left:auto;">TradingView Institutional Panel · {tv_symbol}</span>
+                </div>"""
+                st.markdown(_sm_badge_html, unsafe_allow_html=True)
+
+                # Main layout: chart (left) + side panels (right)
+                _tv_col_main, _tv_col_side = st.columns([3, 1])
+
+                with _tv_col_main:
+                    # Advanced Chart with pre-loaded indicators
+                    components.html(f"""
+                    <!-- TradingView Advanced Chart Widget -->
+                    <div class="tradingview-widget-container" style="height:660px;width:100%">
+                      <div id="tv_adv_chart_{tv_symbol.replace(':','_')}" style="height:660px;width:100%"></div>
+                      <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+                      <script type="text/javascript">
+                      new TradingView.widget({{
+                        "autosize": true,
+                        "symbol": "{tv_symbol}",
+                        "interval": "D",
+                        "timezone": "Etc/UTC",
+                        "theme": "dark",
+                        "style": "1",
+                        "locale": "en",
+                        "enable_publishing": false,
+                        "backgroundColor": "rgba(13, 14, 20, 1)",
+                        "gridColor": "rgba(255, 255, 255, 0.05)",
+                        "withdateranges": true,
+                        "hide_top_toolbar": false,
+                        "hide_legend": false,
+                        "hide_side_toolbar": false,
+                        "allow_symbol_change": true,
+                        "save_image": true,
+                        "show_popup_button": true,
+                        "popup_width": "1000",
+                        "popup_height": "650",
+                        "studies": [
+                          "STD;MA%Cross",
+                          "STD;RSI",
+                          "STD;MACD",
+                          "STD;Volume"
+                        ],
+                        "studies_overrides": {{
+                          "moving average cross.first ma length": 50,
+                          "moving average cross.second ma length": 200,
+                          "rsi.length": 14,
+                          "macd.fast length": 12,
+                          "macd.slow length": 26,
+                          "macd.signal smoothing": 9
+                        }},
+                        "overrides": {{
+                          "paneProperties.background": "rgba(13, 14, 20, 1)",
+                          "mainSeriesProperties.candleStyle.upColor": "#26a69a",
+                          "mainSeriesProperties.candleStyle.downColor": "#ef5350",
+                          "mainSeriesProperties.candleStyle.borderUpColor": "#26a69a",
+                          "mainSeriesProperties.candleStyle.borderDownColor": "#ef5350"
+                        }},
+                        "drawing_access": {{ "type": "all" }},
+                        "container_id": "tv_adv_chart_{tv_symbol.replace(':','_')}"
+                      }});
+                      </script>
+                    </div>
+                    """, height=680)
+
+                with _tv_col_side:
+                    # Panel 1: Technical Analysis Summary (Buy/Sell gauge)
+                    components.html(f"""
+                    <!-- TradingView Technical Analysis Widget -->
+                    <div class="tradingview-widget-container" style="height:310px;">
+                      <div class="tradingview-widget-container__widget"></div>
+                      <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-technical-analysis.js" async>
+                      {{
+                        "interval": "1D",
+                        "width": "100%",
+                        "isTransparent": true,
+                        "height": "310",
+                        "symbol": "{tv_symbol}",
+                        "showIntervalTabs": true,
+                        "locale": "en",
+                        "colorTheme": "dark"
+                      }}
+                      </script>
+                    </div>
+                    """, height=320)
+
+                    # Panel 2: Symbol Overview (Financials + Analyst Targets)
+                    components.html(f"""
+                    <!-- TradingView Symbol Overview Widget -->
+                    <div class="tradingview-widget-container" style="height:330px; margin-top:10px;">
+                      <div class="tradingview-widget-container__widget"></div>
+                      <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-symbol-overview.js" async>
+                      {{
+                        "symbols": [["{tv_symbol}"]],
+                        "chartOnly": false,
+                        "width": "100%",
+                        "height": "330",
+                        "locale": "en",
+                        "colorTheme": "dark",
+                        "autosize": false,
+                        "showVolume": false,
+                        "showMA": false,
+                        "hideDateRanges": false,
+                        "hideMarketStatus": false,
+                        "hideSymbolLogo": false,
+                        "scalePosition": "right",
+                        "scaleMode": "Normal",
+                        "fontFamily": "-apple-system, BlinkMacSystemFont, Trebuchet MS, Roboto, Ubuntu, sans-serif",
+                        "fontSize": "10",
+                        "noTimeScale": false,
+                        "valuesTracking": "1",
+                        "changeMode": "price-and-percent",
+                        "chartType": "area",
+                        "isTransparent": true,
+                        "lineWidth": 2,
+                        "lineType": 0,
+                        "dateRanges": ["1m|1D", "3m|1D", "12m|1W", "60m|1M"]
+                      }}
+                      </script>
+                    </div>
+                    """, height=340)
 
             # --- HISTORICAL FUNDAMENTAL TRENDS (Dual Axis) ---
             st.markdown("---")
@@ -6992,9 +7151,134 @@ if active_tab == "7. Portfolio Builder":
 # ── TAB: MARKET SCANNER & OPPORTUNITY RADAR ──────────────────────────────────
 if active_tab == "2. Opportunity Radar":
     render_header("search", "Market Scanner & Opportunity Radar", level="###")
-    st.info("📊 **Quantitative Engine Note:** All scoring systems, filters, and opportunity signals in this tab are generated entirely through **Hard-coded Quantitative Mathematics** (evaluating Quality, Momentum, and Valuation metrics). They **do not** factor in Qualitative AI Sentiment Reading or NLP Analysis.")
-    st.write("Scan the entire ticker universe for institutional-grade opportunities based on Valuation, Momentum, and Quality Scores.")
     m_df = get_master_screener_data(companies_full, prices_full, quarterly_fin, annual_fin)
+
+    with st.expander("🌐 Live TradingView Global Screener (On-Demand)", expanded=False):
+        st.write("Fetch real-time data directly from TradingView's servers across the entire US market.")
+        
+        tv_presets = {
+            "💎 Value + Pullback (Custom)": {
+                "description": "Undervalued stocks (P/E < 15, P/B < 1.5) of large, profitable companies (ROE > 10%). Currently experiencing short-term oversold conditions (RSI < 40) but remaining above long-term support (MA200). Ideal for buy-the-dip setups.",
+                "filter": [
+                    {"left": "price_earnings_ttm", "operation": "less", "right": 15},
+                    {"left": "price_book_fq", "operation": "less", "right": 1.5},
+                    {"left": "market_cap_basic", "operation": "greater", "right": 5000000000},
+                    {"left": "return_on_equity", "operation": "greater", "right": 10},
+                    {"left": "RSI", "operation": "less", "right": 40},
+                    {"left": "close", "operation": "greater", "right": "SMA200"}
+                ],
+                "sort": {"sortBy": "RSI", "sortOrder": "asc"}
+            },
+            "🌱 GARP (Growth at Reasonable Price)": {
+                "description": "Strong growth companies (Revenue > 10%, ROE > 15%) trading at extremely reasonable valuations (PEG < 2) with low debt. Peter Lynch's preferred screening strategy.",
+                "filter": [
+                    {"left": "price_earnings_growth_ttm", "operation": "less", "right": 2},
+                    {"left": "return_on_equity", "operation": "greater", "right": 15},
+                    {"left": "total_revenue_yoy_growth_ttm", "operation": "greater", "right": 10},
+                    {"left": "market_cap_basic", "operation": "greater", "right": 1000000000},
+                    {"left": "debt_to_equity", "operation": "less", "right": 1.5}
+                ],
+                "sort": {"sortBy": "price_earnings_growth_ttm", "sortOrder": "asc"}
+            },
+            "⚡ Breakout Scanner": {
+                "description": "High momentum super-stocks: Golden Cross confirmed (MA50 > MA200), price trading above MA50, RSI in the strength zone (50-75), accompanied by breakout volume.",
+                "filter": [
+                    {"left": "SMA50", "operation": "greater", "right": "SMA200"},
+                    {"left": "RSI", "operation": "in_range", "right": [50, 75]},
+                    {"left": "close", "operation": "greater", "right": "SMA50"},
+                    {"left": "volume", "operation": "greater", "right": 500000},
+                    {"left": "market_cap_basic", "operation": "greater", "right": 500000000}
+                ],
+                "sort": {"sortBy": "RSI", "sortOrder": "desc"}
+            },
+            "🛡️ Quality Compounders": {
+                "description": "Cash-printing machines with massive competitive moats: Gross Margin > 40%, ROIC > 15%, strong Free Cash Flow generation, and strict debt control. Perfect for long-term compounding.",
+                "filter": [
+                    {"left": "gross_margin", "operation": "greater", "right": 40},
+                    {"left": "return_on_invested_capital", "operation": "greater", "right": 15},
+                    {"left": "free_cash_flow_margin_ttm", "operation": "greater", "right": 15},
+                    {"left": "debt_to_equity", "operation": "less", "right": 1.5},
+                    {"left": "total_revenue_yoy_growth_ttm", "operation": "greater", "right": 5}
+                ],
+                "sort": {"sortBy": "return_on_invested_capital", "sortOrder": "desc"}
+            },
+            "💰 High Yield Dividend": {
+                "description": "Cash-flow focused dividend stocks: Consistent yield > 3%, positive dividend growth rate, backed by strong Free Cash Flow (FCF Margin > 10%) to sustain future payouts.",
+                "filter": [
+                    {"left": "dividend_yield_recent", "operation": "greater", "right": 3},
+                    {"left": "dividends_paid_growth_yoy", "operation": "greater", "right": 2},
+                    {"left": "free_cash_flow_margin_ttm", "operation": "greater", "right": 10},
+                    {"left": "market_cap_basic", "operation": "greater", "right": 1000000000}
+                ],
+                "sort": {"sortBy": "dividend_yield_recent", "sortOrder": "desc"}
+            }
+        }
+        tv_markets = [
+            "america", "vietnam", "uk", "germany", "france", "japan", 
+            "hongkong", "china", "australia", "canada", "india", "brazil", "taiwan", "korea"
+        ]
+        
+        col_preset, col_market = st.columns([3, 1])
+        with col_preset:
+            selected_tv_preset = st.selectbox("Select TradingView Strategy:", list(tv_presets.keys()))
+        with col_market:
+            selected_tv_market = st.selectbox("Market:", tv_markets, index=0)
+            
+        st.info(f"💡 **Strategy:** {tv_presets[selected_tv_preset]['description']}")
+        
+        if st.button(f"🔍 Scan {selected_tv_market.upper()} Market (Live)", type="primary"):
+            with st.spinner(f"Calling TradingView API for {selected_tv_market.upper()}..."):
+                import requests
+                url = f"https://scanner.tradingview.com/{selected_tv_market}/scan"
+                payload = {
+                    "filter": tv_presets[selected_tv_preset]["filter"],
+                    "options": {"lang": "en"},
+                    "markets": [selected_tv_market],
+                    "symbols": {"query": {"types": []}, "tickers": []},
+                    "columns": ["name", "description", "sector", "close", "price_earnings_ttm", "price_book_fq", "RSI", "market_cap_basic", "return_on_equity", "total_revenue_yoy_growth_ttm", "earnings_per_share_diluted_yoy_growth_ttm"],
+                    "sort": tv_presets[selected_tv_preset]["sort"],
+                    "range": [0, 20]
+                }
+                try:
+                    r = requests.post(url, json=payload, timeout=10)
+                    data = r.json()
+                    results = []
+                    market_currency_map = {
+                        "america": "USD", "vietnam": "VND", "uk": "GBP", "germany": "EUR",
+                        "france": "EUR", "japan": "JPY", "hongkong": "HKD", "china": "CNY",
+                        "australia": "AUD", "canada": "CAD", "india": "INR", "brazil": "BRL",
+                        "taiwan": "TWD", "korea": "KRW"
+                    }
+                    local_currency = market_currency_map.get(selected_tv_market.lower(), "USD")
+                    local_to_eur = get_forex_rates("EUR", local_currency)
+                    
+                    for d in (data.get('data') or []):
+                        f = d['d']
+                        price_local = f[3]
+                        price_eur = price_local * local_to_eur if price_local else None
+                        mcap_local = f[7]
+                        mcap_eur = (mcap_local * local_to_eur) / 1e9 if mcap_local else None
+                        
+                        results.append({
+                            "Symbol": d['s'].split(':')[-1],
+                            "Company": f[1],
+                            "Sector": f[2] if f[2] else "N/A",
+                            "Price (€)": f"€{price_eur:.2f}" if price_eur else "N/A",
+                            "P/E": round(f[4], 1) if f[4] else "N/A",
+                            "P/B": round(f[5], 1) if f[5] else "N/A",
+                            "RSI (14)": round(f[6], 1) if f[6] else "N/A",
+                            "Market Cap (€)": f"€{mcap_eur:.1f}B" if mcap_eur else "N/A",
+                            "ROE (%)": f"{round(f[8], 1)}%" if f[8] else "N/A",
+                            "Rev Growth YoY (%)": f"{round(f[9], 1)}%" if f[9] else "N/A",
+                            "EPS Growth YoY (%)": f"{round(f[10], 1)}%" if f[10] else "N/A"
+                        })
+                    if results:
+                        tv_df = pd.DataFrame(results)
+                        st.dataframe(tv_df, use_container_width=True, hide_index=True)
+                    else:
+                        st.warning("No stocks matched the criteria currently.")
+                except Exception as e:
+                    st.error(f"Error fetching from TradingView: {e}")
 
     
     # ── Applied Logic (Synced with Backtest Engine) ───────────────────────────
@@ -7032,7 +7316,6 @@ if active_tab == "2. Opportunity Radar":
         st.session_state.scan_mode = scan_presets[0]
         
     # ── Applied Logic (Synced with Backtest Engine) ───────────────────────────
-    st.markdown("#### Geographic, Sector & Strategy Filters")
     r_col1, r_col2, r_col3 = st.columns([1, 1, 1.5])
     
     with r_col1:

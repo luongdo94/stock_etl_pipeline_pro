@@ -327,7 +327,8 @@ def run_pipeline(lookback_days: int = 1825, force_full: bool = False, fast_mode:
             # ── STEP 4: TRANSFORM ────────────────────────────────────────────────
             logger.info("\n🔧 STEP 4/5 — TRANSFORM")
             t0 = time.time()
-            run_transforms(conn)
+            from etl.extract import TICKERS
+            run_transforms(conn, active_tickers=list(TICKERS.keys()))
             transform_time = time.time() - t0
             logger.info(f"   ⏱  Transform: {transform_time:.1f}s")
 
