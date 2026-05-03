@@ -3174,6 +3174,27 @@ with head_r:
                 for a in hot_alerts[:20]:
                     st.markdown(f"**{a['ticker']}** | <span style='color:{a['color']};font-weight:bold;'>[{a['type']}]</span> — `{a['desc']}`", unsafe_allow_html=True)
             else: st.write("No active signals.")
+            
+            st.markdown("---")
+            st.markdown("##### 🚀 Auto-Discovery (Today)")
+            try:
+                import yaml
+                with open("config/tickers.yaml", "r") as f:
+                    config_data = yaml.safe_load(f)
+                    base_tickers = set(config_data.get("tickers", {}).keys())
+                
+                # Identify auto-discovered tickers (those not in base_tickers)
+                auto_tickers = [t for t in companies_full["ticker"].dropna().unique() if t not in base_tickers]
+                
+                if auto_tickers:
+                    # Filter for those that have valid prices today/recently (to exclude stale ones that GC hasn't deleted yet)
+                    # We can use the latest cross-sectional dataframe if available, but companies_full is fine
+                    auto_list = ", ".join([f"`{t}`" for t in sorted(auto_tickers)])
+                    st.success(f"**{len(auto_tickers)} new stocks** dynamically discovered by TradingView quantitative filters:\n\n{auto_list}")
+                else:
+                    st.caption("No new stocks detected by Auto-Discovery today.")
+            except Exception as e:
+                st.caption(f"Failed to load Auto-Discovery list. Error: {e}")
 
         with tab_mov:
             m_c1, m_c2 = st.columns(2)
@@ -3222,29 +3243,91 @@ with head_r:
             else: st.write("No data.")
 
         with tab_tv:
-            st.markdown("**TradingView Symbol Coverage**")
-            st.caption("✅ = exchange explicitly mapped · ⚠️ = bare ticker (TradingView auto-resolves)")
-            _all_tv_tickers = sorted(prices["ticker"].unique().tolist())
-            _EXPLICIT_SUFFIXES = (".L",".DE",".T",".PA",".AS",".MI",".SW",".MC",
-                                  ".HK",".KS",".KQ",".SS",".SZ",".AX",".TO",".VN",".ST",".CO",".OL")
-            _AMEX_SET = {"SPY","QQQ","IWM","GLD","SLV","TLT","HYG","EEM","EFA",
-                         "DIA","XLF","XLE","XLK","XLV","SQQQ","TQQQ","VXX","LQD"}
-            _INDEX_SET = {"^VIX","^GSPC","^DJI","^IXIC","^RUT","^FTSE","^GDAXI","^N225","^HSI"}
-            _tv_rows = []
-            for _tk in _all_tv_tickers:
-                _tv = get_tv_symbol(_tk)
-                if _tk in _INDEX_SET:        _status = "✅ Index"
-                elif _tk in _AMEX_SET:       _status = "✅ AMEX"
-                elif any(_tk.endswith(s) for s in _EXPLICIT_SUFFIXES): _status = "✅ Mapped"
-                elif ":" in _tv:             _status = "✅ Mapped"
-                else:                        _status = "⚠️ Auto"
-                _tv_rows.append({"Ticker": _tk, "TradingView": _tv, "Status": _status})
-            _tv_df = pd.DataFrame(_tv_rows)
-            _c1, _c2, _c3 = st.columns(3)
-            _c1.metric("Total", len(_tv_df))
-            _c2.metric("✅ Explicit", (_tv_df["Status"].str.startswith("✅")).sum())
-            _c3.metric("⚠️ Auto", (_tv_df["Status"] == "⚠️ Auto").sum())
-            st.dataframe(_tv_df, use_container_width=True, height=340, hide_index=True)
+            st.markdown("**🔮 TradingView Quantitative Filters**")
+            st.caption("Real-time stock discovery from 5 institutional-grade filters")
+            
+            try:
+                from etl.extract import fetch_dynamic_tv_tickers, load_tickers_config
+                
+                # Fetch TradingView discovered stocks
+                with st.spinner("Fetching from TradingView API..."):
+                    base_tickers = load_tickers_config()
+                    tv_tickers = fetch_dynamic_tv_tickers(base_tickers)
+                
+                if tv_tickers:
+                    # Filter mapping
+                    filter_icons = {
+                        'TV_VALUE_STOCKS': '💎',
+                        'TV_GROWTH_AT_REASONABLE_PRICE': '🌱',
+                        'TV_BREAKOUT_MOMENTUM': '⚡',
+                        'TV_QUALITY_COMPOUNDERS': '🛡️',
+                        'TV_HIGH_YIELD_DIVIDEND': '💰'
+                    }
+                    
+                    filter_names = {
+                        'TV_VALUE_STOCKS': 'Value Stocks',
+                        'TV_GROWTH_AT_REASONABLE_PRICE': 'GARP',
+                        'TV_BREAKOUT_MOMENTUM': 'Breakout',
+                        'TV_QUALITY_COMPOUNDERS': 'Quality',
+                        'TV_HIGH_YIELD_DIVIDEND': 'High Yield'
+                    }
+                    
+                    # Group by filter
+                    from collections import defaultdict
+                    by_filter = defaultdict(list)
+                    for ticker, meta in tv_tickers.items():
+                        filter_code = meta.get('discovery_source', 'UNKNOWN')
+                        by_filter[filter_code].append({
+                            'ticker': ticker,
+                            'name': meta.get('name', 'N/A')[:35],
+                            'sector': meta.get('sector', 'N/A')[:18],
+                            'region': meta.get('region', 'N/A')
+                        })
+                    
+                    # Summary metrics
+                    _m1, _m2, _m3 = st.columns(3)
+                    _m1.metric("Total Signals", len(tv_tickers))
+                    _m2.metric("Active Filters", len(by_filter))
+                    _m3.metric("Top Filter", max(by_filter.keys(), key=lambda k: len(by_filter[k])) if by_filter else "N/A")
+                    
+                    st.markdown("---")
+                    
+                    # Display by filter
+                    for filter_code in sorted(by_filter.keys()):
+                        stocks = by_filter[filter_code]
+                        icon = filter_icons.get(filter_code, '📊')
+                        name = filter_names.get(filter_code, filter_code.replace('TV_', ''))
+                        
+                        with st.expander(f"{icon} **{name}** ({len(stocks)} stocks)", expanded=False):
+                            for stock in stocks[:15]:  # Limit to 15 per filter
+                                # Check if stock exists in our database
+                                in_db = stock['ticker'] in companies_full['ticker'].values if not companies_full.empty else False
+                                status_badge = "✅" if in_db else "🆕"
+                                
+                                st.markdown(f"""
+                                <div style='padding:6px 10px; margin-bottom:4px; background:rgba(255,255,255,0.03); border-radius:4px; border-left:3px solid {"#2ecc71" if in_db else "#3498db"};'>
+                                    <div style='display:flex; justify-content:space-between; align-items:center;'>
+                                        <div>
+                                            <span style='font-weight:600; color:#e8eaf6;'>{stock['ticker']}</span>
+                                            <span style='color:#8899aa; font-size:0.8rem; margin-left:8px;'>{stock['name']}</span>
+                                        </div>
+                                        <span style='font-size:0.75rem; color:#667788;'>{status_badge} {stock['sector']}</span>
+                                    </div>
+                                </div>
+                                """, unsafe_allow_html=True)
+                            
+                            if len(stocks) > 15:
+                                st.caption(f"... and {len(stocks) - 15} more stocks")
+                    
+                    st.markdown("---")
+                    st.caption("✅ = Already in database · 🆕 = New discovery · Updates every ETL run")
+                    
+                else:
+                    st.info("No new stocks discovered by TradingView filters at this time.")
+                    
+            except Exception as e:
+                st.error(f"Failed to fetch TradingView signals: {e}")
+                st.caption("TradingView API may be temporarily unavailable. Try again later.")
 
 st.markdown("<div style='margin-bottom:16px;'></div>", unsafe_allow_html=True)
 

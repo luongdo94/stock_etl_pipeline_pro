@@ -174,12 +174,13 @@ def get_config_tickers() -> dict:
         pass
     return {}
 
-def get_missing_tickers_for_table(conn: duckdb.DuckDBPyConnection, table_name: str) -> dict:
+def get_missing_tickers_for_table(conn: duckdb.DuckDBPyConnection, table_name: str, all_tickers: dict = None) -> dict:
     """
     Identifies which tickers from config are missing from a specific raw table.
     Returns: dict of {ticker: meta} for missing tickers.
     """
-    all_tickers = get_config_tickers()
+    if all_tickers is None:
+        all_tickers = get_config_tickers()
     if not all_tickers:
         return {}
     
@@ -204,7 +205,7 @@ def get_missing_tickers_for_table(conn: duckdb.DuckDBPyConnection, table_name: s
 # See: docs/status/CRITICAL_QUARTERLY_DATA_GAP.md for full investigation.
 NON_QUARTERLY_SUFFIXES = ('.PA', '.MI', '.AS', '.DE', '.MC', '.LS', '.SW', '.L', '.CO', '.HK', '.T')
 
-def get_smart_recovery_targets(conn: duckdb.DuckDBPyConnection) -> dict:
+def get_smart_recovery_targets(conn: duckdb.DuckDBPyConnection, all_tickers: dict = None) -> dict:
     """
     Consolidates tickers missing from various critical fundamental tables.
     - metadata: tickers missing from company_info (all types).
@@ -220,8 +221,10 @@ def get_smart_recovery_targets(conn: duckdb.DuckDBPyConnection) -> dict:
         'fundamentals': {ticker: meta} # Missing from quarterly_financials
     }
     """
-    # ... existing code ...
-    missing_meta = get_missing_tickers_for_table(conn, "raw.company_info")
+    if all_tickers is None:
+        all_tickers = get_config_tickers()
+
+    missing_meta = get_missing_tickers_for_table(conn, "raw.company_info", all_tickers=all_tickers)
 
     # Identify tickers already classified as non-equity in the DB
     try:
@@ -232,9 +235,6 @@ def get_smart_recovery_targets(conn: duckdb.DuckDBPyConnection) -> dict:
     except Exception:
         non_equity_set = set()
 
-    # For fundamentals, only process equity tickers from config (no geographic filtering)
-    all_tickers = get_config_tickers()
-    
     def is_eligible_for_quarterly(ticker):
         # 1. Must not be a known non-equity in our DB
         if ticker in non_equity_set: return False
@@ -245,7 +245,7 @@ def get_smart_recovery_targets(conn: duckdb.DuckDBPyConnection) -> dict:
 
     equity_tickers = {k: v for k, v in all_tickers.items() if is_eligible_for_quarterly(k)}
 
-    missing_fundamentals = get_missing_tickers_for_table(conn, "raw.quarterly_financials")
+    missing_fundamentals = get_missing_tickers_for_table(conn, "raw.quarterly_financials", all_tickers=all_tickers)
     # Keep only eligible equity tickers in the fundamentals missing set
     missing_fundamentals = {k: v for k, v in missing_fundamentals.items() if k in equity_tickers}
 

@@ -241,7 +241,8 @@ def run_pipeline(lookback_days: int = 1825, force_full: bool = False, fast_mode:
             )
             
             # 🔗 SMART RECOVERY: Always check for absolute data gaps regardless of mode
-            recovery = get_smart_recovery_targets(conn)
+            from etl.extract import TICKERS
+            recovery = get_smart_recovery_targets(conn, all_tickers=TICKERS)
 
             # Metadata Section (Info/Annuals - 30d cycle)
             if fast_mode:
