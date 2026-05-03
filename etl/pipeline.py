@@ -4,7 +4,7 @@ import pandas as pd
 from pathlib import Path
 from etl.extract   import extract_stock_prices, extract_company_info, extract_historical_financials, extract_quarterly_financials, extract_cashflows, extract_historical_fcf, extract_quarterly_fcf, extract_earnings_calendar, extract_earnings_history, extract_forward_estimates
 from etl.load      import get_connection, create_raw_schema, \
-                          load_stock_prices, load_company_info, load_historical_financials, load_quarterly_financials, load_cashflows, load_historical_fcf, load_quarterly_fcf, load_earnings_calendar, load_earnings_surprise, load_forward_estimates, \
+                          load_stock_prices, load_company_info, load_historical_financials, load_quarterly_financials, load_cashflows, load_historical_fcf, load_quarterly_fcf, load_earnings_calendar, load_earnings_surprise, load_forward_estimates, cleanup_stale_tv_tickers, \
                           perform_atomic_swap, DB_PATH, SHADOW_DB_PATH, AUDIT_DB_PATH
 from etl.transform import run_transforms
 from etl.utils     import get_last_price_dates, needs_full_refresh, needs_earnings_refresh, needs_fundamentals_refresh, needs_metadata_refresh, get_smart_recovery_targets
@@ -335,6 +335,11 @@ def run_pipeline(lookback_days: int = 1825, force_full: bool = False, fast_mode:
             total_time = time.time() - start_time
 
             # ── STEP 5: ATOMIC SWAP ───────────────────────────────────────────────
+            logger.info("\n🧹 STEP 4.8/5 — GARBAGE COLLECTION")
+            t0 = time.time()
+            cleanup_stale_tv_tickers(conn)
+            logger.info(f"   ⏱  GC: {time.time()-t0:.1f}s")
+
             logger.info("\n📡 STEP 5/5 — ATOMIC SWAP")
             t0 = time.time()
             

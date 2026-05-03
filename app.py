@@ -44,6 +44,46 @@ from etl.performance_utils import vectorized_compute_scores, optimize_dataframe_
 # ── LOGGING SETUP ────────────────────────────────────────────────────────────
 logger = logging.getLogger(__name__)
 
+# ── TRADINGVIEW HELPERS ──────────────────────────────────────────────────────
+def get_tv_symbol(t: str) -> str:
+    """Maps a Yahoo Finance ticker to a TradingView symbol.
+    Examples: SIE.DE -> XETR:SIE, ^VIX -> CBOE:VIX, SPY -> AMEX:SPY
+    """
+    if not t or not isinstance(t, str): return ""
+    t = t.strip()
+    _index_map = {
+        "^VIX": "CBOE:VIX", "^GSPC": "FOREXCOM:SPXUSD",
+        "^DJI": "TVC:DJI",  "^IXIC": "FOREXCOM:NSXUSD",
+        "^RUT": "TVC:RUT",  "^FTSE": "TVC:FTSE100",
+        "^GDAXI": "XETR:DAX", "^N225": "TVC:NI225", "^HSI": "HSI:HSI",
+    }
+    if t in _index_map: return _index_map[t]
+    _amex = {"SPY","QQQ","IWM","GLD","SLV","TLT","HYG","EEM","EFA","DIA",
+             "XLF","XLE","XLK","XLV","SQQQ","TQQQ","VXX","LQD"}
+    if t in _amex: return f"AMEX:{t}"
+    if t.endswith(".L"):   return f"LSE:{t[:-2]}"
+    if t.endswith(".DE"):  return f"XETR:{t[:-3]}"
+    if t.endswith(".T"):   return f"TSE:{t[:-2]}"
+    if t.endswith(".PA"):  return f"EURONEXT:{t[:-3]}"
+    if t.endswith(".AS"):  return f"EURONEXT:{t[:-3]}"
+    if t.endswith(".MI"):  return f"MIL:{t[:-3]}"
+    if t.endswith(".SW"):  return f"SWX:{t[:-3]}"
+    if t.endswith(".MC"):  return f"BME:{t[:-3]}"
+    if t.endswith(".HK"):  return f"HKEX:{t[:-3]}"
+    if t.endswith(".KS"):  return f"KRX:{t[:-3]}"
+    if t.endswith(".KQ"):  return f"KOSDAQ:{t[:-3]}"
+    if t.endswith(".SS"):  return f"SSE:{t[:-3]}"
+    if t.endswith(".SZ"):  return f"SZSE:{t[:-3]}"
+    if t.endswith(".AX"):  return f"ASX:{t[:-3]}"
+    if t.endswith(".TO"):  return f"TSX:{t[:-3]}"
+    if t.endswith(".VN"):  return f"HOSE:{t[:-3]}"
+    if t.endswith(".ST"):  return f"OMX:{t[:-3]}"
+    if t.endswith(".CO"):  return f"OMXCOP:{t[:-3]}"
+    if t.endswith(".OL"):  return f"OSL:{t[:-3]}"
+    if ":" in t: return t
+    return t  # Let TradingView auto-resolve NYSE vs NASDAQ for plain US tickers
+
+
 # ── COHERE AI INTELLIGENCE ENGINE ───────────────────────────────────────────
 def get_cohere_insight(api_key: str, metrics: dict) -> str:
     """Generates an institutional-grade stock analysis report using Cohere Command-R+."""
@@ -3125,7 +3165,7 @@ with head_r:
     hub_label = f"SIGNAL ({total_alerts + upcoming_count})" if (total_alerts + upcoming_count) > 0 else "SIGNAL"
     
     with st.popover(hub_label, width="stretch"):
-        tab_sig, tab_mov, tab_ern = st.tabs(["SIGNALS", "MOVERS", "EARNINGS"])
+        tab_sig, tab_mov, tab_ern, tab_tv = st.tabs(["SIGNALS", "MOVERS", "EARNINGS", "📡 TV"])
         # ... rest of logic remains inside ...
         
         with tab_sig:
@@ -3180,6 +3220,31 @@ with head_r:
                         """, unsafe_allow_html=True)
                 else: st.write("No reports (30d).")
             else: st.write("No data.")
+
+        with tab_tv:
+            st.markdown("**TradingView Symbol Coverage**")
+            st.caption("✅ = exchange explicitly mapped · ⚠️ = bare ticker (TradingView auto-resolves)")
+            _all_tv_tickers = sorted(prices["ticker"].unique().tolist())
+            _EXPLICIT_SUFFIXES = (".L",".DE",".T",".PA",".AS",".MI",".SW",".MC",
+                                  ".HK",".KS",".KQ",".SS",".SZ",".AX",".TO",".VN",".ST",".CO",".OL")
+            _AMEX_SET = {"SPY","QQQ","IWM","GLD","SLV","TLT","HYG","EEM","EFA",
+                         "DIA","XLF","XLE","XLK","XLV","SQQQ","TQQQ","VXX","LQD"}
+            _INDEX_SET = {"^VIX","^GSPC","^DJI","^IXIC","^RUT","^FTSE","^GDAXI","^N225","^HSI"}
+            _tv_rows = []
+            for _tk in _all_tv_tickers:
+                _tv = get_tv_symbol(_tk)
+                if _tk in _INDEX_SET:        _status = "✅ Index"
+                elif _tk in _AMEX_SET:       _status = "✅ AMEX"
+                elif any(_tk.endswith(s) for s in _EXPLICIT_SUFFIXES): _status = "✅ Mapped"
+                elif ":" in _tv:             _status = "✅ Mapped"
+                else:                        _status = "⚠️ Auto"
+                _tv_rows.append({"Ticker": _tk, "TradingView": _tv, "Status": _status})
+            _tv_df = pd.DataFrame(_tv_rows)
+            _c1, _c2, _c3 = st.columns(3)
+            _c1.metric("Total", len(_tv_df))
+            _c2.metric("✅ Explicit", (_tv_df["Status"].str.startswith("✅")).sum())
+            _c3.metric("⚠️ Auto", (_tv_df["Status"] == "⚠️ Auto").sum())
+            st.dataframe(_tv_df, use_container_width=True, height=340, hide_index=True)
 
 st.markdown("<div style='margin-bottom:16px;'></div>", unsafe_allow_html=True)
 
@@ -4435,6 +4500,7 @@ if active_tab == "3. Qualitative Audit (AI)":
                     st.markdown("</div>", unsafe_allow_html=True)
 
             st.markdown("---")
+            st.markdown("<div style='margin-top:35px; margin-bottom:15px; padding:6px 12px; background:rgba(255,255,255,0.03); border-left:4px solid #e74c3c; color:#e74c3c; font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:1.5px;'>LAYER 4: TECHNICAL & CHARTING INTELLIGENCE</div>", unsafe_allow_html=True)
 
             # Main Technical Chart (Full Width)
 
@@ -4572,25 +4638,6 @@ if active_tab == "3. Qualitative Audit (AI)":
                 
             with tech_tab_2:
                 import streamlit.components.v1 as components
-                def get_tv_symbol(t):
-                    if t.endswith(".L"):   return f"LSE:{t[:-2]}"
-                    if t.endswith(".DE"):  return f"XETR:{t[:-3]}"
-                    if t.endswith(".T"):   return f"TSE:{t[:-2]}"
-                    if t.endswith(".PA"):  return f"EURONEXT:{t[:-3]}"
-                    if t.endswith(".AS"):  return f"EURONEXT:{t[:-3]}"
-                    if t.endswith(".MI"):  return f"MIL:{t[:-3]}"
-                    if t.endswith(".SW"):  return f"SWX:{t[:-3]}"
-                    if t.endswith(".MC"):  return f"BME:{t[:-3]}"
-                    if t.endswith(".HK"):  return f"HKEX:{t[:-3]}"
-                    if t.endswith(".KS"):  return f"KRX:{t[:-3]}"
-                    if t.endswith(".KQ"):  return f"KOSDAQ:{t[:-3]}"
-                    if t.endswith(".SS"):  return f"SSE:{t[:-3]}"
-                    if t.endswith(".SZ"):  return f"SZSE:{t[:-3]}"
-                    if t.endswith(".AX"):  return f"ASX:{t[:-3]}"
-                    if t.endswith(".TO"):  return f"TSX:{t[:-3]}"
-                    if t.endswith(".VN"):  return f"HOSE:{t[:-3]}"
-                    return f"NASDAQ:{t}" if not ":" in t else t
-
                 tv_symbol = get_tv_symbol(deep_ticker)
 
                 # Smart Money badge above chart
@@ -4726,40 +4773,102 @@ if active_tab == "3. Qualitative Audit (AI)":
                     </div>
                     """, height=340)
 
-                # Cross-Asset Comparison (Relative Strength vs Benchmark)
-                st.markdown("<div style='margin-top:12px; color:#667788; font-size:0.75rem; font-weight:700; text-transform:uppercase; letter-spacing:0.08em;'>📊 Relative Strength vs Key Benchmarks</div>", unsafe_allow_html=True)
-                _cross_symbols = [[tv_symbol, "Primary"], ["FOREXCOM:SPXUSD", "S&P 500"], ["FOREXCOM:NSXUSD", "Nasdaq 100"], ["XETR:DAX", "DAX"]]
+                # ── STOCK PROFILE (Full Width) ────────────────────────────────────────────
                 components.html(f"""
-                <!-- TradingView Symbol Compare Widget -->
-                <div class="tradingview-widget-container" style="height:200px;">
+                <!-- TradingView Symbol Profile Widget -->
+                <div class="tradingview-widget-container">
                   <div class="tradingview-widget-container__widget"></div>
-                  <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-symbol-overview.js" async>
+                  <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-symbol-profile.js" async>
                   {{
-                    "symbols": {json.dumps(_cross_symbols)},
-                    "chartOnly": true,
                     "width": "100%",
-                    "height": "200",
-                    "locale": "en",
+                    "height": "400",
                     "colorTheme": "dark",
                     "isTransparent": true,
-                    "showVolume": false,
-                    "showMA": false,
-                    "hideDateRanges": false,
-                    "hideMarketStatus": true,
-                    "hideSymbolLogo": true,
-                    "scalePosition": "right",
-                    "scaleMode": "Percentage",
-                    "chartType": "line",
-                    "lineWidth": 2,
-                    "lineType": 0,
-                    "dateRanges": ["1m|1D", "3m|1D", "12m|1W", "60m|1M"]
+                    "symbol": "{tv_symbol}",
+                    "locale": "en"
                   }}
                   </script>
                 </div>
-                """, height=210)
+                """, height=410)
+
+                # Cross-Asset Comparison (Relative Strength vs Benchmark)
+                st.markdown("<div style='margin-top:12px; color:#667788; font-size:0.75rem; font-weight:700; text-transform:uppercase; letter-spacing:0.08em;'>📊 Relative Strength vs Key Benchmarks</div>", unsafe_allow_html=True)
+                _compare_syms = json.dumps([
+                    {"symbol": "FOREXCOM:SPXUSD", "position": "SameScale"},
+                    {"symbol": "FOREXCOM:NSXUSD", "position": "SameScale"},
+                    {"symbol": "XETR:DAX",        "position": "SameScale"},
+                ])
+                components.html(f"""
+                <!-- TradingView Advanced Chart (Relative Strength) -->
+                <div class="tradingview-widget-container" style="height:220px;">
+                  <div class="tradingview-widget-container__widget"></div>
+                  <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>
+                  {{
+                    "autosize": true,
+                    "symbol": "{tv_symbol}",
+                    "interval": "D",
+                    "timezone": "Etc/UTC",
+                    "theme": "dark",
+                    "style": "3",
+                    "locale": "en",
+                    "backgroundColor": "rgba(0, 0, 0, 0)",
+                    "gridColor": "rgba(255, 255, 255, 0.06)",
+                    "hide_top_toolbar": true,
+                    "hide_legend": false,
+                    "save_image": false,
+                    "calendar": false,
+                    "hide_volume": true,
+                    "compare_symbols": {_compare_syms},
+                    "studies": [],
+                    "height": 220,
+                    "width": "100%"
+                  }}
+                  </script>
+                </div>
+                """, height=230)
+
+                # ── COMMUNITY IDEAS ──────────────────────────────────────────
+                _tv_base_ideas = tv_symbol if tv_symbol else deep_ticker
+                _ideas_url = f"https://www.tradingview.com/symbols/{_tv_base_ideas}/ideas/"
+                _chart_url  = f"https://www.tradingview.com/chart/?symbol={_tv_base_ideas}"
+                _profile_url = f"https://www.tradingview.com/symbols/{_tv_base_ideas}/"
+                components.html(f"""
+                <div style="margin-top:16px; display:flex; gap:12px; flex-wrap:wrap;">
+                  <a href="{_ideas_url}" target="_blank" style="
+                    display:inline-flex; align-items:center; gap:8px;
+                    padding:12px 22px; border-radius:8px; text-decoration:none;
+                    background:rgba(155,89,182,0.15); border:1px solid rgba(155,89,182,0.4);
+                    color:#c39bd3; font-size:0.85rem; font-weight:700;
+                    font-family:Inter,sans-serif; transition:all 0.2s;
+                    letter-spacing:0.5px;">
+                    💡 View Community Ideas
+                  </a>
+                  <a href="{_chart_url}" target="_blank" style="
+                    display:inline-flex; align-items:center; gap:8px;
+                    padding:12px 22px; border-radius:8px; text-decoration:none;
+                    background:rgba(52,152,219,0.15); border:1px solid rgba(52,152,219,0.4);
+                    color:#7fb3d3; font-size:0.85rem; font-weight:700;
+                    font-family:Inter,sans-serif; letter-spacing:0.5px;">
+                    📈 Full Chart
+                  </a>
+                  <a href="{_profile_url}" target="_blank" style="
+                    display:inline-flex; align-items:center; gap:8px;
+                    padding:12px 22px; border-radius:8px; text-decoration:none;
+                    background:rgba(46,204,113,0.12); border:1px solid rgba(46,204,113,0.35);
+                    color:#82e0aa; font-size:0.85rem; font-weight:700;
+                    font-family:Inter,sans-serif; letter-spacing:0.5px;">
+                    🏢 Symbol Profile
+                  </a>
+                </div>
+                <p style="margin-top:10px; color:#445566; font-size:0.72rem; font-family:Inter,sans-serif;">
+                  Opens TradingView in a new tab · Symbol: <b style="color:#667788;">{_tv_base_ideas}</b>
+                </p>
+                """, height=120)
+
 
             # --- HISTORICAL FUNDAMENTAL TRENDS (Dual Axis) ---
             st.markdown("---")
+            st.markdown("<div style='margin-top:10px; margin-bottom:15px; padding:6px 12px; background:rgba(255,255,255,0.03); border-left:4px solid #1abc9c; color:#1abc9c; font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:1.5px;'>LAYER 5: FUNDAMENTAL TRAJECTORY & VALUATION</div>", unsafe_allow_html=True)
             
             tab_annual, tab_quarterly = st.tabs(["📊 Annual", "📉 Quarterly"])
             
@@ -5330,6 +5439,9 @@ if active_tab == "3. Qualitative Audit (AI)":
             # ── PEER COMPARISON ────────────────────────────────────────────
             st.markdown("---")
 
+            st.markdown("---")
+            st.markdown("<div style='margin-top:10px; margin-bottom:15px; padding:6px 12px; background:rgba(255,255,255,0.03); border-left:4px solid #f39c12; color:#f39c12; font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:1.5px;'>LAYER 6: COMPETITIVE INTELLIGENCE & PEER BENCHMARKING</div>", unsafe_allow_html=True)
+
             # Smart Peer Matching: Industry-first, then Sector-level fallback
             _ticker_industry = meta.get("industry")
             _ticker_sector   = meta.get("sector")
@@ -5571,7 +5683,7 @@ if active_tab == "3. Qualitative Audit (AI)":
             fig_rel.update_layout(template="plotly_dark", height=450, yaxis_title="Return (%)", hovermode="x unified", margin=dict(t=20, l=10, r=10, b=10))
             st.plotly_chart(fig_rel, use_container_width=True)
 
-            st.markdown("<div style='margin-top:35px; padding:6px 12px; background:rgba(255,255,255,0.03); border-left:4px solid #2ecc71; color:#2ecc71; font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:1.5px;'>LAYER 5: PORTFOLIO IDEA MANAGEMENT</div>", unsafe_allow_html=True)
+            st.markdown("<div style='margin-top:35px; padding:6px 12px; background:rgba(255,255,255,0.03); border-left:4px solid #2ecc71; color:#2ecc71; font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:1.5px;'>LAYER 7: PORTFOLIO IDEA MANAGEMENT</div>", unsafe_allow_html=True)
             # --- WATCHLIST QUICK SAVE WORKFLOW ---
             with st.expander("📥 📝 Save Idea to Watchlist Pipeline", expanded=False):
                 with st.form(f"quick_save_form_{deep_ticker}"):
@@ -5680,6 +5792,100 @@ if active_tab == "6. Watchlist":
                     st.rerun()
                 except Exception as e:
                     st.error(f"Failed to sync memory: {e}")
+                    
+        st.markdown("---")
+        st.markdown("### 🔎 Quick Preview")
+        if not wl_df.empty and "Ticker" in wl_df.columns:
+            valid_tickers = [t for t in wl_df["Ticker"].unique() if pd.notna(t) and str(t).strip() != ""]
+            if valid_tickers:
+                preview_ticker = st.selectbox("Select a ticker to view Mini Chart and News:", valid_tickers)
+                if preview_ticker:
+                    tv_sym = get_tv_symbol(preview_ticker)
+                    
+                    c_chart, c_news = st.columns([1, 1])
+                    with c_chart:
+                        import streamlit.components.v1 as components
+                        components.html(f"""
+                        <!-- TradingView Advanced Chart (Quick Preview) -->
+                        <div class="tradingview-widget-container" style="height:410px;">
+                          <div class="tradingview-widget-container__widget"></div>
+                          <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>
+                          {{
+                            "autosize": true,
+                            "symbol": "{tv_sym}",
+                            "interval": "D",
+                            "timezone": "Etc/UTC",
+                            "theme": "dark",
+                            "style": "1",
+                            "locale": "en",
+                            "backgroundColor": "rgba(0, 0, 0, 0)",
+                            "gridColor": "rgba(255, 255, 255, 0.06)",
+                            "hide_top_toolbar": false,
+                            "hide_legend": false,
+                            "save_image": false,
+                            "calendar": false,
+                            "hide_volume": false,
+                            "studies": ["RSI@tv-basicstudies"],
+                            "height": 410,
+                            "width": "100%"
+                          }}
+                          </script>
+                        </div>
+                        """, height=420)
+                        
+                    with c_news:
+                        import xml.etree.ElementTree as _ET
+                        import urllib.request as _urllib
+                        # Strip exchange prefix for Yahoo Finance RSS (use raw ticker)
+                        _yf_ticker = preview_ticker.replace("^", "%5E")
+                        _rss_url = f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={_yf_ticker}&region=US&lang=en-US"
+                        _news_items_wl = []
+                        try:
+                            _req = _urllib.Request(_rss_url, headers={"User-Agent": "Mozilla/5.0"})
+                            with _urllib.urlopen(_req, timeout=4) as _resp:
+                                _tree = _ET.parse(_resp)
+                                _root = _tree.getroot()
+                                for _item in _root.iter("item"):
+                                    _title = (_item.findtext("title") or "").strip()
+                                    _link  = (_item.findtext("link") or "").strip()
+                                    _pub   = (_item.findtext("pubDate") or "").strip()[:22]
+                                    if _title and _link:
+                                        _news_items_wl.append((_title, _link, _pub))
+                        except Exception:
+                            pass
+
+                        if _news_items_wl:
+                            _news_rows = ""
+                            for _t, _l, _p in _news_items_wl[:15]:
+                                _t_esc = _t.replace("'", "\\'").replace('"', "&quot;")
+                                _news_rows += f"""
+                                <a href="{_l}" target="_blank" class="news-item">
+                                  <div class="news-title">{_t_esc}</div>
+                                  <div class="news-date">{_p}</div>
+                                </a>"""
+                        else:
+                            _news_rows = "<div style='color:#667788;padding:20px;text-align:center;'>No news available for this symbol.</div>"
+
+                        components.html(f"""
+                        <style>
+                          body {{ margin:0; background:transparent; font-family:'Inter',sans-serif; }}
+                          .news-header {{ color:#9b59b6; font-size:0.72rem; font-weight:800;
+                            text-transform:uppercase; letter-spacing:1.5px;
+                            padding:10px 14px 8px; border-bottom:1px solid rgba(155,89,182,0.3); }}
+                          .news-scroll {{ height:390px; overflow-y:auto; }}
+                          .news-scroll::-webkit-scrollbar {{ width:4px; }}
+                          .news-scroll::-webkit-scrollbar-thumb {{ background:rgba(155,89,182,0.4); border-radius:2px; }}
+                          .news-item {{ display:block; padding:10px 14px;
+                            border-bottom:1px solid rgba(255,255,255,0.05);
+                            text-decoration:none; transition:background 0.15s; }}
+                          .news-item:hover {{ background:rgba(155,89,182,0.1); }}
+                          .news-title {{ color:#e8eaf6; font-size:0.82rem; line-height:1.4; margin-bottom:4px; }}
+                          .news-date  {{ color:#667788; font-size:0.70rem; }}
+                        </style>
+                        <div class="news-header">📰 {preview_ticker} — Latest News</div>
+                        <div class="news-scroll">{_news_rows}</div>
+                        """, height=430)
+
 
 # ── TAB 7: PORTFOLIO MANAGEMENT ──────────────────────────────────────────────
 if active_tab == "7. Portfolio Builder":

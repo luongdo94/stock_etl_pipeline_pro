@@ -732,6 +732,60 @@ def load_quarterly_financials(
     logger.info(f"✅ Upserted {len(df)} quarterly financial records → raw.quarterly_financials (history preserved)")
     return len(df)
 
+
+def cleanup_stale_tv_tickers(conn: duckdb.DuckDBPyConnection):
+    """
+    Garbage Collection: Removes auto-discovered TV tickers that haven't been
+    updated in 7 days (meaning they fell out of the Top 20 rankings).
+    Base tickers from tickers.yaml are strictly protected.
+    """
+    from etl.extract import load_tickers_config
+    base_tickers = list(load_tickers_config().keys())
+    
+    if not base_tickers:
+        logger.warning("  ⚠️ Could not load base tickers. Skipping GC to prevent accidental wipe.")
+        return 0
+
+    # Find tickers in company_info older than 7 days
+    # (Using stock_prices MAX(date) is also good, but _extracted_at is safer)
+    stale_query = """
+        SELECT ticker 
+        FROM raw.company_info 
+        WHERE _extracted_at < CURRENT_TIMESTAMP - INTERVAL 7 DAY
+          AND ticker NOT IN (SELECT * FROM UNNEST(?))
+    """
+    
+    try:
+        stale_tickers = [row[0] for row in conn.execute(stale_query, [base_tickers]).fetchall()]
+        
+        if not stale_tickers:
+            logger.info("  🧹 Garbage Collection: No stale TV tickers to clean up.")
+            return 0
+            
+        logger.info(f"  🧹 Garbage Collection: Found {len(stale_tickers)} stale TV tickers. Deleting...")
+        
+        # Delete from all raw tables
+        tables = [
+            "raw.stock_prices", "raw.company_info", "raw.historical_financials",
+            "raw.quarterly_financials", "raw.cashflows", "raw.earnings_calendar",
+            "raw.earnings_surprise", "raw.forward_estimates", "raw.hist_fcf",
+            "raw.hist_fcf_quarterly"
+        ]
+        
+        for table in tables:
+            try:
+                conn.execute(f"DELETE FROM {table} WHERE ticker = ANY(?)", [stale_tickers])
+            except Exception as e:
+                pass # Table might not exist yet
+                
+        logger.info(f"  ✅ Garbage Collection Complete: {len(stale_tickers)} tickers removed.")
+        return len(stale_tickers)
+        
+    except Exception as e:
+        logger.error(f"  ❌ Garbage Collection failed: {e}")
+        return 0
+
+
 def perform_atomic_swap():
     """
     Sub-millisecond file swap.
