@@ -78,7 +78,9 @@ def fetch_dynamic_tv_tickers(base_tickers=None):
     tv_presets = {
         "value_stocks": {
             "filters": [
-                {"left": "market_cap_basic", "operation": "greater", "right": 500000000},
+                {"left": "market_cap_basic", "operation": "greater", "right": 2000000000},
+                {"left": "close", "operation": "greater", "right": 5},
+                {"left": "volume", "operation": "greater", "right": 500000},
                 {"left": "price_earnings_ttm", "operation": "less", "right": 15},
                 {"left": "price_earnings_ttm", "operation": "greater", "right": 0},
                 {"left": "price_book_ratio", "operation": "less", "right": 1.5},
@@ -89,7 +91,9 @@ def fetch_dynamic_tv_tickers(base_tickers=None):
         },
         "growth_at_reasonable_price": {
             "filters": [
-                {"left": "market_cap_basic", "operation": "greater", "right": 500000000},
+                {"left": "market_cap_basic", "operation": "greater", "right": 2000000000},
+                {"left": "close", "operation": "greater", "right": 5},
+                {"left": "volume", "operation": "greater", "right": 500000},
                 {"left": "earnings_per_share_yoy_growth_ttm", "operation": "greater", "right": 15},
                 {"left": "total_revenue_yoy_growth_ttm", "operation": "greater", "right": 10},
                 {"left": "price_earnings_ttm", "operation": "less", "right": 25},
@@ -99,8 +103,9 @@ def fetch_dynamic_tv_tickers(base_tickers=None):
         },
         "breakout_momentum": {
             "filters": [
-                {"left": "market_cap_basic", "operation": "greater", "right": 500000000},
-                {"left": "volume", "operation": "greater", "right": 1000000},
+                {"left": "market_cap_basic", "operation": "greater", "right": 2000000000},
+                {"left": "close", "operation": "greater", "right": 5},
+                {"left": "volume", "operation": "greater", "right": 2000000},
                 {"left": "SMA50", "operation": "greater", "right": "SMA200"},
                 {"left": "close", "operation": "greater", "right": "SMA50"},
                 {"left": "RSI", "operation": "greater", "right": 60},
@@ -110,7 +115,9 @@ def fetch_dynamic_tv_tickers(base_tickers=None):
         },
         "quality_compounders": {
             "filters": [
-                {"left": "market_cap_basic", "operation": "greater", "right": 1000000000},
+                {"left": "market_cap_basic", "operation": "greater", "right": 5000000000},
+                {"left": "close", "operation": "greater", "right": 5},
+                {"left": "volume", "operation": "greater", "right": 500000},
                 {"left": "return_on_invested_capital", "operation": "greater", "right": 15},
                 {"left": "return_on_equity", "operation": "greater", "right": 20},
                 {"left": "operating_margin", "operation": "greater", "right": 15},
@@ -120,11 +127,14 @@ def fetch_dynamic_tv_tickers(base_tickers=None):
         },
         "high_yield_dividend": {
             "filters": [
-                {"left": "market_cap_basic", "operation": "greater", "right": 1000000000},
+                {"left": "market_cap_basic", "operation": "greater", "right": 5000000000},
+                {"left": "close", "operation": "greater", "right": 5},
+                {"left": "volume", "operation": "greater", "right": 500000},
                 {"left": "dividend_yield_recent", "operation": "greater", "right": 4},
                 {"left": "payout_ratio", "operation": "less", "right": 60},
                 {"left": "payout_ratio", "operation": "greater", "right": 0},
-                {"left": "total_revenue_yoy_growth_ttm", "operation": "greater", "right": 0}
+                {"left": "total_revenue_yoy_growth_ttm", "operation": "greater", "right": 0},
+                {"left": "debt_to_equity", "operation": "less", "right": 1.0}
             ],
             "sort": {"sortBy": "dividend_yield_recent", "sortOrder": "desc"}
         }

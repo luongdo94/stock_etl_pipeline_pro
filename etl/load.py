@@ -316,6 +316,33 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
             _loaded_at              TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
+    
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS raw.tv_technicals (
+            ticker              VARCHAR PRIMARY KEY,
+            vwap                DOUBLE,
+            ichimoku_conversion DOUBLE,
+            ichimoku_base       DOUBLE,
+            price_52_week_high  DOUBLE,
+            price_52_week_low   DOUBLE,
+            adx                 DOUBLE,
+            macd                DOUBLE,
+            _extracted_at       TIMESTAMP,
+            _loaded_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS raw.tv_sector_rotation (
+            sector              VARCHAR PRIMARY KEY,
+            perf_1m             DOUBLE,
+            perf_3m             DOUBLE,
+            volume              BIGINT,
+            etf_count           INTEGER,
+            _extracted_at       TIMESTAMP,
+            _loaded_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     logger.info("✅ Raw schema created")
 
 
@@ -335,6 +362,27 @@ def load_cashflows(
     """)
     conn.unregister("df_tmp")
     logger.info(f"✅ Loaded {len(df)} cashflow records → raw.cashflows")
+    return len(df)
+
+
+def load_tv_technicals(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
+    if df.empty: return 0
+    conn.execute("DELETE FROM raw.tv_technicals")
+    df['_extracted_at'] = pd.Timestamp.now()
+    conn.register("df_tmp", df)
+    conn.execute("INSERT INTO raw.tv_technicals (ticker, vwap, ichimoku_conversion, ichimoku_base, price_52_week_high, price_52_week_low, adx, macd, _extracted_at) SELECT ticker, VWAP, ichimoku_conversion, ichimoku_base, price_52_week_high, price_52_week_low, ADX, macd, _extracted_at FROM df_tmp")
+    conn.unregister("df_tmp")
+    logger.info(f"✅ Loaded {len(df)} TV technical records → raw.tv_technicals")
+    return len(df)
+
+def load_tv_sector_rotation(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
+    if df.empty: return 0
+    conn.execute("DELETE FROM raw.tv_sector_rotation")
+    df['_extracted_at'] = pd.Timestamp.now()
+    conn.register("df_tmp", df)
+    conn.execute("INSERT INTO raw.tv_sector_rotation (sector, perf_1m, perf_3m, volume, etf_count, _extracted_at) SELECT sector, perf_1m, perf_3m, volume, etf_count, _extracted_at FROM df_tmp")
+    conn.unregister("df_tmp")
+    logger.info(f"✅ Loaded {len(df)} TV sector rotation records → raw.tv_sector_rotation")
     return len(df)
 
 

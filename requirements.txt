@@ -32,3 +32,5 @@ duckdb-engine
 streamlit==1.50.0
 openpyxl
 yahooquery==2.3.7
+tradingview-screener==3.1.0
+tradingview-ta==3.3.0

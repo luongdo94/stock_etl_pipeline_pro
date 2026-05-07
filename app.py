@@ -1378,6 +1378,12 @@ def load_data():
             total_tickers_f = conn.execute("SELECT COUNT(*) FROM marts.dim_companies").fetchone()[0]
         except:
             total_tickers_f = 0
+            
+        try:
+            tv_sector_rotation_f = conn.execute("SELECT * FROM raw.tv_sector_rotation").df()
+        except:
+            tv_sector_rotation_f = pd.DataFrame()
+            
     # ── PRE-PROCESSING INSIDE CACHE ──
     prices_f["date"] = pd.to_datetime(prices_f["date"])
     monthly_f["month"] = pd.to_datetime(monthly_f["month"])
@@ -1396,7 +1402,8 @@ def load_data():
 
     return (
         prices_f, companies_f, monthly_f, annual_f, quarterly_f, earnings_calendar,
-        dq_warnings_f, hist_fcf_f, hist_fcf_q_f, etl_audit_f, total_tickers_f, earnings_surprise_f
+        dq_warnings_f, hist_fcf_f, hist_fcf_q_f, etl_audit_f, total_tickers_f, earnings_surprise_f,
+        tv_sector_rotation_f
     )
 
 
@@ -1706,7 +1713,7 @@ def compute_institutional_rating(
        Previously SM had 25% overweight vs. all other pillars (each worth 1.0).
        Now SM is a confirming signal, not a deciding vote.
     2. STRONG BUY requires p_qual_c == "#00ffcc" (AI Score >= 65).
-       Strong dòng tiền alone cannot elevate a low-fundamental stock to top tier.
+       - Strong cash flow alone cannot elevate a low-fundamental stock to top tier.
 
     Smart Money soft scoring (v15.0):
     - Strength < 40:  0 points (weak signal, ignore)
@@ -2493,7 +2500,7 @@ def render_sector_health_matrix(m_df: pd.DataFrame):
 
 
 # Primary Data Load (Cached)
-prices_full, companies_full, monthly_full, annual_fin, quarterly_fin, earnings_cal, dq_warnings, hist_fcf_full, hist_fcf_q_full, etl_audit, total_universe_size, earnings_surprise_full = load_data()
+prices_full, companies_full, monthly_full, annual_fin, quarterly_fin, earnings_cal, dq_warnings, hist_fcf_full, hist_fcf_q_full, etl_audit, total_universe_size, earnings_surprise_full, tv_sector_rotation = load_data()
 m_df = get_master_screener_data(companies_full, prices_full, quarterly_fin, annual_fin)
 
 
@@ -3243,8 +3250,9 @@ with head_r:
             else: st.write("No data.")
 
         with tab_tv:
-            st.markdown("**🔮 TradingView Quantitative Filters**")
-            st.caption("Real-time stock discovery from 5 institutional-grade filters")
+            st.markdown("### 🔮 TradingView Quantitative Engine")
+            st.caption("Real-time institutional stock discovery and macro sector rotation")
+            st.markdown("---")
             
             try:
                 from etl.extract import fetch_dynamic_tv_tickers, load_tickers_config
@@ -3254,77 +3262,49 @@ with head_r:
                     base_tickers = load_tickers_config()
                     tv_tickers = fetch_dynamic_tv_tickers(base_tickers)
                 
+                st.markdown("##### 🔍 Stock Discovery")
                 if tv_tickers:
-                    # Filter mapping
-                    filter_icons = {
-                        'TV_VALUE_STOCKS': '💎',
-                        'TV_GROWTH_AT_REASONABLE_PRICE': '🌱',
-                        'TV_BREAKOUT_MOMENTUM': '⚡',
-                        'TV_QUALITY_COMPOUNDERS': '🛡️',
-                        'TV_HIGH_YIELD_DIVIDEND': '💰'
-                    }
-                    
                     filter_names = {
                         'TV_VALUE_STOCKS': 'Value Stocks',
                         'TV_GROWTH_AT_REASONABLE_PRICE': 'GARP',
-                        'TV_BREAKOUT_MOMENTUM': 'Breakout',
-                        'TV_QUALITY_COMPOUNDERS': 'Quality',
-                        'TV_HIGH_YIELD_DIVIDEND': 'High Yield'
+                        'TV_BREAKOUT_MOMENTUM': 'Breakout Momentum',
+                        'TV_QUALITY_COMPOUNDERS': 'Quality Compounders',
+                        'TV_HIGH_YIELD_DIVIDEND': 'High Yield Dividend'
                     }
                     
-                    # Group by filter
-                    from collections import defaultdict
-                    by_filter = defaultdict(list)
+                    # Build a flat list of dictionaries for the dataframe
+                    discovery_data = []
                     for ticker, meta in tv_tickers.items():
-                        filter_code = meta.get('discovery_source', 'UNKNOWN')
-                        by_filter[filter_code].append({
-                            'ticker': ticker,
-                            'name': meta.get('name', 'N/A')[:35],
-                            'sector': meta.get('sector', 'N/A')[:18],
-                            'region': meta.get('region', 'N/A')
-                        })
-                    
-                    # Summary metrics
-                    _m1, _m2, _m3 = st.columns(3)
-                    _m1.metric("Total Signals", len(tv_tickers))
-                    _m2.metric("Active Filters", len(by_filter))
-                    _m3.metric("Top Filter", max(by_filter.keys(), key=lambda k: len(by_filter[k])) if by_filter else "N/A")
-                    
-                    st.markdown("---")
-                    
-                    # Display by filter
-                    for filter_code in sorted(by_filter.keys()):
-                        stocks = by_filter[filter_code]
-                        icon = filter_icons.get(filter_code, '📊')
-                        name = filter_names.get(filter_code, filter_code.replace('TV_', ''))
+                        f_code = meta.get('discovery_source', 'UNKNOWN')
+                        in_db = ticker in companies_full['ticker'].values if not companies_full.empty else False
                         
-                        with st.expander(f"{icon} **{name}** ({len(stocks)} stocks)", expanded=False):
-                            for stock in stocks[:15]:  # Limit to 15 per filter
-                                # Check if stock exists in our database
-                                in_db = stock['ticker'] in companies_full['ticker'].values if not companies_full.empty else False
-                                status_badge = "✅" if in_db else "🆕"
-                                
-                                st.markdown(f"""
-                                <div style='padding:6px 10px; margin-bottom:4px; background:rgba(255,255,255,0.03); border-radius:4px; border-left:3px solid {"#2ecc71" if in_db else "#3498db"};'>
-                                    <div style='display:flex; justify-content:space-between; align-items:center;'>
-                                        <div>
-                                            <span style='font-weight:600; color:#e8eaf6;'>{stock['ticker']}</span>
-                                            <span style='color:#8899aa; font-size:0.8rem; margin-left:8px;'>{stock['name']}</span>
-                                        </div>
-                                        <span style='font-size:0.75rem; color:#667788;'>{status_badge} {stock['sector']}</span>
-                                    </div>
-                                </div>
-                                """, unsafe_allow_html=True)
-                            
-                            if len(stocks) > 15:
-                                st.caption(f"... and {len(stocks) - 15} more stocks")
+                        discovery_data.append({
+                            'Strategy': filter_names.get(f_code, f_code),
+                            'Ticker': ticker,
+                            'Company': meta.get('name', 'N/A'),
+                            'Sector': meta.get('sector', 'N/A'),
+                            'Status': '✅ In DB' if in_db else '🆕 New'
+                        })
+                        
+                    discovery_df = pd.DataFrame(discovery_data)
                     
-                    st.markdown("---")
-                    st.caption("✅ = Already in database · 🆕 = New discovery · Updates every ETL run")
-                    
+                    # Display DataFrame
+                    st.dataframe(
+                        discovery_df,
+                        column_config={
+                            "Strategy": st.column_config.TextColumn("Strategy", width="medium"),
+                            "Ticker": st.column_config.TextColumn("Ticker", width="small"),
+                            "Company": st.column_config.TextColumn("Company", width="medium"),
+                            "Sector": st.column_config.TextColumn("Sector", width="medium"),
+                            "Status": st.column_config.TextColumn("Status", width="small")
+                        },
+                        use_container_width=True,
+                        hide_index=True,
+                        height=650
+                    )
                 else:
                     st.info("No new stocks discovered by TradingView filters at this time.")
-                    
+                        
             except Exception as e:
                 st.error(f"Failed to fetch TradingView signals: {e}")
                 st.caption("TradingView API may be temporarily unavailable. Try again later.")
@@ -3349,14 +3329,14 @@ risk_return = monthly.groupby("ticker").agg(
 # ── LAYER 6: MAIN TAB EXECUTION ──────────────────────────────────────────────
 # define tab labels in Decision Stage workflow order
 tab_labels = [
-    "1. Market Regime",             # Strategic Overview
-    "2. Opportunity Radar",         # Market Scanner
-    "3. Qualitative Audit (AI)",    # Single Stock Deep Dive
-    "4. Quantitative Forecast (ML)",# Predictive Suite
-    "5. Backtest Lab",              # Strategy Backtest
-    "6. Watchlist",                 # Watchlist / Kanban
-    "7. Portfolio Builder",         # Portfolio Management
-    "8. System Methodology",        # Methodology Docs
+    "🌐 Market Pulse",      # Macro conditions
+    "🔭 Stock Scanner",     # Market Scanner
+    "🔬 Stock Analysis",    # Single Stock Deep Dive
+    "🤖 ML Predictor",      # Predictive Suite
+    "🧪 Strategy Lab",      # Strategy Backtest
+    "📋 Watchlist",         # Watchlist / Kanban
+    "💼 Portfolio",         # Portfolio Management
+    "📖 Docs",              # Methodology Docs
 ]
 
 # ── TICKER TAPE (Live Scrolling) ────────────────────────────────────────────
@@ -3406,7 +3386,7 @@ active_tab = st.pills(
 if not active_tab:
     active_tab = tab_labels[0]
 
-if active_tab == "1. Market Regime":
+if active_tab == "🌐 Market Pulse":
     # ── [STEP 2] 6-BLOCK GRID LAYOUT ─────────────────────────────────────────
     # Note: Logic (Step 1) has been moved to global dashboard level for consistency
     
@@ -3537,12 +3517,54 @@ if active_tab == "1. Market Regime":
 
 
 
+    st.markdown("---")
     
+    st.markdown("#### 🚀 ETF Sector Rotation")
+    st.caption("Tracking large ETF money flow to identify the strongest sectors.")
+    
+    if not tv_sector_rotation.empty:
+        # Prepare data for chart
+        rot_df = tv_sector_rotation.sort_values("perf_1m", ascending=True).tail(11) # All 11 sectors
+        
+        # Plotly Horizontal Bar Chart
+        fig = px.bar(
+            rot_df,
+            x='perf_1m',
+            y='sector',
+            orientation='h',
+            text=rot_df['perf_1m'].apply(lambda x: f"{x:+.1f}%"),
+            color='perf_1m',
+            color_continuous_scale=['#e74c3c', '#2c3e50', '#2ecc71'],
+            color_continuous_midpoint=0
+        )
+        
+        fig.update_layout(
+            height=400,
+            margin=dict(l=0, r=0, t=20, b=0),
+            xaxis_title="1-Month Performance (%)",
+            yaxis_title="",
+            coloraxis_showscale=False,
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)'
+        )
+        
+        fig.update_traces(
+            textposition='outside', 
+            textfont_size=11,
+            cliponaxis=False
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+    else:
+        st.info("⚠️ Sector Rotation data is currently being collected...")
+
+    st.markdown("---")
+
     # Bottom Row: Global Performance & Stance
     bot_c1, bot_c2 = st.columns([2, 1])
     
     with bot_c1:
-        st.markdown("#### 📈 Global Cross-Asset Performance (YTD)")
+        st.markdown("#### 📈 Global Cross-Asset Performance")
         _mp_comp.html("""
         <!-- TradingView Market Overview (Full) Widget -->
         <div class="tradingview-widget-container" style="height:400px; width:100%">
@@ -3647,11 +3669,13 @@ if active_tab == "1. Market Regime":
             </div>
         </div>
         """, unsafe_allow_html=True)
+        
+
 
 
 
 # ── TAB: SINGLE STOCK ANALYSIS ───────────────────────────────────────────────
-if active_tab == "3. Qualitative Audit (AI)":
+if active_tab == "🔬 Stock Analysis":
     render_header("search", "Single Stock Deep Dive")
     if current_universe:
         # Persist selection across reruns via session_state
@@ -4563,8 +4587,14 @@ if active_tab == "3. Qualitative Audit (AI)":
                         else:
                             e_date_str = "TBD"
                         
-                        eps_est = e_row.iloc[0]['eps_avg']
-                        rev_est = e_row.iloc[0]['rev_avg']
+                        _e_ccy = meta.get('currency', 'USD')
+                        _e_fx = get_forex_rates(target="EUR", source=_e_ccy)
+                        
+                        _raw_eps = e_row.iloc[0]['eps_avg']
+                        eps_est = float(_raw_eps) * _e_fx if pd.notnull(_raw_eps) else None
+                        
+                        _raw_rev = e_row.iloc[0]['rev_avg']
+                        rev_est = float(_raw_rev) * _e_fx if pd.notnull(_raw_rev) else None
                     else:
                         e_date_str = "N/A"
                         eps_est = None
@@ -4973,6 +5003,10 @@ if active_tab == "3. Qualitative Audit (AI)":
                             df_fcf_ticker[["year", "free_cash_flow", "operating_cash_flow"]],
                             on="year", how="left"
                         )
+                        _ticker_ccy = str(meta.get("currency", "USD"))
+                        _fx_rate = get_forex_rates(target="EUR", source=_ticker_ccy)
+                        df_fin_plot["free_cash_flow"] = df_fin_plot["free_cash_flow"] * _fx_rate
+                        df_fin_plot["operating_cash_flow"] = df_fin_plot["operating_cash_flow"] * _fx_rate
                         df_fin_plot['fcf_growth'] = (
                             df_fin_plot['free_cash_flow'] - df_fin_plot['free_cash_flow'].shift(1)
                         ) / df_fin_plot['free_cash_flow'].shift(1).abs() * 100
@@ -5162,6 +5196,10 @@ if active_tab == "3. Qualitative Audit (AI)":
                                 df_fcf_q_ticker[["year", "quarter", "free_cash_flow", "operating_cash_flow"]],
                                 on=["year", "quarter"], how="left"
                             )
+                            _ticker_ccy_q = str(meta.get("currency", "USD"))
+                            _fx_rate_q = get_forex_rates(target="EUR", source=_ticker_ccy_q)
+                            df_fin_q_plot["free_cash_flow"] = df_fin_q_plot["free_cash_flow"] * _fx_rate_q
+                            df_fin_q_plot["operating_cash_flow"] = df_fin_q_plot["operating_cash_flow"] * _fx_rate_q
                         else:
                             df_fin_q_plot['free_cash_flow'] = None
 
@@ -5196,17 +5234,13 @@ if active_tab == "3. Qualitative Audit (AI)":
                                 # Create join keys
                                 _es_q["year"] = _es_q["quarter_date"].dt.year
                                 _es_q["quarter"] = _es_q["quarter_date"].dt.quarter
-                                # Pull eps_actual from same source as eps_estimate to avoid FX mismatch:
-                                # quarterly_financials.eps is FX-converted (USD→EUR).
-                                # eps_actual from earnings_surprise is RAW USD — do NOT use it
-                                # as the chart Y value or it will mix currencies on the same axis.
-                                # We keep eps_actual/eps_estimate/surprise_pct only for hover tooltip.
                                 df_fin_q_plot = df_fin_q_plot.merge(
                                     _es_q[["year", "quarter", "eps_actual", "eps_estimate", "surprise_pct"]],
                                     on=["year", "quarter"], how="left"
                                 )
-                                # Always plot EUR-converted eps from quarterly_financials
-                                df_fin_q_plot["eps_chart"] = df_fin_q_plot["eps"]
+                                # Use eps_actual (Adjusted EPS, already converted to EUR) to match eps_estimate.
+                                # Fall back to GAAP eps if eps_actual is missing.
+                                df_fin_q_plot["eps_chart"] = df_fin_q_plot["eps_actual"].combine_first(df_fin_q_plot["eps"])
                             else:
                                 df_fin_q_plot["eps_chart"] = df_fin_q_plot["eps"]
                         else:
@@ -5249,19 +5283,34 @@ if active_tab == "3. Qualitative Audit (AI)":
                                 secondary_y=False
                             )
                         
-                        # EPS ACTUAL (Line)
+                        # EPS ACTUAL — Adjusted (Line, primary)
                         fig_fin_q.add_trace(
                             go.Scatter(
-                                x=x_labels, 
-                                y=df_fin_q_plot['eps_chart'], 
-                                name="Actual EPS", 
-                                line=dict(color="orange", width=3), 
+                                x=x_labels,
+                                y=df_fin_q_plot['eps_chart'],
+                                name="Adjusted EPS (Actual)",
+                                line=dict(color="orange", width=3),
                                 mode="lines+markers",
-                                hovertemplate="<b>Quarter: %{x}</b><br>Actual EPS: %{y:.2f}<br>" + _growth_label + " Growth: %{text}<extra></extra>",
+                                hovertemplate="<b>Quarter: %{x}</b><br>Adjusted EPS: €%{y:.2f}<br>" + _growth_label + " Growth: %{text}<extra></extra>",
                                 text=eps_text_q,
                             ),
                             secondary_y=True
                         )
+
+                        # EPS ACTUAL — GAAP (dotted, secondary reference)
+                        if df_fin_q_plot['eps'].notna().any():
+                            fig_fin_q.add_trace(
+                                go.Scatter(
+                                    x=x_labels,
+                                    y=df_fin_q_plot['eps'],
+                                    name="GAAP EPS",
+                                    line=dict(color="rgba(231, 76, 60, 0.75)", width=2),
+                                    mode="lines+markers",
+                                    marker=dict(size=6, symbol="circle-open"),
+                                    hovertemplate="<b>Quarter: %{x}</b><br>GAAP EPS: €%{y:.2f}<extra></extra>",
+                                ),
+                                secondary_y=True
+                            )
 
                         # EPS ESTIMATE (Dashed Line)
                         if "eps_estimate" in df_fin_q_plot.columns and df_fin_q_plot["eps_estimate"].notna().any():
@@ -5274,7 +5323,7 @@ if active_tab == "3. Qualitative Audit (AI)":
                                     name="EPS Estimate", 
                                     line=dict(color="rgba(189, 195, 199, 0.8)", width=2, dash="dash"), 
                                     mode="lines+markers",
-                                    hovertemplate="<b>Quarter: %{x}</b><br>EPS Estimate: %{y:.2f}<br>Result: %{text}<extra></extra>",
+                                    hovertemplate="<b>Quarter: %{x}</b><br>EPS Estimate: €%{y:.2f}<br>Result: %{text}<extra></extra>",
                                     text=surprise_text,
                                 ),
                                 secondary_y=True
@@ -5554,185 +5603,229 @@ if active_tab == "3. Qualitative Audit (AI)":
             render_header("package", f"Peer Comparison — {_peer_group_label} {_match_level}")
 
             if not peer_companies.empty:
-                # ── Merge with latest price data for RSI / MA signal ──────────────
+                # ── Merge with latest price data ──────────────────────────────
                 peer_prices = prices.sort_values('date').groupby('ticker').tail(1)[['ticker', 'price_close', 'rsi', 'ma_signal']]
                 peer_df = peer_companies.merge(peer_prices, on='ticker', how='left')
                 peer_df["upside_pct"] = (peer_df["target_mean_price"] / peer_df["price_close"] - 1) * 100
 
-                # ── Improvement 2: Compute 1Y Return % for all peers ─────────────
-                _cutoff_1y = pd.Timestamp.now().normalize() - pd.Timedelta(days=365)
-                _peer_tickers = list(peer_df["ticker"].unique()) + [deep_ticker]
-                _prices_1y = prices[prices["ticker"].isin(_peer_tickers)]
+                # ── Compute Net Debt / EBITDA ──────────────────────────────────
+                def _net_debt_ebitda(row):
+                    td  = row.get("total_debt") or 0
+                    eb  = row.get("ebitda")
+                    if eb and eb > 0:
+                        return td / eb
+                    return None
 
-                def _calc_1y_return(grp):
-                    grp = grp.sort_values("date")
-                    past = grp[grp["date"] <= _cutoff_1y]
-                    if past.empty or len(grp) < 2:
+                # ── Compute YoY growth from actual annual_fin data ─────────────
+                # Same method as Financial Performance chart: (Y - Y-1) / |Y-1| * 100
+                _all_peer_tickers = list(peer_df["ticker"].unique()) + [deep_ticker]
+                _af_peers = annual_fin[annual_fin["ticker"].isin(_all_peer_tickers)].copy()
+
+                def _yoy_growth_from_annual(ticker_sym, col):
+                    """Latest YoY growth for a column from dim_annual_financials."""
+                    t_df = _af_peers[_af_peers["ticker"] == ticker_sym].sort_values("year")
+                    if len(t_df) < 2:
                         return None
-                    start_p = past.iloc[-1]["price_close"]
-                    end_p   = grp.iloc[-1]["price_close"]
-                    return (end_p / start_p - 1) * 100 if start_p and start_p > 0 else None
+                    prev = t_df[col].iloc[-2]
+                    curr = t_df[col].iloc[-1]
+                    if pd.isna(prev) or pd.isna(curr) or prev == 0:
+                        return None
+                    return (curr - prev) / abs(prev) * 100
 
-                _1y_returns = pd.DataFrame([
-                    {"ticker": t, "return_1y_pct": _calc_1y_return(grp)}
-                    for t, grp in _prices_1y.groupby("ticker")
-                ])
+                # ── Build unified rows ─────────────────────────────────────────
+                def _build_row(row, ticker, is_selected):
+                    td   = row.get("total_debt") or 0
+                    eb   = row.get("ebitda")
+                    return {
+                        "ticker":           ticker,
+                        "company":          row.get("company", ticker),
+                        "market_cap":       row.get("market_cap"),
+                        # Growth — from actual annual revenue/eps data
+                        "revenue_growth":   _yoy_growth_from_annual(ticker, "revenue"),
+                        "earnings_growth":  _yoy_growth_from_annual(ticker, "eps"),
+                        # Quality / Profitability
+                        "gross_margin":     (row.get("gross_margin") or 0) * 100,
+                        "operating_margin": (row.get("operating_margin") or 0) * 100,
+                        "roe_pct":          (row.get("roe") or 0) * 100,
+                        "fcf_margin":       row.get("fcf_margin") or 0,
+                        # Balance sheet
+                        "net_debt_ebitda":  td / eb if (eb and eb > 0) else None,
+                        # Valuation
+                        "ev_to_ebitda":     row.get("ev_to_ebitda"),
+                        "pe_ratio":         row.get("pe_ratio"),
+                        "price_to_sales":   row.get("price_to_sales"),
+                        "is_selected":      is_selected,
+                    }
 
-                # ── Build unified comparison rows ─────────────────────────────────
-                rows = []
-
-                # Selected ticker row — always first
-                sel_row         = meta.copy()
-                sel_row_prices  = prices[prices['ticker'] == deep_ticker].tail(1)
-                if not sel_row_prices.empty:
-                    sel_row['rsi']       = sel_row_prices.iloc[0]['rsi']
-                    sel_row['ma_signal'] = sel_row_prices.iloc[0]['ma_signal']
-                sel_row['upside_pct'] = upside
-
-                _sel_1y = _1y_returns[_1y_returns["ticker"] == deep_ticker]["return_1y_pct"]
-                _sel_1y_val = float(_sel_1y.iloc[0]) if not _sel_1y.empty and pd.notnull(_sel_1y.iloc[0]) else None
-
-                rows.append({
-                    'ticker':        deep_ticker,
-                    'company':       meta['company'],
-                    'market_cap':    meta.get('market_cap'),
-                    'pe_ratio':      meta.get('pe_ratio'),
-                    'price_to_book': meta.get('price_to_book'),
-                    'roe_pct':       (meta.get('roe') or 0) * 100,
-                    'fcf_margin':    meta.get('fcf_margin') or 0,
-                    'upside_pct':    upside,
-                    'return_1y_pct': _sel_1y_val,
-                    'quality_score': float(m_df.loc[m_df["Ticker"] == deep_ticker, "Quality"].iloc[0]) if not m_df[m_df["Ticker"] == deep_ticker].empty else compute_score(sel_row),
-                    'is_selected':   True,
-                })
-
+                rows = [_build_row(meta, deep_ticker, True)]
                 for _, pr in peer_df.iterrows():
-                    pr_score_input = pr.copy()
-                    pr_score_input['upside_pct'] = pr.get('upside_pct', 0) or 0
-                    _p1y = _1y_returns[_1y_returns["ticker"] == pr["ticker"]]["return_1y_pct"]
-                    rows.append({
-                        'ticker':        pr['ticker'],
-                        'company':       pr.get('company', pr['ticker']),
-                        'market_cap':    pr.get('market_cap'),
-                        'pe_ratio':      pr.get('pe_ratio'),
-                        'price_to_book': pr.get('price_to_book'),
-                        'roe_pct':       (pr.get('roe') or 0) * 100,
-                        'fcf_margin':    pr.get('fcf_margin') or 0,
-                        'upside_pct':    pr.get('upside_pct', 0) or 0,
-                        'return_1y_pct': float(_p1y.iloc[0]) if not _p1y.empty and pd.notnull(_p1y.iloc[0]) else None,
-                        'quality_score': float(m_df.loc[m_df["Ticker"] == pr["ticker"], "Quality"].iloc[0]) if not m_df[m_df["Ticker"] == pr["ticker"]].empty else compute_score(pr_score_input),
-                        'is_selected':   False,
-                    })
+                    rows.append(_build_row(pr, pr["ticker"], False))
 
                 comp_df = pd.DataFrame(rows)
 
-                # ── Improvement 1: Sector Average row ────────────────────────────
-                _peer_only = comp_df[~comp_df['is_selected']]
-                _numeric_cols = ['pe_ratio', 'price_to_book', 'roe_pct', 'fcf_margin', 'upside_pct', 'return_1y_pct', 'quality_score']
-                avg_vals = _peer_only[_numeric_cols].mean(numeric_only=True)
-                avg_row = {'ticker': 'AVG', 'company': f'⊘ {_match_level} Average', 'is_selected': False, 'market_cap': None}
+                # ── Sector Average row ─────────────────────────────────────────
+                _numeric_cols = [
+                    "revenue_growth", "earnings_growth",
+                    "gross_margin", "operating_margin", "roe_pct", "fcf_margin",
+                    "net_debt_ebitda",
+                    "ev_to_ebitda", "pe_ratio", "price_to_sales",
+                ]
+                _peer_only = comp_df[~comp_df["is_selected"]]
+                avg_vals   = _peer_only[_numeric_cols].mean(numeric_only=True)
+                avg_row    = {"ticker": "AVG", "company": f"⊘ {_match_level} Average", "is_selected": False, "market_cap": None}
                 for c in _numeric_cols:
                     avg_row[c] = avg_vals.get(c)
                 comp_df = pd.concat([comp_df, pd.DataFrame([avg_row])], ignore_index=True)
-                comp_df = comp_df.set_index('ticker')
-
-                # ── Improvement 4: Color coding helper ───────────────────────────
-                # For each metric, we compare against the SECTOR AVERAGE (avg_vals)
-                # Higher-is-better: roe_pct, fcf_margin, upside_pct, return_1y_pct, quality_score
-                # Lower-is-better: pe_ratio, price_to_book
-                HIGHER_BETTER = {'roe_pct', 'fcf_margin', 'upside_pct', 'return_1y_pct', 'quality_score'}
-                LOWER_BETTER  = {'pe_ratio', 'price_to_book'}
-
-                def _color_cell(val, col, avg):
-                    """Return HTML-colored cell content."""
-                    if pd.isna(val) or avg is None or pd.isna(avg):
-                        return val
-                    is_good = (val > avg) if col in HIGHER_BETTER else (val < avg and val > 0)
-                    is_bad  = (val < avg) if col in HIGHER_BETTER else (val > avg and val > 0)
-                    color   = "#00e5a0" if is_good else ("#ff6b6b" if is_bad else "inherit")
-                    return color, val
-
-                # ── Build display table with formatted values ─────────────────────
-                def _fmt_cap(v):
-                    if v is None or pd.isna(v): return "—"
-                    if v >= 1e12: return f"${v/1e12:.1f}T"
-                    if v >= 1e9:  return f"${v/1e9:.0f}B"
-                    return f"${v/1e6:.0f}M"
-
-                # ── Improvement 3+4: Build HTML table with highlight + color coding ─
-                _COL_DEFS = [
-                    ('company',        'Company',     None),
-                    ('market_cap',     'Mkt Cap',     None),
-                    ('pe_ratio',       'P/E',         'lower'),
-                    ('price_to_book',  'P/B',         'lower'),
-                    ('roe_pct',        'ROE %',       'higher'),
-                    ('fcf_margin',     'FCF %',       'higher'),
-                    ('return_1y_pct',  '1Y Return',   'higher'),
-                    ('upside_pct',     'Upside',      'higher'),
-                    ('quality_score',  'Quality',     'higher'),
-                ]
-
-                def _cell_bg(val, col_key, better_dir, avg_dict, is_avg_row):
-                    """Returns background CSS for a cell."""
-                    if is_avg_row or better_dir is None:
-                        return ""
-                    avg = avg_dict.get(col_key)
-                    if avg is None or pd.isna(avg) or val is None or (isinstance(val, float) and pd.isna(val)):
-                        return ""
-                    try:
-                        f_val = float(val)
-                        f_avg = float(avg)
-                    except Exception:
-                        return ""
-                    if better_dir == 'higher':
-                        return "background: rgba(0,229,160,0.18);" if f_val > f_avg * 1.05 else ("background: rgba(255,107,107,0.18);" if f_val < f_avg * 0.95 else "")
-                    else:  # 'lower'
-                        if f_val <= 0: return ""
-                        return "background: rgba(0,229,160,0.18);" if f_val < f_avg * 0.95 else ("background: rgba(255,107,107,0.18);" if f_val > f_avg * 1.05 else "")
-
+                comp_df = comp_df.set_index("ticker")
                 avg_dict = {c: avg_vals.get(c) for c in _numeric_cols}
 
+                # ── Color coding ───────────────────────────────────────────────
+                # Higher = green: growth, margins, roe, fcf
+                # Lower  = green: net_debt_ebitda, valuation multiples
+                HIGHER_BETTER = {"revenue_growth", "earnings_growth", "gross_margin", "operating_margin", "roe_pct", "fcf_margin"}
+                LOWER_BETTER  = {"net_debt_ebitda", "ev_to_ebitda", "pe_ratio", "price_to_sales"}
+
+                def _cell_bg(val, col_key, is_avg_row):
+                    if is_avg_row or val is None: return ""
+                    avg = avg_dict.get(col_key)
+                    if avg is None or pd.isna(avg): return ""
+                    try:
+                        fv, fa = float(val), float(avg)
+                    except Exception:
+                        return ""
+                    if col_key in HIGHER_BETTER:
+                        if fv > fa * 1.05: return "background:rgba(0,229,160,0.18);"
+                        if fv < fa * 0.95: return "background:rgba(255,107,107,0.18);"
+                    elif col_key in LOWER_BETTER:
+                        if fv <= 0: return ""
+                        if fv < fa * 0.95: return "background:rgba(0,229,160,0.18);"
+                        if fv > fa * 1.05: return "background:rgba(255,107,107,0.18);"
+                    return ""
+
+                def _fmt_cap(v):
+                    if v is None or pd.isna(v): return "—"
+                    if v >= 1e12: return f"€{v/1e12:.1f}T"
+                    if v >= 1e9:  return f"€{v/1e9:.0f}B"
+                    return f"€{v/1e6:.0f}M"
+
+                def _fmt_pct(v, sign=False):
+                    if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
+                    prefix = "+" if sign and float(v) > 0 else ""
+                    return f"{prefix}{float(v):.1f}%"
+
+                def _fmt_x(v, decimals=1):
+                    if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
+                    fv = float(v)
+                    if fv <= 0: return "N/A"
+                    return f"{fv:.{decimals}f}x"
+
+                # ── Column definitions: (key, label, fmt_fn, higher/lower/None) ─
+                _COL_DEFS = [
+                    # ── Group 1: Growth ────────────────────────────────────────
+                    ("company",          "Company",           None,         None),
+                    ("market_cap",       "Mkt Cap",           None,         None),
+                    ("revenue_growth",   "Rev Growth",        "pct_sign",   "higher"),
+                    ("earnings_growth",  "EPS Growth",        "pct_sign",   "higher"),
+                    # ── Group 2: Quality / Profitability ──────────────────────
+                    ("gross_margin",     "Gross Mgn",         "pct",        "higher"),
+                    ("operating_margin", "Op Mgn",            "pct",        "higher"),
+                    ("roe_pct",          "ROE",               "pct",        "higher"),
+                    ("fcf_margin",       "FCF Mgn",           "pct",        "higher"),
+                    # ── Group 3: Balance Sheet ─────────────────────────────────
+                    ("net_debt_ebitda",  "ND/EBITDA",         "x",          "lower"),
+                    # ── Group 4: Valuation ─────────────────────────────────────
+                    ("ev_to_ebitda",     "EV/EBITDA",         "x",          "lower"),
+                    ("pe_ratio",         "P/E",               "x",          "lower"),
+                    ("price_to_sales",   "P/S",               "x1",         "lower"),
+                ]
+
+                # ── Group header row ───────────────────────────────────────────
+                _group_spans = [
+                    ("",                          3),  # Ticker + Company + Mkt Cap
+                    ("📈 Growth",                 2),
+                    ("💎 Quality / Profitability",4),
+                    ("🏦 Balance Sheet",           1),
+                    ("💰 Valuation",               3),
+                ]
+                group_header = "".join(
+                    f"<th colspan='{span}' style='padding:4px 10px; text-align:center; color:#64748b; font-size:0.72rem; border-bottom:1px solid rgba(255,255,255,0.06); font-weight:600; text-transform:uppercase; letter-spacing:0.5px;'>{label}</th>"
+                    for label, span in _group_spans
+                )
+
+                # ── Column header row ──────────────────────────────────────────
+                header_cells = "<th style='padding:6px 10px; color:#94a3b8; text-align:left; font-size:0.8rem; white-space:nowrap;'>Ticker</th>" + "".join(
+                    f"<th style='padding:6px 10px; color:#94a3b8; text-align:{'left' if k in ('company','market_cap') else 'center'}; font-size:0.8rem; white-space:nowrap;'>{lbl}</th>"
+                    for k, lbl, *_ in _COL_DEFS
+                )
+
+                # ── Data rows ─────────────────────────────────────────────────
                 html_rows = []
                 for ticker_idx, row_data in comp_df.iterrows():
-                    is_sel  = row_data.get('is_selected', False)
-                    is_avg  = (ticker_idx == 'AVG')
-                    row_bg  = "background: rgba(99,132,255,0.12); font-weight:700;" if is_sel else ("background: rgba(255,255,255,0.04); font-style:italic; font-weight:600;" if is_avg else "")
-                    label   = f"★ {ticker_idx}" if is_sel else ticker_idx
+                    is_sel = row_data.get("is_selected", False)
+                    is_avg = (ticker_idx == "AVG")
+                    row_bg = "background:rgba(99,132,255,0.12); font-weight:700;" if is_sel else (
+                             "background:rgba(255,255,255,0.04); font-style:italic; font-weight:600;" if is_avg else "")
+                    label  = f"★ {ticker_idx}" if is_sel else ticker_idx
 
-                    cells = f"<td style='padding:8px 10px; color:#a78bfa; font-weight:700;'>{label}</td>"
-                    for col_key, col_label, better_dir in _COL_DEFS:
+                    cells = f"<td style='padding:8px 10px; color:#a78bfa; font-weight:700; white-space:nowrap;'>{label}</td>"
+                    for col_key, col_lbl, fmt, direction in _COL_DEFS:
                         val = row_data.get(col_key)
-                        cell_style = _cell_bg(val, col_key, better_dir, avg_dict, is_avg)
-
-                        if col_key == 'company':
-                            text = str(val) if val else "—"
-                        elif col_key == 'market_cap':
+                        bg  = _cell_bg(val, col_key, is_avg)
+                        align = "left" if col_key in ("company",) else "center"
+                        if col_key == "company":
+                            text = str(val)[:28] if val else "—"
+                        elif col_key == "market_cap":
                             text = _fmt_cap(val)
-                        elif col_key == 'quality_score':
-                            text = f"{val:.0f}/100" if val is not None and not (isinstance(val, float) and pd.isna(val)) else "—"
-                        elif col_key in ('pe_ratio', 'price_to_book'):
-                            text = f"{float(val):.1f}x" if val is not None and not (isinstance(val, float) and pd.isna(val)) and float(val) > 0 else "N/A"
-                        elif col_key in ('roe_pct', 'fcf_margin', 'upside_pct', 'return_1y_pct'):
-                            if val is not None and not (isinstance(val, float) and pd.isna(val)):
-                                prefix = "+" if float(val) > 0 and col_key in ('upside_pct', 'return_1y_pct') else ""
-                                text = f"{prefix}{float(val):.1f}%"
-                            else:
-                                text = "—"
+                        elif fmt == "pct":
+                            text = _fmt_pct(val)
+                        elif fmt == "pct_sign":
+                            text = _fmt_pct(val, sign=True)
+                        elif fmt == "x":
+                            text = _fmt_x(val, 1)
+                        elif fmt == "x1":
+                            text = _fmt_x(val, 2)
                         else:
                             text = str(val) if val is not None else "—"
+                        cells += f"<td style='padding:8px 10px; text-align:{align}; {bg} white-space:nowrap;'>{text}</td>"
 
-                        cells += f"<td style='padding:8px 10px; text-align:center; {cell_style}'>{text}</td>"
 
-                    html_rows.append(f"<tr style='{row_bg}'>{cells}</tr>")
 
-                header_cells = "<th style='padding:8px 10px; color:#94a3b8; text-align:left;'>Ticker</th>"
-                for _, col_label, _ in _COL_DEFS:
-                    header_cells += f"<th style='padding:8px 10px; color:#94a3b8; text-align:center;'>{col_label}</th>"
+                # Rebuild clean html rows
+                html_rows = []
+                for ticker_idx, row_data in comp_df.iterrows():
+                    is_sel = row_data.get("is_selected", False)
+                    is_avg = (ticker_idx == "AVG")
+                    row_bg = "background:rgba(99,132,255,0.12); font-weight:700;" if is_sel else (
+                             "background:rgba(255,255,255,0.04); font-style:italic; font-weight:600;" if is_avg else "")
+                    label  = f"★ {ticker_idx}" if is_sel else ticker_idx
+
+                    td_ticker = f"<td style='padding:8px 10px; color:#a78bfa; font-weight:700; white-space:nowrap;'>{label}</td>"
+                    col_cells = ""
+                    for col_key, col_lbl, fmt, direction in _COL_DEFS:
+                        val = row_data.get(col_key)
+                        bg  = _cell_bg(val, col_key, is_avg)
+                        if col_key == "company":
+                            text = str(val)[:28] if val else "—"
+                            col_cells += f"<td style='padding:8px 10px; text-align:left; {bg}'>{text}</td>"
+                        elif col_key == "market_cap":
+                            col_cells += f"<td style='padding:8px 10px; text-align:center; {bg}'>{_fmt_cap(val)}</td>"
+                        elif fmt == "pct":
+                            col_cells += f"<td style='padding:8px 10px; text-align:center; {bg}'>{_fmt_pct(val)}</td>"
+                        elif fmt == "pct_sign":
+                            col_cells += f"<td style='padding:8px 10px; text-align:center; {bg}'>{_fmt_pct(val, sign=True)}</td>"
+                        elif fmt in ("x", "x1"):
+                            col_cells += f"<td style='padding:8px 10px; text-align:center; {bg}'>{_fmt_x(val, 1 if fmt=='x' else 2)}</td>"
+                        else:
+                            col_cells += f"<td style='padding:8px 10px; text-align:center; {bg}'>—</td>"
+                    html_rows.append(f"<tr style='{row_bg}'>{td_ticker}{col_cells}</tr>")
 
                 html_table = f"""
                 <div style="overflow-x:auto; border-radius:12px; border:1px solid rgba(255,255,255,0.08); margin-bottom:12px;">
-                <table style="width:100%; border-collapse:collapse; font-size:0.88rem; color:#e2e8f0;">
-                  <thead><tr style="border-bottom:1px solid rgba(255,255,255,0.1);">{header_cells}</tr></thead>
+                <table style="width:100%; border-collapse:collapse; font-size:0.85rem; color:#e2e8f0;">
+                  <thead>
+                    <tr style="border-bottom:1px solid rgba(255,255,255,0.06);">{group_header}</tr>
+                    <tr style="border-bottom:1px solid rgba(255,255,255,0.1);">{header_cells}</tr>
+                  </thead>
                   <tbody>{"".join(html_rows)}</tbody>
                 </table>
                 </div>
@@ -5740,8 +5833,6 @@ if active_tab == "3. Qualitative Audit (AI)":
                   🟢 = above {_match_level} avg &nbsp;|&nbsp; 🔴 = below avg &nbsp;|&nbsp; ★ = selected ticker
                 </div>
                 """
-
-                # Improvement 3 — render highlighted table
                 st.markdown(html_table, unsafe_allow_html=True)
 
             else:
@@ -5818,7 +5909,7 @@ if active_tab == "3. Qualitative Audit (AI)":
 # ── FEATURE 1.5: Correlation Matrix ──────────────────────────────────────────
 
 # ── TAB 6: WATCHLIST PIPELINE ────────────────────────────────────────────────
-if active_tab == "6. Watchlist":
+if active_tab == "📋 Watchlist":
 
     render_header("calendar", "Watchlist & Idea Pipeline")
     st.write("Track and prune your high-conviction ideas. A thesis without an invalidation level is just a gamble.")
@@ -5971,7 +6062,7 @@ if active_tab == "6. Watchlist":
 
 
 # ── TAB 7: PORTFOLIO MANAGEMENT ──────────────────────────────────────────────
-if active_tab == "7. Portfolio Builder":
+if active_tab == "💼 Portfolio":
     render_header("package", "Professional Bulk Portfolio Suite", level="###")
     st.write("Craft your portfolio by selecting tickers and entering your holdings below. High-density quantitative analysis will follow.")
 
@@ -7391,7 +7482,7 @@ if active_tab == "7. Portfolio Builder":
                 for _lbl, _col, _offset in [("CY", "eps_est_cur_y", 0), ("NTY", "eps_est_next_y", 1)]:
                     _v = _fv(_col)
                     if _v is not None:
-                        _fwd_periods.append({"year": _cur_yr + _offset, "eps": _v})
+                        _fwd_periods.append({"year": _cur_yr + _offset, "eps": _v * _fe_fxr})
 
                 fig_eps = go.Figure()
                 if not _hist_eps.empty:
@@ -7412,7 +7503,7 @@ if active_tab == "7. Portfolio Builder":
                                font=dict(size=12, color="#8899aa"), x=0),
                     legend=dict(orientation="h", yanchor="bottom", y=1.0,
                                 xanchor="right", x=1, font=dict(size=10)),
-                    barmode="group", yaxis_title="EPS ($)",
+                    barmode="group", yaxis_title="EPS (€)",
                     xaxis=dict(tickmode="linear", dtick=1)
                 )
                 st.plotly_chart(fig_eps, use_container_width=True)
@@ -7467,7 +7558,7 @@ if active_tab == "7. Portfolio Builder":
 
 
 # ── TAB: MARKET SCANNER & OPPORTUNITY RADAR ──────────────────────────────────
-if active_tab == "2. Opportunity Radar":
+if active_tab == "🔭 Stock Scanner":
     render_header("search", "Market Scanner & Opportunity Radar", level="###")
     m_df = get_master_screener_data(companies_full, prices_full, quarterly_fin, annual_fin)
 
@@ -7970,7 +8061,7 @@ if active_tab == "2. Opportunity Radar":
         - **If High Upside but Neutral/Bearish Trend**: Potential Value Trap. Wait for MA20 breakout.
         - **If High Quality + RSI < 30**: Extreme Oversold opportunity for mean reversion.
         """)
-if active_tab == "4. Quantitative Forecast (ML)":
+if active_tab == "🤖 ML Predictor":
     import torch
     import optuna
     import numpy as np
@@ -9356,7 +9447,7 @@ Monte Carlo 90% CI: <b style='color:#fff;'>€{p5_final:.2f}</b> ↔ <b style='c
                     rows_html += f"""
                     <tr>
                         <td style='padding:8px 12px; font-weight:600;'>{icon_svg} {model_name}</td>
-                        <td style='padding:8px 12px; text-align:center; color:#e74c3c;'>${m["RMSE"]}</td>
+                        <td style='padding:8px 12px; text-align:center; color:#e74c3c;'>€{m["RMSE"]}</td>
                         <td style='padding:8px 12px; text-align:center; color:#e67e22;'>{m["MAPE (%)"]:.1f}%</td>
                         <td style='padding:8px 12px; text-align:center; font-weight:700; color:{conf_color};'>{conf_score:.1f}%</td>
                         <td style='padding:8px 12px; text-align:center;' title='0% happens when mean-reverting models predict flatlines during a trending test set.'>{m["Dir. Acc"]}</td>
@@ -9373,7 +9464,7 @@ Monte Carlo 90% CI: <b style='color:#fff;'>€{p5_final:.2f}</b> ↔ <b style='c
                     <thead>
                         <tr style='border-bottom:1px solid rgba(255,255,255,0.15); color:#8899aa; font-size:0.78rem; text-transform:uppercase;'>
                             <th style='padding:6px 12px; text-align:left;'>Model</th>
-                            <th style='padding:6px 12px; text-align:center;'>RMSE ($)</th>
+                            <th style='padding:6px 12px; text-align:center;'>RMSE (€)</th>
                             <th style='padding:6px 12px; text-align:center;'>MAPE</th>
                             <th style='padding:6px 12px; text-align:center;' title='Confidence Score (100 - MAPE)'>Confidence <span style='cursor:help;'>ⓘ</span></th>
                             <th style='padding:6px 12px; text-align:center;' title='Directional Accuracy evaluated on the holdout window'>Dir. Acc <span style='cursor:help;'>ⓘ</span></th>
@@ -9422,7 +9513,7 @@ Monte Carlo 90% CI: <b style='color:#fff;'>€{p5_final:.2f}</b> ↔ <b style='c
                                 avg_r, x="Model", y="RMSE", color="Regime",
                                 barmode="group", template="plotly_dark", height=260,
                                 color_discrete_map={"High VIX (>25)": "#e74c3c", "Low VIX (≤25)": "#2ecc71"},
-                                labels={"RMSE": "Avg RMSE ($)"}
+                                labels={"RMSE": "Avg RMSE (€)"}
                             )
                             fig_meta.update_layout(margin=dict(t=10,b=0,l=0,r=0),
                                                    legend=dict(orientation="h", y=1.12))
@@ -9551,7 +9642,7 @@ def run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct,
     }
 
 # ── TAB: STRATEGY BACKTEST ───────────────────────────────────────────────────
-if active_tab == "5. Backtest Lab":
+if active_tab == "🧪 Strategy Lab":
 
     render_header("activity", "Strategy Backtesting Engine — Signal Simulator")
 
@@ -9688,7 +9779,7 @@ if active_tab == "5. Backtest Lab":
 
 
 # ── TAB 8: SYSTEM METHODOLOGY ────────────────────────────────────────────────
-if active_tab == "8. System Methodology":
+if active_tab == "📖 Docs":
     render_header("book", "DSS Framework & System Methodology")
     st.write("Transparency is the foundation of institutional-grade decision making. This document outlines the technical assumptions and boundaries of this Decision Support System.")
     

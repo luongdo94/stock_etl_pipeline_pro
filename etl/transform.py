@@ -510,15 +510,28 @@ def _create_marts(conn):
             GROUP BY 1
         ) b USING (ticker)
         LEFT JOIN (
-            SELECT 
-                p.ticker, 
-                ROUND(AVG(p.close / NULLIF(a.eps, 0)), 2) AS pe_5y_avg
+            -- pe_5y_avg: trailing 5-year average P/E
+            -- Guards:
+            --   1. EPS > 0.5 — excludes loss years and near-zero EPS that produce phantom P/Es
+            --   2. Last 5 calendar years only
+            --   3. Individual annual P/E clamped to [1, 200] to neutralise remaining outliers
+            SELECT
+                ticker,
+                ROUND(AVG(annual_pe), 2) AS pe_5y_avg
             FROM (
-                SELECT ticker, EXTRACT(YEAR FROM date) AS year, AVG(close) AS close
-                FROM staging.stg_stock_prices
-                GROUP BY 1, 2
-            ) p
-            INNER JOIN staging.stg_historical_financials a ON p.ticker = a.ticker AND p.year = a.year
+                SELECT
+                    p.ticker,
+                    LEAST(GREATEST(p.close / a.eps, 1), 200) AS annual_pe
+                FROM (
+                    SELECT ticker, EXTRACT(YEAR FROM date) AS year, AVG(close) AS close
+                    FROM staging.stg_stock_prices
+                    WHERE EXTRACT(YEAR FROM date) >= EXTRACT(YEAR FROM CURRENT_DATE) - 5
+                    GROUP BY 1, 2
+                ) p
+                INNER JOIN staging.stg_historical_financials a
+                    ON p.ticker = a.ticker AND p.year = a.year
+                WHERE a.eps > 0.5  -- exclude loss years and near-zero EPS
+            )
             GROUP BY 1
         ) hpe USING (ticker)
         LEFT JOIN (
