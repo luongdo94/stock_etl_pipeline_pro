@@ -270,6 +270,12 @@ def _guess_currency(ticker: str) -> str:
     if ".HE" in ticker: return "EUR" # Finland
     if ".OL" in ticker: return "NOK"
     if ".TW" in ticker: return "TWD"
+    if any(ticker.endswith(s) for s in [".KS", ".KQ"]): return "KRW"
+    if any(ticker.endswith(s) for s in [".BO", ".NS"]): return "INR"
+    if ticker.endswith(".SA"): return "BRL"
+    if ticker.endswith(".MX"): return "MXN"
+    if ticker.endswith(".SI"): return "SGD"
+    if ticker.endswith(".JO"): return "ZAR"
     return "USD"
 
 def _safe_float(val):
@@ -579,19 +585,32 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
         price_mod  = data.get('price', {})
         calendar   = data.get('calendarEvents', {})  # Contains ex-dividend & pay dates
 
-        # Determine currency and FX rate
-        currency = financials.get('financialCurrency') or summary.get('currency') or _guess_currency(ticker)
+        # Determine currency and FX rates (split by financial vs trading to fix ADR anomalies)
+        financial_currency = financials.get('financialCurrency') or summary.get('currency') or _guess_currency(ticker)
+        trading_currency = summary.get('currency') or price_mod.get('currency') or financial_currency
+
         # GBp (UK pence) fix: Yahoo reports financials in pence for *.L tickers,
         # but our FX table only has GBPEUR=X (pounds). Use the pound rate and divide by 100.
-        _is_gbp_pence = (currency == "GBp") or (ticker.upper().endswith(".L") and currency in ("GBp", "GBP"))
-        if _is_gbp_pence:
-            effective_fx_rate = fx_rates.get("GBP", fx_rates.get("GBp", 1.0)) / 100.0
+        _is_fin_gbp_pence = (financial_currency == "GBp") or (ticker.upper().endswith(".L") and financial_currency in ("GBp", "GBP"))
+        if _is_fin_gbp_pence:
+            fin_fx_rate = fx_rates.get("GBP", fx_rates.get("GBp", 1.0)) / 100.0
         else:
-            effective_fx_rate = fx_rates.get(currency, 1.0)
+            fin_fx_rate = fx_rates.get(financial_currency, 1.0)
 
-        def norm_val(val):
+        _is_trad_gbp_pence = (trading_currency == "GBp") or (ticker.upper().endswith(".L") and trading_currency in ("GBp", "GBP"))
+        if _is_trad_gbp_pence:
+            trad_fx_rate = fx_rates.get("GBP", fx_rates.get("GBp", 1.0)) / 100.0
+        else:
+            trad_fx_rate = fx_rates.get(trading_currency, 1.0)
+
+        def norm_fin_val(val):
             if val is None or (isinstance(val, (float, int)) and pd.isna(val)): return None
-            try: return float(val) * effective_fx_rate
+            try: return float(val) * fin_fx_rate
+            except: return None
+
+        def norm_trad_val(val):
+            if val is None or (isinstance(val, (float, int)) and pd.isna(val)): return None
+            try: return float(val) * trad_fx_rate
             except: return None
 
         record = {
@@ -601,15 +620,15 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
             "sector":          meta.get("sector") or profile.get("sector", "N/A"),
             "industry":        profile.get("industry") or None,  # Granular sub-category from Yahoo
             "region":          meta.get("region") or "N/A",
-            "market_cap":      norm_val(summary.get('marketCap') or price_mod.get('marketCap')),
+            "market_cap":      norm_trad_val(summary.get('marketCap') or price_mod.get('marketCap')),
             "pe_ratio":        summary.get('trailingPE'),
             "forward_pe":      summary.get('forwardPE'),
-            "revenue_ttm":     norm_val(financials.get('totalRevenue')),
+            "revenue_ttm":     norm_fin_val(financials.get('totalRevenue')),
             "employees":       profile.get('fullTimeEmployees'),
             "country":         profile.get('country'),
-            "currency":        currency,
-            "total_debt":      norm_val(financials.get('totalDebt')),
-            "ebitda":          norm_val(financials.get('ebitda')),
+            "currency":        financial_currency,  # Maintain financial currency for EPS on-the-fly math
+            "total_debt":      norm_fin_val(financials.get('totalDebt')),
+            "ebitda":          norm_fin_val(financials.get('ebitda')),
             "gross_margin":    financials.get('grossMargins'),
             "operating_margin":financials.get('operatingMargins'),
             # ── Per-share & ratio metrics: Yahoo already reports in correct local currency.
@@ -617,13 +636,13 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
             "trailing_eps":    _safe_float(stats.get('trailingEps')),
             "forward_eps":     _safe_float(stats.get('forwardEps')),
             "roe":             financials.get('returnOnEquity'),
-            "free_cashflow":   norm_val(financials.get('freeCashflow')),
+            "free_cashflow":   norm_fin_val(financials.get('freeCashflow')),
             "price_to_book":   stats.get('priceToBook'),
             "beta":            stats.get('beta'),
-            # target_mean_price is analyst consensus in local currency — must convert to EUR
+            # target_mean_price is analyst consensus in trading currency — must convert to EUR using trad_fx_rate
             # to be consistent with price_close (which is also stored in EUR after FX normalization).
             # Keeping it as-is would cause massive upside distortion for JPY/TWD/CNY stocks.
-            "target_mean_price": norm_val(financials.get('targetMeanPrice')),
+            "target_mean_price": norm_trad_val(financials.get('targetMeanPrice')),
             "recommendation_key": financials.get('recommendationKey'),
             "peg_ratio":       stats.get('trailingPegRatio') or stats.get('pegRatio'),
             "price_to_sales":  summary.get('priceToSalesTrailing12Months'),

@@ -5569,9 +5569,6 @@ if active_tab == "🔬 Stock Analysis":
 
 
             # ── PEER COMPARISON ────────────────────────────────────────────
-            st.markdown("---")
-
-            st.markdown("---")
             st.markdown("<div style='margin-top:10px; margin-bottom:15px; padding:6px 12px; background:rgba(255,255,255,0.03); border-left:4px solid #f39c12; color:#f39c12; font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:1.5px;'>LAYER 6: COMPETITIVE INTELLIGENCE & PEER BENCHMARKING</div>", unsafe_allow_html=True)
 
             # Smart Peer Matching: Industry-first, then Sector-level fallback
@@ -5636,24 +5633,31 @@ if active_tab == "🔬 Stock Analysis":
                 def _build_row(row, ticker, is_selected):
                     td   = row.get("total_debt") or 0
                     eb   = row.get("ebitda")
+                    rev_growth = _yoy_growth_from_annual(ticker, "revenue")
+                    fcf_mgn = row.get("fcf_margin") or 0
                     return {
                         "ticker":           ticker,
                         "company":          row.get("company", ticker),
                         "market_cap":       row.get("market_cap"),
-                        # Growth — from actual annual revenue/eps data
-                        "revenue_growth":   _yoy_growth_from_annual(ticker, "revenue"),
+                        # Growth
+                        "revenue_growth":   rev_growth,
                         "earnings_growth":  _yoy_growth_from_annual(ticker, "eps"),
                         # Quality / Profitability
                         "gross_margin":     (row.get("gross_margin") or 0) * 100,
                         "operating_margin": (row.get("operating_margin") or 0) * 100,
                         "roe_pct":          (row.get("roe") or 0) * 100,
-                        "fcf_margin":       row.get("fcf_margin") or 0,
-                        # Balance sheet
+                        "fcf_margin":       fcf_mgn,
+                        "rule_of_40":       (rev_growth or 0) + fcf_mgn if rev_growth is not None else None,
+                        # Balance sheet & Risk
                         "net_debt_ebitda":  td / eb if (eb and eb > 0) else None,
+                        "debt_to_equity":   row.get("debt_to_equity"),
+                        "dividend_yield":   row.get("dividend_yield_pct"),
                         # Valuation
                         "ev_to_ebitda":     row.get("ev_to_ebitda"),
                         "pe_ratio":         row.get("pe_ratio"),
+                        "peg_ratio":        row.get("peg_ratio"),
                         "price_to_sales":   row.get("price_to_sales"),
+                        "price_to_book":    row.get("price_to_book"),
                         "is_selected":      is_selected,
                     }
 
@@ -5663,13 +5667,84 @@ if active_tab == "🔬 Stock Analysis":
 
                 comp_df = pd.DataFrame(rows)
 
-                # ── Sector Average row ─────────────────────────────────────────
-                _numeric_cols = [
-                    "revenue_growth", "earnings_growth",
-                    "gross_margin", "operating_margin", "roe_pct", "fcf_margin",
-                    "net_debt_ebitda",
-                    "ev_to_ebitda", "pe_ratio", "price_to_sales",
+                # ── Dynamic Column Definitions based on Business Type ─────────
+                _sector_lower = str(_ticker_sector).lower()
+                _industry_lower = str(_ticker_industry).lower()
+                
+                if any(x in _sector_lower or x in _industry_lower for x in ['software', 'saas', 'cyber', 'ai', 'data', 'technology services', 'it services', 'cloud', 'internet']):
+                    b_type = 'saas'
+                elif any(x in _sector_lower or x in _industry_lower for x in ['semi', 'industrial', 'manufacturing', 'machinery', 'hardware', 'electronic', 'aerospace', 'auto']):
+                    b_type = 'industrial'
+                elif any(x in _sector_lower or x in _industry_lower for x in ['consumer', 'retail', 'food', 'beverage', 'apparel', 'leisure', 'staples']):
+                    b_type = 'consumer'
+                elif any(x in _sector_lower or x in _industry_lower for x in ['bank', 'financial', 'insurance', 'finance', 'capital']):
+                    b_type = 'finance'
+                else:
+                    b_type = 'general'
+
+                base_cols = [
+                    ("company",          "Company",           None,         None),
+                    ("market_cap",       "Mkt Cap",           None,         None),
                 ]
+
+                if b_type == 'saas':
+                    _COL_DEFS = base_cols + [
+                        ("revenue_growth",   "Rev Growth",        "pct_sign",   "higher"),
+                        ("gross_margin",     "Gross Mgn",         "pct",        "higher"),
+                        ("operating_margin", "Op Mgn",            "pct",        "higher"),
+                        ("fcf_margin",       "FCF Mgn",           "pct",        "higher"),
+                        ("rule_of_40",       "Rule of 40",        "pct",        "higher"),
+                        ("price_to_sales",   "EV/Sales",          "x1",         "lower"),
+                        ("peg_ratio",        "PEG",               "x1",         "lower"),
+                    ]
+                    _group_spans = [("", 3), ("📈 Growth & Profitability", 5), ("💰 Valuation", 2)]
+                elif b_type == 'industrial':
+                    _COL_DEFS = base_cols + [
+                        ("gross_margin",     "Gross Mgn",         "pct",        "higher"),
+                        ("operating_margin", "Op Mgn",            "pct",        "higher"),
+                        ("roe_pct",          "ROIC/ROE",          "pct",        "higher"),
+                        ("net_debt_ebitda",  "ND/EBITDA",         "x",          "lower"),
+                        ("ev_to_ebitda",     "EV/EBITDA",         "x",          "lower"),
+                        ("peg_ratio",        "PEG",               "x1",         "lower"),
+                    ]
+                    _group_spans = [("", 3), ("💎 Operations & Return", 3), ("🏦 Risk", 1), ("💰 Valuation", 2)]
+                elif b_type == 'consumer':
+                    _COL_DEFS = base_cols + [
+                        ("revenue_growth",   "Org Growth",        "pct_sign",   "higher"),
+                        ("gross_margin",     "Gross Mgn",         "pct",        "higher"),
+                        ("operating_margin", "Op Mgn",            "pct",        "higher"),
+                        ("fcf_margin",       "FCF Mgn",           "pct",        "higher"),
+                        ("debt_to_equity",   "Debt/Eq",           "x",          "lower"),
+                        ("dividend_yield",   "Div Yield",         "pct",        "higher"),
+                        ("pe_ratio",         "P/E",               "x",          "lower"),
+                    ]
+                    _group_spans = [("", 3), ("🛍️ Consumer Metrics", 4), ("🏦 Risk & Yield", 2), ("💰 Valuation", 1)]
+                elif b_type == 'finance':
+                    _COL_DEFS = base_cols + [
+                        ("revenue_growth",   "Rev Growth",        "pct_sign",   "higher"),
+                        ("roe_pct",          "ROE",               "pct",        "higher"),
+                        ("dividend_yield",   "Div Yield",         "pct",        "higher"),
+                        ("price_to_book",    "P/B",               "x1",         "lower"),
+                        ("pe_ratio",         "P/E",               "x",          "lower"),
+                    ]
+                    _group_spans = [("", 3), ("🏦 Financial Metrics", 3), ("💰 Valuation", 2)]
+                else: # general
+                    _COL_DEFS = base_cols + [
+                        ("revenue_growth",   "Rev Growth",        "pct_sign",   "higher"),
+                        ("earnings_growth",  "EPS Growth",        "pct_sign",   "higher"),
+                        ("gross_margin",     "Gross Mgn",         "pct",        "higher"),
+                        ("operating_margin", "Op Mgn",            "pct",        "higher"),
+                        ("roe_pct",          "ROE",               "pct",        "higher"),
+                        ("fcf_margin",       "FCF Mgn",           "pct",        "higher"),
+                        ("net_debt_ebitda",  "ND/EBITDA",         "x",          "lower"),
+                        ("ev_to_ebitda",     "EV/EBITDA",         "x",          "lower"),
+                        ("pe_ratio",         "P/E",               "x",          "lower"),
+                        ("price_to_sales",   "P/S",               "x1",         "lower"),
+                    ]
+                    _group_spans = [("", 3), ("📈 Growth", 2), ("💎 Profitability", 4), ("🏦 Risk", 1), ("💰 Valuation", 3)]
+
+                # ── Sector Average row ─────────────────────────────────────────
+                _numeric_cols = [c[0] for c in _COL_DEFS if c[0] not in ("company", "market_cap")]
                 _peer_only = comp_df[~comp_df["is_selected"]]
                 avg_vals   = _peer_only[_numeric_cols].mean(numeric_only=True)
                 avg_row    = {"ticker": "AVG", "company": f"⊘ {_match_level} Average", "is_selected": False, "market_cap": None}
@@ -5682,8 +5757,8 @@ if active_tab == "🔬 Stock Analysis":
                 # ── Color coding ───────────────────────────────────────────────
                 # Higher = green: growth, margins, roe, fcf
                 # Lower  = green: net_debt_ebitda, valuation multiples
-                HIGHER_BETTER = {"revenue_growth", "earnings_growth", "gross_margin", "operating_margin", "roe_pct", "fcf_margin"}
-                LOWER_BETTER  = {"net_debt_ebitda", "ev_to_ebitda", "pe_ratio", "price_to_sales"}
+                HIGHER_BETTER = {"revenue_growth", "earnings_growth", "gross_margin", "operating_margin", "roe_pct", "fcf_margin", "rule_of_40", "dividend_yield"}
+                LOWER_BETTER  = {"net_debt_ebitda", "ev_to_ebitda", "pe_ratio", "price_to_sales", "price_to_book", "debt_to_equity", "peg_ratio"}
 
                 def _cell_bg(val, col_key, is_avg_row):
                     if is_avg_row or val is None: return ""
@@ -5719,34 +5794,7 @@ if active_tab == "🔬 Stock Analysis":
                     if fv <= 0: return "N/A"
                     return f"{fv:.{decimals}f}x"
 
-                # ── Column definitions: (key, label, fmt_fn, higher/lower/None) ─
-                _COL_DEFS = [
-                    # ── Group 1: Growth ────────────────────────────────────────
-                    ("company",          "Company",           None,         None),
-                    ("market_cap",       "Mkt Cap",           None,         None),
-                    ("revenue_growth",   "Rev Growth",        "pct_sign",   "higher"),
-                    ("earnings_growth",  "EPS Growth",        "pct_sign",   "higher"),
-                    # ── Group 2: Quality / Profitability ──────────────────────
-                    ("gross_margin",     "Gross Mgn",         "pct",        "higher"),
-                    ("operating_margin", "Op Mgn",            "pct",        "higher"),
-                    ("roe_pct",          "ROE",               "pct",        "higher"),
-                    ("fcf_margin",       "FCF Mgn",           "pct",        "higher"),
-                    # ── Group 3: Balance Sheet ─────────────────────────────────
-                    ("net_debt_ebitda",  "ND/EBITDA",         "x",          "lower"),
-                    # ── Group 4: Valuation ─────────────────────────────────────
-                    ("ev_to_ebitda",     "EV/EBITDA",         "x",          "lower"),
-                    ("pe_ratio",         "P/E",               "x",          "lower"),
-                    ("price_to_sales",   "P/S",               "x1",         "lower"),
-                ]
 
-                # ── Group header row ───────────────────────────────────────────
-                _group_spans = [
-                    ("",                          3),  # Ticker + Company + Mkt Cap
-                    ("📈 Growth",                 2),
-                    ("💎 Quality / Profitability",4),
-                    ("🏦 Balance Sheet",           1),
-                    ("💰 Valuation",               3),
-                ]
                 group_header = "".join(
                     f"<th colspan='{span}' style='padding:4px 10px; text-align:center; color:#64748b; font-size:0.72rem; border-bottom:1px solid rgba(255,255,255,0.06); font-weight:600; text-transform:uppercase; letter-spacing:0.5px;'>{label}</th>"
                     for label, span in _group_spans
@@ -7841,11 +7889,7 @@ if active_tab == "🔭 Stock Scanner":
             max_pe = st.slider("Max Forward P/E", 0, 200, 200)
             z_score_range = st.slider("Z-Score Range", -5.0, 5.0, (-5.0, 5.0), step=0.1)
         with rcol3:
-            filter_trend = st.selectbox(
-                "Trend Filter",
-                options=["🌎 All Trends", "📈 BULLISH only", "📉 BEARISH only"],
-                key="custom_trend_filter"
-            )
+            peg_range = st.slider("PEG Range", -5.0, 10.0, (-5.0, 10.0), step=0.1)
             filter_sm = st.selectbox(
                 "Smart Money",
                 options=["🌎 All", "🟢 Accumulation only", "🔴 Distribution only"],
@@ -7856,12 +7900,9 @@ if active_tab == "🔭 Stock Scanner":
         (f_df["Quality"] >= min_score) &
         (f_df["RSI (14)"].between(rsi_range[0], rsi_range[1])) &
         (f_df["P/E (Fwd)"].fillna(999) <= max_pe) &
-        (f_df["Z-Score"].between(z_score_range[0], z_score_range[1]))
+        (f_df["Z-Score"].between(z_score_range[0], z_score_range[1])) &
+        (f_df["PEG"].fillna(999).between(peg_range[0], peg_range[1]))
     ]
-    if "BULLISH only" in filter_trend:
-        f_df = f_df[f_df["Trend"] == "BULLISH"]
-    elif "BEARISH only" in filter_trend:
-        f_df = f_df[f_df["Trend"] == "BEARISH"]
     if "Accumulation only" in filter_sm:
         f_df = f_df[f_df["Smart Money"].str.contains("ACCUMULATION", na=False)]
     elif "Distribution only" in filter_sm:
