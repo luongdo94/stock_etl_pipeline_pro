@@ -1,0 +1,81 @@
+# scoring_rules.yaml — Business logic configuration for Quality Score calculation
+# All thresholds can be adjusted here without modifying code
+
+valuation:
+  # P/E Ratio thresholds
+  pe_excellent: 15      # Below this = excellent valuation
+  pe_good: 20           # Below this = good valuation
+  pe_fair: 35           # Below this = fair valuation
+  pe_poor: 50           # Above this = poor valuation
+  
+  # PEG Ratio thresholds
+  peg_excellent: 0.8    # Below this = undervalued growth
+  peg_good: 1.5         # Below this = fair growth valuation
+  peg_fair: 2.5         # Below this = acceptable
+  
+  # P/B Ratio thresholds
+  pb_excellent_tech: 3.5    # Tech stocks: below this = excellent
+  pb_excellent_value: 1.0   # Value stocks: below this = excellent
+  pb_good: 6.0
+  pb_fair: 10.0
+
+profitability:
+  # FCF Margin thresholds (%)
+  fcf_margin_excellent: 20
+  fcf_margin_good: 12
+  fcf_margin_fair: 5
+  
+  # ROE thresholds (decimal)
+  roe_excellent: 0.30   # 30%+
+  roe_good: 0.18        # 18%+
+  roe_fair: 0.10        # 10%+
+  roe_poor: 0.05        # 5%+
+
+financial_health:
+  # Debt/EBITDA thresholds
+  debt_ebitda_excellent: 2.5
+  debt_ebitda_good: 4.5
+  debt_ebitda_fair: 7.0
+  debt_ebitda_poor: 12.0
+  debt_ebitda_critical: 12.0  # Above this = red flag
+
+momentum:
+  # RSI thresholds
+  rsi_oversold: 30
+  rsi_neutral_low: 35
+  rsi_neutral_high: 60
+  rsi_overbought: 70
+  
+  # Z-Score thresholds (standard deviations)
+  z_score_deep_value: -2.0
+  z_score_fair: 0.0
+  z_score_expensive: 1.8
+  z_score_bubble: 3.0
+
+growth:
+  # Revenue growth thresholds (decimal)
+  revenue_growth_excellent: 0.50  # 50%+
+  revenue_growth_good: 0.15       # 15%+
+  revenue_growth_fair: 0.05       # 5%+
+  
+  # Earnings growth thresholds (decimal)
+  earnings_growth_excellent: 0.50
+  earnings_growth_good: 0.20
+  earnings_growth_fair: 0.10
+
+red_flags:
+  # Penalty points for various red flags
+  negative_pe_early_stage: -3     # Pre-profit growth company
+  negative_pe_high_growth: -5     # Unprofitable but growing fast
+  negative_pe_stagnant: -12       # Unprofitable and stagnant
+  high_debt_moderate: -10         # Debt/EBITDA > 8
+  high_debt_critical: -15         # Debt/EBITDA > 12
+  value_trap: -5                  # Low price + bearish consensus
+
+sector_adjustments:
+  # Sector-specific caps and adjustments
+  tech_profitability_cap: 30      # Max profitability points for tech
+  tech_payout_cap: 5              # Max payout yield points for tech
+  financial_pb_low: 0.5           # Banks: P/B below this may signal distress
+  financial_pb_ideal_low: 1.0
+  financial_pb_ideal_high: 1.8

@@ -1,0 +1,3193 @@
+tickers:
+  NVDA:
+    name: NVIDIA Corporation
+    sector: Semiconductors
+    region: US
+  MSFT:
+    name: Microsoft Corporation
+    sector: Platform Software
+    region: US
+  AAPL:
+    name: Apple Inc.
+    sector: Consumer Electronics
+    region: US
+  GOOGL:
+    name: Alphabet Inc.
+    sector: Platform Software
+    region: US
+  AMZN:
+    name: Amazon.com, Inc.
+    sector: Ecommerce
+    region: US
+  META:
+    name: Meta Platforms, Inc.
+    sector: Social Media
+    region: US
+  TSLA:
+    name: Tesla, Inc.
+    sector: Automotive & EV
+    region: US
+  ADBE:
+    name: Adobe Inc.
+    sector: SaaS
+    region: US
+  CRM:
+    name: Salesforce
+    sector: SaaS
+    region: US
+  ORCL:
+    name: Oracle
+    sector: Platform Software
+    region: US
+  IBM:
+    name: International Business Machines Corporation
+    sector: Enterprise Hardware
+    region: US
+  NFLX:
+    name: Netflix, Inc.
+    sector: Media & Entertainment
+    region: US
+  PYPL:
+    name: PayPal Holdings, Inc.
+    sector: Fintech
+    region: US
+  SHOP:
+    name: Shopify Inc.
+    sector: Ecommerce
+    region: US
+  SNPS:
+    name: Synopsys, Inc.
+    sector: Semiconductor Tools
+    region: US
+  FIG:
+    name: Figma
+    sector: Design Software
+    region: US
+  DDOG:
+    name: Datadog, Inc.
+    sector: SaaS
+    region: US
+  TEAM:
+    name: Atlassian Corporation plc
+    sector: SaaS
+    region: US
+  SNOW:
+    name: Snowflake Inc.
+    sector: SaaS
+    region: US
+  NOW:
+    name: ServiceNow, Inc.
+    sector: SaaS
+    region: US
+  NBIS:
+    name: Nebius
+    sector: AI & Data
+    region: US
+  GRAB:
+    name: Grab Holdings Limited
+    sector: Travel & Leisure
+    region: US
+  SPOT:
+    name: Spotify Technology S.A.
+    sector: Media & Entertainment
+    region: US
+  APP:
+    name: AppLovin Corporation
+    sector: AI & Data
+    region: US
+  TER:
+    name: Teradyne, Inc.
+    sector: Semiconductors
+    region: US
+  MDB:
+    name: MongoDB, Inc.
+    sector: SaaS
+    region: US
+  APLD:
+    name: Applied Digital Corporation
+    sector: AI & Data
+    region: US
+  ASTS:
+    name: AST SpaceMobile, Inc.
+    sector: Telecom
+    region: US
+  HPE:
+    name: Hewlett Packard Enterprise Company
+    sector: Enterprise Hardware
+    region: US
+  TRIP:
+    name: TripAdvisor, Inc.
+    sector: Travel & Leisure
+    region: US
+  NET:
+    name: Cloudflare, Inc.
+    sector: Platform Software
+    region: US
+  U:
+    name: Unity Software Inc.
+    sector: AI & Data
+    region: US
+  QCOM:
+    name: QUALCOMM Incorporated
+    sector: Semiconductors
+    region: US
+  AMD:
+    name: Advanced Micro Devices, Inc.
+    sector: Semiconductors
+    region: US
+  INTC:
+    name: Intel Corporation
+    sector: Semiconductors
+    region: US
+  ANET:
+    name: Arista Networks, Inc.
+    sector: Networking
+    region: US
+  NXPI:
+    name: NXP Semiconductors N.V.
+    sector: Semiconductors
+    region: US
+  ZBRA:
+    name: Zebra Technologies Corporation
+    sector: Enterprise Hardware
+    region: US
+  AMAT:
+    name: Applied Materials, Inc.
+    sector: Semiconductors
+    region: US
+  KLAC:
+    name: KLA Corporation
+    sector: Semiconductors
+    region: US
+  MRVL:
+    name: Marvell Technology Group, Ltd.
+    sector: Semiconductors
+    region: US
+  ARM:
+    name: Arm Holdings plc
+    sector: Semiconductors
+    region: US
+  TXN:
+    name: Texas Instruments Incorporated
+    sector: Semiconductors
+    region: US
+  LRCX:
+    name: Lam Research Corporation
+    sector: Semiconductors
+    region: US
+  'ON':
+    name: onsemi
+    sector: Semiconductors
+    region: US
+  MPWR:
+    name: Monolithic Power Systems, Inc.
+    sector: Semiconductors
+    region: US
+  QRVO:
+    name: Qorvo, Inc.
+    sector: Semiconductors
+    region: US
+  UNH:
+    name: UnitedHealth Group Incorporated
+    sector: Managed Care
+    region: US
+  ELV:
+    name: Elevance Health, Inc.
+    sector: Managed Care
+    region: US
+  HIMS:
+    name: Hims & Hers Health, Inc.
+    sector: Pharma
+    region: US
+  JNJ:
+    name: Johnson & Johnson
+    sector: Pharma
+    region: US
+  ABT:
+    name: Abbott Laboratories
+    sector: Medical Devices
+    region: US
+  PFE:
+    name: Pfizer
+    sector: Pharma
+    region: US
+  REGN:
+    name: Regeneron Pharmaceuticals
+    sector: Biotech
+    region: US
+  DHR:
+    name: Danaher
+    sector: Life Science Tools
+    region: US
+  MRK:
+    name: Merck
+    sector: Pharma
+    region: US
+  CRSP:
+    name: CRISPR Therapeutics
+    sector: Biotech
+    region: US
+  TMO:
+    name: Thermo Fisher Scientific
+    sector: Life Science Tools
+    region: US
+  MOH:
+    name: Molina Healthcare
+    sector: Managed Care
+    region: US
+  LLY:
+    name: Eli Lilly and Company
+    sector: Pharma
+    region: US
+  AMGN:
+    name: Amgen Inc.
+    sector: Biotech
+    region: US
+  ISRG:
+    name: Intuitive Surgical, Inc.
+    sector: Medical Devices
+    region: US
+  BIIB:
+    name: Biogen Inc.
+    sector: Biotech
+    region: US
+  BEAM:
+    name: Beam Therapeutics Inc.
+    sector: Biotech
+    region: US
+  TXG:
+    name: 10x Genomics, Inc.
+    sector: Biotech
+    region: US
+  NTLA:
+    name: Intellia Therapeutics, Inc.
+    sector: Biotech
+    region: US
+  AZN:
+    name: AstraZeneca PLC
+    sector: Pharma
+    region: US
+  BMY:
+    name: Bristol-Myers Squibb Company
+    sector: Pharma
+    region: US
+  GEHC:
+    name: GE HealthCare Technologies Inc.
+    sector: Medical Devices
+    region: US
+  COIN:
+    name: Coinbase Global, Inc.
+    sector: Fintech
+    region: US
+  HOOD:
+    name: Robinhood Markets, Inc.
+    sector: Fintech
+    region: US
+  SOFI:
+    name: SoFi Technologies, Inc.
+    sector: Fintech
+    region: US
+  KLAR:
+    name: Klarna Bank AB (publ)
+    sector: Fintech
+    region: US
+  NU:
+    name: Nu Holdings Ltd.
+    sector: Fintech
+    region: US
+  JPM:
+    name: JPMorgan Chase & Co.
+    sector: Banks
+    region: US
+  BAC:
+    name: Bank of America
+    sector: Banks
+    region: US
+  V:
+    name: Visa Inc.
+    sector: Fintech
+    region: US
+  LMND:
+    name: Lemonade, Inc.
+    sector: Fintech
+    region: US
+  HG:
+    name: Hamilton Insurance Group, Ltd.
+    sector: Financials
+    region: US
+  ADP:
+    name: Automatic Data Processing, Inc.
+    sector: Fintech
+    region: US
+  CB:
+    name: Chubb Limited
+    sector: Insurance
+    region: US
+  MCO:
+    name: Moody's Corporation
+    sector: Capital Markets
+    region: US
+  BMNR:
+    name: BitMine Immersion Technologies Inc.
+    sector: Crypto/Mining
+    region: US
+  UPS:
+    name: United Parcel Service, Inc.
+    sector: Transportation
+    region: US
+  UBER:
+    name: Uber Technologies, Inc.
+    sector: Travel & Leisure
+    region: US
+  DELL:
+    name: Dell Technologies Inc.
+    sector: Enterprise Hardware
+    region: US
+  HPQ:
+    name: HP Inc.
+    sector: Consumer Electronics
+    region: US
+  UPWK:
+    name: Upwork Inc.
+    sector: Digital Advertising
+    region: US
+  LULU:
+    name: Lululemon Athletica Inc.
+    sector: Retail
+    region: US
+  MELI:
+    name: MercadoLibre, Inc.
+    sector: Ecommerce
+    region: US
+  EBAY:
+    name: eBay Inc.
+    sector: Ecommerce
+    region: US
+  EL:
+    name: "The Est\xE9e Lauder Companies Inc."
+    sector: Consumer Luxury
+    region: US
+  FISV:
+    name: Fiserv, Inc.
+    sector: Fintech
+    region: US
+  PANW:
+    name: Palo Alto Networks, Inc.
+    sector: Cybersecurity
+    region: US
+  FTNT:
+    name: Fortinet, Inc.
+    sector: Cybersecurity
+    region: US
+  ZS:
+    name: Zscaler, Inc.
+    sector: Cybersecurity
+    region: US
+  CRWV:
+    name: CoreWeave, Inc.
+    sector: AI & Data
+    region: US
+  PATH:
+    name: UiPath, Inc.
+    sector: AI & Data
+    region: US
+  TSM:
+    name: Taiwan Semiconductor Manufacturing Company Limited
+    sector: Semiconductors
+    region: US
+  T:
+    name: AT&T Inc.
+    sector: Telecom
+    region: US
+  VZ:
+    name: Verizon Communications Inc.
+    sector: Telecom
+    region: US
+  PG:
+    name: The Procter & Gamble Company
+    sector: Food & Beverage
+    region: US
+  NKE:
+    name: Nike, Inc.
+    sector: Retail
+    region: US
+  WMT:
+    name: Walmart Inc.
+    sector: Retail
+    region: US
+  LOW:
+    name: Lowe's Companies, Inc.
+    sector: Retail
+    region: US
+  PEP:
+    name: PepsiCo, Inc.
+    sector: Food & Beverage
+    region: US
+  HD:
+    name: The Home Depot, Inc.
+    sector: Retail
+    region: US
+  WDC:
+    name: Western Digital Corporation
+    sector: Data Storage
+    region: US
+  CSCO:
+    name: Cisco Systems, Inc.
+    sector: Networking
+    region: US
+  KO:
+    name: The Coca-Cola Company
+    sector: Food & Beverage
+    region: US
+  TTD:
+    name: The Trade Desk, Inc.
+    sector: Digital Advertising
+    region: US
+  DUK:
+    name: Duke Energy Corporation
+    sector: Regulated Utilities
+    region: US
+  MP:
+    name: MP Materials Corp.
+    sector: Industrials
+    region: US
+  LIN:
+    name: Linde plc
+    sector: Basic Materials
+    region: US
+  LEN:
+    name: Lennar Corporation
+    sector: Homebuilders
+    region: US
+  ROK:
+    name: Rockwell Automation, Inc.
+    sector: Industrial Machinery
+    region: US
+  LMT:
+    name: Lockheed Martin Corporation
+    sector: Aerospace & Defense
+    region: US
+  NOC:
+    name: Northrop Grumman Corporation
+    sector: Aerospace & Defense
+    region: US
+  PLUG:
+    name: Plug Power Inc.
+    sector: Energy Specialty
+    region: US
+  LEU:
+    name: Centrus Energy Corp.
+    sector: Energy Specialty
+    region: US
+  CVX:
+    name: Chevron Corporation
+    sector: Oil & Gas
+    region: US
+  CL:
+    name: Colgate-Palmolive
+    sector: Food & Beverage
+    region: US
+  KMB:
+    name: Kimberly-Clark
+    sector: Food & Beverage
+    region: US
+  GIS:
+    name: General Mills
+    sector: Food & Beverage
+    region: US
+  KHC:
+    name: Kraft Heinz
+    sector: Food & Beverage
+    region: US
+  OXY:
+    name: Occidental Petroleum Corporation
+    sector: Oil & Gas
+    region: US
+  CAT:
+    name: Caterpillar Inc.
+    sector: Industrial Machinery
+    region: US
+  ACHR:
+    name: Archer Aviation Inc.
+    sector: Industrials
+    region: US
+  ABNB:
+    name: Airbnb, Inc.
+    sector: Travel & Leisure
+    region: US
+  DE:
+    name: Deere & Company
+    sector: Industrial Machinery
+    region: US
+  BA:
+    name: The Boeing Company
+    sector: Aerospace & Defense
+    region: US
+  ADS.DE:
+    name: Adidas
+    sector: Consumer Retail
+    region: EU
+  ADYEN.AS:
+    name: Adyen
+    sector: Fintech
+    region: EU
+  AD.AS:
+    name: Ahold Delhaize
+    sector: Consumer Retail
+    region: EU
+  AI.PA:
+    name: Air Liquide
+    sector: Basic Materials
+    region: EU
+  AIR.PA:
+    name: Airbus
+    sector: Aerospace & Defense
+    region: EU
+  ALV.DE:
+    name: Allianz
+    sector: Insurance
+    region: EU
+  ABI.BR:
+    name: Anheuser-Busch InBev
+    sector: Food & Beverage
+    region: EU
+  ARGX.BR:
+    name: Argenx
+    sector: Biotech
+    region: EU
+  ASML.AS:
+    name: ASML Holding
+    sector: Semiconductors
+    region: EU
+  CS.PA:
+    name: Axa
+    sector: Insurance
+    region: EU
+  BAS.DE:
+    name: BASF
+    sector: Basic Materials
+    region: EU
+  BAYN.DE:
+    name: Bayer
+    sector: Pharma
+    region: EU
+  BBVA.MC:
+    name: BBVA
+    sector: Banks
+    region: EU
+  SAN.MC:
+    name: Banco Santander
+    sector: Banks
+    region: EU
+  BMW.DE:
+    name: BMW
+    sector: Automotive & EV
+    region: EU
+  BNP.PA:
+    name: BNP Paribas
+    sector: Banks
+    region: EU
+  BN.PA:
+    name: Danone
+    sector: Food & Beverage
+    region: EU
+  DBK.DE:
+    name: Deutsche Bank
+    sector: Banks
+    region: EU
+  DB1.DE:
+    name: "Deutsche B\xF6rse"
+    sector: Capital Markets
+    region: EU
+  DHL.DE:
+    name: Deutsche Post
+    sector: Transportation
+    region: EU
+  DTE.DE:
+    name: Deutsche Telekom
+    sector: Telecom
+    region: EU
+  ENEL.MI:
+    name: Enel
+    sector: Regulated Utilities
+    region: EU
+  ENI.MI:
+    name: Eni
+    sector: Oil & Gas
+    region: EU
+  EL.PA:
+    name: EssilorLuxottica
+    sector: Medical Devices
+    region: EU
+  RACE.MI:
+    name: Ferrari
+    sector: Consumer Luxury
+    region: EU
+  RMS.PA:
+    name: "Herm\xE8s"
+    sector: Consumer Luxury
+    region: EU
+  IBE.MC:
+    name: Iberdrola
+    sector: Regulated Utilities
+    region: EU
+  ITX.MC:
+    name: Inditex
+    sector: Retail
+    region: EU
+  IFX.DE:
+    name: Infineon Technologies
+    sector: Semiconductors
+    region: EU
+  IOS.DE:
+    name: IONOS Group SE
+    sector: IT Services
+    region: EU
+  INGA.AS:
+    name: ING Group
+    sector: Banks
+    region: EU
+  ISP.MI:
+    name: Intesa Sanpaolo
+    sector: Banks
+    region: EU
+  OR.PA:
+    name: "L'Or\xE9al"
+    sector: Consumer Luxury
+    region: EU
+  MC.PA:
+    name: "LVMH Mo\xEBt Hennessy Louis Vuitton"
+    sector: Consumer Luxury
+    region: EU
+  MBG.DE:
+    name: Mercedes-Benz Group
+    sector: Automotive & EV
+    region: EU
+  MUV2.DE:
+    name: Munich Re
+    sector: Insurance
+    region: EU
+  NDA-FI.HE:
+    name: Nordea
+    sector: Banks
+    region: EU
+  PRX.AS:
+    name: Prosus
+    sector: Consumer Retail
+    region: EU
+  RHM.DE:
+    name: Rheinmetall
+    sector: Aerospace & Defense
+    region: EU
+  SAF.PA:
+    name: Safran
+    sector: Aerospace & Defense
+    region: EU
+  SGO.PA:
+    name: Saint-Gobain
+    sector: Construction & Engineering
+    region: EU
+  SAN.PA:
+    name: Sanofi
+    sector: Pharma
+    region: EU
+  SAP.DE:
+    name: SAP
+    sector: IT Services
+    region: EU
+  SU.PA:
+    name: Schneider Electric
+    sector: Industrial Machinery
+    region: EU
+  SIE.DE:
+    name: Siemens
+    sector: Industrial Machinery
+    region: EU
+  ENR.DE:
+    name: Siemens Energy
+    sector: Energy Specialty
+    region: EU
+  TTE.PA:
+    name: TotalEnergies
+    sector: Oil & Gas
+    region: EU
+  DG.PA:
+    name: Vinci SA
+    sector: Industrials
+    region: EU
+  UCG.MI:
+    name: UniCredit
+    sector: Banks
+    region: EU
+  VOW.DE:
+    name: Volkswagen Group
+    sector: Automotive & EV
+    region: EU
+  WKL.AS:
+    name: Wolters Kluwer
+    sector: SaaS
+    region: EU
+  SMHN.DE:
+    name: SUSS MicroTec SE
+    sector: Semiconductors
+    region: EU
+  RWE.DE:
+    name: RWE
+    sector: Regulated Utilities
+    region: EU
+  FNTN.DE:
+    name: freenet AG
+    sector: Telecom
+    region: EU
+  JEN.DE:
+    name: Jenoptik AG
+    sector: Aerospace & Defense
+    region: EU
+  HAG.DE:
+    name: Hensoldt AG
+    sector: Aerospace & Defense
+    region: EU
+  VWS.CO:
+    name: Vestas Wind Systems A/S
+    sector: Renewables
+    region: EU
+  NDX1.DE:
+    name: Nordex SE
+    sector: Renewables
+    region: EU
+  ORSTED.CO:
+    name: "\xD8rsted A/S"
+    sector: Renewables
+    region: EU
+  KER.PA:
+    name: Kering
+    sector: Consumer Luxury
+    region: EU
+  PUM.DE:
+    name: Puma SE
+    sector: Retail
+    region: EU
+  ZAL.DE:
+    name: Zalando SE
+    sector: Ecommerce
+    region: EU
+  DSY.PA:
+    name: "Dassault Syst\xE8mes SE"
+    sector: SaaS
+    region: EU
+  STMPA.PA:
+    name: STMicroelectronics N.V.
+    sector: Semiconductors
+    region: EU
+  AIXA.DE:
+    name: Aixtron SE
+    sector: Semiconductors
+    region: EU
+  NOA3.DE:
+    name: Nokia Corporation
+    sector: Networking
+    region: EU
+  R3NK.DE:
+    name: Renk Group AG
+    sector: Aerospace & Defense
+    region: EU
+  MTX.DE:
+    name: MTU Aero Engines AG
+    sector: Aerospace & Defense
+    region: EU
+  LHA.DE:
+    name: Deutsche Lufthansa AG
+    sector: Transportation
+    region: EU
+  RR.L:
+    name: Rolls-Royce Holdings plc
+    sector: Aerospace & Defense
+    region: EU
+  TKA.DE:
+    name: thyssenkrupp AG
+    sector: Construction & Engineering
+    region: EU
+  HLAG.DE:
+    name: Hapag-Lloyd AG
+    sector: Transportation
+    region: EU
+  SY1.DE:
+    name: Symrise AG
+    sector: Food & Beverage
+    region: EU
+  BEI.DE:
+    name: Beiersdorf Aktiengesellschaft
+    sector: Food & Beverage
+    region: EU
+  HEI.DE:
+    name: Heidelberg Materials AG
+    sector: Construction & Engineering
+    region: EU
+  UNA.AS:
+    name: Unilever PLC
+    sector: Food & Beverage
+    region: EU
+  NOVN.SW:
+    name: Novartis AG
+    sector: Pharma
+    region: EU
+  NESN.SW:
+    name: "Nestl\xE9 S.A."
+    sector: Food & Beverage
+    region: EU
+  HEN3.DE:
+    name: Henkel AG & Co. KGaA
+    sector: Food & Beverage
+    region: EU
+  FRE.DE:
+    name: Fresenius SE & Co. KGaA
+    sector: Managed Care
+    region: EU
+  G1A.DE:
+    name: GEA Group Aktiengesellschaft
+    sector: Industrial Machinery
+    region: EU
+  EOAN.DE:
+    name: E.ON SE
+    sector: Regulated Utilities
+    region: EU
+  NVO:
+    name: Novo Nordisk A/S
+    sector: Pharma
+    region: EU
+  ROG.SW:
+    name: Roche Holding AG
+    sector: Pharma
+    region: EU
+  HNR1.DE:
+    name: "Hannover R\xFCck SE"
+    sector: Insurance
+    region: EU
+  SHL.DE:
+    name: Siemens Healthineers AG
+    sector: Medical Devices
+    region: EU
+  QIA.DE:
+    name: QIAGEN N.V.
+    sector: Life Science Tools
+    region: EU
+  BABA:
+    name: Alibaba Group Holding Limited
+    sector: Ecommerce
+    region: CN
+  BIDU:
+    name: Baidu, Inc.
+    sector: AI & Data
+    region: CN
+  JD:
+    name: JD.com, Inc.
+    sector: Ecommerce
+    region: CN
+  PDD:
+    name: PDD Holdings Inc.
+    sector: Ecommerce
+    region: CN
+  1211.HK:
+    name: BYD Company Limited
+    sector: Automotive & EV
+    region: CN
+  0285.HK:
+    name: BYD Electronic (International) Co., Ltd.
+    sector: Consumer Electronics
+    region: CN
+  1810.HK:
+    name: Xiaomi Corporation
+    sector: Consumer Electronics
+    region: CN
+  8035.T:
+    name: Tokyo Electron Limited
+    sector: Semiconductors
+    region: JP
+  6857.T:
+    name: Advantest Corporation
+    sector: Semiconductors
+    region: JP
+  6758.T:
+    name: Sony Group Corporation
+    sector: Consumer Electronics
+    region: JP
+  7012.T:
+    name: Kawasaki Heavy Industries, Ltd.
+    sector: Aerospace & Defense
+    region: JP
+  6367.T:
+    name: Daikin Industries, Ltd.
+    sector: Industrial Machinery
+    region: JP
+  6861.T:
+    name: Keyence Corporation
+    sector: Industrial Machinery
+    region: JP
+  6752.T:
+    name: Panasonic Holdings Corporation
+    sector: Consumer Electronics
+    region: JP
+  7011.T:
+    name: Mitsubishi Heavy Industries, Ltd.
+    sector: Aerospace & Defense
+    region: JP
+  9984.T:
+    name: SoftBank Group Corp.
+    sector: Capital Markets
+    region: JP
+  SSLN.MI:
+    name: iShares Physical Silver
+    sector: Basic Materials
+    region: EU
+  SPY:
+    name: SPDR S&P 500 ETF Trust
+    sector: Benchmark
+    region: US
+  QQQ:
+    name: Invesco QQQ Trust
+    sector: Benchmark
+    region: US
+  ^GDAXI:
+    name: DAX Performance Index
+    sector: Benchmark
+    region: EU
+  IWDA.AS:
+    name: iShares Core MSCI World
+    sector: Benchmark
+    region: EU
+  ^VIX:
+    name: CBOE Volatility Index
+    sector: Benchmark
+    region: US
+  ABBV:
+    name: AbbVie
+    sector: Pharma
+    region: US
+  ADI:
+    name: Analog Devices
+    sector: Semiconductors
+    region: US
+  ALGN:
+    name: Align Technology
+    sector: Medical Devices
+    region: US
+  APH:
+    name: Amphenol
+    sector: Semiconductors
+    region: US
+  AXP:
+    name: American Express
+    sector: Financial Services
+    region: US
+  BRK-B:
+    name: Berkshire Hathaway
+    sector: Insurance
+    region: US
+  BRO:
+    name: Brown & Brown
+    sector: Insurance
+    region: US
+  BSX:
+    name: Boston Scientific
+    sector: Medical Devices
+    region: US
+  BX:
+    name: Blackstone Inc.
+    sector: Capital Markets
+    region: US
+  C:
+    name: Citigroup
+    sector: Banks
+    region: US
+  CDNS:
+    name: Cadence Design Systems
+    sector: Semiconductor Tools
+    region: US
+  CEG:
+    name: Constellation Energy
+    sector: Nuclear & Clean Utilities
+    region: US
+  CLX:
+    name: Clorox
+    sector: Food & Beverage
+    region: US
+  COHR:
+    name: Coherent Corp.
+    sector: Semiconductors
+    region: US
+  COST:
+    name: Costco
+    sector: Retail
+    region: US
+  CRWD:
+    name: CrowdStrike
+    sector: Cybersecurity
+    region: US
+  CVS:
+    name: CVS Health
+    sector: Managed Care
+    region: US
+  D:
+    name: Dominion Energy
+    sector: Regulated Utilities
+    region: US
+  DAL:
+    name: Delta Air Lines
+    sector: Transportation
+    region: US
+  DASH:
+    name: DoorDash
+    sector: Consumer Retail
+    region: US
+  EXPE:
+    name: Expedia Group
+    sector: Travel & Leisure
+    region: US
+  EXR:
+    name: Extra Space Storage
+    sector: REITs
+    region: US
+  F:
+    name: Ford Motor Company
+    sector: Automotive & EV
+    region: US
+  A:
+    name: Agilent Technologies
+    sector: Life Science Tools
+    region: US
+  ACGL:
+    name: Arch Capital Group
+    sector: Insurance
+    region: US
+  ACN:
+    name: Accenture
+    sector: IT Services
+    region: US
+  ADM:
+    name: Archer Daniels Midland
+    sector: Food & Beverage
+    region: US
+  ADSK:
+    name: Autodesk
+    sector: SaaS
+    region: US
+  AEE:
+    name: Ameren
+    sector: Regulated Utilities
+    region: US
+  AEP:
+    name: American Electric Power
+    sector: Regulated Utilities
+    region: US
+  AES:
+    name: AES Corporation
+    sector: Regulated Utilities
+    region: US
+  AFL:
+    name: Aflac
+    sector: Insurance
+    region: US
+  AIG:
+    name: American International Group
+    sector: Insurance
+    region: US
+  AIZ:
+    name: Assurant
+    sector: Insurance
+    region: US
+  AJG:
+    name: Arthur J. Gallagher & Co.
+    sector: Insurance
+    region: US
+  AKAM:
+    name: Akamai Technologies
+    sector: Platform Software
+    region: US
+  ALB:
+    name: Albemarle Corporation
+    sector: Basic Materials
+    region: US
+  ALL:
+    name: Allstate
+    sector: Insurance
+    region: US
+  ALLE:
+    name: Allegion
+    sector: Industrial Machinery
+    region: US
+  AMCR:
+    name: Amcor
+    sector: Basic Materials
+    region: US
+  AME:
+    name: Ametek
+    sector: Industrial Machinery
+    region: US
+  AMP:
+    name: Ameriprise Financial
+    sector: Capital Markets
+    region: US
+  AMT:
+    name: American Tower
+    sector: Tower & Data REITs
+    region: US
+  AON:
+    name: Aon plc
+    sector: Insurance
+    region: US
+  AOS:
+    name: A. O. Smith
+    sector: Industrial Machinery
+    region: US
+  APA:
+    name: APA Corporation
+    sector: Oil & Gas
+    region: US
+  APD:
+    name: Air Products
+    sector: Basic Materials
+    region: US
+  APO:
+    name: Apollo Global Management
+    sector: Capital Markets
+    region: US
+  APTV:
+    name: Aptiv
+    sector: Consumer Retail
+    region: US
+  ARE:
+    name: Alexandria Real Estate Equities
+    sector: REITs
+    region: US
+  ARES:
+    name: Ares Management
+    sector: Capital Markets
+    region: US
+  ATO:
+    name: Atmos Energy
+    sector: Regulated Utilities
+    region: US
+  AVB:
+    name: AvalonBay Communities
+    sector: REITs
+    region: US
+  AVGO:
+    name: Broadcom
+    sector: Semiconductors
+    region: US
+  AVY:
+    name: Avery Dennison
+    sector: Basic Materials
+    region: US
+  AWK:
+    name: American Water Works
+    sector: Regulated Utilities
+    region: US
+  AXON:
+    name: Axon Enterprise
+    sector: Industrials
+    region: US
+  AZO:
+    name: AutoZone
+    sector: Retail
+    region: US
+  BALL:
+    name: Ball Corporation
+    sector: Basic Materials
+    region: US
+  BAX:
+    name: Baxter International
+    sector: Medical Devices
+    region: US
+  BBY:
+    name: Best Buy
+    sector: Retail
+    region: US
+  BDX:
+    name: Becton Dickinson
+    sector: Medical Devices
+    region: US
+  BEN:
+    name: Franklin Resources
+    sector: Capital Markets
+    region: US
+  BF-B:
+    name: "Brown\u2013Forman"
+    sector: Food & Beverage
+    region: US
+  BG:
+    name: Bunge Global
+    sector: Food & Beverage
+    region: US
+  BK:
+    name: BNY Mellon
+    sector: Capital Markets
+    region: US
+  BKNG:
+    name: Booking Holdings
+    sector: Travel & Leisure
+    region: US
+  BKR:
+    name: Baker Hughes
+    sector: Oil & Gas
+    region: US
+  BLDR:
+    name: Builders FirstSource
+    sector: Construction & Engineering
+    region: US
+  BLK:
+    name: BlackRock
+    sector: Capital Markets
+    region: US
+  BR:
+    name: Broadridge Financial Solutions
+    sector: Business Services
+    region: US
+  BXP:
+    name: BXP, Inc.
+    sector: REITs
+    region: US
+  CAG:
+    name: Conagra Brands
+    sector: Food & Beverage
+    region: US
+  CAH:
+    name: Cardinal Health
+    sector: Managed Care
+    region: US
+  CARR:
+    name: Carrier Global
+    sector: Industrial Machinery
+    region: US
+  CASY:
+    name: Casey's
+    sector: Consumer Retail
+    region: US
+  CBOE:
+    name: Cboe Global Markets
+    sector: Capital Markets
+    region: US
+  CBRE:
+    name: CBRE Group
+    sector: REITs
+    region: US
+  CCI:
+    name: Crown Castle
+    sector: Tower & Data REITs
+    region: US
+  CCL:
+    name: Carnival
+    sector: Travel & Leisure
+    region: US
+  CDW:
+    name: CDW Corporation
+    sector: Enterprise Hardware
+    region: US
+  CF:
+    name: CF Industries
+    sector: Basic Materials
+    region: US
+  CFG:
+    name: Citizens Financial Group
+    sector: Banks
+    region: US
+  CHD:
+    name: Church & Dwight
+    sector: Food & Beverage
+    region: US
+  CHRW:
+    name: C.H. Robinson
+    sector: Transportation
+    region: US
+  CHTR:
+    name: Charter Communications
+    sector: Telecom
+    region: US
+  CI:
+    name: Cigna
+    sector: Managed Care
+    region: US
+  CIEN:
+    name: Ciena
+    sector: Networking
+    region: US
+  CINF:
+    name: Cincinnati Financial
+    sector: Insurance
+    region: US
+  CMCSA:
+    name: Comcast
+    sector: Telecom
+    region: US
+  CME:
+    name: CME Group
+    sector: Capital Markets
+    region: US
+  CMG:
+    name: Chipotle Mexican Grill
+    sector: Restaurants & Hospitality
+    region: US
+  CMI:
+    name: Cummins
+    sector: Industrials
+    region: US
+  CMS:
+    name: CMS Energy
+    sector: Regulated Utilities
+    region: US
+  CNC:
+    name: Centene Corporation
+    sector: Managed Care
+    region: US
+  CNP:
+    name: CenterPoint Energy
+    sector: Regulated Utilities
+    region: US
+  COF:
+    name: Capital One
+    sector: Financial Services
+    region: US
+  COO:
+    name: Cooper Companies (The)
+    sector: Medical Devices
+    region: US
+  COP:
+    name: ConocoPhillips
+    sector: Oil & Gas
+    region: US
+  COR:
+    name: Cencora
+    sector: Managed Care
+    region: US
+  CPAY:
+    name: Corpay
+    sector: Financial Services
+    region: US
+  CPB:
+    name: Campbell's Company (The)
+    sector: Food & Beverage
+    region: US
+  CPRT:
+    name: Copart
+    sector: Transportation
+    region: US
+  CPT:
+    name: Camden Property Trust
+    sector: REITs
+    region: US
+  CRH:
+    name: CRH plc
+    sector: Basic Materials
+    region: US
+  CRL:
+    name: Charles River Laboratories
+    sector: Life Science Tools
+    region: US
+  CSGP:
+    name: CoStar Group
+    sector: REITs
+    region: US
+  CSX:
+    name: CSX Corporation
+    sector: Transportation
+    region: US
+  CTAS:
+    name: Cintas
+    sector: Business Services
+    region: US
+  CTRA:
+    name: Coterra
+    sector: Oil & Gas
+    region: US
+  CTSH:
+    name: Cognizant
+    sector: IT Services
+    region: US
+  CTVA:
+    name: Corteva
+    sector: Basic Materials
+    region: US
+  CVNA:
+    name: Carvana
+    sector: Consumer Retail
+    region: US
+  DD:
+    name: DuPont
+    sector: Basic Materials
+    region: US
+  DECK:
+    name: Deckers Brands
+    sector: Retail
+    region: US
+  DG:
+    name: Dollar General
+    sector: Retail
+    region: US
+  DGX:
+    name: Quest Diagnostics
+    sector: Life Science Tools
+    region: US
+  DHI:
+    name: D. R. Horton
+    sector: Homebuilders
+    region: US
+  DIS:
+    name: Walt Disney Company (The)
+    sector: Media & Entertainment
+    region: US
+  DLR:
+    name: Digital Realty
+    sector: Tower & Data REITs
+    region: US
+  DLTR:
+    name: Dollar Tree
+    sector: Retail
+    region: US
+  DOC:
+    name: Healthpeak Properties
+    sector: REITs
+    region: US
+  DOV:
+    name: Dover Corporation
+    sector: Industrial Machinery
+    region: US
+  DOW:
+    name: Dow Inc.
+    sector: Basic Materials
+    region: US
+  DPZ:
+    name: Domino's
+    sector: Restaurants & Hospitality
+    region: US
+  DRI:
+    name: Darden Restaurants
+    sector: Restaurants & Hospitality
+    region: US
+  DTE:
+    name: DTE Energy
+    sector: Regulated Utilities
+    region: US
+  DVA:
+    name: DaVita
+    sector: Managed Care
+    region: US
+  DVN:
+    name: Devon Energy
+    sector: Oil & Gas
+    region: US
+  DXCM:
+    name: Dexcom
+    sector: Medical Devices
+    region: US
+  EA:
+    name: Electronic Arts
+    sector: Media & Entertainment
+    region: US
+  ECL:
+    name: Ecolab
+    sector: Basic Materials
+    region: US
+  ED:
+    name: Consolidated Edison
+    sector: Regulated Utilities
+    region: US
+  EFX:
+    name: Equifax
+    sector: Business Services
+    region: US
+  EG:
+    name: Everest Group
+    sector: Insurance
+    region: US
+  EIX:
+    name: Edison International
+    sector: Regulated Utilities
+    region: US
+  EME:
+    name: Emcor
+    sector: Construction & Engineering
+    region: US
+  EMR:
+    name: Emerson Electric
+    sector: Industrial Machinery
+    region: US
+  EOG:
+    name: EOG Resources
+    sector: Oil & Gas
+    region: US
+  EPAM:
+    name: EPAM Systems
+    sector: IT Services
+    region: US
+  EQIX:
+    name: Equinix
+    sector: Tower & Data REITs
+    region: US
+  EQR:
+    name: Equity Residential
+    sector: REITs
+    region: US
+  EQT:
+    name: EQT Corporation
+    sector: Oil & Gas
+    region: US
+  ERIE:
+    name: Erie Indemnity
+    sector: Insurance
+    region: US
+  ES:
+    name: Eversource Energy
+    sector: Regulated Utilities
+    region: US
+  ESS:
+    name: Essex Property Trust
+    sector: REITs
+    region: US
+  ETN:
+    name: Eaton Corporation
+    sector: Industrial Machinery
+    region: US
+  ETR:
+    name: Entergy
+    sector: Regulated Utilities
+    region: US
+  EVRG:
+    name: Evergy
+    sector: Regulated Utilities
+    region: US
+  EW:
+    name: Edwards Lifesciences
+    sector: Medical Devices
+    region: US
+  EXC:
+    name: Exelon
+    sector: Regulated Utilities
+    region: US
+  EXE:
+    name: Expand Energy
+    sector: Oil & Gas
+    region: US
+  EXPD:
+    name: Expeditors International
+    sector: Transportation
+    region: US
+  FANG:
+    name: Diamondback Energy
+    sector: Oil & Gas
+    region: US
+  FAST:
+    name: Fastenal
+    sector: Business Services
+    region: US
+  FCX:
+    name: Freeport-McMoRan
+    sector: Basic Materials
+    region: US
+  FDS:
+    name: FactSet
+    sector: Capital Markets
+    region: US
+  FDX:
+    name: FedEx
+    sector: Transportation
+    region: US
+  FE:
+    name: FirstEnergy
+    sector: Regulated Utilities
+    region: US
+  FFIV:
+    name: F5, Inc.
+    sector: Platform Software
+    region: US
+  FICO:
+    name: Fair Isaac
+    sector: SaaS
+    region: US
+  FIS:
+    name: Fidelity National Information Services
+    sector: Financial Services
+    region: US
+  FITB:
+    name: Fifth Third Bancorp
+    sector: Banks
+    region: US
+  FIX:
+    name: Comfort Systems USA
+    sector: Construction & Engineering
+    region: US
+  FOX:
+    name: Fox Corporation (Class B)
+    sector: Media & Entertainment
+    region: US
+  FOXA:
+    name: Fox Corporation (Class A)
+    sector: Media & Entertainment
+    region: US
+  FRT:
+    name: Federal Realty Investment Trust
+    sector: REITs
+    region: US
+  FSLR:
+    name: First Solar
+    sector: Renewables
+    region: US
+  FTV:
+    name: Fortive
+    sector: Industrial Machinery
+    region: US
+  GD:
+    name: General Dynamics
+    sector: Aerospace & Defense
+    region: US
+  GDDY:
+    name: GoDaddy
+    sector: Platform Software
+    region: US
+  GE:
+    name: GE Aerospace
+    sector: Aerospace & Defense
+    region: US
+  GEN:
+    name: Gen Digital
+    sector: Cybersecurity
+    region: US
+  GEV:
+    name: GE Vernova
+    sector: Industrial Machinery
+    region: US
+  GILD:
+    name: Gilead Sciences
+    sector: Pharma
+    region: US
+  GL:
+    name: Globe Life
+    sector: Insurance
+    region: US
+  GLW:
+    name: Corning Inc.
+    sector: Networking
+    region: US
+  GM:
+    name: General Motors
+    sector: Automotive & EV
+    region: US
+  GNRC:
+    name: Generac
+    sector: Industrial Machinery
+    region: US
+  GPC:
+    name: Genuine Parts Company
+    sector: Retail
+    region: US
+  GPN:
+    name: Global Payments
+    sector: Financial Services
+    region: US
+  GRMN:
+    name: Garmin
+    sector: Retail
+    region: US
+  GS:
+    name: Goldman Sachs
+    sector: Capital Markets
+    region: US
+  GWW:
+    name: W. W. Grainger
+    sector: Business Services
+    region: US
+  HAL:
+    name: Halliburton
+    sector: Oil & Gas
+    region: US
+  HAS:
+    name: Hasbro
+    sector: Retail
+    region: US
+  HBAN:
+    name: Huntington Bancshares
+    sector: Banks
+    region: US
+  HCA:
+    name: HCA Healthcare
+    sector: Managed Care
+    region: US
+  HIG:
+    name: Hartford (The)
+    sector: Insurance
+    region: US
+  HII:
+    name: Huntington Ingalls Industries
+    sector: Aerospace & Defense
+    region: US
+  HLT:
+    name: Hilton Worldwide
+    sector: Restaurants & Hospitality
+    region: US
+  HON:
+    name: Honeywell
+    sector: Industrial Machinery
+    region: US
+  HRL:
+    name: Hormel Foods
+    sector: Food & Beverage
+    region: US
+  HSIC:
+    name: Henry Schein
+    sector: Managed Care
+    region: US
+  HST:
+    name: Host Hotels & Resorts
+    sector: REITs
+    region: US
+  HSY:
+    name: Hershey Company (The)
+    sector: Consumer Retail
+    region: US
+  HUBB:
+    name: Hubbell Incorporated
+    sector: Industrial Machinery
+    region: US
+  HUM:
+    name: Humana
+    sector: Managed Care
+    region: US
+  HWM:
+    name: Howmet Aerospace
+    sector: Aerospace & Defense
+    region: US
+  IBKR:
+    name: Interactive Brokers
+    sector: Capital Markets
+    region: US
+  ICE:
+    name: Intercontinental Exchange
+    sector: Capital Markets
+    region: US
+  IDXX:
+    name: Idexx Laboratories
+    sector: Life Science Tools
+    region: US
+  IEX:
+    name: IDEX Corporation
+    sector: Industrial Machinery
+    region: US
+  IFF:
+    name: International Flavors & Fragrances
+    sector: Basic Materials
+    region: US
+  INCY:
+    name: Incyte
+    sector: Pharma
+    region: US
+  INTU:
+    name: Intuit
+    sector: SaaS
+    region: US
+  INVH:
+    name: Invitation Homes
+    sector: REITs
+    region: US
+  IP:
+    name: International Paper
+    sector: Basic Materials
+    region: US
+  IQV:
+    name: IQVIA
+    sector: Life Science Tools
+    region: US
+  IR:
+    name: Ingersoll Rand
+    sector: Industrial Machinery
+    region: US
+  IRM:
+    name: Iron Mountain
+    sector: Tower & Data REITs
+    region: US
+  IT:
+    name: Gartner
+    sector: SaaS
+    region: US
+  ITW:
+    name: Illinois Tool Works
+    sector: Industrial Machinery
+    region: US
+  IVZ:
+    name: Invesco
+    sector: Capital Markets
+    region: US
+  J:
+    name: Jacobs Solutions
+    sector: Construction & Engineering
+    region: US
+  JBHT:
+    name: J.B. Hunt
+    sector: Transportation
+    region: US
+  JBL:
+    name: Jabil
+    sector: Enterprise Hardware
+    region: US
+  JCI:
+    name: Johnson Controls
+    sector: Industrial Machinery
+    region: US
+  JKHY:
+    name: Jack Henry & Associates
+    sector: Financial Services
+    region: US
+  KDP:
+    name: Keurig Dr Pepper
+    sector: Food & Beverage
+    region: US
+  KEY:
+    name: KeyCorp
+    sector: Banks
+    region: US
+  KEYS:
+    name: Keysight Technologies
+    sector: Semiconductors
+    region: US
+  KIM:
+    name: Kimco Realty
+    sector: REITs
+    region: US
+  KKR:
+    name: KKR & Co.
+    sector: Capital Markets
+    region: US
+  KMI:
+    name: Kinder Morgan
+    sector: Oil & Gas
+    region: US
+  KR:
+    name: Kroger
+    sector: Retail
+    region: US
+  KVUE:
+    name: Kenvue
+    sector: Food & Beverage
+    region: US
+  L:
+    name: Loews Corporation
+    sector: Insurance
+    region: US
+  LDOS:
+    name: Leidos
+    sector: Aerospace & Defense
+    region: US
+  LH:
+    name: Labcorp
+    sector: Life Science Tools
+    region: US
+  LHX:
+    name: L3Harris
+    sector: Aerospace & Defense
+    region: US
+  LII:
+    name: Lennox International
+    sector: Industrial Machinery
+    region: US
+  LITE:
+    name: Lumentum
+    sector: Semiconductors
+    region: US
+  LNT:
+    name: Alliant Energy
+    sector: Regulated Utilities
+    region: US
+  LUV:
+    name: Southwest Airlines
+    sector: Transportation
+    region: US
+  LVS:
+    name: Las Vegas Sands
+    sector: Restaurants & Hospitality
+    region: US
+  LYB:
+    name: LyondellBasell
+    sector: Basic Materials
+    region: US
+  LYV:
+    name: Live Nation Entertainment
+    sector: Media & Entertainment
+    region: US
+  MA:
+    name: Mastercard
+    sector: Fintech
+    region: US
+  MAA:
+    name: Mid-America Apartment Communities
+    sector: REITs
+    region: US
+  MAR:
+    name: Marriott International
+    sector: Restaurants & Hospitality
+    region: US
+  MAS:
+    name: Masco
+    sector: Industrial Machinery
+    region: US
+  MCD:
+    name: McDonald's
+    sector: Restaurants & Hospitality
+    region: US
+  MCHP:
+    name: Microchip Technology
+    sector: Semiconductors
+    region: US
+  MCK:
+    name: McKesson Corporation
+    sector: Managed Care
+    region: US
+  MDLZ:
+    name: Mondelez International
+    sector: Food & Beverage
+    region: US
+  MDT:
+    name: Medtronic
+    sector: Medical Devices
+    region: US
+  MET:
+    name: MetLife
+    sector: Insurance
+    region: US
+  MGM:
+    name: MGM Resorts
+    sector: Restaurants & Hospitality
+    region: US
+  MKC:
+    name: McCormick & Company
+    sector: Food & Beverage
+    region: US
+  MLM:
+    name: Martin Marietta Materials
+    sector: Basic Materials
+    region: US
+  MMM:
+    name: 3M
+    sector: Industrial Machinery
+    region: US
+  MNST:
+    name: Monster Beverage
+    sector: Food & Beverage
+    region: US
+  MO:
+    name: Altria
+    sector: Food & Beverage
+    region: US
+  MOS:
+    name: Mosaic Company (The)
+    sector: Basic Materials
+    region: US
+  MPC:
+    name: Marathon Petroleum
+    sector: Oil & Gas
+    region: US
+  MRNA:
+    name: Moderna
+    sector: Biotech
+    region: US
+  MRSH:
+    name: Marsh McLennan
+    sector: Insurance
+    region: US
+  MS:
+    name: Morgan Stanley
+    sector: Capital Markets
+    region: US
+  MSCI:
+    name: MSCI Inc.
+    sector: Capital Markets
+    region: US
+  MSI:
+    name: Motorola Solutions
+    sector: Networking
+    region: US
+  MTB:
+    name: M&T Bank
+    sector: Banks
+    region: US
+  MTD:
+    name: Mettler Toledo
+    sector: Life Science Tools
+    region: US
+  MU:
+    name: Micron Technology
+    sector: Semiconductors
+    region: US
+  NCLH:
+    name: Norwegian Cruise Line Holdings
+    sector: Travel & Leisure
+    region: US
+  NDAQ:
+    name: Nasdaq, Inc.
+    sector: Capital Markets
+    region: US
+  NDSN:
+    name: Nordson Corporation
+    sector: Industrial Machinery
+    region: US
+  NEE:
+    name: NextEra Energy
+    sector: Regulated Utilities
+    region: US
+  NEM:
+    name: Newmont
+    sector: Basic Materials
+    region: US
+  NI:
+    name: NiSource
+    sector: Regulated Utilities
+    region: US
+  NRG:
+    name: NRG Energy
+    sector: Nuclear & Clean Utilities
+    region: US
+  NSC:
+    name: Norfolk Southern
+    sector: Transportation
+    region: US
+  NTAP:
+    name: NetApp
+    sector: Platform Software
+    region: US
+  NTRS:
+    name: Northern Trust
+    sector: Capital Markets
+    region: US
+  NUE:
+    name: Nucor
+    sector: Basic Materials
+    region: US
+  NVR:
+    name: NVR, Inc.
+    sector: Homebuilders
+    region: US
+  NWS:
+    name: News Corp (Class B)
+    sector: Media & Entertainment
+    region: US
+  NWSA:
+    name: News Corp (Class A)
+    sector: Media & Entertainment
+    region: US
+  O:
+    name: Realty Income
+    sector: REITs
+    region: US
+  ODFL:
+    name: Old Dominion
+    sector: Transportation
+    region: US
+  OKE:
+    name: Oneok
+    sector: Oil & Gas
+    region: US
+  OMC:
+    name: Omnicom Group
+    sector: Media & Entertainment
+    region: US
+  ORLY:
+    name: "O\u2019Reilly Automotive"
+    sector: Retail
+    region: US
+  OTIS:
+    name: Otis Worldwide
+    sector: Industrial Machinery
+    region: US
+  PAYX:
+    name: Paychex
+    sector: Business Services
+    region: US
+  PCAR:
+    name: Paccar
+    sector: Transportation
+    region: US
+  PCG:
+    name: PG&E Corporation
+    sector: Nuclear & Clean Utilities
+    region: US
+  PEG:
+    name: Public Service Enterprise Group
+    sector: Regulated Utilities
+    region: US
+  PFG:
+    name: Principal Financial Group
+    sector: Financial Services
+    region: US
+  PGR:
+    name: Progressive Corporation
+    sector: Insurance
+    region: US
+  PH:
+    name: Parker Hannifin
+    sector: Industrial Machinery
+    region: US
+  PHM:
+    name: PulteGroup
+    sector: Homebuilders
+    region: US
+  PKG:
+    name: Packaging Corporation of America
+    sector: Basic Materials
+    region: US
+  PLD:
+    name: Prologis
+    sector: REITs
+    region: US
+  PLTR:
+    name: Palantir Technologies
+    sector: AI & Data
+    region: US
+  PM:
+    name: Philip Morris International
+    sector: Food & Beverage
+    region: US
+  PNC:
+    name: PNC Financial Services
+    sector: Banks
+    region: US
+  PNR:
+    name: Pentair
+    sector: Industrial Machinery
+    region: US
+  PNW:
+    name: Pinnacle West Capital
+    sector: Regulated Utilities
+    region: US
+  PODD:
+    name: Insulet Corporation
+    sector: Medical Devices
+    region: US
+  POOL:
+    name: Pool Corporation
+    sector: Retail
+    region: US
+  PPG:
+    name: PPG Industries
+    sector: Basic Materials
+    region: US
+  PPL:
+    name: PPL Corporation
+    sector: Regulated Utilities
+    region: US
+  PRU:
+    name: Prudential Financial
+    sector: Insurance
+    region: US
+  PSA:
+    name: Public Storage
+    sector: REITs
+    region: US
+  PSKY:
+    name: Paramount Skydance Corporation
+    sector: Media & Entertainment
+    region: US
+  PSX:
+    name: Phillips 66
+    sector: Oil & Gas
+    region: US
+  PTC:
+    name: PTC Inc.
+    sector: SaaS
+    region: US
+  PWR:
+    name: Quanta Services
+    sector: Construction & Engineering
+    region: US
+  Q:
+    name: Qnity Electronics
+    sector: Semiconductors
+    region: US
+  RCL:
+    name: Royal Caribbean Group
+    sector: Travel & Leisure
+    region: US
+  REG:
+    name: Regency Centers
+    sector: REITs
+    region: US
+  RF:
+    name: Regions Financial Corporation
+    sector: Banks
+    region: US
+  RJF:
+    name: Raymond James Financial
+    sector: Capital Markets
+    region: US
+  RL:
+    name: Ralph Lauren Corporation
+    sector: Retail
+    region: US
+  RMD:
+    name: ResMed
+    sector: Medical Devices
+    region: US
+  ROL:
+    name: Rollins, Inc.
+    sector: Business Services
+    region: US
+  ROP:
+    name: Roper Technologies
+    sector: SaaS
+    region: US
+  ROST:
+    name: Ross Stores
+    sector: Retail
+    region: US
+  RSG:
+    name: Republic Services
+    sector: Business Services
+    region: US
+  RTX:
+    name: RTX Corporation
+    sector: Aerospace & Defense
+    region: US
+  RVTY:
+    name: Revvity
+    sector: Life Science Tools
+    region: US
+  SATS:
+    name: EchoStar
+    sector: Telecom
+    region: US
+  SBAC:
+    name: SBA Communications
+    sector: Tower & Data REITs
+    region: US
+  SBUX:
+    name: Starbucks
+    sector: Restaurants & Hospitality
+    region: US
+  SCHW:
+    name: Charles Schwab Corporation
+    sector: Capital Markets
+    region: US
+  SHW:
+    name: Sherwin-Williams
+    sector: Basic Materials
+    region: US
+  SJM:
+    name: J.M. Smucker Company (The)
+    sector: Food & Beverage
+    region: US
+  SLB:
+    name: Schlumberger
+    sector: Oil & Gas
+    region: US
+  SMCI:
+    name: Supermicro
+    sector: Enterprise Hardware
+    region: US
+  SNA:
+    name: Snap-on
+    sector: Industrial Machinery
+    region: US
+  SNDK:
+    name: Sandisk
+    sector: Data Storage
+    region: US
+  SO:
+    name: Southern Company
+    sector: Regulated Utilities
+    region: US
+  SOLV:
+    name: Solventum
+    sector: Pharma
+    region: US
+  SPG:
+    name: Simon Property Group
+    sector: REITs
+    region: US
+  SPGI:
+    name: S&P Global
+    sector: Capital Markets
+    region: US
+  SRE:
+    name: Sempra
+    sector: Regulated Utilities
+    region: US
+  STE:
+    name: Steris
+    sector: Medical Devices
+    region: US
+  STLD:
+    name: Steel Dynamics
+    sector: Basic Materials
+    region: US
+  STT:
+    name: State Street Corporation
+    sector: Capital Markets
+    region: US
+  STX:
+    name: Seagate Technology
+    sector: Data Storage
+    region: US
+  STZ:
+    name: Constellation Brands
+    sector: Food & Beverage
+    region: US
+  SW:
+    name: Smurfit Westrock
+    sector: Basic Materials
+    region: US
+  SWK:
+    name: Stanley Black & Decker
+    sector: Industrial Machinery
+    region: US
+  SWKS:
+    name: Skyworks Solutions
+    sector: Semiconductors
+    region: US
+  SYF:
+    name: Synchrony Financial
+    sector: Financial Services
+    region: US
+  SYK:
+    name: Stryker Corporation
+    sector: Medical Devices
+    region: US
+  SYY:
+    name: Sysco
+    sector: Restaurants & Hospitality
+    region: US
+  TAP:
+    name: Molson Coors Beverage Company
+    sector: Food & Beverage
+    region: US
+  TDG:
+    name: TransDigm Group
+    sector: Aerospace & Defense
+    region: US
+  TDY:
+    name: Teledyne Technologies
+    sector: Aerospace & Defense
+    region: US
+  TECH:
+    name: Bio-Techne
+    sector: Life Science Tools
+    region: US
+  TEL:
+    name: TE Connectivity
+    sector: Semiconductors
+    region: US
+  TFC:
+    name: Truist Financial
+    sector: Banks
+    region: US
+  TGT:
+    name: Target Corporation
+    sector: Retail
+    region: US
+  TJX:
+    name: TJX Companies
+    sector: Retail
+    region: US
+  TKO:
+    name: TKO Group Holdings
+    sector: Media & Entertainment
+    region: US
+  TMUS:
+    name: T-Mobile US
+    sector: Telecom
+    region: US
+  TPL:
+    name: Texas Pacific Land Corporation
+    sector: Oil & Gas
+    region: US
+  TPR:
+    name: Tapestry, Inc.
+    sector: Retail
+    region: US
+  TRGP:
+    name: Targa Resources
+    sector: Oil & Gas
+    region: US
+  TRMB:
+    name: Trimble Inc.
+    sector: SaaS
+    region: US
+  TROW:
+    name: T. Rowe Price
+    sector: Capital Markets
+    region: US
+  TRV:
+    name: Travelers Companies (The)
+    sector: Insurance
+    region: US
+  TSCO:
+    name: Tractor Supply
+    sector: Retail
+    region: US
+  TSN:
+    name: Tyson Foods
+    sector: Food & Beverage
+    region: US
+  TT:
+    name: Trane Technologies
+    sector: Industrial Machinery
+    region: US
+  TTWO:
+    name: Take-Two Interactive
+    sector: Media & Entertainment
+    region: US
+  TXT:
+    name: Textron
+    sector: Aerospace & Defense
+    region: US
+  TYL:
+    name: Tyler Technologies
+    sector: SaaS
+    region: US
+  UAL:
+    name: United Airlines Holdings
+    sector: Transportation
+    region: US
+  UDR:
+    name: UDR, Inc.
+    sector: REITs
+    region: US
+  UHS:
+    name: Universal Health Services
+    sector: Managed Care
+    region: US
+  ULTA:
+    name: Ulta Beauty
+    sector: Retail
+    region: US
+  UNP:
+    name: Union Pacific Corporation
+    sector: Transportation
+    region: US
+  URI:
+    name: United Rentals
+    sector: Transportation
+    region: US
+  USB:
+    name: U.S. Bancorp
+    sector: Banks
+    region: US
+  VICI:
+    name: Vici Properties
+    sector: REITs
+    region: US
+  VLO:
+    name: Valero Energy
+    sector: Oil & Gas
+    region: US
+  VLTO:
+    name: Veralto
+    sector: Industrial Machinery
+    region: US
+  VMC:
+    name: Vulcan Materials Company
+    sector: Basic Materials
+    region: US
+  VRSK:
+    name: Verisk Analytics
+    sector: Business Services
+    region: US
+  VRSN:
+    name: Verisign
+    sector: Platform Software
+    region: US
+  VRT:
+    name: Vertiv
+    sector: Industrial Machinery
+    region: US
+  VRTX:
+    name: Vertex Pharmaceuticals
+    sector: Pharma
+    region: US
+  VST:
+    name: Vistra Corp.
+    sector: Nuclear & Clean Utilities
+    region: US
+  VTR:
+    name: Ventas
+    sector: REITs
+    region: US
+  VTRS:
+    name: Viatris
+    sector: Pharma
+    region: US
+  WAB:
+    name: Wabtec
+    sector: Industrial Machinery
+    region: US
+  WAT:
+    name: Waters Corporation
+    sector: Life Science Tools
+    region: US
+  WBD:
+    name: Warner Bros. Discovery
+    sector: Media & Entertainment
+    region: US
+  WDAY:
+    name: Workday, Inc.
+    sector: SaaS
+    region: US
+  WEC:
+    name: WEC Energy Group
+    sector: Regulated Utilities
+    region: US
+  WELL:
+    name: Welltower
+    sector: REITs
+    region: US
+  WFC:
+    name: Wells Fargo
+    sector: Banks
+    region: US
+  WM:
+    name: Waste Management
+    sector: Business Services
+    region: US
+  WMB:
+    name: Williams Companies
+    sector: Oil & Gas
+    region: US
+  WRB:
+    name: W. R. Berkley Corporation
+    sector: Insurance
+    region: US
+  WSM:
+    name: Williams-Sonoma, Inc.
+    sector: Retail
+    region: US
+  WST:
+    name: West Pharmaceutical Services
+    sector: Medical Devices
+    region: US
+  WTW:
+    name: Willis Towers Watson
+    sector: Insurance
+    region: US
+  WY:
+    name: Weyerhaeuser
+    sector: REITs
+    region: US
+  WYNN:
+    name: Wynn Resorts
+    sector: Restaurants & Hospitality
+    region: US
+  XEL:
+    name: Xcel Energy
+    sector: Regulated Utilities
+    region: US
+  XOM:
+    name: ExxonMobil
+    sector: Oil & Gas
+    region: US
+  XYL:
+    name: Xylem Inc.
+    sector: Industrial Machinery
+    region: US
+  XYZ:
+    name: Block, Inc.
+    sector: Financials
+    region: US
+  YUM:
+    name: Yum! Brands
+    sector: Restaurants & Hospitality
+    region: US
+  ZBH:
+    name: Zimmer Biomet
+    sector: Medical Devices
+    region: US
+  ZTS:
+    name: Zoetis
+    sector: Life Science Tools
+    region: US
+  TEM:
+    name: Tempus AI, Inc.
+    sector: Biotech
+    region: US
+  ANX.PA:
+    name: Amundi Nasdaq 100 ETF
+    sector: Benchmark
+    region: EU
+  AT1.DE:
+    name: Aroundtown SA
+    sector: Real Estate
+    region: EU
+  NDA.DE:
+    name: Aurubis AG
+    sector: Basic Materials
+    region: EU
+  AG1.DE:
+    name: AUTO1 Group SE
+    sector: Ecommerce
+    region: EU
+  BC8.DE:
+    name: Bechtle AG
+    sector: IT Services
+    region: EU
+  GBF.DE:
+    name: Bilfinger SE
+    sector: Industrials
+    region: EU
+  EVD.DE:
+    name: CTS Eventim AG & Co. KGaA
+    sector: Media & Entertainment
+    region: EU
+  DHER.DE:
+    name: Delivery Hero SE
+    sector: Ecommerce
+    region: EU
+  DEZ.DE:
+    name: DEUTZ AG
+    sector: Industrials
+    region: EU
+  DWS.DE:
+    name: DWS Group GmbH & Co. KGaA
+    sector: Financials
+    region: EU
+  EVK.DE:
+    name: Evonik Industries AG
+    sector: Basic Materials
+    region: EU
+  FTK.DE:
+    name: flatexDEGIRO AG
+    sector: Fintech
+    region: EU
+  FRA.DE:
+    name: Fraport AG
+    sector: Transportation
+    region: EU
+  FPE3.DE:
+    name: FUCHS SE
+    sector: Basic Materials
+    region: EU
+  HLE.DE:
+    name: HELLA GmbH & Co. KGaA
+    sector: Automotive & EV
+    region: EU
+  HOT.DE:
+    name: HOCHTIEF AG
+    sector: Construction & Engineering
+    region: EU
+  BOSS.DE:
+    name: HUGO BOSS AG
+    sector: Consumer Luxury
+    region: EU
+  JUN3.DE:
+    name: Jungheinrich AG
+    sector: Industrial Machinery
+    region: EU
+  SDF.DE:
+    name: K+S Aktiengesellschaft
+    sector: Basic Materials
+    region: EU
+  KGX.DE:
+    name: KION Group AG
+    sector: Industrial Machinery
+    region: EU
+  KBX.DE:
+    name: Knorr-Bremse AG
+    sector: Industrial Machinery
+    region: EU
+  KRN.DE:
+    name: KRONES AG
+    sector: Industrial Machinery
+    region: EU
+  LXS.DE:
+    name: LANXESS Aktiengesellschaft
+    sector: Basic Materials
+    region: EU
+  LEG.DE:
+    name: LEG Immobilien SE
+    sector: Real Estate
+    region: EU
+  NEM.DE:
+    name: Nemetschek SE
+    sector: SaaS
+    region: EU
+  RAA.DE:
+    name: RATIONAL Aktiengesellschaft
+    sector: Industrial Machinery
+    region: EU
+  RDC.DE:
+    name: Redcare Pharmacy N.V.
+    sector: Ecommerce
+    region: EU
+  SZG.DE:
+    name: Salzgitter Aktiengesellschaft
+    sector: Basic Materials
+    region: EU
+  SRT3.DE:
+    name: Sartorius Aktiengesellschaft
+    sector: Life Science Tools
+    region: EU
+  SAX.DE:
+    name: "Str\xF6er SE & Co. KGaA"
+    sector: Media & Entertainment
+    region: EU
+  TEG.DE:
+    name: TAG Immobilien AG
+    sector: Real Estate
+    region: EU
+  TLX.DE:
+    name: Talanx AG
+    sector: Insurance
+    region: EU
+  8TRA.DE:
+    name: TRATON SE
+    sector: Automotive & EV
+    region: EU
+  TUI1.DE:
+    name: TUI AG
+    sector: Travel & Leisure
+    region: EU
+  UTDI.DE:
+    name: United Internet AG
+    sector: Telecom
+    region: EU
+  WCH.DE:
+    name: Wacker Chemie AG
+    sector: Basic Materials
+    region: EU
+  1U1.DE:
+    name: 1&1 AG
+    sector: Telecom
+    region: EU
+  ADN1.DE:
+    name: adesso SE
+    sector: IT Services
+    region: EU
+  ADV.DE:
+    name: Adtran Networks SE
+    sector: Telecom
+    region: EU
+  AOF.DE:
+    name: ATOSS Software AG
+    sector: SaaS
+    region: EU
+  BFSA.DE:
+    name: Befesa S.A.
+    sector: Basic Materials
+    region: EU
+  BVB.DE:
+    name: Borussia Dortmund GmbH & Co. KGaA
+    sector: Media & Entertainment
+    region: EU
+  COK.DE:
+    name: CANCOM SE
+    sector: IT Services
+    region: EU
+  AFX.DE:
+    name: Carl Zeiss Meditec AG
+    sector: Medical Devices
+    region: EU
+  CWC.DE:
+    name: CEWE Stiftung & Co. KGaA
+    sector: Consumer Retail
+    region: EU
+  DMP.DE:
+    name: Dermapharm Holding SE
+    sector: Pharma
+    region: EU
+  DBAN.DE:
+    name: Deutsche Beteiligungs AG
+    sector: Financials
+    region: EU
+  DEQ.DE:
+    name: Deutsche EuroShop AG
+    sector: Real Estate
+    region: EU
+  DRW3.DE:
+    name: "Dr\xE4gerwerk AG & Co. KGaA"
+    sector: Medical Devices
+    region: EU
+  DUE.DE:
+    name: "D\xFCrr Aktiengesellschaft"
+    sector: Industrial Machinery
+    region: EU
+  EUZ.DE:
+    name: Eckert & Ziegler SE
+    sector: Life Science Tools
+    region: EU
+  ELG.DE:
+    name: Elmos Semiconductor SE
+    sector: Semiconductors
+    region: EU
+  EKT.DE:
+    name: Energiekontor AG
+    sector: Renewables
+    region: EU
+  EVT.DE:
+    name: Evotec SE
+    sector: Biotech
+    region: EU
+  FIE.DE:
+    name: Fielmann Group AG
+    sector: Retail
+    region: EU
+  VH2.DE:
+    name: Friedrich Vorwerk Group SE
+    sector: Industrials
+    region: EU
+  GFT.DE:
+    name: GFT Technologies SE
+    sector: IT Services
+    region: EU
+  GYC.DE:
+    name: Grand City Properties S.A.
+    sector: Real Estate
+    region: EU
+  GLJ.DE:
+    name: Grenke AG
+    sector: Financials
+    region: EU
+  HAB.DE:
+    name: Hamborner REIT AG
+    sector: Real Estate
+    region: EU
+  HDD.DE:
+    name: Heidelberger Druckmaschinen AG
+    sector: Industrial Machinery
+    region: EU
+  HFG.DE:
+    name: HelloFresh SE
+    sector: Ecommerce
+    region: EU
+  HBH.DE:
+    name: Hornbach Holding AG & Co. KGaA
+    sector: Retail
+    region: EU
+  HYQ.DE:
+    name: Hypoport SE
+    sector: Fintech
+    region: EU
+  INH.DE:
+    name: Indus Holding AG
+    sector: Financials
+    region: EU
+  IXX.DE:
+    name: init innovation in traffic systems SE
+    sector: IT Services
+    region: EU
+  JST.DE:
+    name: JOST Werke SE
+    sector: Automotive & EV
+    region: EU
+  KCO.DE:
+    name: "Kl\xF6ckner & Co SE"
+    sector: Basic Materials
+    region: EU
+  KSB3.DE:
+    name: KSB SE & Co. KGaA
+    sector: Industrial Machinery
+    region: EU
+  KWS.DE:
+    name: KWS SAAT SE & Co. KGaA
+    sector: Basic Materials
+    region: EU
+  MBB.DE:
+    name: MBB SE
+    sector: Financials
+    region: EU
+  MED.DE:
+    name: Medios AG
+    sector: Pharma
+    region: EU
+  MLP.DE:
+    name: MLP SE
+    sector: Financials
+    region: EU
+  MUX.DE:
+    name: Mutares SE & Co. KGaA
+    sector: Financials
+    region: EU
+  NA9.DE:
+    name: Nagarro SE
+    sector: IT Services
+    region: EU
+  NOEJ.DE:
+    name: NORMA Group SE
+    sector: Industrial Machinery
+    region: EU
+  PAT.DE:
+    name: PATRIZIA SE
+    sector: Real Estate
+    region: EU
+  PBB.DE:
+    name: Deutsche Pfandbriefbank AG
+    sector: Banks
+    region: EU
+  PNE3.DE:
+    name: PNE AG
+    sector: Renewables
+    region: EU
+  PSM.DE:
+    name: ProSiebenSat.1 Media SE
+    sector: Media & Entertainment
+    region: EU
+  TPE.DE:
+    name: PVA TePla AG
+    sector: Industrial Machinery
+    region: EU
+  ALO.PA:
+    name: Alstom SA
+    sector: Industrials
+    region: EU
+  EN.PA:
+    name: Bouygues SA
+    sector: Construction & Engineering
+    region: EU
+  CAP.PA:
+    name: Capgemini SE
+    sector: IT Services
+    region: EU
+  CA.PA:
+    name: Carrefour SA
+    sector: Retail
+    region: EU
+  ACA.PA:
+    name: "Cr\xE9dit Agricole S.A."
+    sector: Banks
+    region: EU
+  AM.PA:
+    name: Dassault Aviation SA
+    sector: Aerospace & Defense
+    region: EU
+  ENGI.PA:
+    name: Engie SA
+    sector: Regulated Utilities
+    region: EU
+  ERF.PA:
+    name: Eurofins Scientific SE
+    sector: Life Science Tools
+    region: EU
+  LR.PA:
+    name: Legrand SA
+    sector: Industrials
+    region: EU
+  ML.PA:
+    name: Michelin
+    sector: Automotive & EV
+    region: EU
+  ORA.PA:
+    name: Orange S.A.
+    sector: Telecom
+    region: EU
+  RI.PA:
+    name: Pernod Ricard SA
+    sector: Food & Beverage
+    region: EU
+  PUB.PA:
+    name: Publicis Groupe S.A.
+    sector: Media & Entertainment
+    region: EU
+  RNO.PA:
+    name: Renault SA
+    sector: Automotive & EV
+    region: EU
+  GLE.PA:
+    name: "Soci\xE9t\xE9 G\xE9n\xE9rale S.A."
+    sector: Banks
+    region: EU
+  TEP.PA:
+    name: Teleperformance SE
+    sector: Industrials
+    region: EU
+  STLAP.PA:
+    name: Stellantis N.V.
+    sector: Automotive & EV
+    region: EU
+  URW.PA:
+    name: Unibail-Rodamco-Westfield SE
+    sector: Real Estate
+    region: EU
+  FR.PA:
+    name: Valeo SE
+    sector: Automotive & EV
+    region: EU
+  VIE.PA:
+    name: Veolia Environnement S.A.
+    sector: Regulated Utilities
+    region: EU
+  VIV.PA:
+    name: Vivendi SE
+    sector: Media & Entertainment
+    region: EU
+  WLN.PA:
+    name: Worldline SA
+    sector: Fintech
+    region: EU
+  P911.DE:
+    name: Porsche AG
+    sector: Automotive & EV
+    region: EU
+  RRTL.DE:
+    name: RTL Group S.A.
+    sector: Media & Entertainment
+    region: EU
+  SHA0.DE:
+    name: Schaeffler AG
+    sector: Industrial Machinery
+    region: EU
+  DOU.DE:
+    name: Douglas AG
+    sector: Retail
+    region: EU
+  KTN.DE:
+    name: Kontron AG
+    sector: IT Services
+    region: EU
+  MT.AS:
+    name: ArcelorMittal
+    sector: Basic Materials
+    region: EU
+  6762.T:
+    name: TDK Corporation
+    sector: Technology
+    region: Asia
+  BESI.AS:
+    name: BE Semiconductor
+    sector: Technology
+    region: EU
+  ACMR:
+    name: ACM Research
+    sector: Technology
+    region: US
+  2344.TW:
+    name: Winbond Electronics
+    sector: Semiconductors
+    region: Asia
+  RIVN:
+    name: Rivian Automotive
+    sector: Automotive & EV
+    region: US
+  SEDG:
+    name: SolarEdge Technologies
+    sector: Renewables
+    region: US
+  ENPH:
+    name: Enphase Energy
+    sector: Renewables
+    region: US
+  RUN:
+    name: Sunrun Inc.
+    sector: Renewables
+    region: US
+  OKLO:
+    name: Oklo Inc.
+    sector: Energy Specialty
+    region: US
+  BE:
+    name: Bloom Energy
+    sector: Energy Specialty
+    region: US
+  AAOI:
+    name: Applied Optoelectronics
+    sector: Networking
+    region: US
+  CRDO:
+    name: Credo Technology Group
+    sector: Semiconductors
+    region: US
+  7735.T:
+    name: SCREEN Holdings
+    sector: Semiconductors
+    region: JP
+  6525.T:
+    name: Kokusai Electric
+    sector: Semiconductors
+    region: JP
+  6315.T:
+    name: Towa Corp
+    sector: Semiconductors
+    region: JP
+  3711.TW:
+    name: ASE Technology Holding
+    sector: Semiconductors
+    region: Asia
+  2303.TW:
+    name: UMC
+    sector: Semiconductors
+    region: Asia
+  2379.TW:
+    name: Realtek
+    sector: Semiconductors
+    region: Asia
+  3034.TW:
+    name: Novatek Microelectronics
+    sector: Semiconductors
+    region: Asia
+  603501.SS:
+    name: OmniVision (Will Semi)
+    sector: Semiconductors
+    region: CN
+  6723.T:
+    name: Renesas Electronics
+    sector: Semiconductors
+    region: JP
+  2360.TW:
+    name: Chroma ATE
+    sector: Semiconductors
+    region: Asia
+  6963.T:
+    name: ROHM
+    sector: Semiconductors
+    region: JP
+  6504.T:
+    name: Fuji Electric
+    sector: Energy Specialty
+    region: JP
+  3436.T:
+    name: SUMCO
+    sector: Basic Materials
+    region: JP
+  4063.T:
+    name: Shin-Etsu Chemical
+    sector: Basic Materials
+    region: JP
+  ASM.AS:
+    name: ASM International
+    sector: Semiconductors
+    region: EU
+  AMS.SW:
+    name: ams-OSRAM
+    sector: Semiconductors
+    region: EU
+  SOI.PA:
+    name: Soitec
+    sector: Semiconductors
+    region: EU
+  WAF.DE:
+    name: Siltronic
+    sector: Semiconductors
+    region: EU
+  MELE.BR:
+    name: Melexis
+    sector: Semiconductors
+    region: EU
+  NOD.OL:
+    name: Nordic Semiconductor
+    sector: Semiconductors
+    region: EU
+  TPRO.MI:
+    name: Technoprobe
+    sector: Semiconductors
+    region: EU
+  MYCR.ST:
+    name: Mycronic
+    sector: Semiconductor Tools
+    region: EU
+  AWE.L:
+    name: AlphaWave IP Group
+    sector: Semiconductors
+    region: EU
+  SLR.MC:
+    name: Solaria
+    sector: Renewables
+    region: EU
+  EDPR.LS:
+    name: "EDP Renov\xE1veis"
+    sector: Renewables
+    region: EU
+  PRY.MI:
+    name: Prysmian S.p.A.
+    sector: Industrials
+    region: EU

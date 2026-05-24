@@ -1,0 +1,6 @@
+# Copy file này thành terraform.tfvars và điền thông tin thật của bạn
+# KHÔNG commit file terraform.tfvars lên Git
+
+supabase_project_id   = "ljkkwiowvgaxgclbwcfa" # Đã tự động lấy từ .env của bạn
+supabase_access_token = "YOUR_SUPABASE_ACCESS_TOKEN_OR_SERVICE_ROLE_KEY"
+bucket_name           = "warehouse"

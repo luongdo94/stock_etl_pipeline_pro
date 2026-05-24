@@ -1,0 +1,57 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+.DS_Store
+.vscode/
+airflow/logs/
+airflow/*.db
+/tmp/
+.agents
+.github/workflows
+dbt
+legacy
+airflow
+scratch/
+scripts
+*.sh
+dashboard.py
+.agents/
+logs/
+teraform/
+dashboard_v2/
+.kiro
+
+# Test and debug files
+debug_*.py
+fix_*.py
+test_*_manual.py
+
+# Databases (Data Warehouse)
+warehouse/*.duckdb
+!warehouse/stock_demo.duckdb
+*.db
+*.duckdb
+
+# Logs & Meta
+*.log
+model_performance_log.json
+
+# Streamlit (Ignore secrets, allow config)
+.streamlit/secrets.toml
+# .streamlit/ # Commented out to allow config.toml
+
+# Local temporary cache
+.cache/
+
+# Windows migration backup (local only)
+windows_migration_*/
+
+# Warehouse temp export (generated during sync)
+warehouse/temp_export/
+warehouse/temp_*.parquet
+warehouse/*.parquet
+
+# macOS metadata
+._*
+.DS_Store
