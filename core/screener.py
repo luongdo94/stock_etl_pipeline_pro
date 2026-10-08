@@ -6,7 +6,7 @@ from core.levels import get_tactical_metrics
 from core.rating import compute_institutional_rating
 from core.smart_money import get_sm_spirit_unified_v2
 from core.decision import build_decision, load_rules
-from core.valuation import valuation_inputs
+from core.valuation import DCF_NOT_APPLICABLE_SECTORS, valuation_inputs
 from etl.utils import clean_upside_pct, compute_score_details
 
 
@@ -166,6 +166,10 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
         net_payout = row.get('net_payout_yield_pct', 0) or 0
         vol_30d = row.get('volatility_30d', 0) or 0
         short_pct = (row.get('short_percent_of_float', 0) * 100) if pd.notnull(row.get('short_percent_of_float')) else 0
+
+        # Cash-flow and leverage ratios are meaningless for banks/insurers (deposits, float)
+        if str(row.get('sector', '')).strip().lower() in DCF_NOT_APPLICABLE_SECTORS:
+            fcf_margin, debt_ebitda = float("nan"), float("nan")
 
         screener_rows.append({
             "Ticker": ticker,

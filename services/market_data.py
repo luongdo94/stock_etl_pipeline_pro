@@ -262,3 +262,13 @@ def fetch_dividend_calendar(tickers_tuple: tuple, companies_df: "pd.DataFrame" =
         except Exception:
             result[t] = {'ex_date': '—', 'pay_date': '—'}
     return result
+
+
+@st.cache_data(ttl=6 * 3600, show_spinner="Fetching TradingView discovery...")
+def discover_tv_tickers() -> dict:
+    """TradingView auto-discovery (5 screener presets), cached for 6 hours."""
+    from etl.extract import fetch_dynamic_tv_tickers, load_tickers_config
+    try:
+        return fetch_dynamic_tv_tickers(load_tickers_config())
+    except Exception:
+        return {}

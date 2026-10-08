@@ -18,7 +18,7 @@ _DEFAULT_RULES = {
     "costs": {"base_currency": "EUR", "commission_pct": 0.10, "fx_spread_pct": 0.25,
               "dividend_withholding": {"default": 0.15}},
     "risk": {"account_risk_pct": 1.0, "max_position_pct": 10.0, "min_reward_risk": 2.0,
-             "earnings_blackout_days": 7},
+             "earnings_blackout_days": 7, "min_stop_pct": 8.0},
     "valuation": {"required_margin_of_safety": 0.25, "stale_price_days": 5,
                   "stale_fundamentals_days": 35},
 }
@@ -77,6 +77,7 @@ class Decision:
     downside_pct: Optional[float]
     reward_risk: Optional[float]
     position: dict
+    stop: Optional[float] = None      # thesis stop used for downside and sizing
     reasons: list = field(default_factory=list)
     confidence_notes: list = field(default_factory=list)
     invalidation: list = field(default_factory=list)
@@ -97,17 +98,25 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
     req_mos = rules["valuation"]["required_margin_of_safety"]
     min_rr = rules["risk"]["min_reward_risk"]
 
-    exp_ret = (base_value / price - 1) if base_value and price else None
+    # Only a value the model trusts may produce return / downside numbers; an uninformative DCF
+    # used to show e.g. "expected −76%" next to a note saying the DCF is not informative.
+    usable_value = base_value if (base_value and valuation_reliable) else None
+    usable_bear = bear_value if usable_value else None
+
+    exp_ret = (usable_value / price - 1) if usable_value and price else None
     costs = round_trip_cost_pct(currency, rules) + dividend_tax_drag_pct(dividend_yield_pct, country, rules)
     net_ret = exp_ret - costs if exp_ret is not None else None
 
-    # Downside: the worse of the bear-case value and the technical stop (both expressed as a loss)
-    losses = []
-    if bear_value and price and bear_value < price:
-        losses.append(1 - bear_value / price)
-    if stop_loss and price and stop_loss < price:
-        losses.append(1 - stop_loss / price)
-    downside = max(losses) if losses else None
+    # Thesis stop: a valuation thesis plays out over quarters, so the stop is the WIDER of the
+    # technical support and the bear-case value, and never tighter than min_stop_pct (a 5% stop on
+    # a 12-month DCF thesis is just noise). Downside and position size use this same stop.
+    thesis_stop = None
+    if price:
+        candidates = [x for x in (stop_loss, usable_bear) if x and x < price]
+        widest = min(candidates) if candidates else None
+        floor = price * (1 - rules["risk"].get("min_stop_pct", 8.0) / 100)
+        thesis_stop = min(widest, floor) if widest else floor
+    downside = (1 - thesis_stop / price) if (usable_value and thesis_stop) else None
     # Reward/risk only makes sense with an upside; a negative ratio would read as nonsense
     rr = (net_ret / downside) if (net_ret is not None and net_ret > 0 and downside) else None
 
@@ -166,11 +175,16 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
 
     # ── Thesis invalidation & timing ───────────────────────────────────────────────
     invalidation = []
-    if stop_loss:
-        invalidation.append(f"Close below the stop at {stop_loss:,.2f}.")
-    if base_value:
-        invalidation.append(f"Price reaches base-case value {base_value:,.2f} (thesis played out → reassess / take profit).")
-    invalidation.append("Next results cut free cash flow or growth below the DCF assumptions.")
+    if usable_value:
+        invalidation.append(f"Close below the thesis stop at {thesis_stop:,.2f} "
+                            f"(wider of technical support and bear-case value, at least "
+                            f"{rules['risk'].get('min_stop_pct', 8.0):.0f}% below price).")
+        invalidation.append(f"Price reaches base-case value {usable_value:,.2f} (thesis played out → reassess / take profit).")
+        invalidation.append("Next results cut free cash flow or growth below the DCF assumptions.")
+    else:
+        if stop_loss and price and stop_loss < price:
+            invalidation.append(f"Technical: close below support at {stop_loss:,.2f}.")
+        invalidation.append("No DCF anchor — re-check relative valuation and quality after every report.")
 
     warnings = []
     if next_earnings:
@@ -178,10 +192,10 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
         if 0 <= days <= rules["risk"]["earnings_blackout_days"]:
             warnings.append(f"Earnings in {days} day(s) ({next_earnings:%d %b}) — expect a gap; consider waiting.")
 
-    pos = position_size(price, stop_loss, rules) if stance == "BUY CANDIDATE" else \
+    pos = position_size(price, thesis_stop, rules) if stance == "BUY CANDIDATE" else \
         {"size_pct": 0.0, "stop_distance_pct": None, "capped": False}
     return Decision(stance, confidence,
                     exp_ret * 100 if exp_ret is not None else None,
                     net_ret * 100 if net_ret is not None else None,
                     downside * 100 if downside is not None else None,
-                    rr, pos, reasons, notes, invalidation, warnings)
+                    rr, pos, thesis_stop if usable_value else None, reasons, notes, invalidation, warnings)

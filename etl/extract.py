@@ -747,6 +747,11 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
             if v > 1.0: v = v / 100.0
             return v if 0.0 < v <= 0.25 else None
         
+        # Yahoo divides a dividend in the MAJOR unit (GBP 0.11) by a quote in the MINOR unit
+        # (1404 GBp) for trailingAnnualDividendYield → 100x too small for LSE (Rolls-Royce showed 0.01%).
+        if tdy is not None and str(trading_currency) in _MINOR_UNITS:
+            try: tdy = float(tdy) * 100
+            except (TypeError, ValueError): tdy = None
         _tdy = _sanitize_yield(tdy)
         _dy  = _sanitize_yield(dy)
         # Store 0.0 for confirmed non-payers (yfinance returns None for stocks with no dividend).

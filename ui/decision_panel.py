@@ -60,7 +60,7 @@ def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, re
           <div style='color:#8899aa; font-size:0.7rem;'>Suggested size</div>
           <div style='color:#fff; font-weight:800;'>{fmt(d.net_expected_return_pct)}</div>
           <div style='color:#e74c3c; font-weight:800;'>{("-" + format(d.downside_pct, ".1f") + "%") if d.downside_pct else "N/A"}</div>
-          <div style='color:#fff; font-weight:800;'>{f"{d.reward_risk:.1f}x" if d.reward_risk is not None else ("no upside" if (d.net_expected_return_pct or 0) <= 0 else "N/A")}</div>
+          <div style='color:#fff; font-weight:800;'>{f"{d.reward_risk:.1f}x" if d.reward_risk is not None else ("no upside" if (d.net_expected_return_pct is not None and d.net_expected_return_pct <= 0) else "N/A")}</div>
           <div style='color:#fff; font-weight:800;'>{f"{d.position['size_pct']:.1f}% of portfolio" if d.position['size_pct'] else "—"}</div>
         </div>
       </div>

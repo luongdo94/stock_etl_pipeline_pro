@@ -63,3 +63,9 @@ def test_fcf_margin_plausible(live):
         if t in info.index and pd.notna(info.at[t, "revenue_ttm"]) and info.at[t, "revenue_ttm"]:
             margin = v / info.at[t, "revenue_ttm"]
             assert -0.5 < margin < 0.8, f"{t} FCF margin {margin:.0%} — FX/unit error?"
+
+
+def test_lse_dividend_yield_not_100x_too_small(live):
+    """Yahoo's trailing yield for LSE divides a GBP dividend by a GBp price (was 0.01% for RR.L)."""
+    dy = live["info"].at["RR.L", "dividend_yield"]
+    assert dy is None or dy != dy or 0.002 <= dy <= 0.08, f"RR.L dividend yield {dy:.4%} — pence/pound mix-up?"

@@ -106,7 +106,7 @@ def render(ctx):
             fig_spy.update_layout(
                 template="plotly_dark", height=500,
                 margin=dict(l=0, r=0, t=10, b=0),
-                yaxis_title="Price (€)",  # FIX: SPY prices are normalized to EUR in line 404-408
+                yaxis_title="SPY in € (includes EUR/USD moves)",
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
             )
             st.plotly_chart(fig_spy, use_container_width=True)
@@ -246,7 +246,7 @@ def render(ctx):
         """, height=420)
 
     with bot_c2:
-        render_header("package", "Portfolio Stance & Tactical Guide")
+        render_header("package", "Market Regime Gauge (heuristic)")
         
         # Stance card content
         if conf_score_global >= 70:
@@ -266,12 +266,12 @@ def render(ctx):
         <div style='background:rgba(20,30,45,0.7); border:1px solid rgba(255,255,255,0.1); border-radius:12px; padding:25px; height:400px;'>
             <div style='margin-bottom:15px; display:flex; justify-content:space-between; align-items:center;'>
                 <div>
-                    <span style='color:#8899aa; font-size:0.75rem; font-weight:700;'>STRATEGIC BIAS</span>
+                    <span style='color:#8899aa; font-size:0.75rem; font-weight:700;'>REGIME READ</span>
                     <div style='color:#fff; font-size:1.4rem; font-weight:800;'>{stance}</div>
                 </div>
                 <div style='text-align:right;'>
-                    <span style='color:#8899aa; font-size:0.75rem; font-weight:700;'>CONFIDENCE</span>
-                    <div style='color:#3498db; font-size:1.4rem; font-weight:800;'>{conf_score_global}%</div>
+                    <span style='color:#8899aa; font-size:0.75rem; font-weight:700;'>REGIME SCORE</span>
+                    <div style='color:#3498db; font-size:1.4rem; font-weight:800;'>{conf_score_global}/100</div>
                 </div>
             </div>
             <div style='font-size:0.75rem; font-style:italic; color:#cfd8dc; margin-bottom:15px; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:10px;'>
@@ -279,11 +279,11 @@ def render(ctx):
             </div>
             <div style='display:flex; gap:20px; margin-bottom:20px;'>
                 <div style='flex:1;'>
-                    <span style='color:#8899aa; font-size:0.7rem;'>Exposure Size</span>
+                    <span style='color:#8899aa; font-size:0.7rem;'>Rule-of-thumb exposure</span>
                     <div style='color:#3498db; font-size:1.1rem; font-weight:700;'>{size}</div>
                 </div>
                 <div style='flex:1;'>
-                    <span style='color:#8899aa; font-size:0.7rem;'>Preferred Factor</span>
+                    <span style='color:#8899aa; font-size:0.7rem;'>Typical factor tilt</span>
                     <div style='color:#2ecc71; font-size:1.1rem; font-weight:700;'>{bias}</div>
                 </div>
             </div>
@@ -293,8 +293,8 @@ def render(ctx):
                     {'Watch for failed breakouts in laggard sectors.' if conf_score_global > 50 else 'Focus on capital preservation as breadth deteriorates.'}
                 </p>
                 <div style='margin-top:15px; background:rgba(52,152,219,0.1); padding:10px; border-radius:6px;'>
-                    <span style='color:#3498db; font-size:0.7rem; font-weight:700;'>NEXT ACTION</span>
-                    <p style='color:#fff; font-size:0.85rem; margin:0;'>Use <b>Opportunity Radar</b> to scan for high-quality names with positive trend alignment.</p>
+                    <span style='color:#3498db; font-size:0.7rem; font-weight:700;'>HOW TO USE</span>
+                    <p style='color:#fff; font-size:0.85rem; margin:0;'>Context only — a score of trend, breadth, VIX and rates, <b>not validated against returns</b> and not an allocation recommendation. Stock calls come from the <b>Decision</b> column.</p>
                 </div>
             </div>
         </div>

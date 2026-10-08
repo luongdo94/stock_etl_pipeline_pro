@@ -66,7 +66,7 @@ def test_strategy_lab_backtest_runs(warehouse):
     run_btn = next(b for b in at.button if "Run All Strategies" in (b.label or ""))
     at = run_btn.click().run()
     assert not at.exception, [e.value for e in at.exception]
-    assert any("WINNER" in m.value for m in at.markdown)
+    assert any(("BEST RULE" in m.value) or ("NO RULE BEAT BUY" in m.value) for m in at.markdown)
 
 
 def test_unauthenticated_user_sees_login_only(warehouse):
