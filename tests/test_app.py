@@ -48,51 +48,51 @@ class TestScoreCalculation:
         assert all(0 <= score <= 100 for score in scores)
 
 
+def _yf_close_frame(columns, rows):
+    """yf.download shape for several tickers: MultiIndex ('Close', ticker) columns."""
+    idx = pd.date_range("2024-04-29", periods=len(rows), name="Date")
+    return pd.DataFrame(rows, index=idx, columns=pd.MultiIndex.from_product([["Close"], columns]))
+
+
 class TestMacroDataFetching:
     """Test macro data fetching and fallback."""
-    
+
+    @patch('services.market_data.get_forex_rates', return_value=0.9)
     @patch('services.market_data.yf.download')
-    def test_fetch_macro_data_success(self, mock_download):
-        """Test successful macro data fetch."""
-        # Mock yfinance response
-        mock_data = pd.DataFrame({
-            'SPY': [500, 505],
-            '^VIX': [15, 16],
-            '^TNX': [4.5, 4.6]
-        }, index=pd.date_range('2024-04-29', periods=2))
-        
-        mock_download.return_value = mock_data
-        
-        # Import and test
+    def test_fetch_macro_data_success(self, mock_download, _fx):
+        tickers = ["SPY", "DX-Y.NYB", "^TNX", "^IRX", "^VIX", "CL=F", "GC=F"]
+        mock_download.return_value = _yf_close_frame(
+            tickers, [[500, 104, 4.5, 5.2, 15, 80, 2300], [505, 105, 4.6, 5.2, 16, 81, 2310]])
+
         from services.market_data import fetch_macro_data
-        
+        fetch_macro_data.clear()
         result = fetch_macro_data()
-        
-        assert isinstance(result, dict)
-        assert 'SPY' in result
-        assert 'VIX' in result
-    
-    def test_fetch_macro_data_fallback(self):
-        """Test macro data fallback when API fails."""
-        # This would test the database fallback logic
-        pass
+
+        assert result["VIX"]["val"] == 16 and result["VIX"]["pct"] == pytest.approx(100 / 15)
+        assert result["SPY"]["val"] == pytest.approx(505 * 0.9)   # USD → EUR
+        assert result["US10Y"]["chg"] == pytest.approx(0.1)
 
 
 class TestCurrencyNormalization:
-    """Test currency normalization."""
-    
+    """FX conversion, incl. the UK pence (GBp) vs pound (GBP) distinction."""
+
     @patch('services.market_data.yf.download')
     def test_get_forex_rates(self, mock_download):
-        """Test forex rate fetching."""
-        mock_data = pd.Series([0.92], index=pd.date_range('2024-04-30', periods=1))
-        mock_download.return_value = mock_data
-        
+        mock_download.return_value = pd.DataFrame(
+            {"Close": [0.92]}, index=pd.date_range('2024-04-30', periods=1))
         from services.market_data import get_forex_rates
-        
-        rate = get_forex_rates(target="EUR")
-        
-        assert isinstance(rate, float)
-        assert rate > 0
+        get_forex_rates.clear()
+        assert get_forex_rates(target="EUR", source="USD") == pytest.approx(0.92)
+
+    @patch('services.market_data.yf.download')
+    def test_gbp_pounds_are_not_treated_as_pence(self, mock_download):
+        mock_download.return_value = pd.DataFrame(
+            {"Close": [1.17]}, index=pd.date_range('2024-04-30', periods=1))
+        from services.market_data import get_forex_rates
+        get_forex_rates.clear()
+        assert get_forex_rates(target="EUR", source="GBP") == pytest.approx(1.17)    # pounds
+        assert get_forex_rates(target="EUR", source="GBp") == pytest.approx(0.0117)  # pence
+        assert get_forex_rates(target="GBP", source="GBP") == 1.0
 
 
 class TestSmartMoneyAnalysis:

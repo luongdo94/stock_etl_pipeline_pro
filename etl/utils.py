@@ -376,9 +376,12 @@ def compute_score_details(row) -> dict:
     }
 
     def get_num(key, default=None):
-        """Safe numeric extraction with fallback."""
-        val = row.get(key)
-        return safe_float(val, default if default is not None else 0.0)
+        """Numeric value, or `default` when missing / NaN / unparseable.
+        default=None means "unknown": callers must skip or neutralise the metric instead of
+        scoring it as 0 (which used to give e.g. a missing beta the full low-beta bonus)."""
+        return safe_float(row.get(key), default)
+
+    missing = []  # metrics that were unknown and therefore skipped / neutralised
 
     sector = str(row.get("sector", "")).lower()
 
@@ -406,40 +409,43 @@ def compute_score_details(row) -> dict:
     #   1. Currently unprofitable (P/E < 0)
     #   2. Revenue growing fast (≥ 15% YoY)
     #   3. EPS trajectory improving (forward_eps > trailing_eps)
-    pe         = get_num("pe_ratio", 999)
-    rev_growth = get_num("revenue_growth", 0) or 0
-    fwd_eps    = get_num("forward_eps", None)
-    trail_eps  = get_num("trailing_eps", None)
+    pe         = get_num("pe_ratio")
+    rev_growth = get_num("revenue_growth", 0.0)
+    fwd_eps    = get_num("forward_eps")
+    trail_eps  = get_num("trailing_eps")
     is_early_stage = (
         pe is not None and pe < 0 and
         rev_growth > 0.15 and
         fwd_eps is not None and trail_eps is not None and fwd_eps > trail_eps
     )
 
-    pb  = get_num("price_to_book", 99)
-    peg = get_num("peg_ratio", 999)
-    roe = get_num("roe", 0)
+    pb  = get_num("price_to_book")
+    peg = get_num("peg_ratio")
+    roe = get_num("roe")
 
     # ── 1. VALUATION (Max 20) ────────────────────────────────────────────────────
     val_cfg = config["valuation"]
-    
-    if peg and peg > 0:
+
+    if peg is not None and peg > 0:
         categories["Valuation"] += np.interp(
-            peg, 
-            [val_cfg["peg_excellent"], val_cfg["peg_good"], val_cfg["peg_fair"], 3.0], 
+            peg,
+            [val_cfg["peg_excellent"], val_cfg["peg_good"], val_cfg["peg_fair"], 3.0],
             [12, 10, 4, 0]
         )
     elif is_early_stage:
         # Early stage: P/E is meaningless (negative). Reward fast revenue growth instead.
         categories["Valuation"] += np.interp(rev_growth * 100, [15, 30, 50, 80], [4, 8, 10, 12])
-    else:
+    elif pe is not None and pe > 0:
+        # No usable PEG → fall back to P/E. (A missing PEG used to default to 999, which took
+        # the PEG branch with 0 points, so P/E 18 and P/E 60 scored identically.)
         pe_bands = [val_cfg["pe_good"], val_cfg["pe_fair"], val_cfg["pe_poor"], 70] if is_tech_growth else \
                    [val_cfg["pe_excellent"], 22, val_cfg["pe_fair"], val_cfg["pe_poor"]]
-        if pe and pe > 0:
-            categories["Valuation"] += np.interp(pe, pe_bands, [12, 8, 3, 0])
+        categories["Valuation"] += np.interp(pe, pe_bands, [12, 8, 3, 0])
+    elif pe is None:
+        missing.append("pe_ratio/peg_ratio")
 
     # P/B: sector-adjusted — financials have different P/B norms than tech/industrials
-    if pb and pb > 0:
+    if pb is not None and pb > 0:
         if is_financial_utility:
             # Banks: P/B 1.0-1.8 is ideal; below 0.5 may signal distress (limited credit)
             pb_cfg = config["sector_adjustments"]
@@ -462,8 +468,8 @@ def compute_score_details(row) -> dict:
 
     # ── 2. PROFITABILITY (Max 25, or 30 for Tech) ────────────────────────────────
     prof_cfg = config["profitability"]
-    fcf = get_num("fcf_margin", 0) or 0
-    earn_growth = get_num("earnings_growth", 0) or 0
+    fcf = get_num("fcf_margin", 0.0)
+    earn_growth = get_num("earnings_growth", 0.0)
 
     if fcf > 0:
         categories["Profitability"] += np.interp(
@@ -473,7 +479,7 @@ def compute_score_details(row) -> dict:
             [1, 6, 12, 15, 15]
         )
 
-    if roe:
+    if roe is not None:
         categories["Profitability"] += np.interp(
             roe * 100, 
             [prof_cfg["roe_poor"] * 100, prof_cfg["roe_fair"] * 100, 
@@ -493,11 +499,19 @@ def compute_score_details(row) -> dict:
 
     # ── 3. FINANCIAL HEALTH (Max 15) ─────────────────────────────────────────────
     health_cfg = config["financial_health"]
-    debt  = get_num("total_debt", 0) or 0
-    ebitda = get_num("ebitda", 0)
-    ratio  = debt / ebitda if ebitda and ebitda > 0 else 999
+    debt   = get_num("total_debt")
+    ebitda = get_num("ebitda")
+    if debt is not None and debt <= 0:
+        ratio = 0.0                      # debt-free: healthy regardless of EBITDA
+    elif debt is not None and ebitda is not None:
+        ratio = debt / ebitda if ebitda > 0 else 999   # debt with no earnings = distressed
+    else:
+        ratio = None                     # unknown — previously scored as 999 (worst case)
 
-    if is_financial_utility:
+    if ratio is None:
+        missing.append("total_debt/ebitda")
+        categories["Financial Health"] += 8   # neutral midpoint of the 0–15 band
+    elif is_financial_utility:
         categories["Financial Health"] += np.interp(ratio, [0, 3, 6, 10, 15], [15, 15, 10, 5, 0])
     else:
         categories["Financial Health"] += np.interp(
@@ -510,10 +524,10 @@ def compute_score_details(row) -> dict:
     categories["Financial Health"] = min(int(round(categories["Financial Health"])), 15)
 
     # ── 4. NET PAYOUT YIELD (Max 10, or 5 for Tech) ──────────────────────────────
-    net_payout = get_num("net_payout_yield_pct", None)
+    net_payout = get_num("net_payout_yield_pct")
     if net_payout is None or net_payout == 0:
-        div_pct     = get_num("dividend_yield_pct", 0) or 0
-        buyback_pct = get_num("buyback_yield_pct",  0) or 0
+        div_pct     = get_num("dividend_yield_pct", 0.0)
+        buyback_pct = get_num("buyback_yield_pct",  0.0)
         net_payout  = div_pct + buyback_pct
 
     raw_yield_score = np.interp(net_payout, [0, 1.0, 2.5, 4.0, 6.0], [0, 3, 6, 9, 10])
@@ -525,8 +539,10 @@ def compute_score_details(row) -> dict:
     # ── 5. CONTEXT & MOMENTUM (Max 15) — reduced from 25 ────────────────────────
     mom_cfg = config["momentum"]
     sig = str(row.get("ma_signal", "NEUTRAL")).upper()
-    rsi = get_num("rsi", None)  # None = no RSI data: skip RSI scoring (no bias from default)
-    z   = get_num("price_z_score", 0) or 0
+    rsi = get_num("rsi")  # None = no RSI data: skip RSI scoring (no bias from default)
+    z   = get_num("price_z_score", 0.0)
+    if rsi is None:
+        missing.append("rsi")
 
     if "BULL" in sig:       categories["Context & Momentum"] += 8
     elif "NEUTRAL" in sig:  categories["Context & Momentum"] += 3
@@ -595,7 +611,7 @@ def compute_score_details(row) -> dict:
     # ── 8. RED FLAGS (Instant penalties) — strengthened in v4.0 ─────────────────
     flag_cfg = config["red_flags"]
     
-    if pe and pe < 0:
+    if pe is not None and pe < 0:
         if is_early_stage:
             categories["Red Flags"] += flag_cfg["negative_pe_early_stage"]
         elif rev_growth * 100 > 25:
@@ -604,7 +620,7 @@ def compute_score_details(row) -> dict:
             categories["Red Flags"] += flag_cfg["negative_pe_stagnant"]
 
     # Debt threshold tightened (10→8); new critical tier at D/EBITDA > 12
-    if not is_financial_utility and ratio != 999:
+    if not is_financial_utility and ratio is not None and ratio != 999:
         if ratio > health_cfg["debt_ebitda_critical"]:
             categories["Red Flags"] += flag_cfg["high_debt_critical"]
         elif ratio > 8:
@@ -613,9 +629,11 @@ def compute_score_details(row) -> dict:
     if z < -1.5 and ("sell" in consensus or "underperform" in consensus):
         categories["Red Flags"] += flag_cfg["value_trap"]
 
-    # Beta Risk Adjustment
-    beta = get_num("beta", None)
-    if beta is not None:
+    # Beta Risk Adjustment (unknown beta → no adjustment; it used to read as 0 = max low-beta bonus)
+    beta = get_num("beta")
+    if beta is None:
+        missing.append("beta")
+    else:
         if beta > 1.8:
             categories["Red Flags"] -= int(round(np.interp(beta, [1.8, 2.5, 3.5], [1, 3, 5])))
         elif beta < 0.8 and not is_tech_growth:
@@ -634,13 +652,33 @@ def compute_score_details(row) -> dict:
     total = base_score + categories["Red Flags"]
     final_score = int(max(0, min(total, 100)))
 
-    return {"total": final_score, "breakdown": categories}
+    return {"total": final_score, "breakdown": categories, "missing": missing}
 
 
 
 def compute_score(row) -> int:
     """Returns total score (0-100). Convenience wrapper."""
     return compute_score_details(row)["total"]
+
+
+def clean_upside_pct(target_price, price, avg_5y_price=None) -> float:
+    """
+    Analyst upside (%) used as a scoring input — one definition for the screener and the shell.
+    A target more than 100% away from price is treated as stale (split, crash or FX mismatch)
+    when it is also >3x off the price or the ticker has no 5Y price history → 0. Clipped to ±100.
+    """
+    t, p = safe_float_or_none(target_price), safe_float_or_none(price)
+    if not t or not p or t <= 0 or p <= 0:
+        return 0.0
+    upside = (t / p - 1) * 100
+    if abs(upside) > 100 and (safe_float_or_none(avg_5y_price) is None or abs(t / p) > 3):
+        return 0.0
+    return float(np.clip(upside, -100, 100))
+
+
+def safe_float_or_none(v):
+    from etl.retry_utils import safe_float
+    return safe_float(v, None)
 
 
 

@@ -362,3 +362,71 @@ class TestRealWorldScenarios:
         
         score = compute_score(row)
         assert score < 40, "Value trap should score poorly"
+
+
+# ── Missing data must be "unknown", never "zero" ─────────────────────────────────
+_BASE = dict(sector="Consumer Staples", pe_ratio=18, peg_ratio=1.2, price_to_book=4, roe=0.2,
+             fcf_margin=15, total_debt=1e9, ebitda=1e9, dividend_yield_pct=2, ma_signal="BULLISH",
+             rsi=50, price_z_score=0, upside_pct=10, recommendation_key="buy",
+             revenue_growth=0.06, earnings_growth=0.08, beta=1.0, forward_eps=3, trailing_eps=2.8)
+
+
+def _score(**overrides):
+    row = dict(_BASE)
+    row.update(overrides)
+    return compute_score_details(pd.Series(row))
+
+
+class TestMissingData:
+    def test_missing_beta_gets_no_low_beta_bonus(self):
+        assert _score(beta=None)["total"] == _score(beta=1.0)["total"]
+        assert _score(beta=0.3)["breakdown"]["Red Flags"] > _score(beta=None)["breakdown"]["Red Flags"]
+        assert "beta" in _score(beta=None)["missing"]
+
+    def test_missing_rsi_is_skipped_not_scored_as_zero(self):
+        d = _score(rsi=None)
+        assert "rsi" in d["missing"]
+        # same as an RSI exactly at the neutral boundary minus its 5 RSI points
+        assert d["breakdown"]["Context & Momentum"] == _score(rsi=50)["breakdown"]["Context & Momentum"] - 5
+
+    def test_missing_peg_falls_back_to_pe(self):
+        cheap = _score(peg_ratio=None, pe_ratio=18)["breakdown"]["Valuation"]
+        pricey = _score(peg_ratio=None, pe_ratio=60)["breakdown"]["Valuation"]
+        assert cheap > pricey
+
+    def test_debt_free_company_is_healthy_even_without_ebitda(self):
+        assert _score(total_debt=0, ebitda=None)["breakdown"]["Financial Health"] == 15
+
+    def test_unknown_leverage_is_neutral_not_worst_case(self):
+        d = _score(total_debt=None, ebitda=None)
+        assert d["breakdown"]["Financial Health"] == 8
+        assert d["breakdown"]["Red Flags"] == 0
+        assert "total_debt/ebitda" in d["missing"]
+
+    def test_debt_with_negative_ebitda_is_still_penalised(self):
+        assert _score(total_debt=1e9, ebitda=-5e8)["breakdown"]["Financial Health"] == 0
+
+
+class TestSingleScoringEngine:
+    def test_vectorized_matches_scalar(self):
+        from etl.performance_utils import vectorized_compute_scores
+        rows = [dict(_BASE), {**_BASE, "beta": None}, {**_BASE, "peg_ratio": None},
+                {**_BASE, "rsi": None, "sector": "Semiconductors"}, {**_BASE, "ebitda": None},
+                {**_BASE, "pe_ratio": -5, "revenue_growth": 0.4}]
+        df = pd.DataFrame(rows)
+        assert list(vectorized_compute_scores(df)) == [compute_score(pd.Series(r)) for r in rows]
+
+
+class TestCleanUpside:
+    def test_normal_target(self):
+        from etl.utils import clean_upside_pct
+        assert clean_upside_pct(110, 100, 90) == pytest.approx(10)
+
+    def test_stale_target_is_zeroed(self):
+        from etl.utils import clean_upside_pct
+        assert clean_upside_pct(500, 100, 90) == 0        # >3x off
+        assert clean_upside_pct(250, 100, None) == 0      # >100% and no 5Y history
+
+    def test_missing_inputs(self):
+        from etl.utils import clean_upside_pct
+        assert clean_upside_pct(None, 100) == 0 and clean_upside_pct(120, 0) == 0

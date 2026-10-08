@@ -27,7 +27,7 @@ except ImportError:
     pass  # python-dotenv not installed; rely on system env vars
 
 import auth
-from etl.utils import compute_score, apply_macro_adjustment
+from etl.utils import apply_macro_adjustment, clean_upside_pct
 from etl.performance_utils import vectorized_compute_scores
 from services.db import DB_PATH, load_data
 from services.market_data import fetch_fred_macro, fetch_macro_data, get_forex_rates
@@ -306,28 +306,21 @@ latest_prices_reco = prices_full.sort_values('date').groupby('ticker').tail(1).c
 _merge_cols = ["ticker", "ma_signal", "price_close", "price_z_score", "rsi"]
 _merge_cols = [c for c in _merge_cols if c in latest_prices_reco.columns]
 reco_df = companies_full.merge(latest_prices_reco[_merge_cols], on="ticker", how="left")
-reco_df["upside_pct"] = (reco_df["target_mean_price"] / reco_df["price_close"] - 1) * 100
-# ── Stale Target Detection ─────────────────────────────────────────────────
-# If absolute upside > 100% AND target deviates > 3x from current price
-# → Analyst target is likely stale (due to split, crash, or FX mismatch). Nullify it.
-_stale_mask = (
-    (reco_df["upside_pct"].abs() > 100) &
-    (
-        reco_df["avg_5y_price"].isna() |
-        ((reco_df["target_mean_price"] / reco_df["price_close"].replace(0, float("nan"))).abs() > 3)
-    )
-)
-reco_df.loc[_stale_mask, "upside_pct"] = float("nan")
-reco_df["upside_pct"] = reco_df["upside_pct"].fillna(0).clip(-100, 100)
-# RSI is now merged from warehouse. NaN = no data → utils.py will skip RSI scoring (0 pts, no bias).
+# Same stale-target rule as the screener (etl.utils.clean_upside_pct)
+reco_df["upside_pct"] = [
+    clean_upside_pct(t, p, a5)
+    for t, p, a5 in zip(reco_df["target_mean_price"], reco_df["price_close"],
+                        reco_df.get("avg_5y_price", pd.Series(index=reco_df.index, dtype=float)))
+]
 
-# ✅ PERFORMANCE OPTIMIZATION: Use vectorized scoring (10x faster than apply)
-try:
-    reco_df["score"] = vectorized_compute_scores(reco_df)
-    logger.info("✅ Using vectorized scoring (10x performance boost)")
-except Exception as e:
-    logger.warning(f"⚠️ Vectorized scoring failed, falling back to row-by-row: {e}")
-    reco_df["score"] = reco_df.apply(compute_score, axis=1)
+# ONE score everywhere: reuse the screener's Quality (identical inputs, same compute_score);
+# score the remaining rows (indices/benchmarks the screener skips) with the same engine.
+_quality_map = m_df.set_index("Ticker")["Quality"].to_dict() if "Ticker" in m_df.columns else {}
+reco_df["score"] = reco_df["ticker"].map(_quality_map)
+_unscored = reco_df["score"].isna()
+if _unscored.any():
+    reco_df.loc[_unscored, "score"] = vectorized_compute_scores(reco_df[_unscored])
+reco_df["score"] = reco_df["score"].astype(int)
 
 
 valid_reco = reco_df[~reco_df['ticker'].isin(indices_list)].dropna(subset=['score', 'market_cap'])

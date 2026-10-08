@@ -24,16 +24,20 @@ def get_sm_spirit_unified_v2(df_raw: "pd.DataFrame", sector: str = "Unknown") ->
         NEW: MFI must confirm the signal (MFI divergence in same direction)
         Strength bonus: +15 pts if MFI confirms
 
-    Layer 2 — Institutional Volume Pattern (Medium Priority):
-        Detects large block trades (volume spikes > 2x average on specific days)
-        - Large volume on up days → Institutional buying
-        - Large volume on down days → Institutional selling
-        Filters out retail-driven volume (small, erratic trades)
+    Layer 2 — High-Volume Day Pattern (Medium Priority):
+        Days whose total volume is > 2x the 20-day average, classified by that day's
+        close-to-close direction.
+        - Mostly up days → ACCUMULATION, mostly down days → DISTRIBUTION
+        NOTE: daily volume cannot identify who traded (no tick / block data), so
+        "institutional" here is a heuristic label, not an observation.
 
     Layer 3 — OBV Trend vs MA(21) (Fallback):
-        Classic institutional flow: OBV above/below its 21-day MA.
-        Uses a 5-day consistency window to avoid whipsaws.
-        Applied only when no clear divergence is detected in Layer 1 & 2.
+        OBV must sit clearly above/below its 21-day MA — gap > 0.9 in volume units on
+        each of the last 5 days — otherwise NEUTRAL. Calibrated so random-walk data
+        triggers this layer only ~5% of the time.
+
+    Calibration: on random-walk prices with random volume the engine as a whole should
+    stay NEUTRAL most of the time (see tests/test_smart_money.py).
 
     Returns:
         dict: {
@@ -222,10 +226,12 @@ def get_sm_spirit_unified_v2(df_raw: "pd.DataFrame", sector: str = "Unknown") ->
         large_vol_df = df.tail(20)[large_vol_mask]
         
         if len(large_vol_df) >= 3:  # At least 3 large volume days
-            # Check if large volume aligns with price direction
-            large_vol_df['price_change'] = large_vol_df['price_close'].diff()
-            up_days = (large_vol_df['price_change'] > 0).sum()
-            down_days = (large_vol_df['price_change'] < 0).sum()
+            # Direction of each spike day = its own close vs the PREVIOUS SESSION's close.
+            # (Diffing inside the filtered frame compared one spike day with the previous
+            # spike day — possibly weeks earlier — and always dropped the first one.)
+            day_change = df['price_close'].diff().tail(20)[large_vol_mask]
+            up_days = (day_change > 0).sum()
+            down_days = (day_change < 0).sum()
             total_days = len(large_vol_df)
             
             # Institutional buying: large volume on up days
@@ -253,27 +259,29 @@ def get_sm_spirit_unified_v2(df_raw: "pd.DataFrame", sector: str = "Unknown") ->
             "mfi_confirm": False
         }
 
-    # ── LAYER 3: OBV Trend vs MA(21) — fallback ───────────────────────────────
-    # Require 3 of the last 5 days consistently above/below MA to avoid whipsaws
-    recent_obv    = obv.tail(5)
-    recent_obv_ma = obv_ma21.tail(5)
-    above_count   = (recent_obv > recent_obv_ma).sum()
-    below_count   = (recent_obv < recent_obv_ma).sum()
+    # ── LAYER 3: OBV Trend vs MA(21) — fallback, with a NEUTRAL zone ─────────
+    # "3 of the last 5 days above/below the MA" is true for almost any series, so on pure
+    # random data this layer fired ~88% of the time (and the engine was never NEUTRAL).
+    # Now the gap must be large in VOLUME units — (OBV − MA21) / (avgVol20 · √21) — on all 5
+    # recent days. OBV_GAP_THRESHOLD = 0.9 is the ~95th percentile of that gap on random walks
+    # (~5% false alarms from this layer, ~19% for the whole engine; a genuine volume-on-up-days
+    # pattern is still caught ~85% of the time — see tests/test_smart_money.py). (The old strength divided by |MA(OBV)|, which
+    # explodes whenever cumulative OBV crosses zero.)
+    OBV_GAP_THRESHOLD = 0.9
+    gap = ((obv - obv_ma21) / (avg_vol_20 * np.sqrt(21))).tail(5)
 
     trend_signal = "NEUTRAL"
     trend_strength = 0
 
-    if above_count >= 3:
-        trend_signal = "ACCUMULATION"
-        # Strength based on consistency, distance from MA, and volume quality
-        consistency_pct = above_count / 5.0
-        avg_distance = ((recent_obv - recent_obv_ma) / recent_obv_ma.abs()).mean() if recent_obv_ma.abs().mean() > 0 else 0
-        trend_strength = int(consistency_pct * 40 + min(abs(avg_distance) * 100, 1.0) * 30 + (volume_quality / 100) * 30)
-    elif below_count >= 3:
-        trend_signal = "DISTRIBUTION"
-        consistency_pct = below_count / 5.0
-        avg_distance = ((recent_obv - recent_obv_ma) / recent_obv_ma.abs()).mean() if recent_obv_ma.abs().mean() > 0 else 0
-        trend_strength = int(consistency_pct * 40 + min(abs(avg_distance) * 100, 1.0) * 30 + (volume_quality / 100) * 30)
+    if gap.notna().all() and len(gap) == 5:
+        if (gap > OBV_GAP_THRESHOLD).all():
+            trend_signal = "ACCUMULATION"
+        elif (gap < -OBV_GAP_THRESHOLD).all():
+            trend_signal = "DISTRIBUTION"
+        if trend_signal != "NEUTRAL":
+            weakest = float(gap.abs().min())
+            # gap 0.9 → 42 pts, gap ≥ 1.5 → 70 pts; volume quality adds up to 30
+            trend_strength = int(min(weakest / 1.5, 1.0) * 70 + (volume_quality / 100) * 30)
 
     return {
         "signal": trend_signal,

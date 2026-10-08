@@ -10,20 +10,21 @@ from services.db import get_db_connection
 def get_forex_rates(target="EUR", source="USD"):
     """Returns the rate to convert `source` currency → `target` currency.
     Handles GBp (pence) automatically: GBp → GBP → EUR."""
-    import yfinance as yf
-    # GBp = UK pence = GBP/100
-    _gbp_pence = source.upper() in ("GBP", "GBX")
-    _src = "GBP" if source.upper() in ("GBP", "GBX") else source.upper()
+    # GBp / GBX = UK pence = GBP/100. Case matters: "GBP" is pounds. (Comparing after .upper()
+    # used to treat pounds as pence and divide every GBP rate by 100.)
+    _gbp_pence = source in ("GBp", "GBX", "GBx")
+    _src = "GBP" if _gbp_pence else source.upper()
+    _scale = 0.01 if _gbp_pence else 1.0
     if _src == target.upper():
-        return 0.01 if source.upper() in ("GBP", "GBX") else 1.0  # pence → EUR still needs /100
+        return _scale  # pence → pounds still needs /100
     try:
-        import sys, os
+        import os
         from contextlib import redirect_stdout, redirect_stderr
         with open(os.devnull, 'w') as devnull:
             with redirect_stdout(devnull), redirect_stderr(devnull):
                 df = yf.download(f"{_src}{target}=X", period="5d", progress=False, threads=False)["Close"]
         rate = float(df.dropna().iloc[-1].item()) if not df.dropna().empty else 1.0
-        return rate / 100.0 if source.upper() in ("GBP", "GBX") else rate
+        return rate * _scale
     except:
         return 1.0
 
@@ -45,7 +46,8 @@ def fetch_macro_data():
                 data = yf.download(tickers, period="5d", interval="1d", progress=False, threads=False)
         
         # Handling multi-index columns from yfinance 0.2.x+
-        if "Close" in data.columns.levels[0]:
+        # (flat columns have no .levels — that AttributeError used to send every call to the DB fallback)
+        if isinstance(data.columns, pd.MultiIndex) and "Close" in data.columns.get_level_values(0):
             closes = data["Close"]
         else:
             closes = data

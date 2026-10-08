@@ -5,7 +5,7 @@ import streamlit as st
 from core.levels import get_tactical_metrics
 from core.rating import compute_institutional_rating
 from core.smart_money import get_sm_spirit_unified_v2
-from etl.utils import compute_score
+from etl.utils import clean_upside_pct, compute_score
 
 
 @st.cache_data(ttl=3600)
@@ -58,8 +58,7 @@ def get_master_screener_data(_companies_df, _prices_df, _quarterly_fin, _annual_
         latest_rsi = ticker_prices["rsi"].iloc[-1] if not ticker_prices.empty else 50
         
         cur_p = ticker_prices["price_close"].iloc[-1]
-        target_p = row.get("target_mean_price", 0)
-        upside = ((target_p / cur_p) - 1) * 100 if target_p > 0 else 0
+        upside = clean_upside_pct(row.get("target_mean_price"), cur_p, row.get("avg_5y_price"))
         
         if len(ticker_prices) >= 2:
             prev_p = ticker_prices["price_close"].iloc[-2]
