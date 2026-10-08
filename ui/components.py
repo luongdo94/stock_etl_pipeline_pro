@@ -1,4 +1,6 @@
 """Reusable metric tiles and the sector health matrix."""
+import html
+
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -113,7 +115,7 @@ def render_metric_row(label, value, delta=None, suffix="", is_pct=False, color_i
             delta_html = f"<span style='color:#888;font-size:0.72rem;'>{delta}</span>"
 
     val_col = value_color if value_color else "#e8eaf6"
-    tooltip_attr = f"title='{help_text}'" if help_text else ""
+    tooltip_attr = f'title="{html.escape(str(help_text), quote=True)}"' if help_text else ""
     cursor_style = "cursor:help;" if help_text else ""
 
     st.markdown(f"""
@@ -141,7 +143,7 @@ def render_metric_tile(label, value, delta=None, suffix="", is_pct=False, color_
         except:
             delta_html = f"<div style='color:#888;font-size:0.68rem;'>{delta}</div>"
 
-    tooltip_attr = f"title='{help_text}'" if help_text else ""
+    tooltip_attr = f'title="{html.escape(str(help_text), quote=True)}"' if help_text else ""
     st.markdown(f"""
         <div {tooltip_attr} style='background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);
                     border-radius:6px;padding:5px 8px;margin-bottom:5px;text-align:center;cursor:help;'>
