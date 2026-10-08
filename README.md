@@ -140,6 +140,35 @@ An institutional-grade simulation engine that allows you to directly trade your 
 - **Risk Management**: Incorporates Capital constraints, Trade Slippage (Tx costs), Hard Stop-Loss (%), and Take-Profit (%).
 - **Interactive Outputs**: Visualizes Equity Curves vs traditional Buy&Hold, alongside a granular, row-by-row Trade Log explaining exactly *why* a trade was executed.
 
+### Decision Summary (Stock Analysis tab)
+One answer per stock instead of many competing badges: **stance** (BUY CANDIDATE / HOLD-WATCH /
+AVOID-TRIM / NOT ENOUGH DATA), **confidence**, **expected return net of costs**, **downside**
+(worse of bear-case value and stop), **reward/risk**, **suggested position size** and the
+**conditions that would invalidate the thesis**. A BUY candidate needs a ≥25% margin of safety,
+reward/risk ≥ 2 and non-low confidence. Confidence is capped at MEDIUM until the Track Record shows
+statistical evidence. Logic: `core/decision.py`; assumptions (commission, FX spread, dividend
+withholding, risk per trade, max position, earnings blackout) in `config/decision_rules.yaml`.
+
+- **Valuation** (`core/valuation.py`): levered-FCF DCF discounted at the CAPM cost of equity (no
+  double-counting of debt), growth anchored on the company's own revenue/earnings/FCF history and
+  fading to terminal, bear/base/bull scenarios, sensitivity table, **reverse DCF** (growth implied by
+  the price), and **relative valuation** (percentile vs industry peers, P/E vs own 5-year average).
+- **Portfolio fit**: correlation with current holdings and sector / currency weight before → after.
+- **Timing**: warning when earnings are due within the blackout window.
+
+### Track Record tab
+Every ETL run stores the score and action shown for each stock that day (`etl/snapshot.py` →
+`warehouse/track_record.duckdb`, mirrored to `marts.score_snapshots`). The tab compares them with
+what happened next vs SPY: IC per horizon, returns by score quintile, hit rate per action, and a
+log of every change of call. Logic: `core/track_record.py`.
+
+### Alerts & sell discipline
+Alert rules are stored per user in Supabase (create the table once with `docs/sql/stock_alerts.sql`)
+and evaluated in-app on every load. The Watchlist tab flags ideas whose invalidation level, take
+profit, entry zone or intrinsic value has been reached, and holdings/ideas reporting soon.
+
+> Decision support for your own judgement — not investment advice.
+
 ---
 
 ## 🛡️ 5. Observability & System Integrity

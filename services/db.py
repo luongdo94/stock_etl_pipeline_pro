@@ -41,6 +41,7 @@ _PARQUET_TABLE_MAP = {
     "raw.quarterly_financials":     ["quarterly_financials.parquet"],
     "raw.company_info":             ["company_info.parquet"],
     "raw.stock_prices":             ["macro_prices.parquet"],
+    "marts.score_snapshots":        ["score_snapshots.parquet"],
 }
 
 
@@ -242,93 +243,99 @@ def get_db_connection(read_only=False):
 def load_data():
     """Load all required data, normalize currencies, and pre-compute técnicos inside cache."""
     with get_db_connection(read_only=True) as conn:
-        prices_f = conn.execute("""
-            SELECT f.date, f.ticker, d.company, d.sector, d.region,
-                   f.price_open, f.price_high, f.price_low, f.price_close, 
-                   f.daily_return_pct, f.volume,
-                   f.ma_20, f.ma_50, f.ma_200, f.ma_signal, 
-                   f.price_z_score, f.pct_from_ma200, f.pct_from_52w_high,
-                   f.is_volume_spike, f.cap_category
-            FROM marts.fct_daily_returns f
-            LEFT JOIN marts.dim_companies d USING (ticker)
-            WHERE f.date >= CURRENT_DATE - INTERVAL 3 YEAR
-            ORDER BY f.date
-        """).df()
+        return read_warehouse(conn)
 
 
-        companies_f = conn.execute("""
-            SELECT d.*, r.free_cashflow 
-            FROM marts.dim_companies d
-            LEFT JOIN raw.company_info r USING (ticker)
-        """).df()
-        # Ensure industry column exists even on older warehouses
-        if "industry" not in companies_f.columns:
-            companies_f["industry"] = None
-        monthly_f = conn.execute("SELECT * FROM marts.agg_monthly_performance ORDER BY month, ticker").df()
-        annual_f = conn.execute("SELECT * FROM marts.dim_annual_financials").df()
+def read_warehouse(conn):
+    """All dashboard frames from an open DuckDB connection (no Streamlit) — shared with the ETL
+    snapshot job so the stored daily scores are exactly what the dashboard showed."""
+    prices_f = conn.execute("""
+        SELECT f.date, f.ticker, d.company, d.sector, d.region,
+               f.price_open, f.price_high, f.price_low, f.price_close, 
+               f.daily_return_pct, f.volume,
+               f.ma_20, f.ma_50, f.ma_200, f.ma_signal, 
+               f.price_z_score, f.pct_from_ma200, f.pct_from_52w_high,
+               f.is_volume_spike, f.cap_category
+        FROM marts.fct_daily_returns f
+        LEFT JOIN marts.dim_companies d USING (ticker)
+        WHERE f.date >= CURRENT_DATE - INTERVAL 3 YEAR
+        ORDER BY f.date
+    """).df()
+
+
+    companies_f = conn.execute("""
+        SELECT d.*, r.free_cashflow, r._extracted_at AS info_updated_at
+        FROM marts.dim_companies d
+        LEFT JOIN raw.company_info r USING (ticker)
+    """).df()
+    # Ensure industry column exists even on older warehouses
+    if "industry" not in companies_f.columns:
+        companies_f["industry"] = None
+    monthly_f = conn.execute("SELECT * FROM marts.agg_monthly_performance ORDER BY month, ticker").df()
+    annual_f = conn.execute("SELECT * FROM marts.dim_annual_financials").df()
+    
+    try:
+        quarterly_f = conn.execute("SELECT * FROM marts.dim_quarterly_financials").df()
+    except Exception:
+        quarterly_f = pd.DataFrame(columns=["ticker", "year", "quarter", "report_date", "revenue", "eps"])
         
-        try:
-            quarterly_f = conn.execute("SELECT * FROM marts.dim_quarterly_financials").df()
-        except Exception:
-            quarterly_f = pd.DataFrame(columns=["ticker", "year", "quarter", "report_date", "revenue", "eps"])
-            
-        try:
-            earnings_calendar = conn.execute("SELECT * FROM raw.earnings_calendar").df()
-            if not earnings_calendar.empty:
-                earnings_calendar["earnings_date"] = pd.to_datetime(earnings_calendar["earnings_date"])
-            else:
-                # Ensure columns exist even if empty
-                earnings_calendar = pd.DataFrame(columns=["ticker", "earnings_date", "eps_avg", "rev_avg"])
-        except Exception:
+    try:
+        earnings_calendar = conn.execute("SELECT * FROM raw.earnings_calendar").df()
+        if not earnings_calendar.empty:
+            earnings_calendar["earnings_date"] = pd.to_datetime(earnings_calendar["earnings_date"])
+        else:
+            # Ensure columns exist even if empty
             earnings_calendar = pd.DataFrame(columns=["ticker", "earnings_date", "eps_avg", "rev_avg"])
+    except Exception:
+        earnings_calendar = pd.DataFrame(columns=["ticker", "earnings_date", "eps_avg", "rev_avg"])
 
-        try:
-            dq_warnings_f = conn.execute("SELECT * FROM marts.dq_warnings ORDER BY is_critical DESC, violations DESC").df()
-        except Exception:
-            dq_warnings_f = pd.DataFrame()
+    try:
+        dq_warnings_f = conn.execute("SELECT * FROM marts.dq_warnings ORDER BY is_critical DESC, violations DESC").df()
+    except Exception:
+        dq_warnings_f = pd.DataFrame()
 
-        try:
-            hist_fcf_f = conn.execute("SELECT ticker, year, free_cash_flow, operating_cash_flow FROM raw.hist_fcf ORDER BY ticker, year").df()
-        except Exception:
-            hist_fcf_f = pd.DataFrame()
+    try:
+        hist_fcf_f = conn.execute("SELECT ticker, year, free_cash_flow, operating_cash_flow FROM raw.hist_fcf ORDER BY ticker, year").df()
+    except Exception:
+        hist_fcf_f = pd.DataFrame()
 
-        try:
-            hist_fcf_q_f = conn.execute("SELECT ticker, year, quarter, free_cash_flow, operating_cash_flow FROM raw.hist_fcf_quarterly ORDER BY ticker, year, quarter").df()
-        except Exception:
-            hist_fcf_q_f = pd.DataFrame()
+    try:
+        hist_fcf_q_f = conn.execute("SELECT ticker, year, quarter, free_cash_flow, operating_cash_flow FROM raw.hist_fcf_quarterly ORDER BY ticker, year, quarter").df()
+    except Exception:
+        hist_fcf_q_f = pd.DataFrame()
 
-        try:
-            earnings_surprise_f = conn.execute(
-                "SELECT ticker, quarter_date, eps_actual, eps_estimate, eps_difference, surprise_pct, currency, period FROM raw.earnings_surprise ORDER BY ticker, quarter_date"
-            ).df()
-            if not earnings_surprise_f.empty:
-                earnings_surprise_f["quarter_date"] = pd.to_datetime(earnings_surprise_f["quarter_date"])
-        except Exception:
-            earnings_surprise_f = pd.DataFrame(columns=["ticker", "quarter_date", "eps_actual", "eps_estimate", "eps_difference", "surprise_pct", "currency", "period"])
+    try:
+        earnings_surprise_f = conn.execute(
+            "SELECT ticker, quarter_date, eps_actual, eps_estimate, eps_difference, surprise_pct, currency, period FROM raw.earnings_surprise ORDER BY ticker, quarter_date"
+        ).df()
+        if not earnings_surprise_f.empty:
+            earnings_surprise_f["quarter_date"] = pd.to_datetime(earnings_surprise_f["quarter_date"])
+    except Exception:
+        earnings_surprise_f = pd.DataFrame(columns=["ticker", "quarter_date", "eps_actual", "eps_estimate", "eps_difference", "surprise_pct", "currency", "period"])
 
-        # ── Pipeline Health Data ──
-        try:
-            audit_db = str(Path(ROOT) / "warehouse" / "etl_audit.duckdb")
-            with duckdb.connect(audit_db, read_only=True) as a_conn:
-                etl_audit_f = a_conn.execute("""
-                    SELECT status, start_time, rows_processed
-                    FROM etl.audit_log 
-                    ORDER BY start_time DESC 
-                    LIMIT 1
-                """).df()
-        except:
-            etl_audit_f = pd.DataFrame()
+    # ── Pipeline Health Data ──
+    try:
+        audit_db = str(Path(ROOT) / "warehouse" / "etl_audit.duckdb")
+        with duckdb.connect(audit_db, read_only=True) as a_conn:
+            etl_audit_f = a_conn.execute("""
+                SELECT status, start_time, rows_processed
+                FROM etl.audit_log 
+                ORDER BY start_time DESC 
+                LIMIT 1
+            """).df()
+    except:
+        etl_audit_f = pd.DataFrame()
 
-        try:
-            total_tickers_f = conn.execute("SELECT COUNT(*) FROM marts.dim_companies").fetchone()[0]
-        except:
-            total_tickers_f = 0
-            
-        try:
-            tv_sector_rotation_f = conn.execute("SELECT * FROM raw.tv_sector_rotation").df()
-        except:
-            tv_sector_rotation_f = pd.DataFrame()
-            
+    try:
+        total_tickers_f = conn.execute("SELECT COUNT(*) FROM marts.dim_companies").fetchone()[0]
+    except:
+        total_tickers_f = 0
+        
+    try:
+        tv_sector_rotation_f = conn.execute("SELECT * FROM raw.tv_sector_rotation").df()
+    except:
+        tv_sector_rotation_f = pd.DataFrame()
+        
     # ── PRE-PROCESSING INSIDE CACHE ──
     prices_f["date"] = pd.to_datetime(prices_f["date"])
     monthly_f["month"] = pd.to_datetime(monthly_f["month"])
@@ -351,3 +358,13 @@ def load_data():
         dq_warnings_f, hist_fcf_f, hist_fcf_q_f, etl_audit_f, total_tickers_f, earnings_surprise_f,
         tv_sector_rotation_f
     )
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def load_track_record():
+    """Daily score snapshots written by etl/snapshot.py (empty until the first ETL run with it)."""
+    try:
+        with get_db_connection(read_only=True) as conn:
+            return conn.execute("SELECT * FROM marts.score_snapshots ORDER BY as_of_date, ticker").df()
+    except Exception:
+        return pd.DataFrame(columns=["as_of_date", "ticker", "price_close", "quality", "action"])

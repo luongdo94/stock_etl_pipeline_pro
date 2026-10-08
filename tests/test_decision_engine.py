@@ -1,0 +1,222 @@
+"""Tests for the decision-support layer: valuation, decision, track record, alerts, portfolio risk."""
+from datetime import date
+
+import numpy as np
+import pandas as pd
+import pytest
+
+from core import alerts, decision, portfolio_risk, track_record, valuation
+
+
+# ── valuation ────────────────────────────────────────────────────────────────
+class TestDCF:
+    def test_zero_growth_perpetuity_matches_gordon(self):
+        # growth 0 fading to terminal 0 → plain perpetuity FCF / r
+        v = valuation.dcf_equity_value(100, growth=0.0, discount_rate=0.10, terminal_growth=0.0)
+        assert v == pytest.approx(1000, rel=1e-9)
+
+    def test_debt_is_not_subtracted_from_fcfe_value(self):
+        # equity value depends only on FCFE, shares, growth and cost of equity
+        assert valuation.dcf_per_share(100, 10, 0.0, 0.10, 0.0) == pytest.approx(100)
+
+    def test_growth_fades_to_terminal(self):
+        faded = valuation.dcf_equity_value(100, 0.20, 0.10, 0.02, years=5)
+        constant = sum(100 * 1.2 ** t / 1.1 ** t for t in range(1, 6)) + \
+            100 * 1.2 ** 5 * 1.02 / 0.08 / 1.1 ** 5
+        assert faded < constant
+
+    def test_rejects_discount_below_terminal(self):
+        with pytest.raises(ValueError):
+            valuation.dcf_equity_value(100, 0.05, 0.02, 0.025)
+
+    def test_reverse_dcf_round_trips(self):
+        price = valuation.dcf_per_share(500, 100, 0.08, 0.09)
+        g = valuation.reverse_dcf_growth(price, 500, 100, 0.09)
+        assert g == pytest.approx(0.08, abs=1e-6)
+
+    def test_negative_fcf_cannot_be_valued(self):
+        assert valuation.dcf_per_share(-10, 100, 0.1, 0.09) is None
+        assert valuation.reverse_dcf_growth(50, -10, 100, 0.09) is None
+
+    def test_scenarios_are_ordered(self):
+        sc = valuation.dcf_scenarios(500, 100, 0.08, 0.09)
+        assert sc["bear"].value_per_share < sc["base"].value_per_share < sc["bull"].value_per_share
+
+    def test_cost_of_equity_capm(self):
+        assert valuation.cost_of_equity(1.2, risk_free=0.04, erp=0.05) == pytest.approx(0.10)
+        assert valuation.cost_of_equity(None) == pytest.approx(0.09)
+
+    def test_anchor_growth_uses_company_data_and_clips(self):
+        g, src = valuation.anchor_growth(0.10, 0.30, None)
+        assert g == pytest.approx(0.20) and set(src) == {"revenue growth", "earnings growth"}
+        assert valuation.anchor_growth(0.9, 0.8, 0.7)[0] == valuation.GROWTH_CAP
+        assert valuation.anchor_growth(None, None, None) == (0.05, ["default"])
+
+    def test_fcf_cagr(self):
+        assert valuation.fcf_cagr([100, 110, 121]) == pytest.approx(0.10)
+        assert valuation.fcf_cagr([-5, 100]) is None
+
+    def test_verdict_requires_margin_of_safety(self):
+        assert valuation.valuation_verdict(0.30) == "UNDERVALUED"
+        assert valuation.valuation_verdict(0.10).startswith("BELOW VALUE")
+        assert valuation.valuation_verdict(-0.30) == "OVERVALUED"
+
+    def test_relative_valuation_percentiles(self):
+        cos = pd.DataFrame({"ticker": list("ABCDE"), "sector": ["X"] * 5, "industry": [None] * 5,
+                            "pe_ratio": [10, 15, 20, 25, 30], "pe_5y_avg": [20, 15, 20, 25, 30]})
+        rv = valuation.relative_valuation(cos, "A")
+        assert rv["percentiles"]["pe_ratio"] == 0          # cheapest in sector
+        assert rv["pe_vs_5y"] == pytest.approx(0.5)        # half its own 5Y average
+        assert valuation.relative_valuation(cos, "E")["percentiles"]["pe_ratio"] == 80
+
+
+# ── decision ─────────────────────────────────────────────────────────────────
+class TestDecision:
+    rules = decision.load_rules()
+
+    def _d(self, **kw):
+        base = dict(price=100, base_value=150, bear_value=90, stop_loss=92, currency="EUR",
+                    track_record_ok=True, today=date(2026, 1, 10), rules=self.rules)
+        base.update(kw)
+        return decision.build_decision(**base)
+
+    def test_buy_candidate_needs_margin_and_reward_risk(self):
+        d = self._d()
+        assert d.stance == "BUY CANDIDATE"
+        assert d.reward_risk == pytest.approx((0.5 - 0.002) / 0.10)
+        assert 0 < d.position["size_pct"] <= 10
+
+    def test_thin_margin_is_hold(self):
+        assert self._d(base_value=110).stance == "HOLD / WATCH"
+
+    def test_overvalued_is_avoid(self):
+        d = self._d(base_value=80)
+        assert d.stance == "AVOID / TRIM"
+        assert d.reward_risk is None          # no upside → no (negative) reward/risk ratio
+
+    def test_no_value_is_not_enough_data(self):
+        assert self._d(base_value=None, bear_value=None).stance == "NOT ENOUGH DATA"
+
+    def test_unvalidated_signals_cap_confidence(self):
+        assert self._d(track_record_ok=False).confidence != "HIGH"
+
+    def test_fx_costs_reduce_net_return(self):
+        eur, usd = self._d(), self._d(currency="USD")
+        assert usd.net_expected_return_pct < eur.net_expected_return_pct
+
+    def test_dividend_withholding_drag(self):
+        us = decision.dividend_tax_drag_pct(4.0, "United States", self.rules)
+        assert us == pytest.approx(0.04 * 0.15)
+
+    def test_earnings_warning(self):
+        d = self._d(next_earnings=date(2026, 1, 13))
+        assert any("Earnings in 3 day" in w for w in d.warnings)
+
+    def test_position_size_risk_budget(self):
+        p = decision.position_size(100, 95, self.rules)          # 5% stop → 1%/5% = 20% → capped at 10%
+        assert p["size_pct"] == 10 and p["capped"]
+        p = decision.position_size(100, 80, self.rules)          # 20% stop → 5%
+        assert p["size_pct"] == pytest.approx(5)
+
+
+# ── track record ─────────────────────────────────────────────────────────────
+def _prices(n=200, tickers=("A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "SPY")):
+    dates = pd.bdate_range("2024-01-01", periods=n)
+    rows = []
+    for i, t in enumerate(tickers):
+        drift = 0.0 if t == "SPY" else (i - 4.5) * 0.001   # A..E lag SPY, F..J beat it
+        rows.append(pd.DataFrame({"date": dates, "ticker": t,
+                                  "price_close": 100 * np.exp(np.arange(n) * drift)}))
+    return pd.concat(rows, ignore_index=True)
+
+
+class TestTrackRecord:
+    def test_perfect_score_has_positive_ic_and_monotonic_quintiles(self):
+        px = _prices()
+        tick = list("ABCDEFGHIJ")
+        snaps = pd.concat([pd.DataFrame({"as_of_date": d, "ticker": tick, "quality": range(10),
+                                         "action": ["SELL"] * 5 + ["BUY"] * 5})
+                           for d in pd.bdate_range("2024-01-01", periods=60)])
+        fr = track_record.forward_returns(snaps, px, horizons=(21,))
+        ic = track_record.information_coefficient(fr, 21)
+        assert ic["ic"] == pytest.approx(1.0) and ic["n_days"] == 60
+        q = track_record.quintile_returns(fr, 21)
+        assert list(q["mean_excess_pct"]) == sorted(q["mean_excess_pct"])
+        sc = track_record.action_scorecard(fr, 21).set_index("action")
+        assert sc.loc["BUY", "hit_rate_pct"] == 100 and sc.loc["SELL", "hit_rate_pct"] == 0
+
+    def test_future_not_yet_known_is_nan(self):
+        px = _prices(n=30)
+        snaps = pd.DataFrame({"as_of_date": [px["date"].max()], "ticker": ["A"], "quality": [50], "action": ["BUY"]})
+        fr = track_record.forward_returns(snaps, px, horizons=(21,))
+        assert fr["fwd_21"].isna().all()
+
+    def test_recommendation_log_keeps_changes_only(self):
+        snaps = pd.DataFrame({"as_of_date": pd.bdate_range("2024-01-01", periods=4), "ticker": "A",
+                              "action": ["HOLD", "HOLD", "BUY", "BUY"]})
+        log = track_record.recommendation_log(snaps)
+        assert list(log.sort_values("as_of_date")["action"]) == ["HOLD", "BUY"]
+
+
+# ── alerts ───────────────────────────────────────────────────────────────────
+class TestAlerts:
+    latest = pd.DataFrame({"price_close": [90.0, 210.0], "volume": [1e6, 2e6],
+                           "daily_return_pct": [-3.0, 1.0], "rsi": [25.0, 72.0]}, index=["AAA", "BBB"])
+
+    def test_rules(self):
+        hits = alerts.evaluate_rules([
+            {"ticker": "AAA", "metric": "RSI", "condition": "below", "threshold": 30},
+            {"ticker": "BBB", "metric": "Price", "condition": "below", "threshold": 100},
+        ], self.latest)
+        assert [h["ticker"] for h in hits] == ["AAA"]
+
+    def test_watchlist_sell_discipline(self):
+        wl = pd.DataFrame([
+            {"Ticker": "AAA", "Status": "🟢 ACTIVE", "Invalidation Level": 95, "Take Profit": 150, "Entry Target": 100},
+            {"Ticker": "BBB", "Status": "🟢 ACTIVE", "Invalidation Level": 150, "Take Profit": 200, "Entry Target": 180},
+        ])
+        kinds = {(h["ticker"], h["kind"]) for h in alerts.watchlist_triggers(wl, self.latest, {"BBB": 205})}
+        assert kinds == {("AAA", "THESIS INVALIDATED"), ("BBB", "TARGET REACHED"), ("BBB", "AT INTRINSIC VALUE")}
+
+    def test_closed_ideas_ignored(self):
+        wl = pd.DataFrame([{"Ticker": "AAA", "Status": "⚫ CLOSED", "Invalidation Level": 95}])
+        assert alerts.watchlist_triggers(wl, self.latest) == []
+
+    def test_earnings_soon(self):
+        cal = pd.DataFrame({"ticker": ["AAA", "BBB"], "earnings_date": ["2026-01-12", "2026-03-01"]})
+        hits = alerts.earnings_soon(cal, ["AAA", "BBB"], today=date(2026, 1, 10))
+        assert [h["ticker"] for h in hits] == ["AAA"]
+
+
+# ── portfolio risk ───────────────────────────────────────────────────────────
+class TestPortfolioRisk:
+    def test_shrinkage(self):
+        mu = pd.Series({"a": 0.30, "b": 0.10})
+        assert list(portfolio_risk.shrink_expected_returns(mu, 0.5)) == pytest.approx([0.25, 0.15])
+
+    def test_candidate_impact(self):
+        px = _prices(n=300)
+        cos = pd.DataFrame({"ticker": ["A", "B", "J"], "sector": ["Tech", "Tech", "Energy"],
+                            "currency": ["USD", "USD", "EUR"]})
+        imp = portfolio_risk.candidate_impact(px, {"A": 5000, "B": 5000}, "J", 10, cos)
+        assert imp["sector_weight_before"] == 0 and imp["sector_weight_after"] == pytest.approx(10)
+        assert imp["currency_weight_after"] == pytest.approx(10)
+        assert imp["largest_sector_after"][0] == "Tech"
+
+
+# ── ETL snapshot job ─────────────────────────────────────────────────────────
+def test_snapshot_job_is_idempotent_and_mirrored(tmp_path):
+    import duckdb
+    from etl.snapshot import run_snapshot
+    from tests.synthetic_warehouse import build
+
+    db, track = str(tmp_path / "dw.duckdb"), str(tmp_path / "track.duckdb")
+    build(db)
+    n1 = run_snapshot(db, track)
+    n2 = run_snapshot(db, track)        # same day again → upsert, no duplicates
+    assert n1 == n2 > 0
+    with duckdb.connect(track, read_only=True) as c:
+        assert c.execute("SELECT COUNT(*) FROM signals.score_snapshots").fetchone()[0] == n1
+    with duckdb.connect(db, read_only=True) as c:
+        cols = {r[0] for r in c.execute("DESCRIBE marts.score_snapshots").fetchall()}
+        assert {"as_of_date", "ticker", "quality", "action", "price_close"} <= cols

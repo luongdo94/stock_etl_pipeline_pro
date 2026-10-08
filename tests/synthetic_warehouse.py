@@ -113,7 +113,25 @@ def build(db_path: str, seed: int = 7) -> str:
                 ticker VARCHAR, insider_purchases_6m BIGINT, insider_sales_6m BIGINT, net_shares BIGINT,
                 pct_buy DOUBLE, pct_sell DOUBLE, _extracted_at TIMESTAMP)""")
         run_transforms(conn)
+        _snapshot_history(conn, prices, rng)
     return db_path
+
+
+def _snapshot_history(conn, prices: pd.DataFrame, rng: np.random.Generator, days: int = 120) -> None:
+    """Fake point-in-time score history (marts.score_snapshots) so the Track Record tab has data."""
+    eq = [t for t in UNIVERSE if t not in ("SPY", "^VIX")]
+    dates = sorted(prices["date"].unique())[-days - 130:-130]   # leave room for 6-month outcomes
+    px = prices.set_index(["date", "ticker"])["close"]
+    rows = []
+    for d in dates:
+        q = rng.integers(20, 90, len(eq))
+        for t, qi in zip(eq, q):
+            act = "BUY / ACCUMULATE" if qi >= 60 else ("HOLD / NEUTRAL" if qi >= 40 else "REDUCE / UNDERPERFORM")
+            rows.append({"as_of_date": pd.Timestamp(d).date(), "ticker": t, "price_close": float(px[(d, t)]),
+                         "quality": int(qi), "action": act, "upside_pct": 10.0, "smart_money": "NEUTRAL",
+                         "rsi": 50.0, "trend": "BULLISH", "sector": UNIVERSE[t][1]})
+    conn.register("snap_hist", pd.DataFrame(rows))
+    conn.execute("CREATE OR REPLACE TABLE marts.score_snapshots AS SELECT * FROM snap_hist")
 
 
 if __name__ == "__main__":

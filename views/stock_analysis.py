@@ -14,14 +14,16 @@ from core.levels import get_tactical_metrics
 from core.rating import compute_institutional_rating
 from core.smart_money import get_sm_spirit_unified_v2
 from core.symbols import get_tv_symbol
+from core.valuation import relative_valuation
 from etl.llm_parser import analyze_risk_with_llm
 from etl.utils import compute_score
 from etl.utils import compute_score_details
 from services.ai import get_finbert_pipeline, get_unified_verdict
-from services.db import get_db_connection
+from services.db import get_db_connection, load_track_record
 from services.market_data import get_forex_rates
-from services.user_store import load_watchlist, save_watchlist
+from services.user_store import load_portfolio_from_db, load_watchlist, save_watchlist
 from ui.components import render_metric_row
+from ui.decision_panel import render_decision_panel, render_valuation_section, valuation_inputs
 from ui.icons import SVG_ICONS, render_header
 
 
@@ -172,6 +174,30 @@ def render(ctx):
             _global_ai_target = st.session_state.get(f"ai_target_for_de_{deep_ticker}")
             _tp1 = float(_global_ai_target) if _global_ai_target is not None else _tm["tp1"]
             _tp2 = max(target_p, _tm["tp2"]) if target_p > 0 else _tm["tp2"]
+
+            # ── DECISION SUMMARY (valuation → expected return, risk, size, sell rules) ──
+            _vin = valuation_inputs(meta, cur_p, hist_fcf_full, deep_ticker, macro)
+            _relval = relative_valuation(companies_full, deep_ticker)
+            _next_er = None
+            _er = earnings_cal[earnings_cal["ticker"] == deep_ticker] if not earnings_cal.empty else earnings_cal
+            if not _er.empty:
+                _future = pd.to_datetime(_er["earnings_date"]).dt.date
+                _future = _future[_future >= date.today()]
+                _next_er = _future.min() if not _future.empty else None
+
+            def _holdings_value():
+                _pf = load_portfolio_from_db()
+                _last = prices_full.sort_values("date").groupby("ticker")["price_close"].last()
+                return {t: v.get("shares", 0) * float(_last.get(t, 0)) for t, v in _pf.items()}
+
+            render_decision_panel(
+                ticker=deep_ticker, meta=meta, price=float(cur_p),
+                price_date=pd.to_datetime(df_deep["date"].iloc[-1]).date(),
+                stop_loss=_stop_loss, vin=_vin, relval=_relval,
+                missing=compute_score_details(meta_enriched)["missing"],
+                next_earnings=_next_er, quality=ai_score,
+                snapshots=load_track_record(), prices=prices_full,
+                holdings_loader=_holdings_value, companies=companies_full)
 
             # 52-Week Position Meter
             st.markdown(f"""
@@ -412,6 +438,8 @@ def render(ctx):
             st.markdown("<div style='margin-top:35px; padding:6px 12px; background:rgba(255,255,255,0.03); border-left:4px solid #9b59b6; color:#9b59b6; font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:1.5px;'>LAYER 3: RISK INTELLIGENCE HUB</div>", unsafe_allow_html=True)
             # ── RISK INTELLIGENCE HUB: Full-Width Top, then Split View ─────
             render_header("zap", "AI Investment Intelligence: Unified Risk Audit", level="####")
+            st.caption("🧠 LLM narrative: it summarises the quantitative signals and news above in words. "
+                       "It is not an independent signal — the Decision Summary does not count it as a vote.")
             st.caption("A multi-dimensional synthesis of Qualitative (NLP News) and Quantitative (Fundamental Pillars) risk factors to provide a unified investment verdict.")
 
             # ── PART A (Full-Width): Audit Button + Cockpit + Conflict Banner ─
@@ -1811,71 +1839,7 @@ def render(ctx):
             
 
 
-            # ── DCF INTRINSIC VALUATION MODEL ───────────────────────────────
-            st.markdown("---")
-            render_header("gem", "Discounted Cash Flow (DCF) Intrinsic Valuation")
-            st.write("Calculates the absolute mathematical fair value of the asset based on projected Future Free Cash Flows.")
-            
-            fcf = meta.get("free_cashflow")
-            fcf = fcf if pd.notnull(fcf) else 0
-            mcap = meta.get("market_cap")
-            mcap = mcap if pd.notnull(mcap) else 0
-            total_debt = meta.get("total_debt")
-            total_debt = total_debt if pd.notnull(total_debt) else 0
-            
-            if fcf > 0 and mcap > 0:
-                shares_out = mcap / cur_p
-                
-                col_d1, col_d2, col_d3 = st.columns(3)
-                with col_d1:
-                    proj_growth = st.number_input("Projected FCF Growth Y1-Y5 (%)", value=15.0, step=1.0) / 100
-                with col_d2:
-                    term_growth = st.number_input("Terminal Growth Y6+ (%)", value=2.5, step=0.5) / 100
-                with col_d3:
-                    discount_rate = st.number_input("Discount Rate (WACC) (%)", value=9.0, step=0.5) / 100
-                    
-                if discount_rate > term_growth:
-                    # 5-Year Projection
-                    cash_flows = []
-                    current_fcf = fcf
-                    for year in range(1, 6):
-                        current_fcf *= (1 + proj_growth)
-                        pv_fcf = current_fcf / ((1 + discount_rate) ** year)
-                        cash_flows.append(pv_fcf)
-                    
-                    # Terminal Value Calculation
-                    tv = (current_fcf * (1 + term_growth)) / (discount_rate - term_growth)
-                    pv_tv = tv / ((1 + discount_rate) ** 5)
-                    
-                    # Enterprise Value -> Equity Value
-                    enterprise_value = sum(cash_flows) + pv_tv
-                    intrinsic_equity = enterprise_value - total_debt
-                    
-                    intrinsic_per_share = intrinsic_equity / shares_out
-                    margin_of_safety = (intrinsic_per_share - cur_p) / cur_p * 100
-                    
-                    dcf_color = "#2ecc71" if margin_of_safety > 0 else "#e74c3c"
-                    verdict = "Undervalued / Discounted" if margin_of_safety > 0 else "Overvalued / Premium"
-                    
-                    st.markdown(f"""
-                    <div style='background:rgba(255,255,255,0.03); border-left:4px solid {dcf_color}; padding:15px; border-radius:4px; margin-top: 10px;'>
-                        <div style='display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;'>
-                            <div>
-                                <span style='color:#bbb; font-size:0.9rem; text-transform:uppercase; letter-spacing:1px;'>Intrinsic Value per Share</span><br>
-                                <span style='font-size:2.5rem; font-weight:800; color:#fff;'>€{intrinsic_per_share:,.2f}</span>
-                            </div>
-                            <div style='text-align:right;'>
-                                <span style='color:#bbb; font-size:0.9rem; text-transform:uppercase; letter-spacing:1px;'>Margin of Safety</span><br>
-                                <span style='font-size:1.8rem; font-weight:800; color:{dcf_color};'>{margin_of_safety:+.1f}%</span><br>
-                                <span style='font-size:0.9rem; color:{dcf_color}; font-weight:600;'>[{verdict}]</span>
-                            </div>
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.warning("⚠️ Discount Rate (WACC) must be strictly greater than Terminal Growth Rate to converge.")
-            else:
-                st.info("⚠️ Insufficient Positive Free Cash Flow data to perform a reliable DCF Valuation.")
+            render_valuation_section(meta=meta, price=float(cur_p), vin=_vin, relval=_relval)
 
             # ── OWNERSHIP & SHORT SQUEEZE RISK ──────────────────────────────
             st.markdown("---")

@@ -16,11 +16,13 @@ def sync_to_supabase():
     """
     load_dotenv()
     
+    from etl.load import DB_PATH  # absolute path — the old relative one depended on the cwd
+
     url: str = os.environ.get("SUPABASE_URL")
     key: str = os.environ.get("SUPABASE_SERVICE_KEY")
-    db_path = "warehouse/stock_dw.duckdb"
+    db_path = DB_PATH
     bucket_name = "warehouse"
-    temp_dir = Path("warehouse/temp_export")
+    temp_dir = Path(DB_PATH).parent / "temp_export"
     
     if not url or not key:
         logger.error("SUPABASE_URL or SUPABASE_SERVICE_KEY missing in environment.")
@@ -51,7 +53,8 @@ def sync_to_supabase():
         "raw.quarterly_financials",
         "raw.earnings_calendar",
         "raw.company_info",
-        "raw.stock_prices" # Will be filtered for macro only below
+        "raw.stock_prices", # Will be filtered for macro only below
+        "marts.score_snapshots",  # track record (may not exist before the first snapshot)
     ]
     
     try:
@@ -78,9 +81,13 @@ def sync_to_supabase():
             for file_name, query in parts:
                 local_path = temp_dir / file_name
                 
-                # Export to Parquet
+                # Export to Parquet (a missing optional table must not abort the whole sync)
                 logger.info(f"Exporting data to {local_path}...")
-                conn.execute(f"COPY ({query}) TO '{local_path}' (FORMAT PARQUET)")
+                try:
+                    conn.execute(f"COPY ({query}) TO '{local_path}' (FORMAT PARQUET)")
+                except duckdb.CatalogException as missing:
+                    logger.warning(f"Skipping {table}: {missing}")
+                    continue
                 
                 # 4. Upload to Supabase Storage
                 if local_path.exists():

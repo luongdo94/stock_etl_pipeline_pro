@@ -27,6 +27,8 @@ def render(ctx):
     pass  # hoisted to module level: import numpy as np
     from arch import arch_model
     render_header("zap", "Context-Aware Direct Multi-Step Forecasting (v11.0)", "Institutional-Grade Adaptive ML Ensemble")
+    st.warning("🧪 Experimental: these forecasts have not been shown to beat a no-change forecast out of "
+               "sample. Use them for exploration only — the Decision Summary in Stock Analysis ignores them.")
     
     # ── XGBoost BUY/SELL Classifier (Scale-Invariant Signal) ─────────────────────
     @st.cache_data(show_spinner="🌲 XGBoost: Training Directional Signal Classifier...")
@@ -508,7 +510,7 @@ def render(ctx):
 
     def calculate_backtest_accuracy(df_full, sector_name=None, quality_score=50, test_size=21):
         """Phase 10: Honest Backtest - Strict Train/Test Separation"""
-        if len(df_full) < 150: return None, None
+        if len(df_full) < 150: return None, None, None
         # We slice raw data to ensure NO LEAKAGE from the future
         train_df = df_full.iloc[:-test_size].copy()
         actual_prices = df_full["price_close"].iloc[-test_size:].values
@@ -517,9 +519,12 @@ def render(ctx):
         # No re-training or HPO on the test window allowed
         predicted,_,_ = _run_lstm_core(train_df, lookback=120, forecast_days=test_size, sector_name=sector_name, quality_score=quality_score)
         
-        if predicted is None or len(predicted) < test_size: return None, None
-        mape = np.mean(np.abs((actual_prices - predicted) / actual_prices))
-        return max(0.0, min(100.0, 100*(1-mape))), float(mape)
+        if predicted is None or len(predicted) < test_size: return None, None, None
+        mape = np.mean(np.abs((actual_prices - np.asarray(predicted)) / actual_prices))
+        # Baseline: "price stays where it is". 100·(1−MAPE) looks like ~95% "precision" for ANY
+        # model on a 2-4 week horizon, so the only meaningful question is whether we beat this.
+        naive_mape = np.mean(np.abs((actual_prices - train_df["price_close"].iloc[-1]) / actual_prices))
+        return max(0.0, min(100.0, 100*(1-mape))), float(mape), float(naive_mape)
 
     @st.cache_data(show_spinner="Training Adaptive AI Ensemble (LSTM + ARIMA)...")
     def train_predict_lstm(df_ticker, lookback=60, forecast_days=30, sector_name=None, quality_score=50):
@@ -1112,7 +1117,7 @@ def render(ctx):
         
         # 1.5 Backtest Accuracy (Diagnostic) — Dynamic Horizon Sync (Phase 8)
         with st.spinner(f"Validating {forecast_days}-Day Accuracy..."):
-            precision_score, mape_raw = calculate_backtest_accuracy(df_fc, sector_name=sector_val, quality_score=drift_score, test_size=forecast_days)
+            precision_score, mape_raw, naive_mape = calculate_backtest_accuracy(df_fc, sector_name=sector_val, quality_score=drift_score, test_size=forecast_days)
 
         # ── ROW 2: AI Metrics (Horizontal Cards) ─────────────────────────────
         mcol1, mcol2, mcol3, mcol4 = st.columns(4)
@@ -1145,20 +1150,24 @@ def render(ctx):
                 delta=f"{sm_layer} · Vol Q: {vol_quality}/100" if sm_layer != "NONE" else "No Signal"
             )
         with mcol4:
-            if precision_score is not None:
-                p_val = f"{precision_score:.1f}%"
-                p_label = f"Model Precision ({forecast_days}d Holdout)"
-                p_delta = f"±{mape_raw*100:.1f}% uncertainty" if mape_raw else None
+            p_label = f"Holdout Error vs Naive ({forecast_days}d)"
+            if mape_raw is not None and naive_mape:
+                _skill = 1 - mape_raw / naive_mape   # >0 = better than "no change"
+                st.metric(p_label, f"{mape_raw*100:.1f}% vs {naive_mape*100:.1f}%",
+                          delta=f"{_skill:+.0%} skill vs no-change forecast",
+                          delta_color="normal" if _skill > 0 else "inverse",
+                          help="Mean absolute % error of the model on the last unseen window, next to a "
+                               "forecast that simply assumes today's price. One window is a weak test; "
+                               "do not act on the forecast unless skill is positive consistently.")
             else:
-                p_val, p_label, p_delta = "N/A", f"Model Precision ({forecast_days}d Holdout)", None
-            st.metric(p_label, p_val, delta=p_delta)
+                st.metric(p_label, "N/A")
             
         # Highlight divergence
         if (sent_label == "Bearish" and sm_signal == "ACCUMULATION") or (sent_label == "Bullish" and sm_signal == "DISTRIBUTION"):
             div_type = "BULLISH DIVERGENCE (Smart Money Accumulating despite Retail Fear)" if sent_label == "Bearish" else "BEARISH DIVERGENCE (Smart Money Distributing despite Retail Greed)"
             div_color = "#2ecc71" if sent_label == "Bearish" else "#e74c3c"
             div_icon = "📈" if sent_label == "Bearish" else "📉"
-            st.markdown(f"<div style='margin-top:10px; padding:12px 18px; background:linear-gradient(90deg, {div_color}22, rgba(0,0,0,0)); border-left:4px solid {div_color}; border-radius:6px;'><b style='color:{div_color}; font-size:1.0rem;'>{div_icon} HIGH PROBABILITY SET-UP: {div_type}</b><br><span style='font-size:0.85rem; color:#ccc;'>Institutions and Smart Money are actively positioning in direct opposition to retail sentiment (Strength: {sm_strength}/100, {sm_layer} Layer). This severe dislocation heavily tilts risk/reward for a contrarian entry. <b>Actionable edge: Wait for break of structure in direction of Smart Money.</b></span></div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='margin-top:10px; padding:12px 18px; background:linear-gradient(90deg, {div_color}22, rgba(0,0,0,0)); border-left:4px solid {div_color}; border-radius:6px;'><b style='color:{div_color}; font-size:1.0rem;'>{div_icon} Divergence (unvalidated): {div_type}</b><br><span style='font-size:0.85rem; color:#ccc;'>Institutions and Smart Money are actively positioning in direct opposition to retail sentiment (Strength: {sm_strength}/100, {sm_layer} Layer). This severe dislocation heavily tilts risk/reward for a contrarian entry. <b>Not a validated edge — treat as a prompt for further research.</b></span></div>", unsafe_allow_html=True)
 
         # ── AI TRADING SIGNATURE ─────────────────────────────────────────────
         # Pre-compute all levels for the card
@@ -1231,7 +1240,8 @@ def render(ctx):
         _pill_sm   = _pill("Smart Money",  f"{sm_signal} ({sm_strength})",  sm_signal == "ACCUMULATION")
         _pill_sent = _pill("Sentiment",    sent_label,             avg_sent > 0.05)
         _pill_rr   = _pill("R/R",          f"{_sig_rr:.1f}x",      _sig_rr >= 1.5)
-        _pill_prec = _pill("ML Precision", f"{precision_score:.1f}%" if precision_score else "N/A", (precision_score or 0) >= 75)
+        _ml_skill = (1 - mape_raw / naive_mape) if (mape_raw is not None and naive_mape) else None
+        _pill_prec = _pill("ML vs naive", f"{_ml_skill:+.0%}" if _ml_skill is not None else "N/A", (_ml_skill or 0) > 0)
         _xgb_label = f"XGB {xgb_signal} ({xgb_conf*100:.0f}%)"
         _pill_xgb  = _pill("XGBoost Signal", _xgb_label, xgb_signal == "BUY")
 

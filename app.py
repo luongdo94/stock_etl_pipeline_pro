@@ -924,6 +924,7 @@ tab_labels = [
     "🔬 Stock Analysis",    # Single Stock Deep Dive
     "🤖 ML Predictor",      # Predictive Suite
     "🧪 Strategy Lab",      # Strategy Backtest
+    "📈 Track Record",      # Do the scores / calls actually work?
     "📋 Watchlist",         # Watchlist / Kanban
     "💼 Portfolio",         # Portfolio Management
     "📖 Docs",              # Methodology Docs
@@ -1022,6 +1023,10 @@ if active_tab == '🤖 ML Predictor':
 
 
 # ── TAB: STRATEGY BACKTEST ───────────────────────────────────────────────────
+if active_tab == '📈 Track Record':
+    from views import track_record
+    track_record.render(globals())
+
 if active_tab == '🧪 Strategy Lab':
     from views import strategy_lab
     strategy_lab.render(globals())

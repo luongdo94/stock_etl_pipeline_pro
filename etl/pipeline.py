@@ -390,6 +390,14 @@ def run_pipeline(lookback_days: int = 1825, force_full: bool = False, fast_mode:
             # Sync the success status to the production warehouse so dashboard/cloud see it
             audit.sync_to_main_warehouse(DB_PATH)
 
+            # ── STEP 7: POINT-IN-TIME SCORE SNAPSHOT (track record) ──
+            # Non-fatal: a failed snapshot must never fail an otherwise good ETL run.
+            try:
+                from etl.snapshot import run_snapshot
+                run_snapshot(DB_PATH)
+            except Exception as e:
+                logger.warning(f"   ⚠️ Score snapshot skipped: {e}")
+
 
             logger.info("\n" + "=" * 55)
             logger.info(f"✅ PIPELINE COMPLETED SUCCESSFULLY [{mode_label}]")

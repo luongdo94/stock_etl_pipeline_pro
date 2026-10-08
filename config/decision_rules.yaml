@@ -1,0 +1,26 @@
+# decision_rules.yaml — assumptions behind the Decision Summary (edit to match your broker / tax)
+
+costs:
+  base_currency: EUR
+  commission_pct: 0.10        # per side, % of trade value
+  fx_spread_pct: 0.25         # per conversion, only when the stock is not in base_currency
+  # Dividend withholding tax actually lost after treaty relief, by country (fraction of dividend)
+  dividend_withholding:
+    United States: 0.15
+    Switzerland: 0.35
+    Germany: 0.26
+    France: 0.25
+    Japan: 0.15
+    United Kingdom: 0.0
+    default: 0.15
+
+risk:
+  account_risk_pct: 1.0       # max % of portfolio lost if the stop is hit
+  max_position_pct: 10.0      # hard cap per position
+  min_reward_risk: 2.0        # expected upside / downside required for a BUY candidate
+  earnings_blackout_days: 7   # warn before buying this close to an earnings release
+
+valuation:
+  required_margin_of_safety: 0.25
+  stale_price_days: 5         # price older than this lowers confidence
+  stale_fundamentals_days: 35

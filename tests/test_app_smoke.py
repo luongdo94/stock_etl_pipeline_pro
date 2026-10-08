@@ -18,7 +18,7 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 from tests.synthetic_warehouse import build  # noqa: E402
 
 TABS = ["🌐 Market Pulse", "🔭 Stock Scanner", "🔬 Stock Analysis", "🤖 ML Predictor",
-        "🧪 Strategy Lab", "📋 Watchlist", "💼 Portfolio", "📖 Docs"]
+        "🧪 Strategy Lab", "📈 Track Record", "📋 Watchlist", "💼 Portfolio", "📖 Docs"]
 
 pytestmark = pytest.mark.smoke
 
@@ -79,3 +79,19 @@ def test_unauthenticated_user_sees_login_only(warehouse):
     assert not at.exception, [e.value for e in at.exception]
     assert any(b.label == "Sign In" for b in at.button)
     assert not any("Run All Strategies" in (b.label or "") for b in at.button)
+
+
+def test_stock_analysis_shows_decision_summary(warehouse):
+    at = _app("🔬 Stock Analysis")
+    at.session_state["deep_ticker_selector"] = "AAPL"
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    html = "\n".join(m.value for m in at.markdown)
+    assert "Decision Summary" in html
+    assert "FCFE DCF" in html or "No positive free cash flow" in " ".join(i.value for i in at.info)
+
+
+def test_track_record_tab_scores_history(warehouse):
+    at = _app("📈 Track Record").run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert any(m.label.startswith("IC") for m in at.metric)

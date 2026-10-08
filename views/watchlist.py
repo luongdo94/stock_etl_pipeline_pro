@@ -2,13 +2,20 @@
 import pandas as pd
 import streamlit as st
 
+from core.alerts import earnings_soon, latest_snapshot, watchlist_triggers
 from core.symbols import get_tv_symbol
 from services.user_store import load_watchlist, save_watchlist
+from ui.decision_panel import render_alert_inbox, valuation_inputs
 from ui.icons import render_header
 
 
 def render(ctx):
     """Render the 📋 Watchlist tab. ctx is the app globals() dict."""
+    companies_full = ctx['companies_full']
+    earnings_cal = ctx['earnings_cal']
+    hist_fcf_full = ctx['hist_fcf_full']
+    macro = ctx['macro']
+    prices_full = ctx['prices_full']
 
     render_header("calendar", "Watchlist & Idea Pipeline")
     st.write("Track and prune your high-conviction ideas. A thesis without an invalidation level is just a gamble.")
@@ -18,6 +25,17 @@ def render(ctx):
         st.info("Your watchlist is empty. Go to the **Decision Engine** to add your first candidate.")
     else:
         # Display summary metrics
+        # ── Sell-discipline inbox: plan levels hit, value reached, earnings ahead ──
+        _latest = latest_snapshot(prices_full)
+        _iv = {}
+        for _t in wl_df["Ticker"].dropna().unique():
+            _row = companies_full[companies_full["ticker"] == _t]
+            if not _row.empty and _t in _latest.index:
+                _iv[_t] = valuation_inputs(_row.iloc[0], float(_latest.at[_t, "price_close"]),
+                                           hist_fcf_full, _t, macro)["base"]
+        render_alert_inbox(watchlist_triggers(wl_df, _latest, _iv)
+                           + earnings_soon(earnings_cal, wl_df["Ticker"].dropna().unique()))
+
         st.markdown("### Active Candidates Pipeline")
         _w1, _w2, _w3, _w4 = st.columns(4)
         _w1.metric("Total Ideas", len(wl_df))

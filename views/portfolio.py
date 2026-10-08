@@ -7,9 +7,13 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from core.alerts import METRICS as ALERT_METRICS, earnings_soon, evaluate_rules, latest_snapshot
+from core.portfolio_risk import shrink_expected_returns
+from services.alerts import add_alert_rule, delete_alert_rule, load_alert_rules
 from services.market_data import fetch_dividend_calendar
 from services.user_store import load_portfolio_from_db, save_portfolio_to_db
 from ui.components import render_metric_tile
+from ui.decision_panel import render_alert_inbox
 from ui.icons import render_header
 import pandas as pd, io
 
@@ -20,6 +24,7 @@ def render(ctx):
     all_tickers = ctx['all_tickers']
     annual_fin = ctx['annual_fin']
     companies = ctx['companies']
+    earnings_cal = ctx['earnings_cal']
     format_ticker = ctx['format_ticker']
     m_df = ctx['m_df']
     prices = ctx['prices']
@@ -29,6 +34,10 @@ def render(ctx):
     t_end = ctx['t_end']
     t_start = ctx['t_start']
     render_header("package", "Professional Bulk Portfolio Suite", level="###")
+    _held = list(st.session_state.get("portfolio_shares", {}).keys())
+    _alert_rules = load_alert_rules()   # one Supabase round-trip per render
+    render_alert_inbox(evaluate_rules(_alert_rules, latest_snapshot(prices_full))
+                       + earnings_soon(earnings_cal, _held))
     st.write("Craft your portfolio by selecting tickers and entering your holdings below. High-density quantitative analysis will follow.")
 
     # 1. LOCAL TICKER SELECTION
@@ -529,7 +538,9 @@ def render(ctx):
             
             # ── Pre-compute matrices for Optimizer & Analytics ──
             cov_matrix = ret_matrix.cov() * 252
-            hist_rets  = ret_matrix.mean() * 252
+            # Expected returns for the optimisers: trailing means shrunk 50% toward their average.
+            # Raw trailing means make Max-Sharpe / Max-Return pile into last year's winners.
+            hist_rets  = shrink_expected_returns(ret_matrix.mean() * 252, intensity=0.5)
     
             # Show Total Summary
             total_cost_basis = (edited_df["Cost Basis (€)"] * edited_df["Shares"]).sum()
@@ -1313,17 +1324,33 @@ def render(ctx):
 
         st.markdown("---")
 
-        # 6. ── FEATURE 7: Alert Configurator (Moved Here) ──
-        render_header("activity", "Dynamic Alert Center", level="###")
+        # 6. ── ALERT CENTER (persisted per user in Supabase: docs/sql/stock_alerts.sql) ──
+        render_header("activity", "Alert Center", level="###")
+        st.caption("Rules are saved to your account and checked against the latest warehouse data every "
+                   "time the dashboard loads (in-app; no e-mail delivery is configured).")
+        _rules = _alert_rules
+        _latest = latest_snapshot(prices_full)
+        _fired = {id(h["rule"]) for h in evaluate_rules(_rules, _latest)}
+        for _r in _rules:
+            _c1, _c2 = st.columns([6, 1])
+            _hit = "🔔 **TRIGGERED** — " if id(_r) in _fired else ""
+            _c1.markdown(f"{_hit}{_r['ticker']} · {_r['metric']} {_r['condition']} {float(_r['threshold']):,.2f}")
+            if _c2.button("Delete", key=f"del_alert_{_r['id']}"):
+                try:
+                    delete_alert_rule(_r["id"])
+                    st.rerun()
+                except Exception as _e:
+                    st.error(f"Could not delete rule: {_e}")
         with st.form("alert_form"):
             colX, colY, colZ = st.columns(3)
             with colX: a_ticker = st.selectbox("Ticker", all_tickers, format_func=format_ticker)
-            with colY: a_metric = st.selectbox("Metric", ["Price", "Volume", "Daily Return %", "RSI"])
+            with colY: a_metric = st.selectbox("Metric", list(ALERT_METRICS))
             with colZ: a_condition = st.selectbox("Condition", ["above", "below"])
             a_value = st.number_input("Threshold Value", value=100.0)
-
-            a_email = st.text_input("Notify Email", value="dgl.rocketmail94@gmail.com")
-            submitted = st.form_submit_button("Deploy Alert Rule")
-            if submitted:
-                st.toast(f"Alert rule created for {a_ticker}!")
-                st.success(f"✅ Rule saved: If **{a_ticker} {a_metric}** is **{a_condition} {a_value}**, notify **{a_email}**.")
+            if st.form_submit_button("Save Alert Rule"):
+                try:
+                    add_alert_rule(a_ticker, a_metric, a_condition, a_value)
+                    st.success(f"✅ Saved: {a_ticker} {a_metric} {a_condition} {a_value:,.2f}")
+                    st.rerun()
+                except Exception as _e:
+                    st.error(f"Could not save the rule: {_e}")
