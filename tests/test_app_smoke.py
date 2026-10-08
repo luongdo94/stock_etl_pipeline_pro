@@ -8,6 +8,7 @@ Live market calls (yfinance macro, TradingView widgets) degrade to their fallbac
 import os
 import sys
 
+import pandas as pd
 import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -95,3 +96,15 @@ def test_track_record_tab_scores_history(warehouse):
     at = _app("📈 Track Record").run()
     assert not at.exception, [e.value for e in at.exception]
     assert any(m.label.startswith("IC") for m in at.metric)
+
+
+def test_scanner_keeps_stocks_with_unknown_fundamentals(warehouse):
+    """Missing forward P/E used to become 999 and every such stock vanished from the scanner."""
+    at = _app("🔭 Stock Scanner").run()
+    assert not at.exception, [e.value for e in at.exception]
+    tables = [d.value for d in at.dataframe if "Ticker" in getattr(d.value, "columns", [])]
+    assert tables, "scanner table not rendered"
+    t = tables[-1].set_index("Ticker")
+    assert "KO" in t.index and "JNJ" in t.index
+    assert pd.isna(t.at["KO", "P/E (Fwd)"])
+    assert pd.isna(t.at["JNJ", "Debt/EBITDA"])

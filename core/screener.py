@@ -145,24 +145,28 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
         
         # Additional metrics
         div_yield = float(row.get('dividend_yield_pct', 0)) if pd.notnull(row.get('dividend_yield_pct')) else 0
-        fcf_margin = float(row.get('fcf_margin', 0)) if pd.notnull(row.get('fcf_margin')) else 0
+        # Unknown stays NaN (blank in the table) — sentinels like 999 / 99 / 0 used to be filtered
+        # and ranked as if they were real values (every stock without a forward P/E vanished from
+        # the scanner because 999 > the "Max Forward P/E" slider default).
+        fcf_margin = float(row.get('fcf_margin')) if pd.notnull(row.get('fcf_margin')) else float("nan")
         
         # Safe Financial Metrics (Handling pd.NA)
         eb_val = row.get('ebitda')
         td_val = row.get('total_debt')
-        ebitda = float(eb_val) if pd.notnull(eb_val) else 0
-        total_debt = float(td_val) if pd.notnull(td_val) else 0
-        
-        if ebitda > 0:
+        ebitda = float(eb_val) if pd.notnull(eb_val) else None
+        total_debt = float(td_val) if pd.notnull(td_val) else None
+        if total_debt is not None and total_debt <= 0:
+            debt_ebitda = 0.0                                   # debt-free
+        elif total_debt is not None and ebitda is not None and ebitda > 0:
             debt_ebitda = min(total_debt / ebitda, 99)
         else:
-            debt_ebitda = 99
-            
+            debt_ebitda = float("nan")                          # unknown, or debt with EBITDA ≤ 0 (n/m)
+
         ev_eb_val = row.get('ev_to_ebitda')
-        ev_ebitda = float(ev_eb_val) if pd.notnull(ev_eb_val) else 0
-        
+        ev_ebitda = float(ev_eb_val) if pd.notnull(ev_eb_val) else float("nan")
+
         roe_raw = row.get('roe')
-        roe_val = (float(roe_raw) * 100) if pd.notnull(roe_raw) else 0
+        roe_val = (float(roe_raw) * 100) if pd.notnull(roe_raw) else float("nan")
         net_payout = row.get('net_payout_yield_pct', 0) or 0
         vol_30d = row.get('volatility_30d', 0) or 0
         short_pct = (row.get('short_percent_of_float', 0) * 100) if pd.notnull(row.get('short_percent_of_float')) else 0
@@ -192,9 +196,9 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
             "Net Payout (%)": round(net_payout, 2),
             "FCF Margin (%)": round(fcf_margin, 1),
             "ROE (%)": round(roe_val, 1),
-            "P/E (Fwd)": round(row.get('forward_pe', 999) or 999, 1),
-            "EV/EBITDA": round(ev_ebitda, 1) if ev_ebitda else 0,
-            "PEG": round(row.get('peg_ratio', 99) or 99, 2),
+            "P/E (Fwd)": round(float(row['forward_pe']), 1) if pd.notnull(row.get('forward_pe')) else float("nan"),
+            "EV/EBITDA": round(ev_ebitda, 1),
+            "PEG": round(float(row['peg_ratio']), 2) if pd.notnull(row.get('peg_ratio')) else float("nan"),
             "Debt/EBITDA": round(debt_ebitda, 2),
             "Vol 30D (%)": round(vol_30d, 1) if vol_30d else 0,
             "Short %": round(short_pct, 1),

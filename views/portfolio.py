@@ -18,6 +18,15 @@ from ui.icons import render_header
 import pandas as pd, io
 
 
+def _known(v, nd):
+    """Rounded number, or None when unknown (NaN) — the LLM audit must not read a gap as 0."""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return None
+    return round(v, nd) if v == v else None
+
+
 def render(ctx):
     """Render the 💼 Portfolio tab. ctx is the context dict built in app.py."""
     _vix_val = ctx['_vix_val']
@@ -433,13 +442,13 @@ def render(ctx):
                         "action":         _action_clean,
                         "upside_pct":     round(float(_m.get("Upside (%)", 0) or 0), 1),
                         # Profitability
-                        "roe_pct":        round(float(_m.get("ROE (%)", 0) or 0), 1),
-                        "fcf_margin":     round(float(_m.get("FCF Margin (%)", 0) or 0), 1),
+                        "roe_pct":        _known(_m.get("ROE (%)"), 1),
+                        "fcf_margin":     _known(_m.get("FCF Margin (%)"), 1),
                         # Valuation
-                        "ev_ebitda":      round(float(_m.get("EV/EBITDA", 0) or 0), 1),
-                        "pe_fwd":         round(float(_m.get("P/E (Fwd)", 0) or 0), 1),
+                        "ev_ebitda":      _known(_m.get("EV/EBITDA"), 1),
+                        "pe_fwd":         _known(_m.get("P/E (Fwd)"), 1),
                         # Leverage & Growth
-                        "debt_ebitda":    round(float(_m.get("Debt/EBITDA", 0) or 0), 2),
+                        "debt_ebitda":    _known(_m.get("Debt/EBITDA"), 2),
                         "rev_growth_yoy": _rev_growth_yoy,
                         "price":          float(_pr.get("Price (€)", 0)),
                     })
