@@ -4,6 +4,7 @@ core/indicators.py — Technical indicators shared by the ETL (etl/transform.py)
 Keeping one implementation here guarantees the warehouse, the screener and the backtester
 all see the same RSI value for the same bar.
 """
+
 import pandas as pd
 
 RSI_PERIOD = 14
@@ -27,3 +28,9 @@ def wilder_rsi(close: pd.Series, period: int = RSI_PERIOD) -> pd.Series:
 def wilder_rsi_by_ticker(df: pd.DataFrame, price_col: str = "close", period: int = RSI_PERIOD) -> pd.Series:
     """Per-ticker Wilder RSI for a long-format frame already sorted by (ticker, date)."""
     return df.groupby("ticker", group_keys=False)[price_col].transform(lambda s: wilder_rsi(s, period))
+
+
+# ── UTILITIES ───────────────────────────────────────────────────────────────
+def get_rsi_vectorized(df, periods=14):
+    """Wilder RSI on df['price_close'] — same implementation as the ETL (core.indicators)."""
+    return wilder_rsi(df['price_close'], periods)

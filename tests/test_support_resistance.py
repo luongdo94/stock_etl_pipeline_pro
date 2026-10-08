@@ -10,7 +10,12 @@ import os
 # Add parent directory to path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from app import detect_swing_levels, get_tactical_metrics
+from core.levels import detect_swing_zones, get_tactical_metrics
+
+
+def detect_swing_levels(df, cur_p, lookback=60, window=5):
+    """The engine was renamed detect_swing_zones(base_window=...) — keep the tests' vocabulary."""
+    return detect_swing_zones(df, cur_p, lookback=lookback, base_window=window)
 
 
 class TestSwingLevelDetection:

@@ -247,18 +247,43 @@ stock_etl_pipeline/
 │   ├── load.py            # Local warehouse persistor
 │   └── utils.py           # Core mathematics, Z-Scores, FMI, Quality Score algorithms
 │
+├── core/                  # Pure analytics — no Streamlit, unit-testable
+│   ├── indicators.py      # Wilder RSI (shared by ETL + dashboard)
+│   ├── smart_money.py     # Institutional flow engine
+│   ├── rating.py          # 6-pillar institutional rating
+│   ├── levels.py          # Swing support/resistance, tactical trade metrics
+│   ├── backtest.py        # Strategy Lab simulator
+│   └── symbols.py         # Yahoo → TradingView symbol mapping
+│
+├── services/              # I/O: warehouse, live market data, AI, user store
+│   ├── db.py              # get_db_connection (local / parquet cache / S3), load_data
+│   ├── market_data.py     # Macro, FX, dividend calendar (with DB fallbacks)
+│   ├── screener.py        # Master screener table
+│   ├── ai.py              # Cohere narratives, FinBERT sentiment
+│   └── user_store.py      # Watchlist / portfolio persistence (Supabase)
+│
+├── ui/                    # Theme CSS, icons, metric tiles
+├── views/                 # One module per dashboard tab: render(ctx)
+│
 ├── warehouse/             # Local database location
 │   └── stock_dw.duckdb    # Compiled Analytics Database
 │
-├── airflow/               # Orchestration logic
-│   ├── dags/              # Master DAGs
-│   └── docker-compose.yml # Container definitions
-│
-├── tests/                 # Automated pytest suite
-├── app.py                 # Main Streamlit Tactical Dashboard UI
+├── tests/                 # pytest suite (+ synthetic_warehouse.py, app smoke tests)
+├── app.py                 # Dashboard shell: auth, data load, sidebar, KPI header, tab routing
+├── auth.py                # Supabase login + signed session cookie
 ├── run.py                 # Pipeline trigger entry point
 ├── requirements.txt       # Python dependencies
 └── README.md              # Documentation
+```
+
+`app.py` loads the data and computes the shared state (scores, regime, KPIs), then calls
+`views.<tab>.render(globals())` for the selected tab. Each view unpacks only the shared names it uses
+at the top of `render()`.
+
+Run the tests (the `smoke` ones render every tab against a synthetic warehouse):
+```bash
+pytest                    # everything
+pytest -m "not smoke"     # fast unit tests only
 ```
 
 ---

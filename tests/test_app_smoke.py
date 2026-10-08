@@ -1,0 +1,81 @@
+"""
+End-to-end smoke test: render every dashboard tab against a synthetic warehouse with Streamlit's
+AppTest and fail on any uncaught exception. Catches wiring errors (missing names / imports between
+app.py and views/*) that unit tests can't see.
+
+Live market calls (yfinance macro, TradingView widgets) degrade to their fallbacks when offline.
+"""
+import os
+import sys
+
+import pytest
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, ROOT)
+
+from streamlit.testing.v1 import AppTest  # noqa: E402
+
+from tests.synthetic_warehouse import build  # noqa: E402
+
+TABS = ["🌐 Market Pulse", "🔭 Stock Scanner", "🔬 Stock Analysis", "🤖 ML Predictor",
+        "🧪 Strategy Lab", "📋 Watchlist", "💼 Portfolio", "📖 Docs"]
+
+pytestmark = pytest.mark.smoke
+
+
+@pytest.fixture(scope="module")
+def warehouse(tmp_path_factory):
+    import services.db as db
+    path = str(tmp_path_factory.mktemp("wh") / "stock_dw.duckdb")
+    build(path)
+    old_env, old_path = os.environ.get("STOCK_DW_PATH"), db.DB_PATH
+    os.environ["STOCK_DW_PATH"] = path
+    os.environ["SUPABASE_REMOTE_MODE"] = "false"
+    db.DB_PATH = path  # services.db may already be imported by other tests
+    yield path
+    db.DB_PATH = old_path
+    if old_env is None:
+        os.environ.pop("STOCK_DW_PATH", None)
+    else:
+        os.environ["STOCK_DW_PATH"] = old_env
+
+
+def _app(tab):
+    at = AppTest.from_file(os.path.join(ROOT, "app.py"), default_timeout=300)
+    at.secrets["SUPABASE_URL"] = "http://127.0.0.1:9"  # unreachable → user-store calls fail softly
+    at.secrets["SUPABASE_KEY"] = "test-key"
+    at.secrets["COOKIE_SECRET"] = "test-secret"
+    at.session_state["authenticated"] = True
+    at.session_state["user_id"] = "00000000-0000-0000-0000-000000000000"
+    at.session_state["user_email"] = "smoke@test.local"
+    at.session_state["active_tab"] = tab
+    return at
+
+
+@pytest.mark.parametrize("tab", TABS)
+def test_tab_renders_without_exception(warehouse, tab):
+    if tab == "🤖 ML Predictor":
+        pytest.importorskip("torch")
+    at = _app(tab).run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert len(at.markdown) > 10  # header, KPI grid and tab body actually rendered
+
+
+def test_strategy_lab_backtest_runs(warehouse):
+    at = _app("🧪 Strategy Lab").run()
+    run_btn = next(b for b in at.button if "Run All Strategies" in (b.label or ""))
+    at = run_btn.click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert any("WINNER" in m.value for m in at.markdown)
+
+
+def test_unauthenticated_user_sees_login_only(warehouse):
+    at = AppTest.from_file(os.path.join(ROOT, "app.py"), default_timeout=120)
+    at.secrets["SUPABASE_URL"] = "http://127.0.0.1:9"
+    at.secrets["SUPABASE_KEY"] = "test-key"
+    at.secrets["COOKIE_SECRET"] = "test-secret"
+    at.session_state["cm_pass"] = 1  # skip the cookie-component warm-up rerun
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert any(b.label == "Sign In" for b in at.button)
+    assert not any("Run All Strategies" in (b.label or "") for b in at.button)

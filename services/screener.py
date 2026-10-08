@@ -1,0 +1,180 @@
+"""Master screener table (scores, flow, tactical levels per ticker)."""
+import pandas as pd
+import streamlit as st
+
+from core.levels import get_tactical_metrics
+from core.rating import compute_institutional_rating
+from core.smart_money import get_sm_spirit_unified_v2
+from etl.utils import compute_score
+
+
+@st.cache_data(ttl=3600)
+def get_master_screener_data(_companies_df, _prices_df, _quarterly_fin, _annual_fin):
+    # Exclude non-investable instruments: indices & volatility measures
+    _non_equities = {"^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"}
+    _non_equity_sectors = {"Benchmark", "Volatility"}
+    screener_rows = []
+
+    # ── Pre-compute 2-quarter consecutive momentum for EPS & Revenue ────────────
+    # Logic: label = 'Accelerating' if both q[-1] and q[-2] QoQ growth > +10%,
+    #                'Decelerating' if both < -10%, else 'Neutral'
+    # Uses QoQ (quarter-over-quarter) because "2 consecutive quarters" is inherently QoQ —
+    # comparing Q3->Q4->Q1 in sequence, not the same quarter of the prior year (YoY).
+    def _two_quarter_momentum(ticker, qoq_col, threshold=10.0):
+        """Returns 'Accelerating', 'Decelerating', or 'Neutral'.
+        Uses QoQ growth rates for 2 most recent consecutive quarters.
+        """
+        t_q = _quarterly_fin[_quarterly_fin['ticker'] == ticker].sort_values('report_date', ascending=False)
+        if len(t_q) < 2:
+            return 'Neutral'
+        vals = t_q[qoq_col].dropna().head(2).tolist()
+        if len(vals) < 2:
+            return 'Neutral'
+        if vals[0] > threshold and vals[1] > threshold:
+            return 'Accelerating'
+        if vals[0] < -threshold and vals[1] < -threshold:
+            return 'Decelerating'
+        return 'Neutral'
+
+    # Build lookups by ticker (QoQ — consecutive quarter growth)
+    _eps_mom_lookup = {
+        t: _two_quarter_momentum(t, 'eps_growth_qoq_pct')
+        for t in _companies_df['ticker'].unique()
+    }
+    _rev_mom_lookup = {
+        t: _two_quarter_momentum(t, 'revenue_growth_qoq_pct')
+        for t in _companies_df['ticker'].unique()
+    }
+    
+    for _, row in _companies_df.iterrows():
+        ticker = row['ticker']
+        # Skip indices and volatility
+        if ticker in _non_equities: continue
+        if str(row.get('sector', '')).strip() in _non_equity_sectors: continue
+        ticker_prices = _prices_df[_prices_df['ticker'] == ticker].sort_values('date')
+        if ticker_prices.empty: continue
+        
+        # RSI (Pre-calculated in transform.py)
+        latest_rsi = ticker_prices["rsi"].iloc[-1] if not ticker_prices.empty else 50
+        
+        cur_p = ticker_prices["price_close"].iloc[-1]
+        target_p = row.get("target_mean_price", 0)
+        upside = ((target_p / cur_p) - 1) * 100 if target_p > 0 else 0
+        
+        if len(ticker_prices) >= 2:
+            prev_p = ticker_prices["price_close"].iloc[-2]
+            chg_1d = ((cur_p / prev_p) - 1) * 100 if prev_p > 0 else 0
+        else:
+            chg_1d = 0
+            
+        mcap = row.get("market_cap", 0)
+        mcap_b = (mcap / 1e9) if pd.notnull(mcap) and mcap > 0 else 0
+        
+        # ── AI SCORING (ENRICHED WITH TECHNICALS) ──────────────────────────
+        latest_p = ticker_prices.iloc[-1]
+        score_input = row.to_dict()
+        score_input['rsi'] = float(latest_rsi)
+        score_input['ma_signal'] = str(latest_p.get('ma_signal', 'NEUTRAL'))
+        score_input['price_z_score'] = float(latest_p.get('price_z_score', 0))
+        score_input['upside_pct'] = float(upside)
+        
+        # Ensure numeric safety for fundamental scores
+        for col in ['pe_ratio', 'peg_ratio', 'price_to_book', 'roe', 'fcf_margin', 'dividend_yield_pct']:
+            val = score_input.get(col)
+            try: score_input[col] = float(val) if pd.notnull(val) else None
+            except: score_input[col] = None
+
+        ai_score  = compute_score(score_input)
+        
+        # ── Unified 5-Pillar Rating (delegates to compute_institutional_rating) ──
+        ma_sig = str(latest_p.get('ma_signal', 'NEUTRAL'))
+        # Forward PE preferred over trailing for valuation (forward-looking)
+        pe_v   = float(score_input.get('forward_pe') or score_input.get('pe_ratio') or 0)
+        peg_v  = float(score_input.get('peg_ratio') or 0)
+
+        # Use shared tactical metrics (same formula as Deep Dive)
+        _tm = get_tactical_metrics(
+            ticker_prices,
+            cur_p,
+            analyst_target=float(row.get('target_mean_price') or 0)
+        )
+
+        # Smart Money Spirit (Unified v6.0 with sector awareness)
+        sm_result = get_sm_spirit_unified_v2(ticker_prices, sector=str(row.get('sector', 'Unknown')))
+        sm_spirit = sm_result["signal"]
+        sm_strength = sm_result["strength"]
+        sm_layer = sm_result["layer"]
+
+        _rating = compute_institutional_rating(
+            ai_score   = ai_score,
+            ma_sig     = ma_sig,
+            latest_rsi = _tm["rsi"],
+            upside     = float(upside),
+            pe_v       = pe_v,
+            peg_v      = peg_v,
+            sector     = str(row.get('sector', '')),
+            w52_pos    = _tm["w52_pos"],
+            rr         = _tm["rr_score"],   # scoring uses raw r1 target
+            sm_status  = sm_spirit,
+            sm_strength = sm_strength,
+            sm_layer   = sm_layer
+        )
+        action_label = _rating["action_label"]   # plain text — no emoji
+
+
+        
+        # Additional metrics
+        div_yield = float(row.get('dividend_yield_pct', 0)) if pd.notnull(row.get('dividend_yield_pct')) else 0
+        fcf_margin = float(row.get('fcf_margin', 0)) if pd.notnull(row.get('fcf_margin')) else 0
+        
+        # Safe Financial Metrics (Handling pd.NA)
+        eb_val = row.get('ebitda')
+        td_val = row.get('total_debt')
+        ebitda = float(eb_val) if pd.notnull(eb_val) else 0
+        total_debt = float(td_val) if pd.notnull(td_val) else 0
+        
+        if ebitda > 0:
+            debt_ebitda = min(total_debt / ebitda, 99)
+        else:
+            debt_ebitda = 99
+            
+        ev_eb_val = row.get('ev_to_ebitda')
+        ev_ebitda = float(ev_eb_val) if pd.notnull(ev_eb_val) else 0
+        
+        roe_raw = row.get('roe')
+        roe_val = (float(roe_raw) * 100) if pd.notnull(roe_raw) else 0
+        net_payout = row.get('net_payout_yield_pct', 0) or 0
+        vol_30d = row.get('volatility_30d', 0) or 0
+        short_pct = (row.get('short_percent_of_float', 0) * 100) if pd.notnull(row.get('short_percent_of_float')) else 0
+
+        screener_rows.append({
+            "Ticker": ticker,
+            "Company": row['company'],
+            "Sector": row['sector'],
+            "Action": action_label,
+            "Quality": ai_score,
+            "Upside (%)": round(upside, 1),
+            "1D Chg (%)": round(chg_1d, 2),
+            "Price": cur_p,
+            "MCap (B)": round(mcap_b, 1),
+            "RSI (14)": round(latest_rsi, 1),
+            "Z-Score": round(ticker_prices['price_z_score'].iloc[-1] if 'price_z_score' in ticker_prices.columns else 0, 2),
+            "Smart Money": sm_spirit,
+            "vs MA200 (%)": round(ticker_prices['pct_from_ma200'].iloc[-1] if 'pct_from_ma200' in ticker_prices.columns else 0, 1),
+            "Yield (%)": round(div_yield, 2),
+            "Net Payout (%)": round(net_payout, 2),
+            "FCF Margin (%)": round(fcf_margin, 1),
+            "ROE (%)": round(roe_val, 1),
+            "P/E (Fwd)": round(row.get('forward_pe', 999) or 999, 1),
+            "EV/EBITDA": round(ev_ebitda, 1) if ev_ebitda else 0,
+            "PEG": round(row.get('peg_ratio', 99) or 99, 2),
+            "Debt/EBITDA": round(debt_ebitda, 2),
+            "Vol 30D (%)": round(vol_30d, 1) if vol_30d else 0,
+            "Short %": round(short_pct, 1),
+            "Trend": latest_p.get('ma_signal', 'NEUTRAL'),
+            "Region": row['region'],
+            "EPS Momentum": _eps_mom_lookup.get(ticker, 'Neutral'),
+            "Rev Momentum": _rev_mom_lookup.get(ticker, 'Neutral'),
+        })
+        
+    return pd.DataFrame(screener_rows)

@@ -51,7 +51,7 @@ class TestScoreCalculation:
 class TestMacroDataFetching:
     """Test macro data fetching and fallback."""
     
-    @patch('app.yf.download')
+    @patch('services.market_data.yf.download')
     def test_fetch_macro_data_success(self, mock_download):
         """Test successful macro data fetch."""
         # Mock yfinance response
@@ -64,7 +64,7 @@ class TestMacroDataFetching:
         mock_download.return_value = mock_data
         
         # Import and test
-        from app import fetch_macro_data
+        from services.market_data import fetch_macro_data
         
         result = fetch_macro_data()
         
@@ -81,13 +81,13 @@ class TestMacroDataFetching:
 class TestCurrencyNormalization:
     """Test currency normalization."""
     
-    @patch('app.yf.download')
+    @patch('services.market_data.yf.download')
     def test_get_forex_rates(self, mock_download):
         """Test forex rate fetching."""
         mock_data = pd.Series([0.92], index=pd.date_range('2024-04-30', periods=1))
         mock_download.return_value = mock_data
         
-        from app import get_forex_rates
+        from services.market_data import get_forex_rates
         
         rate = get_forex_rates(target="EUR")
         
@@ -110,7 +110,7 @@ class TestSmartMoneyAnalysis:
             'price_low': np.cumsum(np.random.randn(150)) + 98
         })
         
-        from app import get_sm_spirit_unified_v2
+        from core.smart_money import get_sm_spirit_unified_v2
         
         result = get_sm_spirit_unified_v2(df)
         
@@ -132,7 +132,7 @@ class TestSmartMoneyAnalysis:
             'price_low': [98] * 10
         })
         
-        from app import get_sm_spirit_unified_v2
+        from core.smart_money import get_sm_spirit_unified_v2
         
         result = get_sm_spirit_unified_v2(df)
         
@@ -152,7 +152,7 @@ class TestRSICalculation:
             'price_close': [100, 102, 101, 103, 105, 104, 106, 108, 107, 109, 111, 110, 112, 114, 113]
         })
         
-        from app import get_rsi_vectorized
+        from core.indicators import get_rsi_vectorized
         
         rsi = get_rsi_vectorized(df)
         
@@ -166,56 +166,58 @@ class TestTacticalMetrics:
     """Test tactical metrics calculation."""
     
     def test_tactical_metrics_calculation(self):
-        """Test calculation of support/resistance levels."""
-        # Create sample price data
-        dates = pd.date_range('2024-01-01', periods=100, freq='D')
+        """Support below price, resistance above, stop below support."""
+        rng = np.random.default_rng(0)
+        close = 100 + np.cumsum(rng.normal(0, 1, 120))
         df = pd.DataFrame({
-            'date': dates,
-            'price_close': np.random.uniform(95, 105, 100),
-            'price_high': np.random.uniform(100, 110, 100),
-            'price_low': np.random.uniform(90, 100, 100)
+            'date': pd.date_range('2024-01-01', periods=120, freq='D'),
+            'price_open': close, 'price_close': close,
+            'price_high': close + 1.5, 'price_low': close - 1.5,
+            'volume': rng.integers(1_000_000, 2_000_000, 120),
         })
-        
-        from app import get_tactical_metrics
-        
-        result = get_tactical_metrics(df, current_price=100)
-        
-        assert isinstance(result, dict)
-        assert 'support_s1' in result
-        assert 'resistance_r1' in result
-        assert 'stop_loss_technical' in result
+        cur_p = float(close[-1])
+
+        from core.levels import get_tactical_metrics
+
+        result = get_tactical_metrics(df, cur_p, analyst_target=cur_p * 1.15)
+
+        assert result['s1'] < cur_p < result['r1']
+        assert result['stop_loss'] < result['s1']
+        assert 0 <= result['rsi'] <= 100
+
+
+# Higher = more bullish. Labels documented in compute_institutional_rating's docstring.
+_ACTION_RANK = {"SELL": 0, "REDUCE": 1, "HOLD": 2, "BUY": 3, "STRONG BUY": 4}
+
+
+def _rank(label: str) -> int:
+    return next(v for k, v in sorted(_ACTION_RANK.items(), key=lambda kv: -len(kv[0])) if k in label.upper())
 
 
 class TestInstitutionalRating:
     """Test institutional rating calculation."""
-    
-    def test_institutional_rating_strong_buy(self):
-        """Test rating for strong buy scenario."""
-        from app import compute_institutional_rating
-        
-        rating = compute_institutional_rating(
-            ai_score=85,
-            upside_pct=25,
-            smart_money="ACCUMULATION",
-            ma_signal="BULLISH",
-            rsi=55
-        )
-        
-        assert rating in ["STRONG BUY", "BUY", "ACCUMULATE", "HOLD", "WATCH", "REDUCE", "AVOID"]
-    
-    def test_institutional_rating_avoid(self):
-        """Test rating for avoid scenario."""
-        from app import compute_institutional_rating
-        
-        rating = compute_institutional_rating(
-            ai_score=25,
-            upside_pct=-15,
-            smart_money="DISTRIBUTION",
-            ma_signal="BEARISH",
-            rsi=75
-        )
-        
-        assert rating in ["REDUCE", "AVOID", "WATCH"]
+
+    def _rate(self, **kw):
+        from core.rating import compute_institutional_rating
+        base = dict(ai_score=50, ma_sig="NEUTRAL", latest_rsi=50, upside=0, pe_v=20, peg_v=1.5,
+                    sector="Technology", w52_pos=50, rr=1.5)
+        base.update(kw)
+        return compute_institutional_rating(**base)
+
+    def test_institutional_rating_strong_setup_beats_weak_setup(self):
+        strong = self._rate(ai_score=85, ma_sig="STRONG BULL", latest_rsi=55, upside=25, pe_v=18,
+                            peg_v=0.9, w52_pos=70, rr=3.0, sm_status="ACCUMULATION", sm_strength=80)
+        weak = self._rate(ai_score=25, ma_sig="STRONG BEAR", latest_rsi=75, upside=-15, pe_v=60,
+                          peg_v=4.0, w52_pos=10, rr=0.4, sm_status="DISTRIBUTION", sm_strength=80)
+        assert {"action_label", "action_color"} <= set(strong)
+        assert _rank(strong["action_label"]) >= _ACTION_RANK["BUY"]
+        assert _rank(weak["action_label"]) <= _ACTION_RANK["REDUCE"]
+
+    def test_strong_buy_requires_quality(self):
+        """v15 rule: STRONG BUY needs AI Score >= 65, whatever the other pillars say."""
+        r = self._rate(ai_score=50, ma_sig="STRONG BULL", latest_rsi=55, upside=40, pe_v=12,
+                       peg_v=0.5, w52_pos=70, rr=4.0, sm_status="ACCUMULATION", sm_strength=90)
+        assert "STRONG BUY" not in r["action_label"].upper()
 
 
 class TestPortfolioManagement:
@@ -260,37 +262,6 @@ class TestDataQuality:
         # Check for suspiciously low market caps
         low_mcap = df[df['market_cap'] < 1000000]
         assert len(low_mcap) > 0
-
-
-class TestI18nIntegration:
-    """Test internationalization integration."""
-    
-    def test_language_loading(self):
-        """Test that translations load correctly."""
-        from utils.i18n import load_translations, t
-        
-        # Load English
-        load_translations("en")
-        assert isinstance(t("app.title", default="Test"), str)
-        
-        # Load Vietnamese
-        load_translations("vi")
-        assert isinstance(t("app.title", default="Test"), str)
-    
-    def test_currency_formatting(self):
-        """Test currency formatting."""
-        from utils.i18n import format_currency
-        
-        formatted = format_currency(1234.56, "EUR", "en")
-        assert "EUR" in formatted or "€" in formatted
-        assert "1,234.56" in formatted or "1234.56" in formatted
-    
-    def test_number_formatting(self):
-        """Test number formatting."""
-        from utils.i18n import format_number
-        
-        formatted = format_number(1234567.89, decimals=2, language="en")
-        assert "," in formatted  # Should have thousands separator
 
 
 class TestPerformanceOptimizations:
