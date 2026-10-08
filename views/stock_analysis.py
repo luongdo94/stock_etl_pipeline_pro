@@ -176,7 +176,7 @@ def render(ctx):
             _tp2 = max(target_p, _tm["tp2"]) if target_p > 0 else _tm["tp2"]
 
             # ── DECISION SUMMARY (valuation → expected return, risk, size, sell rules) ──
-            _vin = valuation_inputs(meta, cur_p, hist_fcf_full, deep_ticker, macro)
+            _vin = valuation_inputs(meta, cur_p, hist_fcf_full, deep_ticker, macro, annual_fin)
             _relval = relative_valuation(companies_full, deep_ticker)
             _next_er = None
             _er = earnings_cal[earnings_cal["ticker"] == deep_ticker] if not earnings_cal.empty else earnings_cal
@@ -222,7 +222,7 @@ def render(ctx):
 
             st.markdown("<div style='margin-top:35px; margin-bottom:-10px; padding:6px 12px; background:rgba(255,255,255,0.03); border-left:4px solid #e67e22; color:#e67e22; font-size:0.75rem; font-weight:800; text-transform:uppercase; letter-spacing:1.5px;'>LAYER 2: TACTICAL EXECUTION MATRIX</div>", unsafe_allow_html=True)
             # ── UNIFIED DECISION SUPPORT MATRIX (ACTION LAYER) ────────────────
-            render_header("activity", "360° Decision & Action Matrix")
+            render_header("activity", "360° Signal Matrix (inputs to the Decision Summary above)")
             
             # PILLAR 1: TECHNICAL TREND
             if _ma_sig == "BULLISH" and _rsi_val < 65:
@@ -421,7 +421,7 @@ def render(ctx):
                     </div>
                 </div>
                 <div style='background:rgba({bg_rgb},0.12); border-left:6px solid {act_color}; padding:20px; border-radius:8px; box-shadow:0 4px 15px rgba(0,0,0,0.3);'>
-                    <div style='font-size:0.75em; color:#bbb; text-transform:uppercase; letter-spacing:2px; margin-bottom:6px;'>Positioning Hint / Action Layer</div>
+                    <div style='font-size:0.75em; color:#bbb; text-transform:uppercase; letter-spacing:2px; margin-bottom:6px;'>Signal (technical + quality) — the recommendation is the Decision Summary</div>
                     <div style='font-size:1.6em; font-weight:900; color:{act_color}; margin-bottom:8px; text-shadow: 0px 2px 10px rgba({bg_rgb}, 0.5);'>{act_str}</div>
                     <div style='color:#e0e0e0; font-size:1.0em; line-height:1.5; margin-bottom:15px;'>{act_desc}</div>
                     <hr style='border:0; height:1px; background:linear-gradient(90deg, rgba(255,255,255,0.15), transparent); margin-bottom:15px;'>
@@ -1401,10 +1401,7 @@ def render(ctx):
                             df_fcf_ticker[["year", "free_cash_flow", "operating_cash_flow"]],
                             on="year", how="left"
                         )
-                        _ticker_ccy = str(meta.get("currency", "USD"))
-                        _fx_rate = get_forex_rates(target="EUR", source=_ticker_ccy)
-                        df_fin_plot["free_cash_flow"] = df_fin_plot["free_cash_flow"] * _fx_rate
-                        df_fin_plot["operating_cash_flow"] = df_fin_plot["operating_cash_flow"] * _fx_rate
+                        # hist_fcf is stored in EUR by the ETL — no conversion here
                         df_fin_plot['fcf_growth'] = (
                             df_fin_plot['free_cash_flow'] - df_fin_plot['free_cash_flow'].shift(1)
                         ) / df_fin_plot['free_cash_flow'].shift(1).abs() * 100
@@ -1594,10 +1591,7 @@ def render(ctx):
                                 df_fcf_q_ticker[["year", "quarter", "free_cash_flow", "operating_cash_flow"]],
                                 on=["year", "quarter"], how="left"
                             )
-                            _ticker_ccy_q = str(meta.get("currency", "USD"))
-                            _fx_rate_q = get_forex_rates(target="EUR", source=_ticker_ccy_q)
-                            df_fin_q_plot["free_cash_flow"] = df_fin_q_plot["free_cash_flow"] * _fx_rate_q
-                            df_fin_q_plot["operating_cash_flow"] = df_fin_q_plot["operating_cash_flow"] * _fx_rate_q
+                            # hist_fcf_quarterly is stored in EUR by the ETL — no conversion here
                         else:
                             df_fin_q_plot['free_cash_flow'] = None
 

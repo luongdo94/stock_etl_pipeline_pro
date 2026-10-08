@@ -11,6 +11,7 @@ from ui.icons import render_header
 
 def render(ctx):
     """Render the 📋 Watchlist tab. ctx is the app globals() dict."""
+    annual_fin = ctx['annual_fin']
     companies_full = ctx['companies_full']
     earnings_cal = ctx['earnings_cal']
     hist_fcf_full = ctx['hist_fcf_full']
@@ -31,8 +32,9 @@ def render(ctx):
         for _t in wl_df["Ticker"].dropna().unique():
             _row = companies_full[companies_full["ticker"] == _t]
             if not _row.empty and _t in _latest.index:
-                _iv[_t] = valuation_inputs(_row.iloc[0], float(_latest.at[_t, "price_close"]),
-                                           hist_fcf_full, _t, macro)["base"]
+                _v = valuation_inputs(_row.iloc[0], float(_latest.at[_t, "price_close"]),
+                                      hist_fcf_full, _t, macro, annual_fin)
+                _iv[_t] = _v["base"] if _v["reliable"] else None   # only a trustworthy value can trigger
         render_alert_inbox(watchlist_triggers(wl_df, _latest, _iv)
                            + earnings_soon(earnings_cal, wl_df["Ticker"].dropna().unique()))
 

@@ -6,6 +6,7 @@ import yaml
 from datetime import datetime, timedelta
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Optional
 import numpy as np
 try:
     from yahooquery import Ticker as YQTicker
@@ -278,6 +279,72 @@ def _guess_currency(ticker: str) -> str:
     if ticker.endswith(".JO"): return "ZAR"
     return "USD"
 
+# ── FX to EUR (single implementation for every extractor) ─────────────────────
+# Minor currency units Yahoo uses for QUOTES (prices, targets). Company-level amounts
+# (revenue, cash flow, market cap) are always reported in the MAJOR unit.
+_MINOR_UNITS = {"GBp": "GBP", "GBX": "GBP", "GBx": "GBP", "ZAc": "ZAR", "ILA": "ILS"}
+_FX_CACHE: dict = {}   # major currency → EUR rate (None = unavailable this run)
+
+
+def major_currency(ccy: Optional[str]) -> Optional[str]:
+    if not ccy:
+        return None
+    return _MINOR_UNITS.get(str(ccy), str(ccy).upper())
+
+
+def prefetch_fx_to_eur(currencies) -> None:
+    """Download the latest {CCY}EUR=X close for every currency not cached yet."""
+    majors = sorted({major_currency(c) for c in currencies if c} - {"EUR", None} - set(_FX_CACHE))
+    if not majors:
+        return
+    tickers = [f"{m}EUR=X" for m in majors]
+    close = pd.DataFrame()
+    try:
+        dl = yf.download(tickers, period="7d", progress=False, auto_adjust=False)
+        if not dl.empty and "Close" in dl.columns.get_level_values(0):
+            close = dl["Close"]
+            if isinstance(close, pd.Series):
+                close = close.to_frame(tickers[0])
+    except Exception as e:
+        logger.error(f"   ❌ FX download failed for {tickers}: {e}")
+    for m, t in zip(majors, tickers):
+        series = close[t].dropna() if t in close.columns else pd.Series(dtype=float)
+        if series.empty:
+            logger.error(f"   ❌ No FX rate for {m}→EUR — {m} amounts will be left EMPTY, not stored unconverted.")
+            _FX_CACHE[m] = None
+        else:
+            _FX_CACHE[m] = float(series.iloc[-1])
+
+
+def fx_to_eur(ccy: Optional[str]) -> Optional[float]:
+    """
+    Multiplier converting an amount in `ccy` to EUR, or None when unknown.
+    Minor units are handled: GBp (pence) → GBP rate / 100. 'GBP' means pounds.
+    Callers must treat None as "cannot convert" — never fall back to 1.0.
+    """
+    if not ccy:
+        return None
+    major = major_currency(ccy)
+    if major == "EUR":
+        rate = 1.0
+    else:
+        if major not in _FX_CACHE:
+            prefetch_fx_to_eur([major])
+        rate = _FX_CACHE.get(major)
+        if rate is None:
+            return None
+    return rate / 100.0 if str(ccy) in _MINOR_UNITS else rate
+
+
+def _statement_currency(t_data: pd.DataFrame, ticker: str) -> str:
+    """Currency of a yahooquery financial statement (currencyCode column), else the market's major unit."""
+    if "currencyCode" in t_data.columns:
+        codes = t_data["currencyCode"].dropna()
+        if not codes.empty:
+            return str(codes.iloc[-1])
+    return major_currency(_guess_currency(ticker))
+
+
 def _safe_float(val):
     """None-safe float cast — no FX conversion. Use for per-share metrics
     (EPS, target price) that Yahoo already reports in local currency."""
@@ -548,30 +615,8 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
 
     ticker_keys = list(tickers.keys())
     
-    # ── 1. PRE-FETCH FX RATES (Global) ────────────────────────────────────────
-    logger.info("   🔍 Detecting currencies and FX rates...")
-    fx_rates = {"EUR": 1.0}
-    unique_currencies = {"EUR"}
-    for t in ticker_keys:
-        unique_currencies.add(_guess_currency(t))
-    
-    if len(unique_currencies) > 1:
-        fx_tkrs = [f"{c}EUR=X" for c in unique_currencies if c != "EUR"]
-        try:
-            fx_data = yf.download(fx_tkrs, period="2d", progress=False)["Close"]
-            for c in unique_currencies:
-                if c == "EUR": continue
-                col = f"{c}EUR=X"
-                try:
-                    if isinstance(fx_data, pd.DataFrame) and col in fx_data.columns:
-                        rate = fx_data[col].ffill().iloc[-1]
-                    elif not fx_data.empty:
-                        rate = fx_data.ffill().iloc[-1]
-                    else: rate = 1.0
-                    fx_rates[c] = float(rate.item() if hasattr(rate, "item") else rate)
-                except: fx_rates[c] = 1.0
-        except Exception as e:
-            logger.warning(f"  ⚠️ Global FX fetch failed: {e}. Defaulting to 1.0")
+    # ── 1. PRE-FETCH FX RATES (one shared, fail-loud implementation) ──────────
+    prefetch_fx_to_eur(_guess_currency(t) for t in ticker_keys)
 
     # ── 2. BATCH EXTRACTION VIA YAHOOQUERY (Pass 1) ───────────────────────────
     batch_size = 40
@@ -591,32 +636,27 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
         calendar   = data.get('calendarEvents', {})  # Contains ex-dividend & pay dates
 
         # Determine currency and FX rates (split by financial vs trading to fix ADR anomalies)
-        financial_currency = financials.get('financialCurrency') or summary.get('currency') or _guess_currency(ticker)
+        # Statement amounts are in the financial currency's MAJOR unit (GBP pounds, never pence);
+        # quotes (target price) are in the trading currency, which can be a minor unit (GBp);
+        # market cap is a company-level amount → trading currency's major unit.
+        financial_currency = major_currency(
+            financials.get('financialCurrency') or summary.get('currency') or _guess_currency(ticker))
         trading_currency = summary.get('currency') or price_mod.get('currency') or financial_currency
 
-        # GBp (UK pence) fix: Yahoo reports financials in pence for *.L tickers,
-        # but our FX table only has GBPEUR=X (pounds). Use the pound rate and divide by 100.
-        _is_fin_gbp_pence = (financial_currency == "GBp") or (ticker.upper().endswith(".L") and financial_currency in ("GBp", "GBP"))
-        if _is_fin_gbp_pence:
-            fin_fx_rate = fx_rates.get("GBP", fx_rates.get("GBp", 1.0)) / 100.0
-        else:
-            fin_fx_rate = fx_rates.get(financial_currency, 1.0)
+        fin_fx_rate   = fx_to_eur(financial_currency)
+        quote_fx_rate = fx_to_eur(trading_currency)
+        size_fx_rate  = fx_to_eur(major_currency(trading_currency))
+        if fin_fx_rate is None or quote_fx_rate is None:
+            logger.error(f"   ❌ {ticker}: no EUR rate for {financial_currency}/{trading_currency} — money fields left empty")
 
-        _is_trad_gbp_pence = (trading_currency == "GBp") or (ticker.upper().endswith(".L") and trading_currency in ("GBp", "GBP"))
-        if _is_trad_gbp_pence:
-            trad_fx_rate = fx_rates.get("GBP", fx_rates.get("GBp", 1.0)) / 100.0
-        else:
-            trad_fx_rate = fx_rates.get(trading_currency, 1.0)
+        def _conv(val, rate):
+            if rate is None or val is None or (isinstance(val, (float, int)) and pd.isna(val)): return None
+            try: return float(val) * rate
+            except (TypeError, ValueError): return None
 
-        def norm_fin_val(val):
-            if val is None or (isinstance(val, (float, int)) and pd.isna(val)): return None
-            try: return float(val) * fin_fx_rate
-            except: return None
-
-        def norm_trad_val(val):
-            if val is None or (isinstance(val, (float, int)) and pd.isna(val)): return None
-            try: return float(val) * trad_fx_rate
-            except: return None
+        norm_fin_val   = lambda v: _conv(v, fin_fx_rate)
+        norm_trad_val  = lambda v: _conv(v, quote_fx_rate)
+        norm_size_val  = lambda v: _conv(v, size_fx_rate)
 
         record = {
             "ticker":          ticker,
@@ -625,19 +665,19 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
             "sector":          meta.get("sector") or profile.get("sector", "N/A"),
             "industry":        profile.get("industry") or None,  # Granular sub-category from Yahoo
             "region":          meta.get("region") or "N/A",
-            "market_cap":      norm_trad_val(summary.get('marketCap') or price_mod.get('marketCap')),
+            "market_cap":      norm_size_val(summary.get('marketCap') or price_mod.get('marketCap')),
             "pe_ratio":        summary.get('trailingPE'),
             "forward_pe":      summary.get('forwardPE'),
             "revenue_ttm":     norm_fin_val(financials.get('totalRevenue')),
             "employees":       profile.get('fullTimeEmployees'),
             "country":         profile.get('country'),
-            "currency":        financial_currency,  # Maintain financial currency for EPS on-the-fly math
+            "currency":        financial_currency,  # financial currency (major unit) of EPS / estimates
             "total_debt":      norm_fin_val(financials.get('totalDebt')),
             "ebitda":          norm_fin_val(financials.get('ebitda')),
             "gross_margin":    financials.get('grossMargins'),
             "operating_margin":financials.get('operatingMargins'),
-            # ── Per-share & ratio metrics: Yahoo already reports in correct local currency.
-            # Do NOT apply norm_val() (FX multiplier) — that would double-convert.
+            # ── Per-share EPS stays in the financial currency on purpose: it is only used as a
+            # ratio (forward vs trailing) and views convert estimates via `currency` when displayed.
             "trailing_eps":    _safe_float(stats.get('trailingEps')),
             "forward_eps":     _safe_float(stats.get('forwardEps')),
             "roe":             financials.get('returnOnEquity'),
@@ -822,25 +862,7 @@ def extract_historical_financials(tickers: dict = None) -> pd.DataFrame:
     ticker_keys = sorted([t for t in ticker_keys if not t.startswith('^') and t not in ['SPY']])
 
     
-    # 1. Pre-fetch FX rates globally (yf still works well for price/FX data)
-    unique_currencies = {"EUR"}
-    for ticker in ticker_keys:
-        unique_currencies.add(_guess_currency(ticker))
-    
-    fx_rates = {"EUR": 1.0}
-    if len(unique_currencies) > 1:
-        fx_tkrs = [f"{c}EUR=X" for c in unique_currencies if c != "EUR"]
-        try:
-            fx_data = yf.download(fx_tkrs, period="1d", progress=False)["Close"]
-            for c in unique_currencies:
-                if c == "EUR": continue
-                col = f"{c}EUR=X"
-                if isinstance(fx_data, pd.DataFrame) and col in fx_data.columns:
-                    fx_rates[c] = float(fx_data[col].iloc[-1].item() if hasattr(fx_data[col].iloc[-1], 'item') else fx_data[col].iloc[-1])
-                elif not fx_data.empty:
-                    fx_rates[c] = float(fx_data.iloc[-1].item() if hasattr(fx_data.iloc[-1], 'item') else fx_data.iloc[-1])
-        except Exception as e:
-            logger.warning(f"  ⚠️ Global FX fetch failed for financials: {e}")
+    # 1. FX rates come from the shared fx_to_eur() (per statement currency)
 
     def process_yq_fin(df, successful_set):
         if not isinstance(df, pd.DataFrame) or df.empty:
@@ -860,8 +882,11 @@ def extract_historical_financials(tickers: dict = None) -> pd.DataFrame:
         
         for ticker in df['symbol'].unique():
             t_data = df[df['symbol'] == ticker].copy()
-            currency = _guess_currency(ticker)
-            fx_rate = fx_rates.get(currency, 1.0)
+            currency = _statement_currency(t_data, ticker)
+            fx_rate = fx_to_eur(currency)
+            if fx_rate is None:
+                logger.error(f"   ❌ {ticker}: no EUR rate for {currency} — statements skipped")
+                continue
             
             # Map columns and normalize
             found_cols = [c for c in row_map.keys() if c in t_data.columns]
@@ -982,25 +1007,7 @@ def extract_quarterly_financials(tickers: dict = None) -> pd.DataFrame:
     ticker_keys = sorted([t for t in ticker_keys if not t.startswith('^') and t not in ['SPY']])
 
     
-    # 1. Pre-fetch FX rates globally
-    unique_currencies = {"EUR"}
-    for ticker in ticker_keys:
-        unique_currencies.add(_guess_currency(ticker))
-    
-    fx_rates = {"EUR": 1.0}
-    if len(unique_currencies) > 1:
-        fx_tkrs = [f"{c}EUR=X" for c in unique_currencies if c != "EUR"]
-        try:
-            fx_data = yf.download(fx_tkrs, period="1d", progress=False)["Close"]
-            for c in unique_currencies:
-                if c == "EUR": continue
-                col = f"{c}EUR=X"
-                if isinstance(fx_data, pd.DataFrame) and col in fx_data.columns:
-                    fx_rates[c] = float(fx_data[col].iloc[-1].item() if hasattr(fx_data[col].iloc[-1], 'item') else fx_data[col].iloc[-1])
-                elif not fx_data.empty:
-                    fx_rates[c] = float(fx_data.iloc[-1].item() if hasattr(fx_data.iloc[-1], 'item') else fx_data.iloc[-1])
-        except Exception as e:
-            logger.warning(f"  ⚠️ Global FX fetch failed for quarterly financials: {e}")
+    # 1. FX rates come from the shared fx_to_eur() (per statement currency)
 
     def process_yq_q_fin(df, successful_set):
         if not isinstance(df, pd.DataFrame) or df.empty:
@@ -1019,8 +1026,11 @@ def extract_quarterly_financials(tickers: dict = None) -> pd.DataFrame:
         
         for ticker in df['symbol'].unique():
             t_data = df[df['symbol'] == ticker].copy()
-            currency = _guess_currency(ticker)
-            fx_rate = fx_rates.get(currency, 1.0)
+            currency = _statement_currency(t_data, ticker)
+            fx_rate = fx_to_eur(currency)
+            if fx_rate is None:
+                logger.error(f"   ❌ {ticker}: no EUR rate for {currency} — statements skipped")
+                continue
             
             found_cols = [c for c in row_map.keys() if c in t_data.columns]
             if not found_cols: continue
@@ -1135,25 +1145,7 @@ def extract_cashflows(tickers: dict = TICKERS) -> pd.DataFrame:
     ticker_keys = sorted([t for t in ticker_keys if not t.startswith('^') and t not in ['SPY']])
 
 
-    # 1. Pre-fetch FX rates globally
-    unique_currencies = {"EUR", "DKK", "USD"}
-    for ticker in ticker_keys:
-        unique_currencies.add(_guess_currency(ticker))
-    
-    fx_rates = {"EUR": 1.0}
-    if len(unique_currencies) > 1:
-        fx_tkrs = [f"{c}EUR=X" for c in unique_currencies if c != "EUR"]
-        try:
-            fx_data = yf.download(fx_tkrs, period="1d", progress=False)["Close"]
-            for c in unique_currencies:
-                if c == "EUR": continue
-                col = f"{c}EUR=X"
-                if isinstance(fx_data, pd.DataFrame) and col in fx_data.columns:
-                    fx_rates[c] = float(fx_data[col].iloc[-1].item() if hasattr(fx_data[col].iloc[-1], 'item') else fx_data[col].iloc[-1])
-                elif isinstance(fx_data, pd.Series) and not fx_data.empty:
-                    fx_rates[c] = float(fx_data.iloc[-1].item() if hasattr(fx_data.iloc[-1], 'item') else fx_data.iloc[-1])
-        except Exception as e:
-            logger.warning(f"  ⚠️ Global FX fetch failed for cashflows: {e}")
+    # 1. FX rates come from the shared fx_to_eur() (statement currencyCode)
 
     def fetch_single(ticker, session=None):
         try:
@@ -1179,37 +1171,29 @@ def extract_cashflows(tickers: dict = TICKERS) -> pd.DataFrame:
             raw_buyback = abs(buyback_val) if buyback_val < 0 else 0.0
             raw_div     = abs(div_val)     if div_val < 0 else 0.0
 
-            currency = _guess_currency(ticker)
-            fx_rate  = fx_rates.get(currency, 1.0)
-            
-            # Sanity check via market cap (ADR detection)
-            # IMPORTANT: Use a large fallback (1T) to prevent false-zeroing when API call fails
+            # Statement currency (e.g. DKK for a USD-listed ADR) — no more DKK guessing
+            currency = _statement_currency(cf_df, ticker)
+            fx_rate  = fx_to_eur(currency)
+            if fx_rate is None:
+                logger.error(f"   ❌ {ticker}: no EUR rate for {currency} — cashflow skipped")
+                return None
+            buyback_eur = raw_buyback * fx_rate
+            div_eur     = raw_div     * fx_rate
+
+            # Sanity check vs market cap (both in EUR): >20% payout yield = bad data
             try:
                 summary = yq.summary_detail.get(ticker, {})
-                mktcap = summary.get("marketCap", None)
-                if not mktcap or mktcap < 1_000_000:
-                    mktcap = 1_000_000_000_000  # 1T sentinel — skip ADR check if no valid mktcap
-            except:
-                mktcap = 1_000_000_000_000  # Safe fallback
-
-            buyback_usd = raw_buyback * fx_rate
-            div_usd     = raw_div     * fx_rate
-
-            implied_yield = (buyback_usd + div_usd) / max(float(mktcap), 1)
-            if implied_yield > 0.20:
-                dkk_rate = fx_rates.get("DKK", None)
-                if dkk_rate:
-                    buyback_usd = raw_buyback * dkk_rate
-                    div_usd     = raw_div     * dkk_rate
-                    if (buyback_usd + div_usd) / max(float(mktcap), 1) > 0.20:
-                        buyback_usd, div_usd = 0.0, 0.0
-                else: buyback_usd, div_usd = 0.0, 0.0
-
+                mcap_eur = (summary.get("marketCap") or 0) * (fx_to_eur(major_currency(summary.get("currency"))) or 0)
+            except Exception:
+                mcap_eur = 0
+            if mcap_eur > 1_000_000 and (buyback_eur + div_eur) / mcap_eur > 0.20:
+                logger.warning(f"   ⚠️ {ticker}: implausible payout yield — buyback/dividend ignored")
+                buyback_eur, div_eur = 0.0, 0.0
 
             return {
                 "ticker": ticker,
-                "buyback_ttm": buyback_usd,
-                "dividends_paid_ttm": div_usd,
+                "buyback_ttm": buyback_eur,
+                "dividends_paid_ttm": div_eur,
             }
         except Exception as e:
             logger.warning(f"  ⚠️ Cashflow fetch failed for {ticker}: {e}")
@@ -1313,6 +1297,16 @@ def extract_historical_fcf(tickers: dict = None) -> pd.DataFrame:
                 if pd.isna(fcf) and pd.isna(ocf): continue
                 if pd.isna(fcf) and not pd.isna(ocf) and not pd.isna(capex):
                     fcf = ocf + capex
+                # Stored in EUR (statement currencyCode → EUR) so FCF is comparable with revenue,
+                # market cap and the DCF. Views must NOT convert again.
+                ccy = row.get('currencyCode') if isinstance(row.get('currencyCode'), str) else \
+                    major_currency(_guess_currency(ticker))
+                rate = fx_to_eur(ccy)
+                if rate is None:
+                    continue
+                fcf   = fcf * rate if not pd.isna(fcf) else fcf
+                ocf   = ocf * rate if not pd.isna(ocf) else ocf
+                capex = capex * rate if not pd.isna(capex) else capex
                 
                 records_list.append({
                     "ticker": ticker, "year": int(year),
@@ -1418,6 +1412,16 @@ def extract_quarterly_fcf(tickers: dict = None) -> pd.DataFrame:
                 if pd.isna(fcf) and pd.isna(ocf): continue
                 if pd.isna(fcf) and not pd.isna(ocf) and not pd.isna(capex):
                     fcf = ocf + capex
+                # Stored in EUR (statement currencyCode → EUR) so FCF is comparable with revenue,
+                # market cap and the DCF. Views must NOT convert again.
+                ccy = row.get('currencyCode') if isinstance(row.get('currencyCode'), str) else \
+                    major_currency(_guess_currency(ticker))
+                rate = fx_to_eur(ccy)
+                if rate is None:
+                    continue
+                fcf   = fcf * rate if not pd.isna(fcf) else fcf
+                ocf   = ocf * rate if not pd.isna(ocf) else ocf
+                capex = capex * rate if not pd.isna(capex) else capex
                 
                 records_list.append({
                     "ticker": ticker, "year": int(year), "quarter": int(quarter),
@@ -1785,49 +1789,14 @@ def extract_earnings_history(tickers: dict = None) -> pd.DataFrame:
     ticker_keys = [t for t in tickers.keys() if not t.startswith("^")]
     successful_tickers = set()
 
-    # ── PRE-FETCH FX RATES (same pattern as extract_company_info) ─────────────
-    fx_rates: dict = {"EUR": 1.0}
-    unique_currencies = {"EUR"}
-    for t in ticker_keys:
-        unique_currencies.add(_guess_currency(t))
+    def _eur_rate(ticker_sym: str, reported_currency: str):
+        """Multiplier reported_currency → EUR (None = unknown). EPS is in the major unit (GBP, not GBp)."""
+        ccy = reported_currency.strip() if reported_currency else major_currency(_guess_currency(ticker_sym))
+        return fx_to_eur(ccy)
 
-    if len(unique_currencies) > 1:
-        fx_tkrs = [f"{c}EUR=X" for c in unique_currencies if c not in ("EUR", "GBp")]
-        # GBp (UK pence) → use GBPEUR=X, then divide by 100 at application time
-        if "GBp" in unique_currencies:
-            fx_tkrs.append("GBPEUR=X")
-        try:
-            import time as _time
-            fx_dl = yf.download(fx_tkrs, period="2d", progress=False)["Close"]
-            for c in unique_currencies:
-                if c == "EUR":
-                    continue
-                col = f"{c}EUR=X" if c != "GBp" else "GBPEUR=X"
-                try:
-                    if isinstance(fx_dl, pd.DataFrame) and col in fx_dl.columns:
-                        rate = float(fx_dl[col].dropna().iloc[-1])
-                    elif isinstance(fx_dl, pd.Series):
-                        rate = float(fx_dl.dropna().iloc[-1])
-                    else:
-                        rate = 1.0
-                    fx_rates[c] = rate
-                except Exception:
-                    fx_rates[c] = 1.0
-        except Exception as e:
-            logger.warning(f"  ⚠️ EarningsSurprise FX fetch failed: {e}. Defaulting to 1.0")
-
-    def _eur_rate(ticker_sym: str, reported_currency: str) -> float:
-        """Return multiplier to convert reported_currency → EUR."""
-        ccy = reported_currency.strip() if reported_currency else _guess_currency(ticker_sym)
-        if not ccy or ccy == "EUR":
-            return 1.0
-        if ccy == "GBp" or (ccy == "GBP" and ticker_sym.upper().endswith(".L")):
-            return fx_rates.get("GBp", fx_rates.get("GBP", 1.0)) / 100.0
-        return fx_rates.get(ccy, 1.0)
-
-    def _to_eur(val, rate: float):
+    def _to_eur(val, rate):
         """None-safe multiply."""
-        if val is None:
+        if val is None or rate is None:
             return None
         try:
             return float(val) * rate

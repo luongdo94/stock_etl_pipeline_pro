@@ -42,13 +42,27 @@ class TestDCF:
         sc = valuation.dcf_scenarios(500, 100, 0.08, 0.09)
         assert sc["bear"].value_per_share < sc["base"].value_per_share < sc["bull"].value_per_share
 
-    def test_cost_of_equity_capm(self):
-        assert valuation.cost_of_equity(1.2, risk_free=0.04, erp=0.05) == pytest.approx(0.10)
+    def test_cost_of_equity_capm_with_blume_beta(self):
+        # Blume: 2/3 * 1.2 + 1/3 = 1.1333
+        assert valuation.cost_of_equity(1.2, risk_free=0.04, erp=0.05) == pytest.approx(0.04 + 1.13333 * 0.05, rel=1e-4)
         assert valuation.cost_of_equity(None) == pytest.approx(0.09)
+        assert valuation.cost_of_equity(3.0) == pytest.approx(0.04 + 2.0 * 0.05)   # capped at 2.0
 
     def test_anchor_growth_uses_company_data_and_clips(self):
+        # median 20%, but earnings may only move the revenue anchor by ±5pp → 15%
         g, src = valuation.anchor_growth(0.10, 0.30, None)
-        assert g == pytest.approx(0.20) and set(src) == {"revenue growth", "earnings growth"}
+        assert g == pytest.approx(0.15) and len(src) == 2
+
+    def test_anchor_prefers_multi_year_revenue_cagr(self):
+        # XOM-like: one-quarter revenue spike +44%, EPS +113%, FCF CAGR -26%, 3Y revenue CAGR ~0
+        g, src = valuation.anchor_growth(0.44, 1.13, -0.26, revenue_cagr=0.0)
+        # median(0%, +30% capped EPS, -26% FCF) = 0% — the spike quarter no longer drives growth
+        assert g == pytest.approx(0.0) and "3Y revenue CAGR" in src
+
+    def test_normalized_fcf_is_median_of_three_years(self):
+        hist = pd.DataFrame({"ticker": ["X"] * 4, "year": [2022, 2023, 2024, 2025],
+                             "free_cash_flow": [52.0, 29.8, 27.4, 21.1]})
+        assert valuation.normalized_statement_fcf(hist, "X") == pytest.approx(27.4)
         assert valuation.anchor_growth(0.9, 0.8, 0.7)[0] == valuation.GROWTH_CAP
         assert valuation.anchor_growth(None, None, None) == (0.05, ["default"])
 
@@ -88,6 +102,10 @@ class TestDecision:
 
     def test_thin_margin_is_hold(self):
         assert self._d(base_value=110).stance == "HOLD / WATCH"
+
+    def test_avoid_needs_price_above_bull_case(self):
+        assert self._d(base_value=80, bear_value=60, bull_value=110).stance == "HOLD / WATCH"
+        assert self._d(base_value=80, bear_value=60, bull_value=95).stance == "AVOID / TRIM"
 
     def test_overvalued_is_avoid(self):
         d = self._d(base_value=80)
@@ -220,3 +238,70 @@ def test_snapshot_job_is_idempotent_and_mirrored(tmp_path):
     with duckdb.connect(db, read_only=True) as c:
         cols = {r[0] for r in c.execute("DESCRIBE marts.score_snapshots").fetchall()}
         assert {"as_of_date", "ticker", "quality", "action", "price_close"} <= cols
+
+
+
+class TestDCFReliability:
+    def test_banks_not_applicable(self):
+        ok, note = valuation.dcf_reliability("Banks", 100, 120, 150, 0.05)
+        assert not ok and "banks" in note.lower()
+
+    def test_price_beyond_model_range(self):
+        ok, note = valuation.dcf_reliability("Semiconductors", 300, 40, 80, None)
+        assert not ok and "not informative" in note
+
+    def test_implausibly_cheap_flags_data(self):
+        ok, note = valuation.dcf_reliability("Consumer Electronics", 20, 93, 140, -0.35)
+        assert not ok and "data problem" in note
+
+    def test_normal_case_reliable(self):
+        assert valuation.dcf_reliability("Software", 100, 130, 170, 0.06) == (True, None)
+
+    def test_statement_fcf_preferred(self):
+        hist = pd.DataFrame({"ticker": ["X", "X"], "year": [2024, 2025], "free_cash_flow": [50.0, 67.0]})
+        assert valuation.latest_statement_fcf(hist, "X") == 67.0
+        assert valuation.latest_statement_fcf(hist, "Y") is None
+
+    def test_valuation_inputs_uses_statement_fcf_and_flags_banks(self):
+        hist = pd.DataFrame({"ticker": ["X"] * 3, "year": [2023, 2024, 2025], "free_cash_flow": [80.0, 90.0, 100.0]})
+        meta = {"free_cashflow": 10.0, "market_cap": 2000.0, "sector": "Software", "beta": 1.0,
+                "revenue_growth": 0.08, "earnings_growth": 0.1}
+        vin = valuation.valuation_inputs(meta, 100.0, hist, "X", {})
+        assert vin["fcfe"] == 90.0 and "statement" in vin["fcf_source"]   # median of last 3 years
+        bank = valuation.valuation_inputs({**meta, "sector": "Banks"}, 100.0, hist, "X", {})
+        assert bank["base"] is None and not bank["reliable"]
+
+
+class TestUnreliableValuationNeverDrivesTrades:
+    def test_unreliable_value_is_hold_not_buy_or_avoid(self):
+        for base in (300.0, 20.0):     # would be BUY or AVOID if trusted
+            d = decision.build_decision(price=100, base_value=base, bear_value=base * 0.7, stop_loss=90,
+                                        currency="EUR", track_record_ok=True, valuation_reliable=False,
+                                        valuation_note="not informative", today=date(2026, 1, 10))
+            assert d.stance == "HOLD / WATCH" and "not informative" in d.reasons[0]
+
+
+# ── FX helper (etl.extract) ──────────────────────────────────────────────────
+class TestFxToEur:
+    def _download(self, rates):
+        def dl(tickers, **kw):
+            idx = pd.date_range("2026-01-01", periods=3)
+            cols = pd.MultiIndex.from_product([["Close"], tickers])
+            return pd.DataFrame([[rates.get(t) for t in tickers]] * 3, index=idx, columns=cols)
+        return dl
+
+    def test_pence_pounds_and_missing(self, monkeypatch):
+        from etl import extract as ex
+        monkeypatch.setattr(ex, "_FX_CACHE", {})
+        monkeypatch.setattr(ex.yf, "download", self._download({"GBPEUR=X": 1.17, "JPYEUR=X": 0.006}))
+        assert ex.fx_to_eur("EUR") == 1.0
+        assert ex.fx_to_eur("GBP") == pytest.approx(1.17)        # pounds
+        assert ex.fx_to_eur("GBp") == pytest.approx(0.0117)      # pence
+        assert ex.fx_to_eur("JPY") == pytest.approx(0.006)
+        assert ex.fx_to_eur("CNY") is None                       # unavailable → None, never 1.0
+
+    def test_major_currency_and_statement_currency(self):
+        from etl import extract as ex
+        assert ex.major_currency("GBp") == "GBP" and ex.major_currency("usd") == "USD"
+        assert ex._statement_currency(pd.DataFrame({"currencyCode": ["CNY"]}), "1810.HK") == "CNY"
+        assert ex._statement_currency(pd.DataFrame({"x": [1]}), "RR.L") == "GBP"

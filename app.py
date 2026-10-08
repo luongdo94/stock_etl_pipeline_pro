@@ -67,7 +67,11 @@ inject_global_css()
 
 # Primary Data Load (Cached)
 prices_full, companies_full, monthly_full, annual_fin, quarterly_fin, earnings_cal, dq_warnings, hist_fcf_full, hist_fcf_q_full, etl_audit, total_universe_size, earnings_surprise_full, tv_sector_rotation = load_data()
-m_df = get_master_screener_data(companies_full, prices_full, quarterly_fin, annual_fin)
+# Same live 10Y yield as the Decision Summary panel → the screener's Decision column and the panel
+# agree for every ticker (fetch_macro_data is cached, so this costs nothing extra)
+_rf_pct = (fetch_macro_data() or {}).get("US10Y", {}).get("val")
+m_df = get_master_screener_data(companies_full, prices_full, quarterly_fin, annual_fin,
+                                hist_fcf_full, risk_free_pct=_rf_pct)
 
 
 # Shared Global Views (Filtered from the cached full datasets)

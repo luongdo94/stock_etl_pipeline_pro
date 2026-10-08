@@ -149,10 +149,17 @@ reward/risk ≥ 2 and non-low confidence. Confidence is capped at MEDIUM until t
 statistical evidence. Logic: `core/decision.py`; assumptions (commission, FX spread, dividend
 withholding, risk per trade, max position, earnings blackout) in `config/decision_rules.yaml`.
 
-- **Valuation** (`core/valuation.py`): levered-FCF DCF discounted at the CAPM cost of equity (no
-  double-counting of debt), growth anchored on the company's own revenue/earnings/FCF history and
-  fading to terminal, bear/base/bull scenarios, sensitivity table, **reverse DCF** (growth implied by
-  the price), and **relative valuation** (percentile vs industry peers, P/E vs own 5-year average).
+- **Valuation** (`core/valuation.py`): 10-year DCF on normalised cash-flow-statement FCF (median of
+  the last 3 years, OCF − capex, EUR) discounted at the CAPM cost of equity with Blume-adjusted beta
+  (no double-counting of debt). Growth is anchored on the 3-year revenue CAGR; earnings and FCF
+  growth may move it by ±5pp; it fades to terminal. Bear/base/bull scenarios, sensitivity table,
+  **reverse DCF**, and **relative valuation** (percentile vs industry peers, P/E vs own 5-year average).
+  The DCF is reported as *not informative* — and never drives BUY/AVOID — for banks/insurers, when
+  the price implies growth beyond the model's range, or when the value is implausibly high (>2.5x).
+  BUY needs a 25% margin of safety on the base case; AVOID needs the price above the bull case.
+  ERP and margin of safety are set in `config/decision_rules.yaml`.
+- **One recommendation**: the Scanner's **Decision** column and the Decision Summary use the same
+  function and inputs. The old 6-pillar label is now shown as **Signal** (an input, not a call).
 - **Portfolio fit**: correlation with current holdings and sector / currency weight before → after.
 - **Timing**: warning when earnings are due within the blackout window.
 
@@ -311,9 +318,19 @@ at the top of `render()`.
 
 Run the tests (the `smoke` ones render every tab against a synthetic warehouse):
 ```bash
-pytest                    # everything
+pytest                    # everything offline
 pytest -m "not smoke"     # fast unit tests only
+RUN_LIVE=1 pytest -m live # real Yahoo data: checks EUR units of market cap / revenue / FCF
 ```
+
+**Currency handling** (`etl/extract.py`): one `fx_to_eur()` for every extractor. Statement amounts
+use the statement's own `currencyCode` (e.g. CNY for Xiaomi, DKK for Novo ADRs); quotes may be in a
+minor unit (GBp = GBP/100) but company-level amounts are always in the major unit. A missing FX
+rate leaves the value empty instead of storing it unconverted. Annual/quarterly FCF is stored in
+EUR. After upgrading, run one full refresh (`python run.py --full`) so older rows are re-converted.
+
+**Daily schedule** (needed for the Track Record): `powershell -ExecutionPolicy Bypass -File .\register_daily_etl.ps1`
+registers a Windows task (Mon–Sat 07:00) that runs `run.py` and logs to `logs/scheduled_etl.log`.
 
 ---
 *Architected and Engineered by GIA LUONG DO.*

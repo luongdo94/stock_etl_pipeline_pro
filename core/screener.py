@@ -5,10 +5,21 @@ import pandas as pd
 from core.levels import get_tactical_metrics
 from core.rating import compute_institutional_rating
 from core.smart_money import get_sm_spirit_unified_v2
-from etl.utils import clean_upside_pct, compute_score
+from core.decision import build_decision, load_rules
+from core.valuation import valuation_inputs
+from etl.utils import clean_upside_pct, compute_score_details
 
 
-def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin) -> pd.DataFrame:
+def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
+                         _hist_fcf=None, _macro=None) -> pd.DataFrame:
+    """
+    One row per investable ticker. Two distinct outputs:
+      - "Signal"   (column "Action"): 6-pillar technical + quality composite — an INPUT
+      - "Decision": the single recommendation, from core.decision.build_decision — the same
+                    function and inputs as the Decision Summary in the Stock Analysis tab
+    """
+    _rules = load_rules()
+    _hist_fcf = _hist_fcf if _hist_fcf is not None else pd.DataFrame()
     # Exclude non-investable instruments: indices & volatility measures
     _non_equities = {"^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"}
     _non_equity_sectors = {"Benchmark", "Volatility"}
@@ -82,7 +93,8 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin)
             try: score_input[col] = float(val) if pd.notnull(val) else None
             except: score_input[col] = None
 
-        ai_score  = compute_score(score_input)
+        _details  = compute_score_details(score_input)
+        ai_score  = _details["total"]
         
         # ── Unified 5-Pillar Rating (delegates to compute_institutional_rating) ──
         ma_sig = str(latest_p.get('ma_signal', 'NEUTRAL'))
@@ -119,6 +131,16 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin)
         )
         action_label = _rating["action_label"]   # plain text — no emoji
 
+        # ── Decision (single recommendation; identical logic to the Stock Analysis panel) ──
+        _vin = valuation_inputs(row, float(cur_p), _hist_fcf, ticker, _macro or {}, _annual_fin)
+        _dec = build_decision(
+            price=float(cur_p), base_value=_vin["base"], bear_value=_vin["bear"], bull_value=_vin["bull"],
+            stop_loss=_tm["stop_loss"], currency=row.get("currency"), country=row.get("country"),
+            dividend_yield_pct=row.get("dividend_yield_pct"), missing_metrics=_details["missing"],
+            quality_score=ai_score, valuation_reliable=_vin["reliable"], valuation_note=_vin["note"],
+            rules=_rules)
+        _mos = (_vin["base"] / float(cur_p) - 1) * 100 if (_vin["base"] and _vin["reliable"]) else None
+
 
         
         # Additional metrics
@@ -149,6 +171,9 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin)
             "Ticker": ticker,
             "Company": row['company'],
             "Sector": row['sector'],
+            "Decision": _dec.stance,
+            "Confidence": _dec.confidence,
+            "MoS (%)": round(_mos, 0) if _mos is not None else None,
             "Action": action_label,
             "Quality": ai_score,
             "Upside (%)": round(upside, 1),

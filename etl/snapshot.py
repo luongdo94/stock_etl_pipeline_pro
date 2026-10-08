@@ -30,6 +30,7 @@ _DDL = """
         price_close  DOUBLE,
         quality      INTEGER,
         action       VARCHAR,
+        decision     VARCHAR,
         upside_pct   DOUBLE,
         smart_money  VARCHAR,
         rsi          DOUBLE,
@@ -51,7 +52,8 @@ def build_snapshot(db_path: str = DB_PATH) -> pd.DataFrame:
     prices, companies, _monthly, annual, quarterly = frames[:5]
     if prices.empty:
         return pd.DataFrame()
-    table = build_screener_table(companies, prices, quarterly, annual)
+    hist_fcf = frames[7]
+    table = build_screener_table(companies, prices, quarterly, annual, hist_fcf)
     if table.empty:
         return pd.DataFrame()
     as_of = pd.to_datetime(prices["date"]).max().date()
@@ -61,6 +63,7 @@ def build_snapshot(db_path: str = DB_PATH) -> pd.DataFrame:
         "price_close": table["Price"].astype(float),
         "quality": table["Quality"].astype(int),
         "action": table["Action"].astype(str),
+        "decision": table["Decision"].astype(str),
         "upside_pct": table["Upside (%)"].astype(float),
         "smart_money": table["Smart Money"].astype(str),
         "rsi": table["RSI (14)"].astype(float),
@@ -76,6 +79,7 @@ def save_snapshot(rows: pd.DataFrame, track_db_path: str = TRACK_DB_PATH, db_pat
     cols = list(rows.columns)
     with duckdb.connect(track_db_path) as tconn:
         tconn.execute(_DDL)
+        tconn.execute("ALTER TABLE signals.score_snapshots ADD COLUMN IF NOT EXISTS decision VARCHAR")
         tconn.register("snap_rows", rows)
         tconn.execute(f"INSERT OR REPLACE INTO signals.score_snapshots ({', '.join(cols)}) "
                       f"SELECT {', '.join(cols)} FROM snap_rows")
