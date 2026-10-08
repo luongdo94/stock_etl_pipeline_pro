@@ -5,6 +5,9 @@ import streamlit as st
 from services.market_data import get_forex_rates
 from ui.icons import render_header
 
+UPTREND = {"STRONG BULL", "BULLISH"}       # golden cross (MA50 > MA200)
+DOWNTREND = {"STRONG BEAR", "BEARISH"}     # death cross (MA50 < MA200)
+
 
 def render(ctx):
     """Render the 🔭 Stock Scanner tab. ctx is the context dict built in app.py."""
@@ -21,7 +24,7 @@ def render(ctx):
             "💎 Value + Pullback (Custom)": {
                 "description": "Undervalued stocks (P/E < 15, P/B < 1.5) of large, profitable companies (ROE > 10%). Currently experiencing short-term oversold conditions (RSI < 40) but remaining above long-term support (MA200). Ideal for buy-the-dip setups.",
                 "filter": [
-                    {"left": "price_earnings_ttm", "operation": "less", "right": 15},
+                    {"left": "price_earnings_ttm", "operation": "in_range", "right": [0, 15]},
                     {"left": "price_book_fq", "operation": "less", "right": 1.5},
                     {"left": "market_cap_basic", "operation": "greater", "right": 5000000000},
                     {"left": "return_on_equity", "operation": "greater", "right": 10},
@@ -147,14 +150,14 @@ def render(ctx):
     scan_presets = [
         "🔍 All Stock Universe",
         "──────────── 📈 OPPORTUNITY ────────────",
-        "🏆 Institutional Pulse (Quality ≥ 70 & Bullish)",
+        "🏆 Institutional Pulse (Quality ≥ 65 & Uptrend)",
         "🚀 Buy on Dip (Bullish + Oversold)",
         "🚀 Bullish Momentum (Trend + RSI > 50)",
         "📈 Both Accelerating (EPS + Revenue QoQ, 2 qtrs > +10%)",
         "🌱 GARP (Growth at Reasonable Price: PEG < 1.5 + Quality > 55)",
         "💰 High Quality Dividend (Yield > 2.5% + Quality > 65)",
         "🔥 Short Squeeze Watch (Short % > 15% + Bullish)",
-        "🎯 Smart Money Accumulation (Institutional Buying)",
+        "🎯 Accumulation Flow (volume heuristic)",
         "🔄 Mean Reversion Elite (Quality + Oversold)",
         "⚡ Strong Breakout (MA200 + RSI 50-70)",
         "💎 Contrarian Value (Bearish + Quality + Cheap)",
@@ -164,12 +167,12 @@ def render(ctx):
         "──────────── ⛔ RISK / WARNING ────────────",
         "⚠️ Earnings Deterioration (EPS + Revenue QoQ, 2 qtrs < -10%)",
         "⚠️ Structural Caution (Quality < 38 & Bearish)",
-        "📉 Negative Momentum (MA20 < MA50)",
+        "📉 Negative Momentum (MA20 < MA50 < MA200)",
         "🔥 Overbought Alert (RSI > 65)",
-        "🎈 Valuation Exhaustion (Z-Score > +2.0)",
+        "🎈 Price Stretch (Z-Score > +2.0 vs 5Y mean)",
         "⚔️ Exit on Strength (Bearish + Overbought)",
         "💔 Multi-Indicator Breakdown (Bearish + RSI < 50)",
-        "🚨 Distribution Warning (Smart Money Exiting)"
+        "🚨 Distribution Warning (volume heuristic)"
     ]
     
     # Initialize session state for scan mode if not exists
@@ -207,6 +210,12 @@ def render(ctx):
             label_visibility="visible"
         )
 
+    # Trend = ma_signal: STRONG BULL / BULLISH (MA50 > MA200, MA20 above / below MA50),
+    # STRONG BEAR / BEARISH (MA50 < MA200, MA20 below / back above MA50), NEUTRAL.
+    # Presets used to test == "BULLISH", which silently dropped every STRONG BULL stock.
+    up = m_df["Trend"].isin(UPTREND)
+    down = m_df["Trend"].isin(DOWNTREND)
+
     # Apply both filters (Supporting "All" options)
     f_df = m_df.copy()
     if selected_region != "🌎 All Regions":
@@ -214,32 +223,32 @@ def render(ctx):
     if selected_sector != "🌍 All Sectors":
         f_df = f_df[f_df["Sector"] == selected_sector]
     if "Institutional Pulse" in scan_mode:
-        f_df = f_df[(f_df["Quality"] >= 70) & (f_df["Trend"] == "BULLISH")]
-        st.success("🏆 Institutional Pulse: Quality Score ≥ 70 (ELITE tier) and Bullish Trend (Institutional Conviction)")
+        f_df = f_df[(f_df["Quality"] >= 65) & up]
+        st.success("🏆 Institutional Pulse: Quality ≥ 65 (ELITE tier) in an uptrend (MA50 > MA200)")
     elif "Buy on Dip" in scan_mode:
-        f_df = f_df[(f_df["Trend"] == "BULLISH") & (f_df["RSI (14)"] < 40)]
-        st.info("🚀 Buy on Dip: Bullish Trend with short-term RSI cooling (< 40)")
+        f_df = f_df[up & (f_df["RSI (14)"] < 40)]
+        st.info("🚀 Buy on Dip: uptrend (MA50 > MA200) with RSI cooling below 40")
     elif "Bullish Momentum" in scan_mode:
-        f_df = f_df[(f_df["Trend"] == "BULLISH") & (f_df["RSI (14)"] > 50)]
-        st.success("🚀 Bullish Momentum: Strong uptrend (MA20 > MA50) with RSI > 50 confirming momentum strength")
+        f_df = f_df[up & (f_df["RSI (14)"] > 50)]
+        st.success("🚀 Bullish Momentum: uptrend (MA50 > MA200) with RSI > 50")
     elif "Structural Caution" in scan_mode:
-        f_df = f_df[(f_df["Quality"] < 38) & (f_df["Trend"] == "BEARISH")]
-        st.error("⚠️ Structural Caution: High Risk! Low Quality (Score < 38 = WEAK tier) + Confirmed Downtrend (MA20 < MA50)")
+        f_df = f_df[(f_df["Quality"] < 38) & down]
+        st.error("⚠️ Structural Caution: WEAK quality (< 38) in a downtrend (MA50 < MA200)")
     elif "Negative Momentum" in scan_mode:
-        f_df = f_df[f_df["Trend"] == "BEARISH"]
-        st.error("📉 Negative Momentum: Stocks in confirmed MA20 < MA50 bearish alignment. Avoid jumping in too early.")
+        f_df = f_df[down & (f_df["Trend"] == "STRONG BEAR")]
+        st.error("📉 Negative Momentum: full bearish alignment (MA20 < MA50 < MA200). Avoid jumping in too early.")
     elif "Overbought Alert" in scan_mode:
         f_df = f_df[f_df["RSI (14)"] > 65]
         st.warning("🔥 Overbought Alert: Overbought (RSI > 65). Elevated risk of short-term pullback.")
-    elif "Valuation Exhaustion" in scan_mode:
+    elif "Price Stretch" in scan_mode:
         f_df = f_df[f_df["Z-Score"] > 2.0]
-        st.error("🎈 Valuation Exhaustion: Prices at +2.0 Std Dev relative to 5Y mean. Likely overvalued.")
+        st.error("🎈 Price Stretch: price > 2 std dev above its 5-year mean. This is a price statistic, not a valuation — long-term winners sit here for years.")
     elif "Exit on Strength" in scan_mode:
-        f_df = f_df[(f_df["Trend"] == "BEARISH") & (f_df["RSI (14)"] > 60)]
-        st.warning("⚔️ Exit on Strength: Bearish general trend but experiencing a short-term rally (RSI > 60). Prime short setup.")
+        f_df = f_df[down & (f_df["RSI (14)"] > 60)]
+        st.warning("⚔️ Exit on Strength: downtrend (MA50 < MA200) with a short-term rally (RSI > 60) — a place to trim, not a forecast.")
     elif "Multi-Indicator Breakdown" in scan_mode:
-        f_df = f_df[(f_df["Trend"] == "BEARISH") & (f_df["RSI (14)"] < 50)]
-        st.error("💔 Breakdown: Extreme downside momentum (Trend Bearish + RSI < 50). Falling knife.")
+        f_df = f_df[down & (f_df["RSI (14)"] < 50)]
+        st.error("💔 Breakdown: downtrend (MA50 < MA200) and RSI < 50.")
     elif "Both Accelerating" in scan_mode:
         f_df = f_df[(f_df["EPS Momentum"] == "Accelerating") & (f_df["Rev Momentum"] == "Accelerating")]
         st.success("📈 Both Accelerating: EPS & Revenue both growing QoQ > +10% for 2 consecutive quarters. Strongest fundamental momentum signal.")
@@ -250,35 +259,35 @@ def render(ctx):
         f_df = f_df[(f_df["PEG"] > 0) & (f_df["PEG"] < 1.5) & (f_df["Quality"] > 55)]
         st.success("🌱 GARP — Growth at a Reasonable Price: PEG < 1.5 + Quality > 55 (SOLID tier). Peter Lynch-style filter.")
     elif "High Quality Dividend" in scan_mode:
-        f_df = f_df[(f_df["Yield (%)"] > 2.5) & (f_df["Quality"] > 65) & (f_df["Trend"] == "BULLISH")]
-        st.success("💰 High Quality Dividend: Yield > 2.5% with strong fundamentals (Quality > 65) and confirmed uptrend. Income + quality.")
+        f_df = f_df[(f_df["Yield (%)"] > 2.5) & (f_df["Quality"] > 65) & up]
+        st.success("💰 High Quality Dividend: yield > 2.5% + Quality > 65 + uptrend. Check payout cover (FCF) before relying on the yield.")
     elif "Short Squeeze Watch" in scan_mode:
-        f_df = f_df[(f_df["Short %"] > 15) & (f_df["RSI (14)"] < 45) & (f_df["Trend"] == "BULLISH")]
-        st.warning("🔥 Short Squeeze Watch: High short interest (> 15% of float) + oversold RSI + bullish trend reversal. High volatility, event-driven setup.")
-    elif "Smart Money Accumulation" in scan_mode:
+        f_df = f_df[(f_df["Short %"] > 15) & (f_df["RSI (14)"] < 45) & up]
+        st.warning("🔥 Short Squeeze Watch: short interest > 15% of float + RSI < 45 inside an uptrend. Event-driven and volatile.")
+    elif "Accumulation Flow" in scan_mode:
         f_df = f_df[(f_df["Smart Money"].str.contains("ACCUMULATION", na=False)) & (f_df["Quality"] >= 55) & (f_df["RSI (14)"] < 50)]
-        st.success("🎯 Smart Money Accumulation: Institutions actively buying + Quality ≥ 55 (SOLID tier) + RSI < 50 (not overbought). Follow the smart money.")
+        st.success("🎯 Accumulation Flow: volume-flow heuristic reads ACCUMULATION (it cannot see who traded) + Quality ≥ 55 + RSI < 50.")
     elif "Mean Reversion Elite" in scan_mode:
         f_df = f_df[(f_df["Quality"] >= 65) & (f_df["RSI (14)"] < 35) & (f_df["Z-Score"] < -1.0)]
-        st.success("🔄 Mean Reversion Elite: High Quality (≥65 STRONG tier) + Oversold (RSI<35) + Below Mean (Z<-1.0). Elite assets on sale.")
+        st.success("🔄 Mean Reversion Elite: Quality ≥ 65 (ELITE) + RSI < 35 + price more than 1 std dev below its 5Y mean.")
     elif "Strong Breakout" in scan_mode:
-        f_df = f_df[(f_df["vs MA200 (%)"] > 5) & (f_df["RSI (14)"].between(50, 70)) & (f_df["Trend"] == "BULLISH")]
-        st.success("⚡ Strong Breakout: Price > MA200 by 5%+ with healthy RSI (50-70) + confirmed uptrend. Riding the wave.")
+        f_df = f_df[(f_df["vs MA200 (%)"] > 5) & (f_df["RSI (14)"].between(50, 70)) & up]
+        st.success("⚡ Strong Breakout: price 5%+ above MA200, RSI 50-70, uptrend (MA50 > MA200).")
     elif "Contrarian Value" in scan_mode:
-        f_df = f_df[(f_df["Quality"] >= 60) & (f_df["Trend"] == "BEARISH") & (f_df["Z-Score"] < -1.5) & (f_df["PEG"] > 0) & (f_df["PEG"] < 1.2)]
-        st.warning("💎 Contrarian Value: High Quality (≥60) in downtrend + cheap valuation (Z<-1.5, PEG<1.2). Contrarian opportunity — wait for reversal signal before entry.")
+        f_df = f_df[(f_df["Quality"] >= 60) & down & (f_df["Z-Score"] < -1.5) & (f_df["PEG"] > 0) & (f_df["PEG"] < 1.2)]
+        st.warning("💎 Contrarian Value: Quality ≥ 60 in a downtrend + PEG < 1.2 + price 1.5 std dev below its 5Y mean. Wait for a reversal before entry.")
     elif "Defensive Moat" in scan_mode:
         f_df = f_df[(f_df["Debt/EBITDA"] < 2.0) & (f_df["ROE (%)"] > 15) & (f_df["Yield (%)"] > 2.0) & (f_df["Quality"] >= 60)]
         st.success("🏰 Defensive Moat: Low debt (<2x EBITDA) + High ROE (>15%) + Dividend (>2%) + Quality ≥60. Fortress balance sheet for all-weather portfolio.")
     elif "Oversold Reversal Setup" in scan_mode:
         f_df = f_df[(f_df["RSI (14)"] < 30) & (f_df["Smart Money"].str.contains("ACCUMULATION", na=False)) & (f_df["Quality"] >= 50)]
-        st.success("🌊 Oversold Reversal: Extreme oversold (RSI<30) + Smart Money buying + Quality ≥50. High probability bounce setup.")
+        st.success("🌊 Oversold Reversal: RSI < 30 + accumulation flow + Quality ≥ 50. A setup to watch, not a validated edge.")
     elif "Balanced Growth" in scan_mode:
-        f_df = f_df[(f_df["Quality"].between(55, 75)) & (f_df["P/E (Fwd)"].between(15, 30)) & (f_df["ROE (%)"] > 12) & (f_df["Trend"] == "BULLISH")]
-        st.success("📊 Balanced Growth: Quality 55-75 (SOLID-STRONG) + PE 15-30x + ROE >12% + Bullish trend. Sustainable growth at fair price.")
+        f_df = f_df[(f_df["Quality"].between(55, 75)) & (f_df["P/E (Fwd)"].between(15, 30)) & (f_df["ROE (%)"] > 12) & up]
+        st.success("📊 Balanced Growth: Quality 55-75 + forward P/E 15-30x + ROE > 12% + uptrend.")
     elif "Distribution Warning" in scan_mode:
         f_df = f_df[(f_df["Smart Money"].str.contains("DISTRIBUTION", na=False)) & (f_df["RSI (14)"] > 60) & (f_df["Quality"] < 55)]
-        st.error("🚨 Distribution Warning: Institutions selling + Overbought (RSI>60) + Weak Quality (<55). Strong exit signal.")
+        st.error("🚨 Distribution Warning: volume flow reads DISTRIBUTION + RSI > 60 + Quality < 55.")
     elif "──" in scan_mode:
         # Just to catch the separator line if selected
         st.warning("Please select a valid screening preset.")
@@ -300,13 +309,18 @@ def render(ctx):
                 key="custom_sm_filter"
             )
 
-    f_df = f_df[
-        (f_df["Quality"] >= min_score) &
-        (f_df["RSI (14)"].between(rsi_range[0], rsi_range[1])) &
-        (f_df["P/E (Fwd)"].fillna(999) <= max_pe) &
-        (f_df["Z-Score"].between(z_score_range[0], z_score_range[1])) &
-        (f_df["PEG"].fillna(999).between(peg_range[0], peg_range[1]))
-    ]
+    # A refinement applies only once moved off its default — otherwise stocks with an unknown value
+    # (no forward P/E, no PEG) were silently removed from every preset, including "All".
+    if min_score > 0:
+        f_df = f_df[f_df["Quality"] >= min_score]
+    if rsi_range != (0, 100):
+        f_df = f_df[f_df["RSI (14)"].between(*rsi_range)]
+    if max_pe < 200:
+        f_df = f_df[f_df["P/E (Fwd)"].between(0, max_pe, inclusive="right")]   # loss-makers excluded
+    if z_score_range != (-5.0, 5.0):
+        f_df = f_df[f_df["Z-Score"].between(*z_score_range)]
+    if peg_range != (-5.0, 10.0):
+        f_df = f_df[f_df["PEG"].between(*peg_range)]
     if "Accumulation only" in filter_sm:
         f_df = f_df[f_df["Smart Money"].str.contains("ACCUMULATION", na=False)]
     elif "Distribution only" in filter_sm:

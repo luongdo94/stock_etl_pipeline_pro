@@ -70,7 +70,11 @@ def _company_info(prices: pd.DataFrame, rng: np.random.Generator) -> pd.DataFram
             "pay_date": str(date.today() + timedelta(days=35)),
             "_extracted_at": pd.Timestamp.now(),
         })
-    return pd.DataFrame(rows)
+    df = pd.DataFrame(rows)
+    # Real data has gaps: KO without forward P/E and PEG, JNJ without EBITDA
+    df.loc[df["ticker"] == "KO", ["forward_pe", "peg_ratio"]] = None
+    df.loc[df["ticker"] == "JNJ", "ebitda"] = None
+    return df
 
 
 def _financials(quarterly: bool) -> pd.DataFrame:
