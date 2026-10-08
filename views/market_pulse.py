@@ -7,7 +7,7 @@ from ui.icons import render_header
 
 
 def render(ctx):
-    """Render the 🌐 Market Pulse tab. ctx is the app globals() dict."""
+    """Render the 🌐 Market Pulse tab. ctx is the context dict built in app.py."""
     _macro_regime = ctx['_macro_regime']
     breadth_ts_global = ctx['breadth_ts_global']
     conf_reason_str = ctx['conf_reason_str']

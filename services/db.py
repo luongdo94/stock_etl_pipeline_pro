@@ -94,7 +94,7 @@ def _ensure_local_cache() -> bool:
             data = _client.storage.from_(_bucket).download(filename)
             local_path.write_bytes(data)
             return filename, True
-        except Exception as err:
+        except Exception:
             return filename, False
 
     # Parallel download
@@ -368,3 +368,32 @@ def load_track_record():
             return conn.execute("SELECT * FROM marts.score_snapshots ORDER BY as_of_date, ticker").df()
     except Exception:
         return pd.DataFrame(columns=["as_of_date", "ticker", "price_close", "quality", "action"])
+
+
+def insider_tickers():
+    """Tickers with SEC Form 4 rows (US listings only)."""
+    with get_db_connection(read_only=True) as conn:
+        return conn.execute("SELECT DISTINCT ticker FROM raw.insider_transactions ORDER BY ticker").df()["ticker"].tolist()
+
+
+def load_insider_transactions(ticker=None, tx_type=None, min_value_usd=0.0, days=90, limit=500):
+    """Insider transactions of the last `days` days, newest first; values stay in USD (bound parameters)."""
+    where, params = [f"t.transaction_date >= CURRENT_DATE - INTERVAL '{int(days)} days'"], []
+    if ticker:
+        where.append("t.ticker = ?"); params.append(ticker)
+    if tx_type:
+        where.append("t.transaction_type = ?"); params.append(tx_type)
+    if min_value_usd > 0:
+        where.append("t.value >= ?"); params.append(float(min_value_usd))
+    sql = f"""
+        SELECT t.ticker, COALESCE(c.company, t.ticker) AS company, t.insider_name, t.position,
+               t.transaction_type, t.shares, t.value, t.transaction_date, t.ownership_type,
+               t.text AS description
+        FROM raw.insider_transactions t
+        LEFT JOIN (SELECT ticker, company FROM raw.company_info
+                   QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY _extracted_at DESC) = 1) c USING (ticker)
+        WHERE {" AND ".join(where)}
+        ORDER BY t.transaction_date DESC, t.value DESC
+        LIMIT {int(limit)}"""
+    with get_db_connection(read_only=True) as conn:
+        return conn.execute(sql, params).df()

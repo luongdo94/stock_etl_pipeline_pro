@@ -10,7 +10,7 @@ from ui.icons import render_header
 
 
 def render(ctx):
-    """Render the 📋 Watchlist tab. ctx is the app globals() dict."""
+    """Render the 📋 Watchlist tab. ctx is the context dict built in app.py."""
     annual_fin = ctx['annual_fin']
     companies_full = ctx['companies_full']
     earnings_cal = ctx['earnings_cal']

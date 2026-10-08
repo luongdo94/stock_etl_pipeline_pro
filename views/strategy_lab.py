@@ -9,7 +9,7 @@ from ui.icons import render_header
 
 
 def render(ctx):
-    """Render the 🧪 Strategy Lab tab. ctx is the app globals() dict."""
+    """Render the 🧪 Strategy Lab tab. ctx is the context dict built in app.py."""
     all_tickers = ctx['all_tickers']
     format_ticker = ctx['format_ticker']
     prices_full = ctx['prices_full']

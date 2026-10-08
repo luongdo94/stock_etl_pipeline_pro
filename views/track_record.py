@@ -16,7 +16,7 @@ def _forward(snapshots: pd.DataFrame, prices: pd.DataFrame) -> pd.DataFrame:
 
 
 def render(ctx):
-    """Render the 📈 Track Record tab. ctx is the app globals() dict."""
+    """Render the 📈 Track Record tab. ctx is the context dict built in app.py."""
     prices_full = ctx['prices_full']
 
     render_header("trophy", "Track Record — Are the Signals Any Good?")

@@ -7,7 +7,7 @@ from ui.icons import render_header
 
 
 def render(ctx):
-    """Render the 🔭 Stock Scanner tab. ctx is the app globals() dict."""
+    """Render the 🔭 Stock Scanner tab. ctx is the context dict built in app.py."""
     # The shell's screener table — computed once with the statement FCF and live risk-free rate, so
     # the Decision column here matches the Stock Analysis Decision Summary. (Recomputing it here
     # without those inputs silently produced different decisions.)
