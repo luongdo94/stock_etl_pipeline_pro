@@ -3,19 +3,16 @@ import pandas as pd
 import streamlit as st
 
 from services.market_data import get_forex_rates
-from services.screener import get_master_screener_data
 from ui.icons import render_header
 
 
 def render(ctx):
     """Render the 🔭 Stock Scanner tab. ctx is the app globals() dict."""
-    annual_fin = ctx['annual_fin']
-    companies_full = ctx['companies_full']
-    prices_full = ctx['prices_full']
-    quarterly_fin = ctx['quarterly_fin']
+    # The shell's screener table — computed once with the statement FCF and live risk-free rate, so
+    # the Decision column here matches the Stock Analysis Decision Summary. (Recomputing it here
+    # without those inputs silently produced different decisions.)
     m_df = ctx['m_df']
     render_header("search", "Market Scanner & Opportunity Radar", level="###")
-    m_df = get_master_screener_data(companies_full, prices_full, quarterly_fin, annual_fin)
 
     with st.expander("🌐 Live TradingView Global Screener (On-Demand)", expanded=False):
         st.write("Fetch real-time data directly from TradingView's servers across the entire US market.")

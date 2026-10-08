@@ -71,7 +71,8 @@ prices_full, companies_full, monthly_full, annual_fin, quarterly_fin, earnings_c
 # agree for every ticker (fetch_macro_data is cached, so this costs nothing extra)
 _rf_pct = (fetch_macro_data() or {}).get("US10Y", {}).get("val")
 m_df = get_master_screener_data(companies_full, prices_full, quarterly_fin, annual_fin,
-                                hist_fcf_full, risk_free_pct=_rf_pct)
+                                hist_fcf_full, risk_free_pct=_rf_pct,
+                                hist_fcf_rows=len(hist_fcf_full))
 
 
 # Shared Global Views (Filtered from the cached full datasets)
