@@ -1,5 +1,16 @@
 """Institutional rating engine (pure)."""
 
+# Quality tiers on the 0-100 score — the one definition used by the rating, the deep dive and the radar
+QUALITY_TIERS = ((65, "ELITE", "#00ffcc"), (50, "SOLID", "#2ecc71"), (38, "FAIR", "#f1c40f"))
+
+
+def quality_tier(score):
+    """(label, colour) for a 0-100 quality score."""
+    for cut, label, colour in QUALITY_TIERS:
+        if score >= cut:
+            return label, colour
+    return "WEAK", "#e74c3c"
+
 
 def compute_institutional_rating(
     ai_score: float,
@@ -46,25 +57,26 @@ def compute_institutional_rating(
     #   to filter false signals and allow earlier entry. Requires fct_daily_returns to
     #   expose ema_20 and vol_vs_avg_20d columns from the transform layer.
     _ma_upper = ma_sig.upper() if ma_sig else ""
+    # Every pillar returns a label AND its colour from the same branch, so the UI can never show a
+    # label that disagrees with the colour the action logic used.
     if _ma_upper == "STRONG BULL" and latest_rsi < 70:
-        p_trend_c = "#00ffcc"            # Golden Cross + RSI not overbought → strongest signal
+        p_trend, p_trend_c = "STRONG BULLISH", "#00ffcc"   # Golden Cross + RSI not overbought
     elif _ma_upper in ("STRONG BULL", "BULLISH") and latest_rsi < 65:
-        p_trend_c = "#2ecc71"            # Bullish trend, healthy RSI
+        p_trend, p_trend_c = "BULLISH", "#2ecc71"          # Bullish trend, healthy RSI
     elif _ma_upper in ("STRONG BULL", "BULLISH") and latest_rsi >= 65:
-        p_trend_c = "#f1c40f"            # Bullish but extended / overbought
+        p_trend, p_trend_c = "EXTENDED", "#f1c40f"         # Bullish but overbought
     elif _ma_upper in ("BEARISH", "STRONG BEAR") and latest_rsi <= 35:
-        p_trend_c = "#f1c40f"            # Death Cross but oversold — potential reversal caution
+        p_trend, p_trend_c = "OVERSOLD", "#f1c40f"         # Death Cross but oversold — reversal caution
     elif _ma_upper == "STRONG BEAR":
-        p_trend_c = "#c0392b"            # Death Cross confirmed — dark red
+        p_trend, p_trend_c = "STRONG BEARISH", "#c0392b"   # Death Cross confirmed
+    elif _ma_upper == "BEARISH":
+        p_trend, p_trend_c = "BEARISH", "#e74c3c"
     else:
-        p_trend_c = "#e74c3c"            # BEARISH or NEUTRAL
+        p_trend, p_trend_c = "NO TREND", "#e74c3c"         # NEUTRAL / missing — scored like bearish
 
     # ── PILLAR 2: QUALITY ────────────────────────────────────────────────
     # v4.0 thresholds: scores shifted slightly lower due to momentum weight reduction
-    if ai_score >= 65:   p_qual_c = "#00ffcc"
-    elif ai_score >= 50: p_qual_c = "#2ecc71"
-    elif ai_score >= 38: p_qual_c = "#f1c40f"
-    else:                p_qual_c = "#e74c3c"
+    p_qual, p_qual_c = quality_tier(ai_score)
 
     # ── PILLAR 3: VALUATION (Sector-Aware) ──────────────────────────────
     _sector_lc = str(sector or "").lower()
@@ -81,17 +93,19 @@ def compute_institutional_rating(
     _val_fair       = (upside > 0) and (not _val_expensive)
 
     if _val_cheap:
-        p_val_c = "#2ecc71"
-    elif _val_premium_ok or _val_compounder:
-        p_val_c = "#3498db"
+        p_val, p_val_c = "UNDERVALUED", "#2ecc71"
+    elif _val_premium_ok:
+        p_val, p_val_c = "PREMIUM / JUSTIFIED", "#3498db"
+    elif _val_compounder:
+        p_val, p_val_c = "FAIR FOR QUALITY", "#3498db"
     elif _val_fair:
-        p_val_c = "#f1c40f"
+        p_val, p_val_c = "FAIR VS SECTOR", "#f1c40f"
     elif _val_expensive:
-        p_val_c = "#e67e22"
+        p_val, p_val_c = "EXPENSIVE / PREMIUM", "#e67e22"
     elif pe_v < 0:
-        p_val_c = "#e74c3c"
+        p_val, p_val_c = "SPECULATIVE / RISK", "#e74c3c"
     else:
-        p_val_c = "#95a5a6"
+        p_val, p_val_c = "AVERAGE", "#95a5a6"
 
     # ── PILLAR 4: RISK (52-Week Position) ───────────────────────────────
     # CANSLIM Breakout Exception: near 52-week high is a BUY signal — not a risk —
@@ -108,18 +122,18 @@ def compute_institutional_rating(
         sm_status.upper() == "ACCUMULATION"
     )
     if _is_canslim_breakout:
-        p_risk_c = "#3498db"    # Breakout — neutral-positive, not a penalty
+        p_risk, p_risk_c = "BREAKOUT", "#3498db"     # neutral-positive, not a penalty
     elif w52_pos > 80:
-        p_risk_c = "#e74c3c"    # Near-high without confirmation — elevated risk
+        p_risk, p_risk_c = "ELEVATED", "#e74c3c"     # near the high without confirmation
     elif w52_pos < 20:
-        p_risk_c = "#2ecc71"    # Deep in range — strong support, low downside risk
+        p_risk, p_risk_c = "LOW RISK", "#2ecc71"     # deep in the range
     else:
-        p_risk_c = "#f1c40f"    # Mid-range — watch and wait
+        p_risk, p_risk_c = "MODERATE", "#f1c40f"
 
     # ── PILLAR 5: CONVICTION (Risk / Reward) ────────────────────────────
-    if rr > 2.5:   p_conv_c = "#00ffcc"
-    elif rr > 1.2: p_conv_c = "#2ecc71"
-    else:           p_conv_c = "#e74c3c"
+    if rr > 2.5:   p_conv, p_conv_c = "HIGH", "#00ffcc"
+    elif rr > 1.2: p_conv, p_conv_c = "MEDIUM", "#2ecc71"
+    else:          p_conv, p_conv_c = "LOW", "#e74c3c"
 
     # ── PILLAR 6: SMART MONEY (Soft Scoring v14.0) ──────────────────────
     # Determine Smart Money contribution based on signal + strength
@@ -210,6 +224,11 @@ def compute_institutional_rating(
         "p_risk_c":      p_risk_c,
         "p_conv_c":      p_conv_c,
         "p_sm_c":        p_sm_c,
+        "p_trend":       p_trend,
+        "p_qual":        p_qual,
+        "p_val":         p_val,
+        "p_risk":        p_risk,
+        "p_conv":        p_conv,
         "sm_label":      sm_label,
         "sm_points":     sm_points,
         "pts":           pts,
