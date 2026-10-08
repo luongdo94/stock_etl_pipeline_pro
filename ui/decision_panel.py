@@ -11,6 +11,7 @@ import streamlit as st
 
 from core import decision as dec
 from core import valuation as val
+from core.valuation import risk_free_from_macro, valuation_inputs  # noqa: F401 (re-exported)
 from core.portfolio_risk import candidate_impact
 from core.track_record import evidence_status
 
@@ -27,35 +28,6 @@ def _f(x) -> Optional[float]:
         return None
 
 
-def risk_free_from_macro(macro: dict) -> float:
-    """^TNX is quoted in percent (4.3 = 4.3%)."""
-    v = _f((macro or {}).get("US10Y", {}).get("val"))
-    return v / 100 if v and 0.1 < v < 20 else val.RISK_FREE
-
-
-def valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, macro: dict) -> dict:
-    """Company-anchored DCF inputs + scenarios + reverse DCF (EUR, per share)."""
-    fcfe = _f(meta.get("free_cashflow"))
-    mcap = _f(meta.get("market_cap"))
-    shares = mcap / price if mcap and price else None
-    hist = hist_fcf[hist_fcf["ticker"] == ticker].sort_values("year")["free_cash_flow"].tail(5) \
-        if hist_fcf is not None and not hist_fcf.empty else []
-    growth, sources = val.anchor_growth(meta.get("revenue_growth"), meta.get("earnings_growth"),
-                                        val.fcf_cagr(hist))
-    rf = risk_free_from_macro(macro)
-    coe = val.cost_of_equity(meta.get("beta"), risk_free=rf)
-    valuable = bool(fcfe and fcfe > 0 and shares)
-    scen = val.dcf_scenarios(fcfe, shares, growth, coe) if valuable else {}
-    return {
-        "fcfe": fcfe, "shares": shares, "growth": growth, "growth_sources": sources,
-        "risk_free": rf, "cost_of_equity": coe, "scenarios": scen,
-        "base": scen["base"].value_per_share if scen else None,
-        "bear": scen["bear"].value_per_share if scen else None,
-        "bull": scen["bull"].value_per_share if scen else None,
-        "implied_growth": val.reverse_dcf_growth(price, fcfe, shares, coe) if valuable else None,
-    }
-
-
 @st.cache_data(ttl=3600, show_spinner=False)
 def _cached_evidence(snapshots: pd.DataFrame, prices: pd.DataFrame) -> dict:
     return evidence_status(snapshots, prices)
@@ -65,11 +37,12 @@ def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, re
                           next_earnings, quality, snapshots, prices, holdings_loader, companies):
     ev = _cached_evidence(snapshots, prices[["date", "ticker", "price_close"]])
     d = dec.build_decision(
-        price=price, base_value=vin["base"], bear_value=vin["bear"], stop_loss=stop_loss,
+        price=price, base_value=vin["base"], bear_value=vin["bear"], bull_value=vin["bull"], stop_loss=stop_loss,
         currency=meta.get("currency"), country=meta.get("country"),
         dividend_yield_pct=_f(meta.get("dividend_yield_pct")), missing_metrics=missing,
         price_date=price_date, fundamentals_date=_to_date(meta.get("info_updated_at")),
-        next_earnings=next_earnings, track_record_ok=ev["ok"], quality_score=quality)
+        next_earnings=next_earnings, track_record_ok=ev["ok"], quality_score=quality,
+        valuation_reliable=vin["reliable"], valuation_note=vin["note"])
 
     sc, cc = _STANCE_COLORS.get(d.stance, "#8899aa"), _CONF_COLORS[d.confidence]
     fmt = lambda v, s="%": f"{v:+.1f}{s}" if v is not None else "N/A"
@@ -141,12 +114,15 @@ def render_valuation_section(*, meta, price, vin, relval):
     st.markdown("---")
     render_header("gem", "Intrinsic Valuation (FCFE DCF) — Scenarios & Sensitivity")
     if not vin["fcfe"] or vin["fcfe"] <= 0 or not vin["shares"]:
-        st.info("⚠️ No positive free cash flow — a cash-flow valuation is not meaningful. "
-                "Use the relative valuation and quality pillars instead.")
+        st.info("⚠️ " + (vin["note"] or "No positive free cash flow — a cash-flow valuation is not meaningful.")
+                + " Use the relative valuation and quality pillars instead.")
         return
-    st.caption(f"Free cash flow here is levered (after interest), so it is discounted at the cost of equity "
-               f"(CAPM: rf {vin['risk_free']:.1%} + β×5% ERP) and debt is not subtracted again. "
-               f"Starting growth anchored on: {', '.join(vin['growth_sources'])}; it fades to the terminal rate by year 5.")
+    if not vin["reliable"] and vin["note"]:
+        st.warning("⚠️ " + vin["note"])
+    st.caption(f"Free cash flow is after interest, so it is discounted at the cost of equity "
+               f"(CAPM: rf {vin['risk_free']:.1%} + Blume-adjusted β×5% ERP) and debt is not subtracted again. "
+               f"Base cash flow: {vin['fcf_source']}. Starting growth anchored on: "
+               f"{', '.join(vin['growth_sources'])}; it fades to the terminal rate over {val.EXPLICIT_YEARS} years.")
     c1, c2, c3 = st.columns(3)
     g = c1.number_input("Starting FCF growth (%)", value=round(vin["growth"] * 100, 1), step=1.0,
                         key=f"dcf_g_{meta.get('ticker')}") / 100

@@ -68,8 +68,9 @@ def render(ctx):
             st.plotly_chart(fig, width="stretch")
             st.caption("A working score rises steadily from Q1 to Q5.")
     with c2:
-        st.markdown(f"**Hit rate by action label ({_H_LABEL[h]})**")
-        sc = tr.action_scorecard(fr, h)
+        _by = "decision" if "decision" in fr.columns and fr["decision"].notna().any() else "action"
+        st.markdown(f"**Hit rate by {'Decision' if _by == 'decision' else 'Signal'} ({_H_LABEL[h]})**")
+        sc = tr.action_scorecard(fr, h, action_col=_by)
         if sc.empty:
             st.info("Not enough resolved snapshots for this horizon yet.")
         else:

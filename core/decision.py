@@ -84,11 +84,13 @@ class Decision:
 
 
 def build_decision(*, price: float, base_value: Optional[float], bear_value: Optional[float],
+                   bull_value: Optional[float] = None,
                    stop_loss: Optional[float], currency: Optional[str] = None,
                    country: Optional[str] = None, dividend_yield_pct=None,
                    missing_metrics=(), price_date: Optional[date] = None,
                    fundamentals_date: Optional[date] = None, next_earnings: Optional[date] = None,
                    track_record_ok: bool = False, quality_score: Optional[float] = None,
+                   valuation_reliable: bool = True, valuation_note: Optional[str] = None,
                    today: Optional[date] = None, rules: Optional[dict] = None) -> Decision:
     rules = rules or load_rules()
     today = today or date.today()
@@ -114,7 +116,9 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
     if not track_record_ok:
         notes.append("Signals not yet validated against forward returns (see Track Record).")
     if base_value is None:
-        notes.append("No intrinsic value (no positive free cash flow).")
+        notes.append(valuation_note or "No intrinsic value (no positive free cash flow).")
+    elif not valuation_reliable:
+        notes.append("Intrinsic value is not informative for this stock (see valuation note).")
     if missing_metrics:
         notes.append(f"Missing inputs: {', '.join(missing_metrics)}.")
     if bear_value and base_value and bear_value > 0 and base_value / bear_value > 2.5:
@@ -132,16 +136,23 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
     reasons = []
     if base_value is None:
         stance = "NOT ENOUGH DATA"
-        reasons.append("No DCF value — judge on relative valuation and quality only.")
+        reasons.append(valuation_note or "No DCF value — judge on relative valuation and quality only.")
+    elif not valuation_reliable:
+        # Never BUY or AVOID on a DCF the model itself flags as uninformative
+        stance = "HOLD / WATCH"
+        reasons.append(valuation_note)
     else:
         mos = base_value / price - 1
         reasons.append(f"Base-case value {base_value:,.2f} vs price {price:,.2f} → margin of safety {mos:+.0%}"
                        f" (required {req_mos:.0%}).")
         if mos >= req_mos and rr is not None and rr >= min_rr and confidence != "LOW":
             stance = "BUY CANDIDATE"
-        elif mos <= -0.15:
+        elif (bull_value is not None and price > bull_value) or (bull_value is None and mos <= -0.15):
+            # Symmetric with BUY (which needs a 25% cushion on the BASE case): only call AVOID when even
+            # the BULL case cannot justify the price — a DCF is too uncertain for anything tighter.
             stance = "AVOID / TRIM"
-            reasons.append("Price is >15% above base-case value.")
+            reasons.append(f"Price is above even the bull-case value ({bull_value:,.2f})." if bull_value is not None
+                           else "Price is >15% above base-case value.")
         else:
             stance = "HOLD / WATCH"
             if mos < req_mos:

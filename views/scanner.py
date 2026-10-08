@@ -317,7 +317,7 @@ def render(ctx):
 
 
     # ── Display Results ───────────────────────────────────────────────────────
-    display_cols = ["Ticker", "Company", "Sector", "Action", "Quality", "Smart Money",
+    display_cols = ["Ticker", "Company", "Sector", "Decision", "MoS (%)", "Action", "Quality", "Smart Money",
                     "Upside (%)", "RSI (14)", "Z-Score",
                     "vs MA200 (%)", "P/E (Fwd)", "EV/EBITDA", "PEG", "FCF Margin (%)",
                     "ROE (%)", "Yield (%)", "Net Payout (%)", "Debt/EBITDA"]
@@ -337,7 +337,8 @@ def render(ctx):
             val_str = str(val).upper()
             if "STRONG BUY" in val_str: return 'color: #2ecc71; font-weight: 800'
             elif "BUY" in val_str: return 'color: #27ae60; font-weight: bold'
-            elif "SELL" in val_str: return 'color: #e74c3c; font-weight: bold'
+            elif "SELL" in val_str or "AVOID" in val_str: return 'color: #e74c3c; font-weight: bold'
+            elif "NOT ENOUGH" in val_str: return 'color: #8899aa'
             elif "REDUCE" in val_str: return 'color: #e67e22; font-weight: bold'
             return 'color: #f1c40f'  # HOLD
             
@@ -393,7 +394,7 @@ def render(ctx):
             except: pass
             return ''
 
-        styler = df.style.map(highlight_action, subset=['Action']) \
+        styler = df.style.map(highlight_action, subset=['Decision', 'Action']) \
                          .map(highlight_smart_money, subset=['Smart Money']) \
                          .map(color_pos_neg, subset=['Upside (%)', 'vs MA200 (%)']) \
                          .map(color_zscore, subset=['Z-Score']) \
@@ -415,7 +416,12 @@ def render(ctx):
             "Ticker":          st.column_config.TextColumn("Ticker", width="small"),
             "Company":         st.column_config.TextColumn("Company", width="medium"),
             "Sector":          st.column_config.TextColumn("Sector", width="small"),
-            "Action":          st.column_config.TextColumn("Action", width="small"),
+            "Decision":        st.column_config.TextColumn("Decision", width="small",
+                                                       help="The single recommendation (same logic as the Decision Summary in Stock Analysis)"),
+            "MoS (%)":         st.column_config.NumberColumn("MoS", format="%+d%%",
+                                                         help="Margin of safety vs base-case DCF value (blank = DCF not informative)"),
+            "Action":          st.column_config.TextColumn("Signal", width="small",
+                                                     help="Technical + quality composite — an input to the Decision, not a recommendation"),
             "Quality":         st.column_config.ProgressColumn("Quality", min_value=0, max_value=100, format="%d", help="Fundamental Quality Score (v4.0)"),
             "Smart Money":     st.column_config.TextColumn("Smart Money", width="small"),
             "Upside (%)":      st.column_config.NumberColumn("Upside", format="%+.1f%%"),
