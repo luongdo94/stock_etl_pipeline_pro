@@ -13,7 +13,7 @@ import numpy as np
 
 
 def render(ctx):
-    """Render the 🤖 ML Predictor tab. ctx is the app globals() dict."""
+    """Render the 🤖 ML Predictor tab. ctx is the context dict built in app.py."""
     breadth_ts_global = ctx['breadth_ts_global']
     companies_full = ctx['companies_full']
     current_universe = ctx['current_universe']

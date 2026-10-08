@@ -7,7 +7,7 @@ from ui.icons import render_header
 
 
 def render(ctx):
-    """Render the 📖 Docs tab. ctx is the app globals() dict."""
+    """Render the 📖 Docs tab. ctx is the context dict built in app.py."""
     rules = load_rules()
     render_header("book", "Methodology & Known Limitations")
     st.write("What the numbers mean, where they come from, and what they cannot tell you. "

@@ -19,7 +19,7 @@ import pandas as pd, io
 
 
 def render(ctx):
-    """Render the 💼 Portfolio tab. ctx is the app globals() dict."""
+    """Render the 💼 Portfolio tab. ctx is the context dict built in app.py."""
     _vix_val = ctx['_vix_val']
     all_tickers = ctx['all_tickers']
     annual_fin = ctx['annual_fin']
