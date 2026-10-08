@@ -215,7 +215,11 @@ def detect_swing_zones(ticker_prices: "pd.DataFrame", cur_p: float, lookback: in
         "s2": float(s2),
         "r1": float(r1),
         "r2": float(r2),
-        "zone_width": zone_width_pct / 100  # Return as decimal for calculations
+        "zone_width": zone_width_pct / 100,  # Return as decimal for calculations
+        # all detected zones (midpoint, strength, touches) — used to build the multi-timeframe ladder
+        "support_zones": [(float(z["midpoint"]), float(z["strength"]), int(z["test_count"])) for z in support_zones_scored],
+        "resistance_zones": [(float(z["midpoint"]), float(z["strength"]), int(z["test_count"])) for z in resistance_zones_scored],
+        "atr": float(atr) if atr == atr else None,
     }
 
 
@@ -241,52 +245,63 @@ def get_tactical_metrics(ticker_prices: "pd.DataFrame", cur_p: float, analyst_ta
         rsi_series = 100 - (100 / (1 + gain / loss.replace(0, 1e-9)))
         rsi_val = float(rsi_series.iloc[-1]) if not rsi_series.empty else 50.0
 
-    # Multi-timeframe Support / Resistance ZONES using adaptive swing detection
-    # S1/R1: Short-term (20 days) - Tactical zones
+    # ── Multi-timeframe ladder built ONLY from real zones ───────────────────────
+    # Previously S2/S3/R2/R3 fell back to synthetic steps (R1×1.03, R2×1.05 …) that were drawn and
+    # labelled as "Major Resistance (252d)" — on real data that happened for almost every stock.
+    # Now every level is a detected swing zone (20d / 60d / 252d) or the 52-week high/low; where no
+    # real level exists the value is an ATR projection and is flagged as such in `kinds`.
     swing_20d = detect_swing_zones(ticker_prices, cur_p, lookback=20, base_window=3)
-    s1 = swing_20d["s1"]
-    r1 = swing_20d["r1"]
-    zone_width_20d = swing_20d["zone_width"]
-    
-    # S2/R2: Medium-term (60 days) - Intermediate zones
     swing_60d = detect_swing_zones(ticker_prices, cur_p, lookback=60, base_window=5)
-    s2_candidate = swing_60d["s1"]
-    r2_candidate = swing_60d["r1"]
-    
-    # S3/R3: Long-term (252 days / 1 year) - Strategic zones
     swing_252d = detect_swing_zones(ticker_prices, cur_p, lookback=252, base_window=7)
-    s3_candidate = swing_252d["s1"]
-    r3_candidate = swing_252d["r1"]
-    
-    # Smart hierarchy: only use candidates if they're meaningfully different from shorter timeframes
-    # If zones overlap, prefer the shorter timeframe (more recent/relevant)
-    
-    # S2: Use 60d zone only if it's at least 3% below S1, otherwise skip to S3
-    if s2_candidate < s1 * 0.97:
-        s2 = s2_candidate
-    else:
-        s2 = s3_candidate if s3_candidate < s1 * 0.97 else s1 * 0.97
-    
-    # S3: Use 252d zone only if it's at least 5% below S2
-    if s3_candidate < s2 * 0.95:
-        s3 = s3_candidate
-    else:
-        s3 = s2 * 0.95
-    
-    # R2: Use 60d zone only if it's at least 3% above R1
-    if r2_candidate > r1 * 1.03:
-        r2 = r2_candidate
-    else:
-        r2 = r3_candidate if r3_candidate > r1 * 1.03 else r1 * 1.03
-    
-    # R3: Use 252d zone only if it's at least 5% above R2
-    if r3_candidate > r2 * 1.05:
-        r3 = r3_candidate
-    else:
-        r3 = r2 * 1.05
+    zone_width_20d = swing_20d["zone_width"]
 
-    # Derived levels (adjusted for zone width)
-    stop_loss = s1 * (1 - zone_width_20d * 1.5)  # Stop below S1 zone
+    _tr = pd.concat([
+        ticker_prices["price_high"] - ticker_prices["price_low"],
+        (ticker_prices["price_high"] - ticker_prices["price_close"].shift(1)).abs(),
+        (ticker_prices["price_low"] - ticker_prices["price_close"].shift(1)).abs(),
+    ], axis=1).max(axis=1)
+    atr = float(_tr.tail(14).mean()) if len(_tr.dropna()) >= 5 else cur_p * 0.02
+
+    df_252 = ticker_prices.tail(252)
+    w52_hi = float(df_252["price_high"].max())
+    w52_lo = float(df_252["price_low"].min())
+
+    pool_s, pool_r = [], []   # (price, source)
+    for sw, src in ((swing_20d, "20d"), (swing_60d, "60d"), (swing_252d, "252d")):
+        pool_s += [(p, f"zone {src}") for p, _st, _n in sw.get("support_zones", [])]
+        pool_r += [(p, f"zone {src}") for p, _st, _n in sw.get("resistance_zones", [])]
+    pool_s.append((w52_lo, "52-week low"))
+    pool_r.append((w52_hi, "52-week high"))
+    near = max(atr * 0.5, cur_p * 0.003)            # a "level" inside half an ATR is the price itself
+    supports = sorted({p: src for p, src in pool_s if p < cur_p - near}.items(), key=lambda x: -x[0])
+    resists = sorted({p: src for p, src in pool_r if p > cur_p + near}.items(), key=lambda x: x[0])
+
+    def _ladder(levels, first, gaps, direction):
+        """Pick up to 3 levels moving away from price, each ≥ gap beyond the previous one."""
+        out, ref = [], first
+        for gap in gaps:
+            nxt = next(((p, src) for p, src in levels
+                        if (p <= ref * (1 - gap) if direction < 0 else p >= ref * (1 + gap))), None)
+            if nxt is None:
+                proj = ref - 2 * atr if direction < 0 else ref + 2 * atr
+                nxt = (proj, "projected (2×ATR, no real level)")
+            out.append(nxt)
+            ref = nxt[0]
+        return out
+
+    # Level 1: the 20-day strongest zone if it is a real level on the right side, else the nearest one
+    s1_cand = swing_20d["s1"] if swing_20d["s1"] < cur_p - near else None
+    r1_cand = swing_20d["r1"] if swing_20d["r1"] > cur_p + near else None
+    first_s = (s1_cand, "zone 20d") if s1_cand else (supports[0] if supports else (cur_p - 2 * atr, "projected (2×ATR, no real level)"))
+    first_r = (r1_cand, "zone 20d") if r1_cand else (resists[0] if resists else (cur_p + 2 * atr, "projected (2×ATR — price discovery, no overhead resistance)"))
+    (s2, s2k), (s3, s3k) = _ladder(supports, first_s[0], (0.03, 0.05), -1)
+    (r2, r2k), (r3, r3k) = _ladder(resists, first_r[0], (0.03, 0.05), +1)
+    s1, s1k = first_s
+    r1, r1k = first_r
+
+    # Derived levels. Stop: below the S1 zone AND at least 2×ATR below price (a stop inside the
+    # daily noise band — LVMH was at -1.8% — gets hit by ordinary volatility).
+    stop_loss = min(s1 * (1 - zone_width_20d * 1.5), cur_p - 2 * atr)
     tp1       = r1 * (1 + zone_width_20d * 1.5)  # Target above R1 zone
     tp2       = r2  # Use R2 zone midpoint
     tp3       = r3  # Use R3 zone midpoint
@@ -304,10 +319,8 @@ def get_tactical_metrics(ticker_prices: "pd.DataFrame", cur_p: float, analyst_ta
     rr_score = (rr_score_dist / risk_dist) if risk_dist > 0 else 0.0
     rr       = (rr_disp_dist  / risk_dist) if risk_dist > 0 else 0.0
 
-    # 52-week position
-    df_252  = ticker_prices.tail(252)
-    w52_hi  = df_252["price_high"].max()
-    w52_lo  = df_252["price_low"].min()
+    # 52-week position (needs a full year of history — callers pass the full series, not the
+    # sidebar-filtered window, otherwise "52-week" silently means "last month")
     w52_rng = w52_hi - w52_lo
     w52_pos = ((cur_p - w52_lo) / w52_rng * 100) if w52_rng > 0 else 50.0
 
@@ -329,4 +342,7 @@ def get_tactical_metrics(ticker_prices: "pd.DataFrame", cur_p: float, analyst_ta
         "w52_hi":    float(w52_hi),
         "w52_lo":    float(w52_lo),
         "zone_width": zone_width_20d,  # For UI display
+        "atr":       atr,
+        # where each level comes from: "zone 20d/60d/252d", "52-week high/low" or "projected (...)"
+        "kinds": {"s1": s1k, "s2": s2k, "s3": s3k, "r1": r1k, "r2": r2k, "r3": r3k},
     }

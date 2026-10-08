@@ -155,7 +155,11 @@ def render(ctx):
             elif ai_score >= 38: p_qual, p_qual_c = "FAIR",  "#f1c40f"
             else:                p_qual, p_qual_c = "WEAK",  "#e74c3c"
             # All tactical values computed by the shared helper (identical formula to Screener)
-            _tm        = get_tactical_metrics(df_deep, cur_p, analyst_target=target_p)
+            # Levels and the 52-week range always use the FULL price history — `df_deep` follows the
+            # sidebar horizon (1M → "52-week high" was the 1-month high) and is only used for display.
+            _df_levels = prices_full[prices_full["ticker"] == deep_ticker].sort_values("date")
+            _tm        = get_tactical_metrics(_df_levels, cur_p, analyst_target=target_p)
+            _kinds     = _tm.get("kinds", {})
             _s1        = _tm["s1"]
             _s2        = _tm["s2"]
             _s3        = _tm["s3"]
@@ -841,6 +845,17 @@ def render(ctx):
             _card_style = "background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:10px 4px 4px 4px;margin-bottom:4px;"
             _header_style = "color:#aabbcc;font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;padding:0 8px 6px 8px;"
             
+            # Missing values must read "N/A" — not "nan%", and not "0.0%" painted red as if it were a fact
+            def _num(v):
+                try:
+                    v = float(v)
+                    return v if v == v else None
+                except (TypeError, ValueError):
+                    return None
+
+            def _txt(v, fmt):
+                return "N/A" if v is None else fmt.format(v)
+
             with st.container():
                 kcol1, kcol2, kcol3, kcol4, kcol5, kcol6 = st.columns(6)
 
@@ -860,45 +875,51 @@ def render(ctx):
                     peg_col = "#2ecc71" if pd.notnull(peg_raw) and 0 < peg_raw <= 1.0 else ("#e74c3c" if pd.notnull(peg_raw) and peg_raw > 2.0 else None)
                     render_metric_row("PEG", f"{peg_raw:.2f}" if pd.notnull(peg_raw) else "N/A", value_color=peg_col)
                     
-                    ev_raw = meta.get('ev_to_ebitda', 0)
-                    ev_col = "#2ecc71" if 0 < ev_raw <= 10 else ("#e74c3c" if ev_raw > 20 else None)
-                    render_metric_row("EV/EBITDA",  f"{ev_raw:.2f}", value_color=ev_col, help_text="🟢 <10x (Value) | 🔴 >20x (Expensive)")
-                    
-                    ps_val = meta.get('price_to_sales', 0)
-                    ps_col = "#2ecc71" if 0 < ps_val <= 2 else ("#e74c3c" if ps_val > 10 else None)
-                    render_metric_row("Price/Sales",f"{ps_val:.2f}", value_color=ps_col, help_text="🟢 < 2x (Cheap) | 🔴 > 10x (Expensive)")
+                    ev_raw = _num(meta.get('ev_to_ebitda'))
+                    ev_col = None if ev_raw is None else ("#2ecc71" if 0 < ev_raw <= 10 else ("#e74c3c" if ev_raw > 20 else None))
+                    render_metric_row("EV/EBITDA", _txt(ev_raw, "{:.2f}x"), value_color=ev_col, help_text="🟢 <10x (Value) | 🔴 >20x (Expensive)")
+
+                    ps_val = _num(meta.get('price_to_sales'))
+                    ps_col = None if ps_val is None else ("#2ecc71" if 0 < ps_val <= 2 else ("#e74c3c" if ps_val > 10 else None))
+                    render_metric_row("Price/Sales", _txt(ps_val, "{:.2f}x"), value_color=ps_col, help_text="🟢 < 2x (Cheap) | 🔴 > 10x (Expensive)")
                     st.markdown("</div>", unsafe_allow_html=True)
 
                 with kcol2:
                     st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Profit & Returns</div>", unsafe_allow_html=True)
                     
-                    div_val = meta.get('dividend_yield_pct', 0)
-                    div_col = "#2ecc71" if pd.notnull(div_val) and div_val > 4 else None
-                    render_metric_row("Div Yield", f"{div_val:.2f}%" if pd.notnull(div_val) else "0.00%", value_color=div_col, help_text="🟢 > 4% (High Yielding)")
-                    
+                    div_val = _num(meta.get('dividend_yield_pct'))
+                    div_col = "#2ecc71" if div_val is not None and div_val > 4 else None
+                    render_metric_row("Div Yield", _txt(div_val, "{:.2f}%"), value_color=div_col, help_text="🟢 > 4% (High Yielding)")
+
                     # Net Payout = Div + Buybacks
-                    net_payout = meta.get('net_payout_yield_pct', 0)
-                    bb_yield   = meta.get('buyback_yield_pct', 0)
-                    render_metric_row("Net Payout",   f"{net_payout:.2f}%", delta=f"BB: {bb_yield:.1f}%")
-                    
-                    roe_raw = float(meta.get('roe') or 0) * 100
-                    roe_col = "#2ecc71" if roe_raw >= 15 else ("#e74c3c" if roe_raw < 5 else None)
-                    render_metric_row("ROE", f"{roe_raw:.1f}%", value_color=roe_col, help_text="🟢 > 15% (Strong Profitability) | 🔴 < 5% (Poor)")
-                    
-                    gm_val = float(meta.get('gross_margin') or 0) * 100
-                    gm_col = "#2ecc71" if gm_val >= 40 else ("#e74c3c" if gm_val < 10 else None)
-                    render_metric_row("Gross Margin", f"{gm_val:.1f}%", value_color=gm_col, help_text="🟢 > 40% (Wide Moat) | 🔴 < 10% (Thin Margin)")
-                    
-                    op_val = float(meta.get('operating_margin') or 0) * 100
-                    op_col = "#2ecc71" if op_val >= 15 else ("#e74c3c" if op_val < 5 else None)
-                    render_metric_row("Op Margin", f"{op_val:.1f}%", value_color=op_col)
-                    
-                    fcf_m = float(meta.get('fcf_margin') or 0)
-                    render_metric_row("FCF Margin", f"{fcf_m:.1f}%", value_color="#2ecc71" if fcf_m > 15 else None)
-                    
-                    rev_growth = float(meta.get('revenue_growth') or 0) * 100
-                    rev_col = "#2ecc71" if rev_growth > 20 else ("#e74c3c" if rev_growth < 0 else None)
-                    render_metric_row("Rev Growth", f"{rev_growth:.1f}%", value_color=rev_col)
+                    net_payout = _num(meta.get('net_payout_yield_pct'))
+                    bb_yield   = _num(meta.get('buyback_yield_pct'))
+                    render_metric_row("Net Payout", _txt(net_payout, "{:.2f}%"),
+                                      delta=f"BB: {bb_yield:.1f}%" if bb_yield is not None else None)
+
+                    _roe = _num(meta.get('roe'))
+                    roe_raw = _roe * 100 if _roe is not None else None
+                    roe_col = None if roe_raw is None else ("#2ecc71" if roe_raw >= 15 else ("#e74c3c" if roe_raw < 5 else None))
+                    render_metric_row("ROE", _txt(roe_raw, "{:.1f}%"), value_color=roe_col, help_text="🟢 > 15% (Strong Profitability) | 🔴 < 5% (Poor)")
+
+                    _gm = _num(meta.get('gross_margin'))
+                    gm_val = _gm * 100 if _gm is not None else None
+                    gm_col = None if gm_val is None else ("#2ecc71" if gm_val >= 40 else ("#e74c3c" if gm_val < 10 else None))
+                    render_metric_row("Gross Margin", _txt(gm_val, "{:.1f}%"), value_color=gm_col, help_text="🟢 > 40% (Wide Moat) | 🔴 < 10% (Thin Margin)")
+
+                    _om = _num(meta.get('operating_margin'))
+                    op_val = _om * 100 if _om is not None else None
+                    op_col = None if op_val is None else ("#2ecc71" if op_val >= 15 else ("#e74c3c" if op_val < 5 else None))
+                    render_metric_row("Op Margin", _txt(op_val, "{:.1f}%"), value_color=op_col)
+
+                    fcf_m = _num(meta.get('fcf_margin'))
+                    render_metric_row("FCF Margin", _txt(fcf_m, "{:.1f}%"), value_color="#2ecc71" if (fcf_m or 0) > 15 else None)
+
+                    _rg = _num(meta.get('revenue_growth'))
+                    rev_growth = _rg * 100 if _rg is not None else None
+                    rev_col = None if rev_growth is None else ("#2ecc71" if rev_growth > 20 else ("#e74c3c" if rev_growth < 0 else None))
+                    render_metric_row("Rev Growth (last qtr YoY)", _txt(rev_growth, "{:.1f}%"), value_color=rev_col,
+                                      help_text="Latest quarter vs the same quarter a year ago (Yahoo) — noisy for cyclical businesses")
                     st.markdown("</div>", unsafe_allow_html=True)
 
                 with kcol3:
@@ -944,18 +965,22 @@ def render(ctx):
                     else:
                         render_metric_row("Beta", "N/A")
                     
-                    inst = meta.get('inst_ownership', 0) * 100
-                    inst_col = "#2ecc71" if inst > 60 else ("#e74c3c" if inst < 10 else None)
-                    render_metric_row("Inst Own", f"{inst:.0f}%", value_color=inst_col, help_text="🟢 > 60% (Strong Institutional Backing)")
-                    
-                    short_val = meta.get('short_percent_of_float', 0) * 100
-                    short_col = "#e74c3c" if short_val > 10 else ("#2ecc71" if 0 <= short_val <= 2 else None)
-                    render_metric_row("Short Float", f"{short_val:.1f}%", value_color=short_col, help_text="🔴 > 10% (Squeeze Risk) | 🟢 < 2% (Safe)")
+                    _io = _num(meta.get('inst_ownership'))
+                    inst = _io * 100 if _io is not None else None
+                    inst_col = None if inst is None else ("#2ecc71" if inst > 60 else ("#e74c3c" if inst < 10 else None))
+                    render_metric_row("Inst Own", _txt(inst, "{:.0f}%"), value_color=inst_col, help_text="🟢 > 60% (Strong Institutional Backing)")
+
+                    _sf = _num(meta.get('short_percent_of_float'))
+                    short_val = _sf * 100 if _sf is not None else None
+                    short_col = None if short_val is None else ("#e74c3c" if short_val > 10 else ("#2ecc71" if short_val <= 2 else None))
+                    render_metric_row("Short Float", _txt(short_val, "{:.1f}%"), value_color=short_col, help_text="🔴 > 10% (Squeeze Risk) | 🟢 < 2% (Safe)")
                     st.markdown("</div>", unsafe_allow_html=True)
 
                 with kcol5:
                     st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Price & Context</div>", unsafe_allow_html=True)
-                    render_metric_row("Target",       f"€{target_p:.2f}", delta=upside, is_pct=True)
+                    _tgt = _num(target_p)
+                    render_metric_row("Analyst Target", _txt(_tgt if _tgt else None, "€{:.2f}"),
+                                      delta=upside if _tgt else None, is_pct=True)
                     
                     pe_5y_avg    = meta.get('pe_5y_avg', 0)
                     pe_cur       = meta.get('pe_ratio', 0)
@@ -1000,7 +1025,7 @@ def render(ctx):
 
                     st.markdown(f"<div style='{_card_style}'><div style='{e_header}'>Earnings & Events</div>", unsafe_allow_html=True)
                     render_metric_row("Report Date", e_date_str)
-                    render_metric_row("EPS Est",     f"{eps_est:.2f}" if pd.notnull(eps_est) else "N/A")
+                    render_metric_row("EPS Est",     f"€{eps_est:.2f}" if pd.notnull(eps_est) else "N/A")
                     
                     if pd.notnull(rev_est) and rev_est > 0:
                         if rev_est >= 1e9: rev_txt = f"€{rev_est/1e9:.1f}B"
@@ -1034,40 +1059,28 @@ def render(ctx):
             if 'ma_200' in df_deep.columns:
                 fig_tech.add_trace(go.Scatter(x=df_deep['date'], y=df_deep['ma_200'], name='MA200', line=dict(color='#E040FB', width=2.5)), row=1, col=1)
             
-            # Support/Resistance → Scatter traces (appear in legend, not as annotations)
+            # Support/Resistance → Scatter traces (appear in legend, not as annotations).
+            # Each label says where the level comes from; ATR projections are grey and dotted so they
+            # are never mistaken for real support/resistance.
             dates_range = df_deep['date'].tolist()
             df_deep['rsi'] = df_deep['rsi'] if 'rsi' in df_deep.columns else _rsi_val  # RSI from get_tactical_metrics
-            fig_tech.add_trace(go.Scatter(
-                x=[dates_range[0], dates_range[-1]], y=[_s1, _s1],
-                name=f'S1 Support  €{_s1:.2f}', mode='lines',
-                line=dict(color='#2ecc71', width=1, dash='dot'), opacity=0.8
-            ), row=1, col=1)
-            fig_tech.add_trace(go.Scatter(
-                x=[dates_range[0], dates_range[-1]], y=[_r1, _r1],
-                name=f'R1 Resistance  €{_r1:.2f}', mode='lines',
-                line=dict(color='#e74c3c', width=1, dash='dot'), opacity=0.8
-            ), row=1, col=1)
-            fig_tech.add_trace(go.Scatter(
-                x=[dates_range[0], dates_range[-1]], y=[_s2, _s2],
-                name=f'S2 Support (60d)  €{_s2:.2f}', mode='lines',
-                line=dict(color='#27ae60', width=1.5, dash='dash'), opacity=0.7
-            ), row=1, col=1)
-            fig_tech.add_trace(go.Scatter(
-                x=[dates_range[0], dates_range[-1]], y=[_r2, _r2],
-                name=f'R2 Resistance (60d)  €{_r2:.2f}', mode='lines',
-                line=dict(color='#c0392b', width=1.5, dash='dash'), opacity=0.7
-            ), row=1, col=1)
-            # 🛡️ MAJOR INSTITUTIONAL LEVELS (1-Year Swing)
-            fig_tech.add_trace(go.Scatter(
-                x=[dates_range[0], dates_range[-1]], y=[_s3, _s3],
-                name=f'S3 Major Support (252d)  €{_s3:.2f}', mode='lines',
-                line=dict(color='#1b5e20', width=2.5, dash='solid'), opacity=0.5
-            ), row=1, col=1)
-            fig_tech.add_trace(go.Scatter(
-                x=[dates_range[0], dates_range[-1]], y=[_r3, _r3],
-                name=f'R3 Major Resistance (252d)  €{_r3:.2f}', mode='lines',
-                line=dict(color='#b71c1c', width=2.5, dash='solid'), opacity=0.5
-            ), row=1, col=1)
+            _zw = _tm.get("zone_width", 0.0)
+            for _lvl, _val, _col, _w in (("S1", _s1, "#2ecc71", 1.2), ("R1", _r1, "#e74c3c", 1.2),
+                                          ("S2", _s2, "#27ae60", 1.6), ("R2", _r2, "#c0392b", 1.6),
+                                          ("S3", _s3, "#1b5e20", 2.4), ("R3", _r3, "#b71c1c", 2.4)):
+                _src = _kinds.get(_lvl.lower(), "")
+                _proj = _src.startswith("projected")
+                fig_tech.add_trace(go.Scatter(
+                    x=[dates_range[0], dates_range[-1]], y=[_val, _val],
+                    name=f"{_lvl} {'Support' if _lvl[0] == 'S' else 'Resistance'} €{_val:.2f} · {_src or 'zone'}",
+                    mode='lines',
+                    line=dict(color='rgba(160,160,160,0.6)' if _proj else _col, width=1 if _proj else _w,
+                              dash='dot' if _proj else ('dot' if _lvl.endswith('1') else 'dash')),
+                    opacity=0.85), row=1, col=1)
+                # real S1/R1 zones are bands (±½ zone width), not single prices
+                if _lvl in ("S1", "R1") and not _proj and _zw > 0:
+                    fig_tech.add_hrect(y0=_val * (1 - _zw / 2), y1=_val * (1 + _zw / 2), line_width=0,
+                                       fillcolor=_col, opacity=0.08, row=1, col=1)
             # 📈 AUTOMATED TRENDLINE (Linear Regression)
             # Calculate best-fit line for the current price window
             y_data = df_deep['price_close'].values
@@ -1079,7 +1092,7 @@ def render(ctx):
                 trendline_y = slope * x_data + intercept
                 fig_tech.add_trace(go.Scatter(
                     x=df_deep['date'], y=trendline_y,
-                    name='Regression Trendline',
+                    name='Linear fit of closes (visible window)',
                     line=dict(color='rgba(255, 215, 0, 0.4)', width=2, dash='dash'),
                     hoverinfo='skip'
                 ), row=1, col=1)
