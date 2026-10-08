@@ -334,17 +334,20 @@ def extract_stock_prices(
 
     all_frames = []
 
+    def _batch_download(batch, start):
+        # A batch-level API error (rate limit, network) must not abort the whole run:
+        # treat it as "nothing received" and let PASS 2 retry ticker by ticker.
+        try:
+            return yf.download(batch, start=start, end=end_date, auto_adjust=True,
+                               progress=False, group_by='column')
+        except Exception as e:
+            logger.warning(f"⚠️ Batch price download failed for {len(batch)} tickers: {e}")
+            return pd.DataFrame()
+
     # ── BATCH DOWNLOAD: Incremental (or Full if no watermarks) ───────────────
     existing_tickers = [t for t in all_ticker_list if t not in new_tickers]
     if existing_tickers:
-        raw_prices = yf.download(
-            existing_tickers,
-            start=start_date,
-            end=end_date,
-            auto_adjust=True,
-            progress=False,
-            group_by='column'
-        )
+        raw_prices = _batch_download(existing_tickers, start_date)
 
         if raw_prices.empty:
             logger.warning("⚠️ No price data returned for existing tickers in the incremental window.")
@@ -353,14 +356,7 @@ def extract_stock_prices(
 
     # ── BATCH DOWNLOAD: Full history for brand-new tickers ───────────────────
     if new_tickers and full_start:
-        raw_new = yf.download(
-            new_tickers,
-            start=full_start,
-            end=end_date,
-            auto_adjust=True,
-            progress=False,
-            group_by='column'
-        )
+        raw_new = _batch_download(new_tickers, full_start)
         if not raw_new.empty:
             all_frames.append(("new", new_tickers, raw_new))
 
@@ -395,8 +391,12 @@ def extract_stock_prices(
             except Exception as e:
                 logger.warning(f"   ❌ Recovery error for {ticker}: {e}")
 
-    if not all_frames and not watermarks:
-        raise ValueError("❌ No price data returned from Yahoo Finance.")
+    if not all_frames:
+        if not watermarks:
+            raise ValueError("❌ No price data returned from Yahoo Finance.")
+        # Incremental run with nothing new (weekend/holiday): skip currency + FX API calls
+        logger.info("ℹ️ No new price rows in the incremental window.")
+        return pd.DataFrame()
 
     # 2. RESOLVE CURRENCIES: Heuristic-first, API only for ambiguous tickers
     # _guess_currency() correctly identifies ~95% of non-US tickers by suffix.
@@ -447,13 +447,18 @@ def extract_stock_prices(
         # Standardize on {CUR}EUR=X format for direct conversion to Euro
         fx_tickers = [f"{c}EUR=X" for c in unique_currencies]
         logger.info(f"    💱 Downloading FX rates to EUR for: {unique_currencies}")
-        _fx_raw = yf.download(fx_tickers, start=start_date, end=end_date, progress=False)["Close"]
+        # FX history must cover the earliest price row (new tickers bootstrap from full_start)
+        fx_start = min(d for d in (start_date, full_start) if d is not None)
+        _fx_dl = yf.download(fx_tickers, start=fx_start, end=end_date, progress=False)
+        if _fx_dl.empty or "Close" not in _fx_dl.columns.get_level_values(0):
+            # Storing local-currency prices as EUR would silently corrupt the warehouse
+            raise RuntimeError(f"❌ FX download returned no data for {fx_tickers} — aborting price extract.")
+        _fx_raw = _fx_dl["Close"]
         if isinstance(_fx_raw, pd.Series):
-            c_name = list(unique_currencies)[0]
-            fx_data = _fx_raw.to_frame(name=c_name)
-        else:
-            fx_data = _fx_raw
-        fx_data = fx_data.ffill().bfill()
+            # Must use the "{CUR}EUR=X" name: the lookup below searches for exactly that column.
+            # Naming it after the bare currency made the lookup miss → prices left unconverted.
+            _fx_raw = _fx_raw.to_frame(name=fx_tickers[0])
+        fx_data = _fx_raw.ffill().bfill()
 
     # 3. VECTORIZED NORMALIZATION & FORMATTING
     # Process each download batch (may have 1 or 2: existing tickers + new tickers)

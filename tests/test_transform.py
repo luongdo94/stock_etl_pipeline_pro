@@ -114,8 +114,6 @@ class TestTransformIntermediate:
         rsi = conn.execute("SELECT rsi FROM intermediate.int_stock_metrics WHERE date = '2024-01-30'").fetchone()[0]
         assert rsi == 100
 
-class TestTransformMarts:
-
 def test_data_quality_checks_integration(tmp_path):
     """Ensure Audit Engine catches violations in marts."""
     db_file = str(tmp_path / "test_dq.duckdb")

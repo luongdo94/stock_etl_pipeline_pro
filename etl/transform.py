@@ -2,6 +2,8 @@
 import duckdb
 import logging
 
+from core.indicators import wilder_rsi_by_ticker
+
 logger = logging.getLogger(__name__)
 
 
@@ -169,7 +171,18 @@ def _create_intermediate(conn):
     Naming: int_{entity}_{transformation}
     """
     conn.execute("CREATE SCHEMA IF NOT EXISTS intermediate")
-    
+
+    # RSI-14 uses Wilder's recursive smoothing, which SQL window functions cannot express.
+    # Compute it in pandas with the same function the dashboard uses, then join it back.
+    rsi_df = conn.execute(
+        "SELECT ticker, date, close FROM staging.stg_stock_prices ORDER BY ticker, date"
+    ).df()
+    rsi_df["rsi"] = wilder_rsi_by_ticker(rsi_df).round(2)
+    rsi_df = rsi_df[["ticker", "date", "rsi"]]
+    conn.register("rsi_wilder_df", rsi_df)
+    conn.execute("CREATE OR REPLACE TEMP TABLE rsi_wilder AS SELECT * FROM rsi_wilder_df")
+    conn.unregister("rsi_wilder_df")
+
     # Compute technical indicators
     conn.execute("""
         CREATE OR REPLACE TABLE intermediate.int_stock_metrics AS
@@ -195,51 +208,32 @@ def _create_intermediate(conn):
                 ROUND(AVG(close) OVER (w ROWS BETWEEN 49 PRECEDING AND CURRENT ROW), 4) AS ma_50,
                 -- 🏆 EXPERT: 200-day Moving Average (Traditional gold standard)
                 ROUND(AVG(close) OVER (w ROWS BETWEEN 199 PRECEDING AND CURRENT ROW), 4) AS ma_200,
-                -- 🏆 EXPERT: RSI-14 (Relative Strength Index)
-                -- 1. Calculate price deltas
-                close - LAG(close) OVER w AS diff,
             FROM staging.stg_stock_prices
-            WINDOW 
+            WINDOW
                 w AS (PARTITION BY ticker ORDER BY date)
-        ),
-        rsi_base AS (
-            SELECT
-                *,
-                CASE WHEN diff > 0 THEN diff ELSE 0 END AS gain,
-                CASE WHEN diff < 0 THEN -diff ELSE 0 END AS loss
-            FROM base_pre
-        ),
-        rsi_calc AS (
-            SELECT
-                *,
-                AVG(gain) OVER (PARTITION BY ticker ORDER BY date ROWS BETWEEN 13 PRECEDING AND CURRENT ROW) AS avg_gain,
-                AVG(loss) OVER (PARTITION BY ticker ORDER BY date ROWS BETWEEN 13 PRECEDING AND CURRENT ROW) AS avg_loss
-            FROM rsi_base
         ),
         base AS (
             SELECT
-                *,
-                -- Relative Strength (RS) = AvgGain / AvgLoss
-                -- RSI = 100 - (100 / (1 + RS))
-                CASE 
-                    WHEN avg_loss = 0 THEN 100
-                    WHEN avg_gain = 0 THEN 0
-                    ELSE ROUND(100 - (100 / (1 + (avg_gain / avg_loss))), 2)
-                END AS rsi,
+                b.*,
+                -- 🏆 EXPERT: RSI-14 (Wilder), precomputed in rsi_wilder
+                r.rsi,
                 -- Volume moving average
                 ROUND(AVG(volume) OVER (w ROWS BETWEEN 19 PRECEDING AND CURRENT ROW), 0) AS volume_ma_20,
                 -- 52-week high/low
                 MAX(close) OVER (w ROWS BETWEEN 251 PRECEDING AND CURRENT ROW) AS week52_high,
                 MIN(close) OVER (w ROWS BETWEEN 251 PRECEDING AND CURRENT ROW) AS week52_low,
-                -- 🏆 EXPERT: 5-year (all-time) High/Low/Mean
-                MAX(close) OVER w_all AS high_5y,
-                MIN(close) OVER w_all AS low_5y,
-                AVG(close) OVER w_all AS avg_5y,
-                STDDEV(close) OVER w_all AS std_dev_5y
-            FROM rsi_calc
-            WINDOW 
+                -- 🏆 EXPERT: rolling 5-year (1260 trading days) High/Low/Mean.
+                -- Was UNBOUNDED PRECEDING, which silently grew past 5 years because
+                -- incremental runs keep appending to raw.stock_prices.
+                MAX(close) OVER w_5y AS high_5y,
+                MIN(close) OVER w_5y AS low_5y,
+                AVG(close) OVER w_5y AS avg_5y,
+                STDDEV(close) OVER w_5y AS std_dev_5y
+            FROM base_pre b
+            LEFT JOIN rsi_wilder r USING (ticker, date)
+            WINDOW
                 w AS (PARTITION BY ticker ORDER BY date),
-                w_all AS (PARTITION BY ticker ORDER BY date ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+                w_5y AS (PARTITION BY ticker ORDER BY date ROWS BETWEEN 1259 PRECEDING AND CURRENT ROW)
         )
         SELECT
             *,
@@ -583,7 +577,8 @@ def _create_marts(conn):
             d.sector,
             d.region,
             ROUND(AVG(f.daily_return_pct), 4)  AS avg_daily_return,
-            ROUND(SUM(f.daily_return_pct), 4)  AS monthly_return,
+            -- Compounded: prod(1 + r) - 1. A plain SUM of daily % returns drifts badly for volatile names.
+            ROUND((EXP(SUM(LN(1 + f.daily_return_pct / 100))) - 1) * 100, 4) AS monthly_return,
             ROUND(STDDEV(f.daily_return_pct), 4) AS volatility,
             COUNT(*)                           AS trading_days,
             ROUND(AVG(f.volume), 0)            AS avg_volume,

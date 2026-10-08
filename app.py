@@ -40,6 +40,7 @@ import yfinance as yf
 from etl.llm_parser import analyze_risk_with_llm
 from etl.utils import compute_score
 from etl.performance_utils import vectorized_compute_scores, optimize_dataframe_memory
+from core.indicators import wilder_rsi
 
 # ── LOGGING SETUP ────────────────────────────────────────────────────────────
 logger = logging.getLogger(__name__)
@@ -900,14 +901,8 @@ st.markdown("""
 
 # ── UTILITIES ───────────────────────────────────────────────────────────────
 def get_rsi_vectorized(df, periods=14):
-    """Fast vectorized RSI calculation."""
-    close_delta = df['price_close'].diff()
-    up = close_delta.clip(lower=0)
-    down = -1 * close_delta.clip(upper=0)
-    ma_up = up.ewm(com=periods-1, adjust=True, min_periods=periods).mean()
-    ma_down = down.ewm(com=periods-1, adjust=True, min_periods=periods).mean()
-    rs = ma_up / ma_down
-    return 100 - (100 / (1 + rs))
+    """Wilder RSI on df['price_close'] — same implementation as the ETL (core.indicators)."""
+    return wilder_rsi(df['price_close'], periods)
 
 # ── DATA LOADING ──────────────────────────────────────────────────────────────
 DB_PATH = os.path.join(ROOT, "warehouse", "stock_dw.duckdb")
@@ -1400,8 +1395,9 @@ def load_data():
     monthly_f["month"] = pd.to_datetime(monthly_f["month"])
     prices_f = prices_f.sort_values(['ticker', 'date'])
 
-    # Vectorized RSI (only for those missing it or to ensure consistency)
-    prices_f['rsi'] = prices_f.groupby('ticker', group_keys=False).apply(lambda x: get_rsi_vectorized(x), include_groups=False)
+    # Recompute RSI over the loaded 3-year window with the same Wilder implementation the ETL uses
+    # (the warehouse's own rsi column predates this on older synced parquet snapshots)
+    prices_f['rsi'] = prices_f.groupby('ticker', group_keys=False)['price_close'].transform(wilder_rsi)
 
     # ✅ PERFORMANCE OPTIMIZATION: Optimize memory usage for large DataFrames
     try:
@@ -9781,6 +9777,9 @@ def run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct,
 
     return {
         "ticker": bt_ticker, "strategy": strategy_type,
+        # static_score is TODAY's quality score applied to every past bar → lookahead bias.
+        # Such results are shown for reference but never crowned the winner.
+        "lookahead": "Institutional Quality" in strategy_type,
         "total_return": total_return, "bnh_return": bnh_return, "sharpe": sharpe, "max_dd": max_dd,
         "win_rate": win_rate, "n_trades": n_trades, "dates_arr": dates_arr, "equity_curve": equity_curve,
         "bnh_curve": bnh_curve, "trade_log": trade_log
@@ -9847,7 +9846,7 @@ if active_tab == "🧪 Strategy Lab":
             
             if results:
                 st.session_state["bt_leaderboard"] = results
-                best_res = max(results, key=lambda x: x["sharpe"])
+                best_res = max(results, key=lambda x: (not x["lookahead"], x["sharpe"]))
                 st.session_state["bt_results"] = best_res
 
         # ── RENDER RESULTS ────────────────────────────────────────────────────
@@ -9867,10 +9866,12 @@ if active_tab == "🧪 Strategy Lab":
                         "Sharpe": s_res["sharpe"],
                         "Max DD %": s_res["max_dd"],
                         "Win Rate %": s_res["win_rate"],
-                        "Trades": s_res["n_trades"]
+                        "Trades": s_res["n_trades"],
+                        "Lookahead": s_res.get("lookahead", False),
                     })
-                
-                comp_df = pd.DataFrame(comp_data).sort_values("Sharpe", ascending=False)
+
+                # Lookahead-biased rows sink to the bottom so iloc[0] is always a fair winner
+                comp_df = pd.DataFrame(comp_data).sort_values(["Lookahead", "Sharpe"], ascending=[True, False])
                 
                 # Highlight Winner
                 best_strat_name = comp_df.iloc[0]["Strategy"]
@@ -9886,8 +9887,11 @@ if active_tab == "🧪 Strategy Lab":
                                  "Return %": st.column_config.NumberColumn("Return", format="%.1f%%"),
                                  "Sharpe": st.column_config.NumberColumn("Sharpe", format="%.2f"),
                                  "Max DD %": st.column_config.NumberColumn("Max DD", format="%.1f%%"),
-                                 "Win Rate %": st.column_config.NumberColumn("Win Rate", format="%.0f%%")
+                                 "Win Rate %": st.column_config.NumberColumn("Win Rate", format="%.0f%%"),
+                                 "Lookahead": st.column_config.CheckboxColumn("⚠️ Lookahead", help="Uses today's Quality Score on historical bars — results are optimistic and excluded from the ranking."),
                              })
+                st.caption("⚠️ The winner is picked in-sample on the same history it is scored on — "
+                           "treat it as a hypothesis to validate on newer data, not as an expected return.")
                 st.markdown("---")
 
             # Main Metrics (of best/selected)

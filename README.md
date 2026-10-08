@@ -78,7 +78,8 @@ A CANSLIM-style growth accelerator index. Because free APIs often suffer from de
 - Outputs actionable labels: `Accelerating`, `Slowing`, `Turning Around`, `Bottoming`.
 
 ### 📉 Z-Score Mean Reversion & Deep Value
-- Continuously calculates $Z = (Price - MA_{60}) / STD_{60}$.
+- Warehouse / screener Z-Score (`price_z_score`): $Z = (Price - MEAN_{5Y}) / STD_{5Y}$ over a rolling 1260-trading-day window.
+- The Strategy Lab's Z-Score strategy uses a faster $Z = (Price - MA_{60}) / STD_{60}$.
 - Easily identifies massive dislocations from intrinsic value, spotting deep panics ($Z < -2$) and severe overbought euphoria ($Z > +2$).
 
 ---

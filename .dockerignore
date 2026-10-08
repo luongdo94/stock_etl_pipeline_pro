@@ -23,3 +23,10 @@
 **/values.dev.yaml
 LICENSE
 README.md
+**/__pycache__
+**/.venv
+**/.cache
+**/logs
+**/.streamlit/secrets.toml
+warehouse/*.duckdb
+warehouse/*.parquet

@@ -130,18 +130,20 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
             insider_ownership DOUBLE,
             _extracted_at   TIMESTAMP,
             dividend_yield  DOUBLE,
+            ex_dividend_date VARCHAR,
+            pay_date         VARCHAR,
             _loaded_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """)
-    # Migrate existing tables that predate the quote_type / industry columns
-    try:
-        conn.execute("ALTER TABLE raw.company_info ADD COLUMN IF NOT EXISTS quote_type VARCHAR DEFAULT 'EQUITY'")
-    except Exception:
-        pass  # Column already exists or not supported — safe to ignore
-    try:
-        conn.execute("ALTER TABLE raw.company_info ADD COLUMN IF NOT EXISTS industry VARCHAR")
-    except Exception:
-        pass  # Column already exists
+    # Migrate existing tables that predate newer columns. staging.stg_company_info reads
+    # ex_dividend_date / pay_date, so they must exist even before load_company_info() runs
+    # (fresh warehouse, or a run where metadata extraction returned nothing).
+    for col_ddl in ("quote_type VARCHAR DEFAULT 'EQUITY'", "industry VARCHAR",
+                    "ex_dividend_date VARCHAR", "pay_date VARCHAR"):
+        try:
+            conn.execute(f"ALTER TABLE raw.company_info ADD COLUMN IF NOT EXISTS {col_ddl}")
+        except Exception:
+            pass  # Column already exists or not supported — safe to ignore
     conn.execute("""
         CREATE TABLE IF NOT EXISTS raw.historical_financials (
             ticker          VARCHAR,
