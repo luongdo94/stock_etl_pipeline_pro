@@ -224,6 +224,7 @@ To run the dashboard on the web (e.g., Streamlit Cloud) without pushing the data
     - `SUPABASE_REMOTE_MODE = "true"`
     - `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`
     - `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`, `S3_ENDPOINT`
+    - In `.streamlit/secrets.toml`: `COOKIE_SECRET` (a long random string, e.g. `python -c "import secrets; print(secrets.token_hex(32))"`) — signs the 7-day login cookie. Without it, users must log in again in every new browser session. Optionally `SUPABASE_ANON_KEY` for the login client.
 4. The dashboard will now stream data directly from the cloud via HTTP Parquet querying.
 
 ### Step 5. Continuous Integration (Airflow)

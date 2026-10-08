@@ -48,6 +48,11 @@ class AuditManager:
         self.start_time = pd.Timestamp.now()
         self.rows_processed = 0
         self.status = "STARTED"
+        self.failure_reason = None
+
+    def mark_failed(self, reason: str):
+        """Record a controlled abort (no exception raised) as FAILED instead of SUCCESS."""
+        self.failure_reason = reason
 
     def __enter__(self):
         logger.info(f"🆔 Run ID: {self.run_id} ({self.mode} mode)")
@@ -62,6 +67,9 @@ class AuditManager:
             self.status = "FAILED"
             error_msg = "".join(traceback.format_exception(exc_type, exc_val, exc_tb))
             logger.error(f"❌ Pipeline failed: {exc_val}")
+        elif self.failure_reason:
+            self.status = "FAILED"
+            error_msg = self.failure_reason
         else:
             self.status = "SUCCESS"
             logger.info(f"✅ Pipeline completed: {self.rows_processed:,} rows processed.")
@@ -295,16 +303,22 @@ def run_pipeline(lookback_days: int = 1825, force_full: bool = False, fast_mode:
 
             # ── STEP 2: VALIDATE ─────────────────────────────────────────────────
             logger.info("\n🔍 STEP 2/5 — VALIDATE")
+            other_dfs = [company_df, financials_df, quarterly_df, fcf_df, fcf_q_df, cashflow_df,
+                         earnings_df, earnings_surprise_df, forward_estimates_df]
             if prices_df.empty:
-                # For incremental: empty is OK (market closed, weekend, etc.)
-                if is_incremental:
-                    logger.info("   ℹ️  No new price data — market may be closed. Pipeline complete.")
-                    return True
-                else:
+                if not is_incremental:
                     raise AssertionError("No price data extracted in full refresh mode!")
-            assert "close" in prices_df.columns, "Missing 'close' column!"
-            assert prices_df["close"].gt(0).all(), "Negative prices found!"
-            logger.info(f"   ✅ Validation passed — {len(prices_df):,} rows clean")
+                # Incremental with no new prices (market closed, weekend, ...). Only stop if nothing
+                # else was fetched either — otherwise the weekly/monthly fundamentals refresh would be
+                # thrown away on every non-trading-day run and never reach the warehouse.
+                if all(df.empty for df in other_dfs):
+                    logger.info("   ℹ️  No new data — market may be closed. Pipeline complete.")
+                    return True
+                logger.info("   ℹ️  No new price data, but fundamentals/metadata were fetched — loading those.")
+            else:
+                assert "close" in prices_df.columns, "Missing 'close' column!"
+                assert prices_df["close"].gt(0).all(), "Negative prices found!"
+                logger.info(f"   ✅ Validation passed — {len(prices_df):,} rows clean")
 
             # ── STEP 3: LOAD ─────────────────────────────────────────────────────
             logger.info("\n📤 STEP 3/5 — LOAD")
@@ -312,7 +326,8 @@ def run_pipeline(lookback_days: int = 1825, force_full: bool = False, fast_mode:
             create_raw_schema(conn)
             
             # Accumulate rows processed for audit
-            audit.rows_processed += load_stock_prices(conn, prices_df, mode="upsert")
+            if not prices_df.empty:
+                audit.rows_processed += load_stock_prices(conn, prices_df, mode="upsert")
             audit.rows_processed += load_company_info(conn, company_df)
             audit.rows_processed += load_historical_financials(conn, financials_df)
             audit.rows_processed += load_quarterly_financials(conn, quarterly_df)
@@ -348,6 +363,7 @@ def run_pipeline(lookback_days: int = 1825, force_full: bool = False, fast_mode:
             # We verify that the shadow database isn't "suspiciously empty" before swapping
             if not validate_shadow_integrity(conn):
                 logger.error("❌ SHADOW INTEGRITY CHECK FAILED: Aborting swap to protect production data.")
+                audit.mark_failed("Shadow integrity check failed — swap aborted")
                 conn.close()
                 return False
 
@@ -360,6 +376,7 @@ def run_pipeline(lookback_days: int = 1825, force_full: bool = False, fast_mode:
                 gx_success = run_dq_validations(SHADOW_DB_PATH)
                 if not gx_success:
                     logger.error("❌ GX VALIDATION FAILED: Aborting swap!")
+                    audit.mark_failed("Great Expectations validation failed — swap aborted")
                     return False
             except ImportError:
                  logger.warning("   ⚠️ GX not installed, skipping advanced data quality checks.")

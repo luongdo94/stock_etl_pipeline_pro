@@ -1139,6 +1139,10 @@ def get_db_connection(read_only=False):
         # ── HYBRID REMOTE MODE: Local Shadow Cache (fast) → S3 direct (fallback) ──
         cache_ready = _ensure_local_cache()
 
+        # Only connection *setup* may fall back to S3. The yield stays outside the
+        # try/except: catching errors raised by the caller's `with` body and then
+        # yielding a second time made contextlib raise "generator didn't stop after throw()".
+        conn = None
         if cache_ready:
             # Fast path: read from local .cache/ — near-instant DuckDB queries
             try:
@@ -1153,13 +1157,18 @@ def get_db_connection(read_only=False):
                     else:
                         paths_str = ", ".join(f"'{p}'" for p in local_paths)
                         conn.execute(f"CREATE VIEW {table} AS SELECT * FROM read_parquet([{paths_str}])")
-                yield conn
-                return
             except Exception as e:
                 st.warning(f"⚠️ Local cache read failed, falling back to S3: {e}")
-            finally:
-                if 'conn' in locals():
+                if conn is not None:
                     conn.close()
+                conn = None
+
+        if conn is not None:
+            try:
+                yield conn
+            finally:
+                conn.close()
+            return
 
         # Slow fallback: read directly from S3 when local cache is unavailable
         try:
@@ -1191,15 +1200,17 @@ def get_db_connection(read_only=False):
                 else:
                     paths_str = ", ".join(f"'s3://{bucket}/{f}'" for f in files)
                     conn.execute(f"CREATE VIEW {table} AS SELECT * FROM read_parquet([{paths_str}])")
-
-            yield conn
-            return
         except Exception as e:
             st.error(f"Failed to initialize Remote Mode: {e}")
-            raise e
-        finally:
-            if 'conn' in locals():
+            if conn is not None:
                 conn.close()
+            raise
+
+        try:
+            yield conn
+        finally:
+            conn.close()
+        return
 
     # ── LOCAL MODE (File-based DuckDB) ──
     possible_paths = [
@@ -9666,7 +9677,8 @@ def run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct,
     static_score = int(ticker_score_row["score"].iloc[0]) if not ticker_score_row.empty else 50
 
     prices_arr  = bt_prices["price_close"].values
-    returns_arr = bt_prices["daily_return_pct"].values / 100
+    # A single NaN return would turn the whole cumprod equity curve into NaN
+    returns_arr = np.nan_to_num(bt_prices["daily_return_pct"].values.astype(float) / 100)
     dates_arr   = bt_prices["date"].values
     
     # Fetch indicators
@@ -9692,7 +9704,8 @@ def run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct,
         current_price = prices_arr[i]
         p_date = str(dates_arr[i])[:10]
         position[i] = position[i-1]
-        
+        exited_today = False
+
         # 1. Exit Conditions
         if in_position:
             pnl_pct = (current_price - entry_price_val) / entry_price_val
@@ -9717,11 +9730,13 @@ def run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct,
                     if current_price < ma50_arr[i]: exit_signal = True; exit_reason = "Price < MA50"
                     
             if exit_signal:
-                position[i] = 0; in_position = False
+                position[i] = 0; in_position = False; exited_today = True
                 trade_log.append({"Date": p_date, "Action": "🔴 SELL", "Reason": exit_reason, "Price": f"€{current_price:.2f}", "PnL": f"{pnl_pct*100:+.1f}%"})
         
-        # 2. Entry Conditions
-        if not in_position:
+        # 2. Entry Conditions — never re-enter on the bar we just exited, otherwise level-based
+        #    rules (e.g. Institutional Quality) re-buy immediately after a Stop Loss: the stop
+        #    is silently undone and the round trip pays no transaction cost.
+        if not in_position and not exited_today:
             entry_signal = False; entry_reason = ""
             if "Trend Following" in strategy_type:
                 if ma20_arr[i] > ma50_arr[i] and ma20_arr[i-1] <= ma50_arr[i-1]: entry_signal = True; entry_reason = "MA Golden Cross"

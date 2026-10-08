@@ -6,9 +6,13 @@ TTL: 7 days.
 """
 import streamlit as st
 from supabase import create_client
+import base64
+import hashlib
+import hmac
 import time
 import json
 from datetime import datetime, timedelta
+from typing import Optional
 
 _COOKIE_NAME = "hqi_session"
 _COOKIE_TTL_DAYS = 7
@@ -16,11 +20,63 @@ _COOKIE_TTL_DAYS = 7
 
 @st.cache_resource
 def get_supabase_client():
+    """Shared data client (service role). Never call .auth.* on it: a sign-in would
+    swap its Authorization header to that user's JWT for every session in the process."""
     url = st.secrets.get("SUPABASE_URL")
     key = st.secrets.get("SUPABASE_SERVICE_ROLE_KEY") or st.secrets.get("SUPABASE_SERVICE_KEY") or st.secrets.get("SUPABASE_KEY")
     if not url or not key:
         return None
     return create_client(url, key)
+
+
+def _new_auth_client():
+    """Fresh, uncached client for sign-in / sign-up / reset so auth state stays per-request."""
+    url = st.secrets.get("SUPABASE_URL")
+    key = st.secrets.get("SUPABASE_ANON_KEY") or st.secrets.get("SUPABASE_KEY") \
+        or st.secrets.get("SUPABASE_SERVICE_ROLE_KEY") or st.secrets.get("SUPABASE_SERVICE_KEY")
+    if not url or not key:
+        return None
+    return create_client(url, key)
+
+
+# ── Signed session cookie ────────────────────────────────────────────────────
+# The cookie used to be plain JSON {"user_id": ...}; anyone could forge it and read or
+# overwrite another user's watchlist/portfolio (queries run with the service-role key).
+# It is now HMAC-SHA256 signed with COOKIE_SECRET and carries its own expiry.
+def _cookie_secret() -> Optional[bytes]:
+    secret = st.secrets.get("COOKIE_SECRET")
+    return secret.encode() if secret else None
+
+
+def _sign_session(user_id: str, user_email: str) -> Optional[str]:
+    secret = _cookie_secret()
+    if not secret:
+        return None
+    payload = json.dumps(
+        {"user_id": user_id, "user_email": user_email,
+         "exp": int(time.time()) + _COOKIE_TTL_DAYS * 86400},
+        separators=(",", ":"),
+    ).encode()
+    body = base64.urlsafe_b64encode(payload).decode()
+    sig = hmac.new(secret, body.encode(), hashlib.sha256).hexdigest()
+    return f"{body}.{sig}"
+
+
+def _verify_session(token) -> Optional[dict]:
+    secret = _cookie_secret()
+    if not secret or not isinstance(token, str) or "." not in token:
+        return None
+    body, sig = token.rsplit(".", 1)
+    expected = hmac.new(secret, body.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(sig.encode(), expected.encode()):  # bytes: str form rejects non-ASCII input
+        return None
+    try:
+        data = json.loads(base64.urlsafe_b64decode(body.encode()))
+    except Exception:
+        return None
+    if not data.get("user_id") or data.get("exp", 0) < time.time():
+        return None
+    return data
 
 
 def get_cookie_manager():
@@ -30,7 +86,7 @@ def get_cookie_manager():
 
 def _login_form(cm):
     """Render the Login / Signup UI. Writes cookie on success."""
-    supabase = get_supabase_client()
+    supabase = _new_auth_client()
     if not supabase:
         st.error("⚠️ System Error: SUPABASE_URL and SUPABASE_KEY missing in .streamlit/secrets.toml")
         st.stop()
@@ -109,10 +165,12 @@ def _login_form(cm):
                             {"email": email, "password": password}
                         )
                         if resp.user:
-                            # 1. Write the cookie logically
-                            payload = json.dumps({"user_id": resp.user.id, "user_email": resp.user.email})
-                            expires = datetime.now() + timedelta(days=_COOKIE_TTL_DAYS)
-                            cm.set(_COOKIE_NAME, payload, expires_at=expires, key="set_login_cookie")
+                            # 1. Write the signed cookie (skipped when COOKIE_SECRET is unset:
+                            #    the session then lasts only for this browser tab)
+                            token = _sign_session(resp.user.id, resp.user.email)
+                            if token:
+                                expires = datetime.now() + timedelta(days=_COOKIE_TTL_DAYS)
+                                cm.set(_COOKIE_NAME, token, expires_at=expires, key="set_login_cookie")
 
                             # 2. Assign state
                             st.session_state["authenticated"] = True
@@ -183,17 +241,13 @@ def require_auth(cm=None):
     raw = cm.get(_COOKIE_NAME)
     
     if raw:
-        try:
-            data = json.loads(raw) if isinstance(raw, str) else raw
-            uid = data.get("user_id")
-            if uid:
-                st.session_state["authenticated"] = True
-                st.session_state["user_id"] = uid
-                st.session_state["user_email"] = data.get("user_email", "")
-                st.rerun()
-                return
-        except Exception:
-            pass
+        data = _verify_session(raw)
+        if data:
+            st.session_state["authenticated"] = True
+            st.session_state["user_id"] = data["user_id"]
+            st.session_state["user_email"] = data.get("user_email", "")
+            st.rerun()
+            return
 
     # Give Streamlit 1 pass to establish the component connection if we have NO raw cookie
     if "cm_pass" not in st.session_state:
@@ -217,22 +271,10 @@ def render_user_profile(cm=None):
 
     if st.sidebar.button("🚪 Logout", use_container_width=True):
         cm.delete(_COOKIE_NAME, key="del_login_cookie")
-        try:
-            get_supabase_client().auth.sign_out()
-        except Exception:
-            pass
         st.session_state["authenticated"] = False
         st.session_state["user_id"] = None
         st.session_state["user_email"] = None
         if "cm_pass" in st.session_state:
             del st.session_state["cm_pass"]
         time.sleep(0.5)
-        st.rerun()
-
-        # Best-effort Supabase sign out
-        try:
-            get_supabase_client().auth.sign_out()
-        except Exception:
-            pass
-
         st.rerun()
