@@ -105,7 +105,10 @@ def run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct,
     
     total_return = (equity_curve[-1] / initial_capital - 1) * 100
     bnh_return = (bnh_curve[-1] / initial_capital - 1) * 100
-    sharpe = ( (strategy_returns - 0.04/252).mean() / (strategy_returns.std() + 1e-9) ) * np.sqrt(252)
+    # No trades / no variance → Sharpe is undefined (dividing by ~0 used to print -2,519,763)
+    _vol = strategy_returns.std()
+    sharpe = float("nan") if (not np.any(position) or not np.isfinite(_vol) or _vol < 1e-12) else \
+        ((strategy_returns - 0.04 / 252).mean() / _vol) * np.sqrt(252)
     max_dd = ((equity_curve - np.maximum.accumulate(equity_curve)) / np.maximum.accumulate(equity_curve)).min() * 100
     
     # Win rate: computed per completed trade (BUY→SELL pair) from trade_log

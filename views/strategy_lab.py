@@ -12,7 +12,7 @@ def render(ctx):
     """Render the 🧪 Strategy Lab tab. ctx is the app globals() dict."""
     all_tickers = ctx['all_tickers']
     format_ticker = ctx['format_ticker']
-    prices = ctx['prices']
+    prices_full = ctx['prices_full']
     reco_df = ctx['reco_df']
 
     render_header("activity", "Strategy Backtesting Engine — Signal Simulator")
@@ -21,7 +21,7 @@ def render(ctx):
     <div style='background:rgba(0,255,204,0.05); border:1px solid rgba(0,255,204,0.2);
                 border-radius:8px; padding:12px 16px; margin-bottom:16px; font-size:0.85rem; color:#aaa;'>
     <span style='color:#00ffcc; font-weight:900;'>[INFO]</span> <b>How it works:</b> Select a trading rule or run a tournament to find the best logic for a specific ticker.
-    The engine simulates every signal on <b>5 years of historical data</b>.
+    The engine simulates every signal on <b>the full price history loaded in the dashboard</b> (up to ~3 years, independent of the sidebar horizon).
     </div>
     """, unsafe_allow_html=True)
 
@@ -52,8 +52,8 @@ def render(ctx):
             sl_pct = stop_loss / 100.0
             tp_pct = take_profit / 100.0
             
-            # Filter bt_prices using the globally filtered 'prices' (respects Horizon sidebar)
-            bt_prices = prices[prices["ticker"] == bt_ticker].sort_values("date").copy()
+            # Full loaded history — the sidebar horizon (default 1Y) left only a handful of trades
+            bt_prices = prices_full[prices_full["ticker"] == bt_ticker].sort_values("date").copy()
             
             all_strats = [
                 "Institutional Quality Pulse (AI Score > 75)",
@@ -73,7 +73,8 @@ def render(ctx):
             
             if results:
                 st.session_state["bt_leaderboard"] = results
-                best_res = max(results, key=lambda x: (not x["lookahead"], x["sharpe"]))
+                best_res = max(results, key=lambda x: (not x["lookahead"],
+                                                       x["sharpe"] if x["sharpe"] == x["sharpe"] else float("-inf")))
                 st.session_state["bt_results"] = best_res
 
         # ── RENDER RESULTS ────────────────────────────────────────────────────
@@ -98,16 +99,27 @@ def render(ctx):
                     })
 
                 # Lookahead-biased rows sink to the bottom so iloc[0] is always a fair winner
-                comp_df = pd.DataFrame(comp_data).sort_values(["Lookahead", "Sharpe"], ascending=[True, False])
-                
-                # Highlight Winner
-                best_strat_name = comp_df.iloc[0]["Strategy"]
-                st.markdown(f"""
-                <div style='background:rgba(46, 204, 113, 0.1); border-left:4px solid #2ecc71; padding:15px; border-radius:4px; margin-bottom:20px;'>
-                    <span style='color:#2ecc71; font-weight:800; font-size:1.1rem;'>WINNER: {best_strat_name}</span><br>
-                    <span style='color:#bbb; font-size:0.9rem;'>For {r['ticker']}, this strategy offers the superior risk-adjusted performance (Sharpe: {comp_df.iloc[0]['Sharpe']:.2f}).</span>
-                </div>
-                """, unsafe_allow_html=True)
+                comp_df = pd.DataFrame(comp_data).sort_values(["Lookahead", "Sharpe"], ascending=[True, False],
+                                                              na_position="last")
+
+                # Only call a "winner" if it actually beats doing nothing (buy & hold) after costs
+                best = comp_df.iloc[0]
+                best_strat_name = best["Strategy"]
+                _bnh = r["bnh_return"]
+                if best["Return %"] > _bnh and best["Sharpe"] == best["Sharpe"] and best["Sharpe"] > 0:
+                    st.markdown(f"""
+                    <div style='background:rgba(46, 204, 113, 0.1); border-left:4px solid #2ecc71; padding:15px; border-radius:4px; margin-bottom:20px;'>
+                        <span style='color:#2ecc71; font-weight:800; font-size:1.1rem;'>BEST RULE: {best_strat_name}</span><br>
+                        <span style='color:#bbb; font-size:0.9rem;'>For {r['ticker']}: {best['Return %']:+.1f}% vs buy &amp; hold {_bnh:+.1f}% (Sharpe {best['Sharpe']:.2f}).</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+                else:
+                    st.markdown(f"""
+                    <div style='background:rgba(241, 196, 15, 0.08); border-left:4px solid #f1c40f; padding:15px; border-radius:4px; margin-bottom:20px;'>
+                        <span style='color:#f1c40f; font-weight:800; font-size:1.1rem;'>NO RULE BEAT BUY &amp; HOLD</span><br>
+                        <span style='color:#bbb; font-size:0.9rem;'>For {r['ticker']}, buy &amp; hold returned {_bnh:+.1f}%; the best rule ({best_strat_name}) returned {best['Return %']:+.1f}%. Trading these signals would have cost money here.</span>
+                    </div>
+                    """, unsafe_allow_html=True)
                 
                 st.dataframe(comp_df, width="stretch", hide_index=True,
                              column_config={

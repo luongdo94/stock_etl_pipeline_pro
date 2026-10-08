@@ -23,7 +23,7 @@ def render(ctx):
     
     wl_df = load_watchlist()
     if wl_df.empty:
-        st.info("Your watchlist is empty. Go to the **Decision Engine** to add your first candidate.")
+        st.info("Your watchlist is empty. Open **Stock Analysis**, pick a stock and use **Save Idea to Watchlist Pipeline** at the bottom.")
     else:
         # Display summary metrics
         # ── Sell-discipline inbox: plan levels hit, value reached, earnings ahead ──

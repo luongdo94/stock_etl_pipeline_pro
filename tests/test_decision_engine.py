@@ -272,7 +272,29 @@ class TestDCFReliability:
         assert bank["base"] is None and not bank["reliable"]
 
 
+class TestThesisStop:
+    def test_stop_is_wider_of_support_and_bear_and_at_least_8pct(self):
+        # technical support at -5%, bear case at -6% → floor of -8% wins
+        d = decision.build_decision(price=100, base_value=150, bear_value=94, stop_loss=95, currency="EUR",
+                                    track_record_ok=True, today=date(2026, 1, 10))
+        assert d.stop == pytest.approx(92.0) and d.downside_pct == pytest.approx(8.0)
+        assert d.position["stop_distance_pct"] == pytest.approx(8.0)
+
+    def test_bear_case_wider_than_floor_is_used(self):
+        d = decision.build_decision(price=100, base_value=150, bear_value=80, stop_loss=95, currency="EUR",
+                                    track_record_ok=True, today=date(2026, 1, 10))
+        assert d.stop == pytest.approx(80.0)
+
+
 class TestUnreliableValuationNeverDrivesTrades:
+    def test_no_return_or_downside_numbers_when_dcf_uninformative(self):
+        d = decision.build_decision(price=300, base_value=76, bear_value=55, bull_value=106, stop_loss=284,
+                                    currency="USD", track_record_ok=True, valuation_reliable=False,
+                                    valuation_note="beyond range", today=date(2026, 1, 10))
+        assert d.expected_return_pct is None and d.downside_pct is None and d.reward_risk is None
+        assert not any("base-case value" in i for i in d.invalidation)
+        assert any("support" in i for i in d.invalidation)
+
     def test_unreliable_value_is_hold_not_buy_or_avoid(self):
         for base in (300.0, 20.0):     # would be BUY or AVOID if trusted
             d = decision.build_decision(price=100, base_value=base, bear_value=base * 0.7, stop_loss=90,

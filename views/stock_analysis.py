@@ -725,7 +725,7 @@ def render(ctx):
                                 _avg_sent = sum(_sent_scores) / len(_sent_scores)
                                 _mood_lbl = "🚀 BULLISH" if _avg_sent > 0.1 else ("📉 BEARISH" if _avg_sent < -0.1 else "😴 NEUTRAL")
                                 _mood_color = "#2ecc71" if _avg_sent > 0.1 else ("#e74c3c" if _avg_sent < -0.1 else "#f1c40f")
-                                st.markdown(f"<div style='margin-bottom:12px;padding:8px 12px;background:rgba(255,255,255,0.04);border-radius:6px;border-left:3px solid {_mood_color};font-size:0.85rem;'><b style='color:{_mood_color};'>{_mood_lbl}</b> &nbsp;·&nbsp; FinBERT: {abs(_avg_sent):.2f}</div>", unsafe_allow_html=True)
+                                st.markdown(f"<div style='margin-bottom:12px;padding:8px 12px;background:rgba(255,255,255,0.04);border-radius:6px;border-left:3px solid {_mood_color};font-size:0.85rem;'><b style='color:{_mood_color};'>{_mood_lbl}</b> &nbsp;·&nbsp; FinBERT: {_avg_sent:+.2f}</div>", unsafe_allow_html=True)
                         
                         # Popover for details
                         with st.popover(f"View {len(_news_items)} Detailed Headlines", width="stretch"):
@@ -2326,10 +2326,14 @@ def render(ctx):
 
                 try: _trail_pe = float(meta.get("pe_ratio")) if pd.notnull(meta.get("pe_ratio")) else None
                 except: _trail_pe = None
-                _eps_g_cy  = _fv("eps_growth_cur_y")
-                _eps_g_ny  = _fv("eps_growth_next_y")
-                _rev_g_cy  = _fv("rev_growth_cur_y")
-                _rev_g_ny  = _fv("rev_growth_next_y")
+                # Yahoo's consensus growth fields are sometimes garbage (Sony: revenue +1508%);
+                # anything beyond ±300% is treated as missing rather than displayed as fact.
+                def _plausible(x):
+                    return x if (x is not None and abs(x) <= 3.0) else None
+                _eps_g_cy  = _plausible(_fv("eps_growth_cur_y"))
+                _eps_g_ny  = _plausible(_fv("eps_growth_next_y"))
+                _rev_g_cy  = _plausible(_fv("rev_growth_cur_y"))
+                _rev_g_ny  = _plausible(_fv("rev_growth_next_y"))
                 _n_analysts     = _fv("n_analysts_cur_y")
                 _upgrades       = _fv("upgrades_30d")
                 _downgrades     = _fv("downgrades_30d")

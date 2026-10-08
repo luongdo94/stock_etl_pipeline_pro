@@ -81,15 +81,18 @@ def render(ctx):
 
     # ── 3. Recommendation log ─────────────────────────────────────────────────
     st.markdown("**Recommendation log — every change of call, and how it has done since**")
-    log = tr.recommendation_log(snaps)
+    _call = "decision" if "decision" in snaps.columns and snaps["decision"].notna().any() else "action"
+    log = tr.recommendation_log(snaps, action_col=_call)
     last = prices_full.sort_values("date").groupby("ticker")["price_close"].last()
     log = log.assign(price_now=log["ticker"].map(last))
     log["since_call_pct"] = (log["price_now"] / log["price_close"] - 1) * 100
     st.dataframe(
-        log[["as_of_date", "ticker", "previous_action", "action", "quality", "price_close", "price_now", "since_call_pct"]].head(300),
+        log[["as_of_date", "ticker", "previous_action", _call, "quality", "price_close", "price_now", "since_call_pct"]].head(300),
         hide_index=True, width="stretch",
         column_config={
             "as_of_date": st.column_config.DateColumn("Date"),
+            "previous_action": st.column_config.TextColumn("Previous call"),
+            _call: st.column_config.TextColumn("Call" if _call == "decision" else "Signal"),
             "price_close": st.column_config.NumberColumn("Price at call", format="€%.2f"),
             "price_now": st.column_config.NumberColumn("Price now", format="€%.2f"),
             "since_call_pct": st.column_config.NumberColumn("Since call", format="%+.1f%%"),

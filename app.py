@@ -30,7 +30,7 @@ import auth
 from etl.utils import apply_macro_adjustment, clean_upside_pct
 from etl.performance_utils import vectorized_compute_scores
 from services.db import DB_PATH, load_data
-from services.market_data import fetch_fred_macro, fetch_macro_data, get_forex_rates
+from services.market_data import discover_tv_tickers, fetch_fred_macro, fetch_macro_data, get_forex_rates
 from services.screener import get_master_screener_data
 from ui.styles import inject_global_css
 
@@ -602,7 +602,7 @@ if macro:
                 </div>
             </div>
             <div class='sb-macro-row' style='flex:1; margin-bottom:0;'>
-                <div class='sb-macro-label' style='font-size:0.55rem;'>SPREAD</div>
+                <div class='sb-macro-label' style='font-size:0.55rem;' title='10-year yield minus 13-week T-bill (^TNX − ^IRX)'>10Y–3M</div>
                 <div style='display:flex; justify-content:space-between; align-items:center;'>
                     <span class='sb-macro-val' style='font-size:0.7rem; color:{"#2ecc71" if _spread_v > 0 else "#e74c3c"}'>{_spread_v:.2f}%</span>
                 </div>
@@ -648,7 +648,7 @@ with head_l:
                 border:1px solid rgba(255,255,255,0.06); border-radius:8px; margin-bottom:0px;'>
         <div>
             <span style='font-size:1.3rem; font-weight:900; color:#e8eaf6; font-family: "Courier New", monospace;'>
-                LuongDo | Quant Analytics Workspace
+                Honest Quant Intelligence
             </span>
             <span style='font-size:0.72rem; color:#556677; margin-left:12px;'>
                 {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')} UTC &nbsp;|&nbsp; {stock_count} Tickers
@@ -687,7 +687,7 @@ with head_r:
         
         with tab_sig:
             if alert_count > 0 or macro:
-                if macro: st.markdown(f"**Macro Advice:** {advice}")
+                if macro: st.markdown(f"**Regime read (heuristic, not validated):** {advice}")
                 for a in hot_alerts[:20]:
                     st.markdown(f"**{a['ticker']}** | <span style='color:{a['color']};font-weight:bold;'>[{a['type']}]</span> — `{a['desc']}`", unsafe_allow_html=True)
             else: st.write("No active signals.")
@@ -815,13 +815,16 @@ with head_r:
                 up_m = earnings_cal[(earnings_cal["earnings_date"].dt.date >= today.date()) & (earnings_cal["earnings_date"].dt.date <= next_m.date())].sort_values("earnings_date")
                 if not up_m.empty:
                     # Merge with companies to get full company name
-                    up_m = up_m.merge(companies_full[["ticker", "company"]], on="ticker", how="left")
+                    up_m = up_m.merge(companies_full[["ticker", "company", "currency"]], on="ticker", how="left")
                     
                     for _, r in up_m.iterrows():
                         display_name = r["company"] if pd.notnull(r["company"]) else r["ticker"]
                         e_date = r["earnings_date"].strftime("%b %d")
-                        eps_est = f"€{r['eps_avg']:.2f}" if pd.notnull(r['eps_avg']) else "N/A"
-                        rev_est = f"€{r['rev_avg']/1e9:.1f}B" if pd.notnull(r['rev_avg']) else "N/A"
+                        # Estimates are in the company's reporting currency → convert (was shown raw with a € sign:
+                        # Sony's ¥3.2T revenue estimate read as "€3165B")
+                        _fx = get_forex_rates(target="EUR", source=str(r.get("currency") or "USD"))
+                        eps_est = f"€{r['eps_avg'] * _fx:.2f}" if pd.notnull(r['eps_avg']) else "N/A"
+                        rev_est = f"€{r['rev_avg'] * _fx / 1e9:.1f}B" if pd.notnull(r['rev_avg']) else "N/A"
                         
                         st.markdown(f"""
                         <div class="earning-card">
@@ -850,12 +853,12 @@ with head_r:
             st.markdown("---")
             
             try:
-                from etl.extract import fetch_dynamic_tv_tickers, load_tickers_config
-                
-                # Fetch TradingView discovered stocks
-                with st.spinner("Fetching from TradingView API..."):
-                    base_tickers = load_tickers_config()
-                    tv_tickers = fetch_dynamic_tv_tickers(base_tickers)
+                from etl.extract import load_tickers_config
+
+                # Cached 6h: this popover renders on EVERY rerun, so an uncached call meant five
+                # TradingView API requests per click anywhere in the app.
+                base_tickers = load_tickers_config()
+                tv_tickers = discover_tv_tickers()
                 
                 st.markdown("##### 🔍 Stock Discovery")
                 if tv_tickers:

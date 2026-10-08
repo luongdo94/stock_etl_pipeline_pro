@@ -19,6 +19,7 @@ risk:
   max_position_pct: 10.0      # hard cap per position
   min_reward_risk: 2.0        # expected upside / downside required for a BUY candidate
   earnings_blackout_days: 7   # warn before buying this close to an earnings release
+  min_stop_pct: 8.0           # thesis stop is never tighter than this (valuation theses need room)
 
 valuation:
   # DCF verdicts are very sensitive to these two numbers — change them deliberately.

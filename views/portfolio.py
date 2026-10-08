@@ -53,10 +53,11 @@ def render(ctx):
             st.session_state.portfolio_shares = {t: db_portfolio[t]["shares"] for t in db_portfolio}
             st.session_state.portfolio_cost = {t: db_portfolio[t]["cost"] for t in db_portfolio}
         else:
-            defaults = ["AAPL", "NVDA", "META"] # Safe defaults
-            st.session_state.portfolio_tickers = defaults
-            st.session_state.portfolio_shares = {t: 10.0 for t in defaults}
-            st.session_state.portfolio_cost = {t: 150.0 for t in defaults}
+            # Start empty. Pre-filled demo holdings (AAPL/NVDA/META at €150) were shown as if they
+            # were the user's portfolio — and META, absent from the warehouse, priced at €0 (-100%).
+            st.session_state.portfolio_tickers = []
+            st.session_state.portfolio_shares = {}
+            st.session_state.portfolio_cost = {}
         st.session_state.portfolio_db_synced = True
 
     # Always ensure _portfolio_version is initialized (may be missing on first run or after cache clear)
@@ -244,7 +245,7 @@ def render(ctx):
            'portfolio_df' not in st.session_state or \
            "Cost Basis (€)" not in st.session_state.portfolio_df.columns or \
            "Action" not in st.session_state.portfolio_df.columns or \
-           not any(emoji in str(x) for x in st.session_state.portfolio_df.get("Action", []) for emoji in ["💎", "🟢", "🔴", "🟡", "🟠"]) or \
+           not any(emoji in str(x) for x in st.session_state.portfolio_df.get("Action", []) for emoji in ["🟢", "🔴", "🟡", "⚪"]) or \
            "Region" not in st.session_state.portfolio_df.columns:
             
             st.session_state.last_portfolio_tickers = p_tickers
@@ -254,8 +255,9 @@ def render(ctx):
                 # Enrich with m_df data for professional look
                 meta = m_df[m_df["Ticker"] == t].iloc[0] if not m_df[m_df["Ticker"] == t].empty else {}
                 
-                _act = meta.get("Action", "Neutral")
-                _act_emoji = "💎 " if "STRONG" in _act else "🟢 " if "BUY" in _act else "🔴 " if "SELL" in _act else "🟠 " if "REDUCE" in _act else "🟡 "
+                # The single recommendation (same as Scanner / Stock Analysis), not the technical Signal
+                _act = meta.get("Decision", "NOT ENOUGH DATA")
+                _act_emoji = "🟢 " if "BUY" in _act else "🔴 " if "AVOID" in _act else "🟡 " if "HOLD" in _act else "⚪ "
                 
                 _sm = meta.get("Smart Money", "Neutral")
                 _sm_emoji = "🟢 " if "ACCUMULATION" in _sm else "🔴 " if "DISTRIBUTION" in _sm else "⚪ "
@@ -298,7 +300,8 @@ def render(ctx):
                 column_config={
                     "Ticker": st.column_config.TextColumn("Ticker", disabled=True),
                     "Company": st.column_config.TextColumn("Company", disabled=True),
-                    "Action": st.column_config.TextColumn("Action", disabled=True),
+                    "Action": st.column_config.TextColumn("Decision", disabled=True,
+                                                      help="Same Decision as the Scanner and the Stock Analysis Decision Summary"),
                     "Region": st.column_config.TextColumn("Region", disabled=True),
                     "Z-Score": st.column_config.NumberColumn("Z-Score", format="%.2f", disabled=True),
                     "RSI (14)": st.column_config.NumberColumn("RSI", format="%.1f", disabled=True),
@@ -399,7 +402,7 @@ def render(ctx):
                     _sm_raw = str(_m.get("Smart Money", "NEUTRAL"))
                     # Strip emojis from Smart Money label
                     _sm_clean = _sm_raw.replace("🟢 ", "").replace("🔴 ", "").replace("⚪ ", "").strip()
-                    _action_raw = str(_m.get("Action", "HOLD / NEUTRAL"))
+                    _action_raw = str(_m.get("Decision", "NOT ENOUGH DATA"))
                     _action_clean = _action_raw.replace("💎 ", "").replace("🟢 ", "").replace("🔴 ", "").replace("🟠 ", "").replace("🟡 ", "").strip()
                     # Revenue Growth YoY from annual_fin (2 most recent years)
                     _rev_growth_yoy = None
@@ -583,8 +586,8 @@ def render(ctx):
                 render_metric_tile("Sharpe Ratio", f"{sharpe:.2f} · {s_label}", help_text="< 1.0 Poor | 1.0–1.5 Acceptable | 1.5–2.0 Strong | > 2.0 Elite")
                 render_metric_tile("Max Drawdown",  f"{max_dd:.1f}%")
                 render_metric_tile("Annual Vol",    f"{vol:.1f}%")
-                render_metric_tile("VaR (95%)",     f"{var_95:.2f}%")
-                render_metric_tile("CVaR (95%)",    f"{cvar_95:.2f}%")
+                render_metric_tile("VaR 95% (1-day)",  f"{var_95:.2f}%")
+                render_metric_tile("CVaR 95% (1-day)", f"{cvar_95:.2f}%")
     
             with l1_right:
                 # ── Benchmark Growth Simulation ──────────────────────────────
@@ -863,13 +866,13 @@ def render(ctx):
             
             with st.expander("Institutional Rebalancing Protocol & Rulebook", expanded=False):
                 st.markdown("""
-                **1. Security Assessment Construct (5-Pillar Matrix)**  
-                The analytical engine issues tactical recommendations based on a composite score derived from 5 independent pillars: Technical Trend, AI Quality, Sector-weighted Valuation, Volatility Risk, and Support/Resistance R/R.
-                * **STRONG BUY:** The security achieves optimal alignment across all quantitative pillars. It exhibits elite fundamental quality coupled with highly favorable Risk/Reward metrics. Represents an ideal entry zone.
-                * **BUY / ACCUMULATE:** Strong underlying fundamentals and robust long-term signals, though potentially undergoing short-term consolidation. Suitable for progressive accumulation.
-                * **HOLD / NEUTRAL:** Mixed signals or lack of clear directional advantage. This also applies to elite assets currently trading at premium multiples (overbought). Capital allocation should be deferred pending a structural pullback.
-                * **REDUCE / UNDERPERFORM:** Asset is technically overextended (RSI > 70) yielding elevated tactical risk. Recommends partial profit-taking to mitigate impending mean reversion.
-                * **SELL / AVOID:** Significant deterioration in technical trends and poor profitability metrics. High probability of capital depreciation. Focus shifts to capital preservation.
+                **1. Decision per holding** (same logic as the Scanner and the Stock Analysis Decision Summary)
+                * **BUY CANDIDATE:** base-case DCF value ≥ 25% above price, reward/risk ≥ 2 after costs, and confidence not low.
+                * **HOLD / WATCH:** no sufficient margin of safety either way, or the DCF is not informative for this stock.
+                * **AVOID / TRIM:** price is above even the bull-case value.
+                * **NOT ENOUGH DATA:** no usable cash-flow valuation (e.g. banks, negative free cash flow).
+
+                Until the Track Record tab shows statistical evidence, every Decision is an unvalidated hypothesis.
     
                 **2. Portfolio Strategy Optimization (Modern Portfolio Theory)**  
                 * **Minimum Volatility:** Prioritizes capital preservation by overwriting cap-weights with a mathematical minimization of portfolio variance. It actively strips out high-beta components. **Application:** Systemic risk spikes, macroeconomic distress, or defensive posturing.

@@ -318,9 +318,13 @@ def render(ctx):
                     "Upside (%)", "RSI (14)", "Z-Score",
                     "vs MA200 (%)", "P/E (Fwd)", "EV/EBITDA", "PEG", "FCF Margin (%)",
                     "ROE (%)", "Yield (%)", "Net Payout (%)", "Debt/EBITDA"]
-    display_df = f_df.sort_values(["Quality"], ascending=False)[display_cols]
+    # Sort by the recommendation first (BUY → HOLD → AVOID → n/a), then margin of safety, then Quality
+    _decision_rank = {"BUY CANDIDATE": 0, "HOLD / WATCH": 1, "AVOID / TRIM": 2, "NOT ENOUGH DATA": 3}
+    display_df = (f_df.assign(_r=f_df["Decision"].map(_decision_rank).fillna(4))
+                  .sort_values(["_r", "MoS (%)", "Quality"], ascending=[True, False, False], na_position="last")
+                  [display_cols])
 
-    st.markdown(f"**Found {len(display_df)} active opportunities** — Sorted by Quality")
+    st.markdown(f"**Found {len(display_df)} active opportunities** — sorted by Decision, then margin of safety, then Quality")
     
     # ── PAGINATION / LIMIT LOGIC ──────────────────────────────────────────────
     if 'radar_limit' not in st.session_state:
