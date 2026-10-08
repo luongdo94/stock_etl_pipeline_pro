@@ -173,7 +173,7 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
             "Sector": row['sector'],
             "Decision": _dec.stance,
             "Confidence": _dec.confidence,
-            "MoS (%)": round(_mos, 0) if _mos is not None else None,
+            "MoS (%)": round(_mos, 0) if _mos is not None else float("nan"),   # numeric column → blank, not "None"
             "Action": action_label,
             "Quality": ai_score,
             "Upside (%)": round(upside, 1),

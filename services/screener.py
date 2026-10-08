@@ -6,6 +6,7 @@ from core.screener import build_screener_table
 
 @st.cache_data(ttl=3600)
 def get_master_screener_data(_companies_df, _prices_df, _quarterly_fin, _annual_fin, _hist_fcf=None,
-                             risk_free_pct=None):
+                             risk_free_pct=None, hist_fcf_rows=None):
+    """`hist_fcf_rows` only feeds the cache key (DataFrames prefixed with _ are not hashed)."""
     macro = {"US10Y": {"val": risk_free_pct}} if risk_free_pct else {}
     return build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin, _hist_fcf, macro)
