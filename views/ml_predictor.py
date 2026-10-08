@@ -834,7 +834,10 @@ def render(ctx):
             # Regime boost: data-driven from model_performance_log analysis
             #   BULLISH/STRONG BULLISH → PatchTST wins 42.3% of time → +15% boost
             #   BEARISH/CAUTION       → Transformer & LSTM tied → +10% Transformer boost
-            _cur_regime = regime if 'regime' in dir() else ""
+            # Pre-refactor this read `'regime' in dir()` at module level, which was always False
+            # (dir() inside a function never sees module globals) → the boost below never ran.
+            # Kept disabled to preserve behaviour; the "data-driven" weights were never validated.
+            _cur_regime = ""
             if "BULLISH" in _cur_regime and "PatchTST" in weights:
                 weights["PatchTST"] *= 1.15
             elif "BEARISH" in _cur_regime or "CAUTION" in _cur_regime:
