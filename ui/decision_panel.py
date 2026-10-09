@@ -32,6 +32,12 @@ def _score_tile(title, sub, score, colour):
             f"<div style='font-size:0.65em; color:#778;'>{sub}</div></div>")
 
 
+def _rev_sub(scores):
+    up, down = scores.get("rev_up"), scores.get("rev_down")
+    counts = f" · {int(up)}↑ / {int(down)}↓ (30d)" if up is not None and down is not None else ""
+    return f"30-day change in analysts' EPS estimates{counts}; context only"
+
+
 def render_score_strip(scores):
     """Quality / Value / Momentum tiles + red flags. `scores` = dict(quality, value, momentum, flags, coverage)."""
     q, v, m = scores.get("quality"), scores.get("value"), scores.get("momentum")
@@ -44,7 +50,7 @@ def render_score_strip(scores):
     tiles = (_score_tile("Quality — the business", f"{q_label} · a floor for any BUY", q, q_col)
              + _score_tile("Value — the price", f"{v_label} · vs sector peers, no analyst forecasts", v, v_col)
              + _score_tile("Momentum — timing only", "12-1 month return (local currency) + trend", m, m_col)
-             + _score_tile("Revisions — estimate changes", "30-day change in analysts' EPS estimates; context only", rv, rv_col))
+             + _score_tile("Revisions — estimate changes", _rev_sub(scores), rv, rv_col))
     st.markdown(f"<div style='display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px;'>{tiles}</div>",
                 unsafe_allow_html=True)
     if scores.get("flags"):

@@ -130,3 +130,14 @@ def test_decision_and_signal_never_contradict_across_the_universe(warehouse):
     assert (arrow == expected).all()
     bad = t[((decision == "AVOID / TRIM") & (arrow == "▲")) | ((decision == "BUY CANDIDATE") & (t["Action"] == "UNFAVOURABLE"))]
     assert bad.empty, bad[["Ticker", "Verdict", "Action"]].to_string()
+
+def test_deep_dive_shows_each_number_once(warehouse):
+    """Quality / Value / R-R / 52-week position / revisions / forward P/E / short interest each live in ONE place."""
+    at = _app("🔬 Stock Analysis").run()
+    assert not at.exception, [e.value for e in at.exception]
+    html = " ".join(m.value for m in at.markdown)
+    for gone in ("Quant Health", "Revision Signal", "52-week position", "Reward/Risk (Decision)", "THESIS STOP",
+                 "Short Float", "Inst Own", "Smart Money Flow", "Risk &amp; Volume", "Risk & Volume"):
+        assert gone not in html, gone
+    for kept in ("Technical Trend", "Volume flow", "Quality — the business", "Revisions — estimate changes", "Risk & Solvency"):
+        assert kept in html or kept.replace("&", "&amp;") in html, kept

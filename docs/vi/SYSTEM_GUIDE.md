@@ -35,10 +35,10 @@ Tài liệu này tổng hợp các tính năng nổi bật của nền tảng Ho
         *   **R/R Diagnostic**: Giải thích chi tiết *tại sao* tỷ lệ rủi ro/lợi nhuận lại được đánh giá là Cao, Trung bình hay Thấp.
     *   **Layer 3: Risk Intelligence Hub**:
         *   **CIO Unified Verdict**: Báo cáo tổng hợp từ Cohere Command-R+ kết hợp cả dữ liệu định lượng và định tính.
-        *   **Signal Conflict Detection**: Hệ thống tự động cảnh báo khi có sự phân kỳ giữa sức khỏe tài chính và tâm lý tin tức (Divergence).
+        *   **News vs Quality Conflict**: Hệ thống tự động cảnh báo khi có sự phân kỳ giữa sức khỏe tài chính và tâm lý tin tức (Divergence).
         *   **FinBERT Market Sentiment**: Phân tích tâm lý từ 10 đầu báo gần nhất, hiển thị nhãn "Bullish/Bearish" kèm biểu đồ Radar 6 yếu tố chất lượng.
     *   **Layer 4: Deep Diagnostics**: Hệ thống thẻ metric chi tiết về Solvency, Liquidity, Profitability và bảng dữ liệu lịch sử.
-*   **Cách sử dụng**: Nhập mã Ticker, nhấn **"Run Real-Time AI Risk Audit"** để kích hoạt CIO Verdict. Kiểm tra phần **"Why Risk/Reward is..."** để hiểu logic phía sau gợi ý giao dịch.
+*   **Cách sử dụng**: Nhập mã Ticker, nhấn **"Run Real-Time AI Risk Audit"** để kích hoạt CIO Verdict. Reward/risk, stop và giá trị nằm trong **Decision Summary**; khung "Timing context" chỉ giải thích bối cảnh xu hướng và dòng tiền.
 
 ---
 
