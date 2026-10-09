@@ -133,9 +133,9 @@ def build(ctx, deep_ticker):
     tm = get_tactical_metrics(_df_levels, cur_p, analyst_target=target_p)
     ma_sig = str(latest_tech.get("ma_signal", meta.get("ma_signal", "NEUTRAL")))
 
-    # TP1: honour AI Ensemble target if already computed, otherwise use standard formula
-    _global_ai_target = st.session_state.get(f"ai_target_for_de_{deep_ticker}")
-    tp1 = float(_global_ai_target) if _global_ai_target is not None else tm["tp1"]
+    # TP1 is the technical target. (It used to take the ML Predictor's forecast when one had been run — an unvalidated
+    # number leaking into this page.)
+    tp1 = tm["tp1"]
     tp2 = max(target_p, tm["tp2"]) if target_p > 0 else tm["tp2"]
 
     vin = valuation_inputs(meta, cur_p, ctx["hist_fcf_full"], deep_ticker, ctx["macro"], annual_fin)

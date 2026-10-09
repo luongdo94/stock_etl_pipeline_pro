@@ -141,3 +141,20 @@ def test_deep_dive_shows_each_number_once(warehouse):
         assert gone not in html, gone
     for kept in ("Technical Trend", "Volume flow", "Quality — the business", "Revisions — estimate changes", "Risk & Solvency"):
         assert kept in html or kept.replace("&", "&amp;") in html, kept
+
+
+def test_ml_experiment_runs_and_withholds_an_unvalidated_forecast(warehouse):
+    """End to end: the form runs, the risk range is drawn, and without a passed walk-forward test the ML forecast is NOT a headline."""
+    at = _app("🤖 ML Predictor").run()
+    assert not at.exception, [e.value for e in at.exception]
+    at.session_state["fc_selector_form"] = "AAPL"
+    at.session_state["fc_days_form"] = 7
+    at.session_state["n_sims_form"] = 500
+    at.session_state["engine_mode_form"] = "LSTM Core"
+    next(b for b in at.button if "ML EXPERIMENT" in str(b.label)).click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    html = " ".join(m.value for m in at.markdown)
+    assert "ML Experiment Summary" in html and "Risk range" in html
+    assert "STRONG LONG" not in html and "BUY / ACCUMULATE" not in html and "REDUCE / HEDGE" not in html
+    assert ("ML forecast", "not shown") in [(m.label, m.value) for m in at.metric]
+    assert "ai_target_for_de_AAPL" not in at.session_state          # no leak into Stock Analysis
