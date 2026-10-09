@@ -84,6 +84,9 @@ FADE_KEEP = 0.7                   # share of a bank's normalised ROE assumed to 
 IMPLAUSIBLE_MARGIN = 1.5          # value > 2.5x price → suspect the inputs, not the market
 # Sectors where free-cash-flow DCF is not meaningful (cash flow includes customer deposits / float)
 DCF_NOT_APPLICABLE_SECTORS = {"banks", "capital markets", "financial services", "financials", "insurance"}
+# Inside those sectors, fee businesses with no balance-sheet lending or float (exchanges, index / data providers):
+# book value says nothing about them and their free cash flow is real, so they are valued with the FCFE DCF.
+ASSET_LIGHT_INDUSTRIES = {"financial data & stock exchanges"}
 
 
 def _finite(x) -> Optional[float]:
@@ -361,6 +364,19 @@ def latest_statement_fcf(hist_fcf: pd.DataFrame, ticker: str) -> Optional[float]
     return _finite(rows["free_cash_flow"].iloc[-1]) if not rows.empty else None
 
 
+def uses_book_model(meta, hist_fcf=None, ticker=None) -> bool:
+    """True for banks, insurers, brokers and other balance-sheet financials (justified P/B); False for everything the
+    free-cash-flow DCF can value, including asset-light fee businesses that report positive free cash flow."""
+    if str(meta.get("sector") or "").strip().lower() not in DCF_NOT_APPLICABLE_SECTORS:
+        return False
+    if str(meta.get("industry") or "").strip().lower() in ASSET_LIGHT_INDUSTRIES:
+        fcf = normalized_statement_fcf(hist_fcf, ticker) if hist_fcf is not None and ticker else None
+        if fcf is None:
+            fcf = _finite(meta.get("free_cashflow"))
+        return not (fcf is not None and fcf > 0)
+    return True
+
+
 def dcf_reliability(sector, price, base_value, bull_value, implied_growth) -> tuple:
     """(reliable: bool, note: str|None). Unreliable DCFs must not drive BUY/AVOID."""
     if sector and str(sector).strip().lower() in DCF_NOT_APPLICABLE_SECTORS:
@@ -396,7 +412,7 @@ def valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, ma
     ass = currency_assumptions(meta.get("currency"), macro)
     rf, tg = ass["risk_free"], ass["terminal_growth"]
     coe = cost_of_equity(meta.get("beta"), risk_free=rf)
-    if str(meta.get("sector") or "").strip().lower() in DCF_NOT_APPLICABLE_SECTORS:
+    if uses_book_model(meta, hist_fcf, ticker):
         return _financial_inputs(meta, price, annual_fin, ticker, coe, tg, ass)
 
     # Cash-flow-statement FCF after stock-based compensation (EUR) first; Yahoo's levered FCF only as a fallback
@@ -417,7 +433,7 @@ def valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, ma
     base = scen["base"].value_per_share if scen else None
     bull = scen["bull"].value_per_share if scen else None
     implied = reverse_dcf_growth(price, fcfe, shares, coe, tg) if valuable else None
-    reliable, note = dcf_reliability(meta.get("sector"), price, base, bull, implied)
+    reliable, note = dcf_reliability(None, price, base, bull, implied)       # sector test already done by uses_book_model
     return {
         "model": "dcf", "fcfe": fcfe, "fcf_source": fcf_source, "shares": shares,
         "growth": growth, "growth_sources": sources, "reliable": reliable, "note": note,

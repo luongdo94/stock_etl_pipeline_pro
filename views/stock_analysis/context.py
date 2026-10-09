@@ -140,11 +140,12 @@ def build(ctx, deep_ticker):
 
     # The Decision's reward/risk feeds the Signal (same inputs as the Decision Summary; the track-record and
     # data-gap notes of that panel do not change it)
-    from core.decision import build_decision, load_rules
-    _d = build_decision(price=float(cur_p), base_value=vin["base"], bear_value=vin["bear"], bull_value=vin["bull"],
-                        stop_loss=tm["stop_loss"], currency=meta.get("currency"), country=meta.get("country"),
-                        dividend_yield_pct=meta.get("dividend_yield_pct"), valuation_reliable=vin["reliable"],
-                        valuation_note=vin["note"], rules=load_rules())
+    # Same Decision as the panel and the scanner (core.decision.decide); the Signal below reads its stance.
+    from core.decision import decide, load_rules
+    _d = decide(price=float(cur_p), vin=vin, stop_loss=tm["stop_loss"], meta=meta,
+                scores={**scores, "quality": ai_score},
+                price_date=pd.to_datetime(df_deep["date"].iloc[-1]).date(), next_earnings=next_er,
+                track_record_ok=bool(ctx.get("track_record_ok", False)), rules=load_rules())
     usable = bool(vin["base"] and vin["reliable"])
 
     # Smart money on the full history (OBV is path-dependent)
@@ -154,7 +155,8 @@ def build(ctx, deep_ticker):
         pe_v=float(meta_enriched.get("forward_pe") or meta_enriched.get("pe_ratio") or 0),
         peg_v=float(meta_enriched.get("peg_ratio") or 0), sector=str(meta.get("sector", "")),
         w52_pos=tm["w52_pos"], rr=_d.reward_risk, sm_status=sm["signal"],
-        sm_strength=sm["strength"], sm_layer=sm["layer"], value_score=scores["value"])
+        sm_strength=sm["strength"], sm_layer=sm["layer"], value_score=scores["value"],
+        decision_stance=_d.stance)
     act_str = rating["action_label"]
     from core.signal_matrix import ACTION_COLOURS, action_description
     act_color = ACTION_COLOURS.get(act_str, rating["action_color"])

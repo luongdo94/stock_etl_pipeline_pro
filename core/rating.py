@@ -18,6 +18,7 @@ SIGNAL_LABELS = {"strong": "STRONG SETUP", "favourable": "FAVOURABLE", "neutral"
 SIGNAL_COLOURS = {"STRONG SETUP": "#00ffcc", "FAVOURABLE": "#2ecc71", "NEUTRAL": "#f1c40f",
                   "WEAKENING": "#e67e22", "UNFAVOURABLE": "#e74c3c"}
 BULLISH_SIGNALS = ("STRONG SETUP", "FAVOURABLE")
+DECISION_AVOID, DECISION_BUY = "AVOID / TRIM", "BUY CANDIDATE"      # stances of core.decision.Decision
 
 
 def value_tier(score):
@@ -50,6 +51,7 @@ def compute_institutional_rating(
     sm_strength: int = 0,
     sm_layer: str = "NONE",
     value_score: float = None,
+    decision_stance: str = None,
 ) -> dict:
     """
     Signal engine — technical trend, quality, value and reward/risk, confirmed by volume flow.
@@ -150,7 +152,13 @@ def compute_institutional_rating(
         p_risk, p_risk_c = "MID-RANGE", "#95a5a6"
 
     # ── PILLAR 5: REWARD / RISK (from the Decision) ─────────────────────────
-    if rr is None or rr != rr:
+    # rr is None for two opposite reasons: no usable DCF (nothing to say) and a DCF that puts the price above even the
+    # bull case (a clear negative). The Decision's stance tells them apart; they used to look the same here, so a stock
+    # the Decision said to AVOID could still score FAVOURABLE on trend + quality + peer-relative value.
+    overvalued = decision_stance == DECISION_AVOID
+    if overvalued:
+        p_conv, p_conv_c = "OVERVALUED vs DCF", "#e74c3c"
+    elif rr is None or rr != rr:
         p_conv, p_conv_c = "N/A", "#95a5a6"
     elif rr > 2.5:
         p_conv, p_conv_c = "HIGH", "#00ffcc"
@@ -209,7 +217,7 @@ def compute_institutional_rating(
         (1 if p_qual_c  in ["#2ecc71", "#00ffcc"] else 0) +
         (1 if p_val_c   in ["#2ecc71", "#00ffcc"] else 0) +
         (1 if p_conv_c  in ["#2ecc71", "#00ffcc"] else 0)
-    ) + sm_points
+    ) + sm_points - (1 if overvalued else 0)
 
     if pts >= 4.0 and p_qual_c == "#00ffcc":
         action_label = L["strong"]
@@ -227,6 +235,13 @@ def compute_institutional_rating(
         action_label = L["weakening"]
     else:
         action_label = L["neutral"]
+    # Consistency guard (the Decision is the recommendation; the Signal is context and must not contradict it):
+    # a stock the Decision says to AVOID cannot read as a favourable set-up, and a BUY CANDIDATE cannot read as unfavourable.
+    clamped = False
+    if decision_stance == DECISION_AVOID and action_label in (L["strong"], L["favourable"]):
+        action_label, clamped = L["neutral"], True
+    elif decision_stance == DECISION_BUY and action_label == L["unfavourable"]:
+        action_label, clamped = L["neutral"], True
     action_color = SIGNAL_COLOURS[action_label]
 
     return {
@@ -246,4 +261,6 @@ def compute_institutional_rating(
         "sm_label":      sm_label,
         "sm_points":     sm_points,
         "pts":           pts,
+        "overvalued":    overvalued,
+        "clamped":       clamped,
     }

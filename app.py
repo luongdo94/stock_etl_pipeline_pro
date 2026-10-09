@@ -27,7 +27,7 @@ except ImportError:
 import auth
 from core import market_regime as mr
 from etl.utils import clean_upside_pct
-from services.db import DB_PATH, load_data
+from services.db import DB_PATH, load_data, track_record_ok
 from services.market_data import fetch_fred_macro, fetch_macro_data
 from services.screener import get_master_screener_data
 from ui import header, sidebar
@@ -66,10 +66,11 @@ if prices_full.empty:
 
 macro = fetch_macro_data() or {}
 # Same live 10Y yield as the Decision Summary → the screener's Decision column and the panel agree
+_track_ok = track_record_ok(prices_full, rows_key=len(prices_full))
 m_df = get_master_screener_data(companies_full, prices_full, quarterly_fin, annual_fin, hist_fcf_full,
                                 risk_free_pct=macro.get("US10Y", {}).get("val"),
                                 hist_fcf_rows=len(hist_fcf_full), _estimates=forward_estimates_full,
-                                estimates_rows=len(forward_estimates_full))
+                                estimates_rows=len(forward_estimates_full), track_record_ok=_track_ok)
 
 all_tickers = sorted(prices_full["ticker"].unique().tolist())
 ticker_to_name = dict(zip(companies_full["ticker"], companies_full["company"]))
@@ -205,7 +206,7 @@ ctx = dict(
     prices=prices, spy_prices=spy_prices, companies=companies, selected_horizon=selected_horizon,
     t_start=t_start, t_end=t_end, current_universe=current_universe, indices_list=indices_list,
     # scores / screener
-    m_df=m_df, reco_df=reco_df, _action_map=_action_map, format_ticker=format_ticker,
+    m_df=m_df, reco_df=reco_df, track_record_ok=_track_ok, _action_map=_action_map, format_ticker=format_ticker,
     # market context
     macro=macro, regime=regime, regime_ui_color=regime_ui_color, _macro_regime=_macro_regime,
     _vix_val=_vix_val, _dxy_pct=_dxy_pct, conf_score_global=conf_score_global, conf_reason_str=conf_reason_str,

@@ -12,6 +12,13 @@ GOOD = ("#2ecc71", "#00ffcc")
 
 def action_description(action, rating, *, s1, price, rsi, sm_signal):
     """One-paragraph reading of the Signal label."""
+    if rating.get("overvalued") and action in ("NEUTRAL", "WEAKENING", "UNFAVOURABLE"):
+        return ("The Decision Summary rates the price above even the bull-case DCF value, which holds this back: "
+                "trend, quality and peer-relative value cannot make the context favourable while the price is not "
+                "supported by the cash flows. Where the DCF and the multiples disagree, check the Decision's notes.")
+    if rating.get("clamped") and action == "NEUTRAL":
+        return ("The Decision Summary calls this a buy candidate, so the context is not shown as unfavourable; the "
+                "weaker trend, quality or flow readings above are the risks to monitor.")
     if action == "STRONG SETUP":
         return (f"Trend, quality, value and reward/risk all line up. Nearest support to watch: €{s1:.2f} "
                 f"(price €{price:.2f}). Whether to act is the Decision Summary's call.")
@@ -33,9 +40,16 @@ def action_description(action, rating, *, s1, price, rsi, sm_signal):
     return "Mixed signals across the pillars; nothing decisive either way."
 
 
-def rr_explainer(*, rr, price, stop, target, s1, rsi, w52_pos, pe, quality):
+def rr_explainer(*, rr, price, stop, target, s1, rsi, w52_pos, pe, quality, overvalued=False):
     """(level, colour, [bullets]) for the reward/risk pillar. `rr`, `stop` and `target` come from the
     Decision (thesis stop vs value); bands match the rating: 1.2 / 2.5. rr None = no usable value."""
+    if overvalued:
+        return "OVERVALUED", "#e74c3c", [
+            f"The price (€{price:.2f}) is above even the bull-case DCF value, so there is no positive reward to weigh "
+            "against the thesis stop — the Decision rates it AVOID / TRIM.",
+            "This pillar costs one point. A strong trend and good peer-relative multiples do not offset a price the "
+            "cash flows do not support; if you think the DCF is too harsh, check its growth and discount-rate "
+            "assumptions in the Valuation section."]
     if rr is None:
         return "N/A", "#95a5a6", [
             "No usable intrinsic value for this stock (negative free cash flow, an unreliable model, or too little data), "

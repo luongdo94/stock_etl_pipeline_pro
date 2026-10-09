@@ -113,3 +113,13 @@ def test_scanner_keeps_stocks_with_unknown_fundamentals(warehouse):
     assert "KO" in t.index and "JNJ" in t.index
     assert pd.isna(t.at["KO", "P/E (Fwd)"])
     assert pd.isna(t.at["JNJ", "Debt/EBITDA"])
+
+def test_decision_and_signal_never_contradict_across_the_universe(warehouse):
+    """AVOID / TRIM never sits next to a favourable Signal, nor BUY CANDIDATE next to an unfavourable one."""
+    at = _app("🔭 Stock Scanner").run()
+    assert not at.exception, [e.value for e in at.exception]
+    t = [d.value for d in at.dataframe if "Ticker" in getattr(d.value, "columns", [])][-1]
+    assert len(t) > 0 and {"Decision", "Action"} <= set(t.columns)
+    bad = t[((t["Decision"] == "AVOID / TRIM") & t["Action"].isin(["STRONG SETUP", "FAVOURABLE"]))
+            | ((t["Decision"] == "BUY CANDIDATE") & (t["Action"] == "UNFAVOURABLE"))]
+    assert bad.empty, bad[["Ticker", "Decision", "Action"]].to_string()

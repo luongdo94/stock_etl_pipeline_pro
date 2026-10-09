@@ -2,10 +2,6 @@
 Decision Summary + Valuation sections of the Stock Analysis tab, and the alert inbox.
 All numbers come from core.valuation / core.decision / core.track_record; this module only renders.
 """
-from datetime import date
-from typing import Optional
-
-import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -19,14 +15,6 @@ from core.track_record import evidence_status
 _STANCE_COLORS = {"BUY CANDIDATE": "#2ecc71", "HOLD / WATCH": "#f1c40f",
                   "AVOID / TRIM": "#e74c3c", "NOT ENOUGH DATA": "#8899aa"}
 _CONF_COLORS = {"HIGH": "#2ecc71", "MEDIUM": "#f1c40f", "LOW": "#e74c3c"}
-
-
-def _f(x) -> Optional[float]:
-    try:
-        x = float(x)
-        return x if np.isfinite(x) else None
-    except (TypeError, ValueError):
-        return None
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -69,15 +57,9 @@ def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, re
                           next_earnings, quality, snapshots, prices, holdings_loader, companies,
                           scores=None):
     ev = _cached_evidence(snapshots, prices[["date", "ticker", "price_close"]])
-    d = dec.build_decision(
-        price=price, base_value=vin["base"], bear_value=vin["bear"], bull_value=vin["bull"], stop_loss=stop_loss,
-        currency=meta.get("currency"), country=meta.get("country"),
-        dividend_yield_pct=_f(meta.get("dividend_yield_pct")), missing_metrics=missing,
-        price_date=price_date, fundamentals_date=_to_date(meta.get("info_updated_at")),
-        next_earnings=next_earnings, track_record_ok=ev["ok"], quality_score=quality,
-        valuation_reliable=vin["reliable"], valuation_note=vin["note"],
-        value_score=(scores or {}).get("value"), risk_flags=(scores or {}).get("flags", ""),
-        coverage_pct=(scores or {}).get("coverage"))
+    d = dec.decide(price=price, vin=vin, stop_loss=stop_loss, meta=meta,
+                   scores={**(scores or {}), "quality": quality, "missing": missing},
+                   price_date=price_date, next_earnings=next_earnings, track_record_ok=ev["ok"])
 
     sc, cc = _STANCE_COLORS.get(d.stance, "#8899aa"), _CONF_COLORS[d.confidence]
     fmt = lambda v, s="%": f"{v:+.1f}{s}" if v is not None else "N/A"
@@ -257,9 +239,3 @@ def render_alert_inbox(items: list, title: str = "🔔 Alerts & Sell-Discipline 
             st.markdown(f"{icons.get(it['kind'], '•')} **{it['kind']}** — {it['message']}")
 
 
-def _to_date(x) -> Optional[date]:
-    try:
-        t = pd.to_datetime(x)
-        return None if pd.isna(t) else t.date()
-    except (TypeError, ValueError):
-        return None

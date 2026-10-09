@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
+import pandas as pd
 import yaml
 
 _RULES_PATH = Path(__file__).resolve().parent.parent / "config" / "decision_rules.yaml"
@@ -34,6 +35,22 @@ def load_rules(path: Path = _RULES_PATH) -> dict:
     except OSError:
         pass
     return rules
+
+
+def _finite(x) -> Optional[float]:
+    try:
+        x = float(x)
+        return x if np.isfinite(x) else None
+    except (TypeError, ValueError):
+        return None
+
+
+def to_date(x) -> Optional[date]:
+    try:
+        t = pd.to_datetime(x)
+        return None if pd.isna(t) else t.date()
+    except (TypeError, ValueError):
+        return None
 
 
 def round_trip_cost_pct(currency: Optional[str], rules: dict) -> float:
@@ -147,6 +164,10 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
     if (value_score is not None and value_score < sc["value_crosscheck_below"]
             and base_value and valuation_reliable and base_value / price - 1 >= req_mos):
         notes.append(f"DCF cushion not confirmed by multiples: Value score {value_score:.0f}/100 vs peers.")
+    if (value_score is not None and value_score >= sc.get("value_disagree_above", 65)
+            and base_value and valuation_reliable and base_value / price - 1 <= -sc.get("dcf_disagree_below", 0.35)):
+        notes.append(f"DCF and multiples disagree: Value score {value_score:.0f}/100 vs peers, but the DCF puts the price "
+                     f"{price / base_value - 1:+.0%} above base-case value.")
     n = len(notes)
     confidence = "HIGH" if n == 0 else ("MEDIUM" if n <= 2 else "LOW")
     if not track_record_ok and confidence == "HIGH":
@@ -215,3 +236,25 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
                     net_ret * 100 if net_ret is not None else None,
                     downside * 100 if downside is not None else None,
                     rr, pos, thesis_stop if usable_value else None, reasons, notes, invalidation, warnings)
+
+
+def decide(*, price: float, vin: dict, stop_loss: Optional[float], meta, scores: Optional[dict] = None,
+           price_date: Optional[date] = None, next_earnings: Optional[date] = None,
+           track_record_ok: bool = False, rules: Optional[dict] = None) -> Decision:
+    """
+    THE way to build a Decision from a stock's valuation inputs. The scanner, the Stock Analysis panel and the Signal
+    all go through here, so the same stock gets the same stance everywhere (the three used to pass different
+    arguments: the deep-dive's Signal ignored quality, value, flags and coverage, the scanner ignored dates and the
+    track-record state — each of which can change confidence, and confidence can block a BUY).
+
+    scores: dict(quality, value, flags, coverage, missing) from core.scoring. meta: the company row.
+    """
+    sc = scores or {}
+    return build_decision(
+        price=float(price), base_value=vin["base"], bear_value=vin["bear"], bull_value=vin["bull"], stop_loss=stop_loss,
+        currency=meta.get("currency"), country=meta.get("country"),
+        dividend_yield_pct=_finite(meta.get("dividend_yield_pct")), missing_metrics=tuple(sc.get("missing") or ()),
+        price_date=price_date, fundamentals_date=to_date(meta.get("info_updated_at")), next_earnings=next_earnings,
+        track_record_ok=track_record_ok, quality_score=sc.get("quality"), valuation_reliable=vin["reliable"],
+        valuation_note=vin["note"], value_score=sc.get("value"), risk_flags=sc.get("flags") or "",
+        coverage_pct=sc.get("coverage"), rules=rules)
