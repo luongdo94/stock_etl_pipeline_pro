@@ -3,10 +3,14 @@ import pandas as pd
 import streamlit as st
 
 import auth
+from services import local_store
 
 
 def load_watchlist():
     cols = ["Ticker", "Status", "Thesis", "Catalyst", "Entry Target", "Invalidation Level", "Take Profit", "Next Earnings", "Added Date"]
+    if auth.local_dev_mode():
+        records = local_store.load_watchlist_records()
+        return pd.DataFrame(records, columns=cols) if records else pd.DataFrame(columns=cols)
     if not st.session_state.get("authenticated") or not st.session_state.get("user_id"):
         return pd.DataFrame(columns=cols)
         
@@ -40,6 +44,9 @@ def load_watchlist():
 
 
 def save_watchlist(df):
+    if auth.local_dev_mode():
+        local_store.save_watchlist_records(df.astype(object).where(df.notna(), None).to_dict("records"))
+        return
     if not st.session_state.get("authenticated") or not st.session_state.get("user_id"):
         raise Exception("Authentication required to save data.")
         
@@ -76,6 +83,8 @@ def save_watchlist(df):
 
 
 def load_portfolio_from_db():
+    if auth.local_dev_mode():
+        return local_store.load_portfolio()
     if not st.session_state.get("authenticated") or not st.session_state.get("user_id"):
         return {}
     try:
@@ -100,6 +109,9 @@ def load_portfolio_from_db():
 
 
 def save_portfolio_to_db(shares_dict, cost_dict):
+    if auth.local_dev_mode():
+        local_store.save_portfolio(shares_dict, cost_dict)
+        return
     if not st.session_state.get("authenticated") or not st.session_state.get("user_id"):
         return
     try:

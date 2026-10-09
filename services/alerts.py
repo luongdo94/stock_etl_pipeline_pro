@@ -2,6 +2,7 @@
 import streamlit as st
 
 import auth
+from services import local_store
 
 _TABLE = "stock_alerts"
 
@@ -13,6 +14,8 @@ def _user_id():
 
 
 def load_alert_rules() -> list:
+    if auth.local_dev_mode():
+        return local_store.load_alerts()
     uid = _user_id()
     if not uid:
         return []
@@ -26,6 +29,8 @@ def load_alert_rules() -> list:
 
 
 def add_alert_rule(ticker: str, metric: str, condition: str, threshold: float) -> None:
+    if auth.local_dev_mode():
+        return local_store.add_alert(ticker, metric, condition, threshold)
     uid = _user_id()
     if not uid:
         raise PermissionError("Authentication required.")
@@ -36,6 +41,8 @@ def add_alert_rule(ticker: str, metric: str, condition: str, threshold: float) -
 
 
 def delete_alert_rule(rule_id) -> None:
+    if auth.local_dev_mode():
+        return local_store.delete_alert(rule_id)
     uid = _user_id()
     if not uid:
         raise PermissionError("Authentication required.")
