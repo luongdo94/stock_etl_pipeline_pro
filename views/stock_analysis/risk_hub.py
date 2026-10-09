@@ -10,7 +10,6 @@ from core.rating import quality_tier
 from views.stock_analysis.layout import layer_banner
 
 from etl.llm_parser import analyze_risk_with_llm
-from etl.utils import compute_score_details
 from services.ai import get_finbert_pipeline, get_unified_verdict
 from ui.icons import SVG_ICONS, render_header
 
@@ -347,45 +346,25 @@ def render(dd, ctx):
 
     with quant_col:
         
-        # Build radar from score_details
-        _radar_sd = compute_score_details(meta_enriched)
-        _radar_breakdown = _radar_sd.get("breakdown", {})
-        _sector_lc = meta.get("sector", "").lower() if meta.get("sector") else ""
-        _TECH_SECTORS = {
-            "ai & data", "design software", "ecommerce", "fintech",
-            "platform software", "semiconductor tools", "semiconductors", "technology",
-            "consumer electronics", "cybersecurity", "data storage", "digital advertising",
-            "enterprise hardware", "it services", "media & entertainment", "networking",
-            "saas", "social media", "telecom",
+        # Radar of the sub-scores behind Quality (and the Value / Momentum scores); unknown axes are left out
+        _cmp = dd.scores.get("components") or {}
+        def _avg(keys):
+            v = [_cmp[k] for k in keys if _cmp.get(k) is not None]
+            return sum(v) / len(v) if v else None
+        _axes = {
+            "Returns on capital": _avg(["q_roc", "q_roe"]),
+            "Margins": _avg(["q_op_margin", "q_gross_margin", "q_fcf_margin", "q_net_margin"]),
+            "Growth & stability": _avg(["q_growth_stability"]),
+            "Balance sheet": _avg(["q_balance_sheet"]),
+            "Cash conversion": _avg(["q_earnings_quality"]),
+            "Value (vs peers)": dd.scores.get("value"),
+            "Momentum (timing)": dd.scores.get("momentum"),
         }
-        _is_tech = _sector_lc in _TECH_SECTORS
-        _max_pts = {
-            "Valuation":       20,
-            "Profitability":   30 if _is_tech else 25,
-            "Fin. Health":     15,
-            "Net Yield":       5  if _is_tech else 10,
-            "Momentum":        15,   # v4.0: Context & Momentum cap reduced from 25 → 15
-            "Analyst Est.":    10,   # v4.0: Analyst Estimates cap increased from 5 → 10
-            "Rev. Growth":     5,    # v4.0: Revenue Consistency pillar (new)
-        }
-        _pillar_keys = {
-            "Valuation":       "Valuation",
-            "Profitability":   "Profitability",
-            "Fin. Health":     "Financial Health",
-            "Net Yield":       "Net Payout Yield",
-            "Momentum":        "Context & Momentum",
-            "Analyst Est.":    "Analyst Estimates",
-            "Rev. Growth":     "Revenue Consistency",
-        }
-        _radar_labels = list(_max_pts.keys())
-        _radar_vals   = [
-            round((_radar_breakdown.get(_pillar_keys[k], 0) / _max_pts[k]) * 100, 1)
-            for k in _radar_labels
-        ]
-        # Close the polygon
-        _radar_labels_closed = _radar_labels + [_radar_labels[0]]
-        _radar_vals_closed   = _radar_vals   + [_radar_vals[0]]
-        
+        _axes = {k: round(v, 1) for k, v in _axes.items() if v is not None}
+        _radar_labels = list(_axes)
+        _radar_vals_closed = list(_axes.values()) + list(_axes.values())[:1]
+        _radar_labels_closed = _radar_labels + _radar_labels[:1]
+
         fig_radar = go.Figure()
         fig_radar.add_trace(go.Scatterpolar(
             r=_radar_vals_closed,

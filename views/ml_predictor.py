@@ -5,8 +5,9 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from core.rating import QUALITY_TIERS
+
 from core.smart_money import get_sm_spirit_unified_v2
-from etl.utils import compute_score
 from services.ai import analyze_sentiment_finbert
 from ui.icons import SVG_ICONS, render_header
 import numpy as np
@@ -16,6 +17,7 @@ def render(ctx):
     """Render the 🤖 ML Predictor tab. ctx is the context dict built in app.py."""
     breadth_ts_global = ctx['breadth_ts_global']
     companies_full = ctx['companies_full']
+    m_df = ctx['m_df']
     current_universe = ctx['current_universe']
     df_spy_global = ctx['df_spy_global']
     format_ticker = ctx['format_ticker']
@@ -955,7 +957,8 @@ def render(ctx):
         elif forecast_days <= 45: std_lookback = 180
         else:                     std_lookback = 252
 
-        drift_score    = compute_score(co_data) if co_data is not None else 50
+        _q_row = m_df[m_df["Ticker"] == fc_ticker]
+        drift_score = float(_q_row.iloc[0]["Quality"]) if not _q_row.empty else 50   # Quality, core/scoring.py
         use_ensemble    = (engine_mode == "Smart Blend (Best of 3)")
         use_patchtst    = (engine_mode == "PatchTST (SOTA)")
         use_transformer = (engine_mode == "Transformer")
@@ -1036,8 +1039,8 @@ def render(ctx):
         last_price = ts[-1]
         
         drift_bias = 0
-        if drift_score >= 75: drift_bias += 0.0005 
-        elif drift_score <= 40: drift_bias -= 0.0005 
+        if drift_score >= QUALITY_TIERS[0][0]: drift_bias += 0.0005      # ELITE quality tier
+        elif drift_score < QUALITY_TIERS[-1][0]: drift_bias -= 0.0005     # WEAK tier
         drift_bias += (avg_sent * 0.001) 
         if lstm_return is not None and lstm_return > 0.05: drift_bias += 0.0005
         

@@ -26,8 +26,7 @@ except ImportError:
 
 import auth
 from core import market_regime as mr
-from etl.performance_utils import vectorized_compute_scores
-from etl.utils import apply_macro_adjustment, clean_upside_pct
+from etl.utils import clean_upside_pct
 from services.db import DB_PATH, load_data
 from services.market_data import fetch_fred_macro, fetch_macro_data
 from services.screener import get_master_screener_data
@@ -95,7 +94,7 @@ companies = companies_full[~companies_full["ticker"].isin(indices_list)]
 current_universe = sorted(prices["ticker"].unique().tolist()) or [t for t in all_tickers if t not in indices_list]
 stock_count = prices_full[~prices_full["ticker"].isin(indices_list)]["ticker"].nunique()
 
-# ── One quality score everywhere: the screener's; same engine for rows it skips ──────────────
+# ── One Quality score everywhere: the screener's (core/scoring.py). Indices / benchmarks are not scored. ──
 latest_bar = prices_full.sort_values("date").groupby("ticker").tail(1)
 reco_df = companies_full.merge(
     latest_bar[[c for c in ["ticker", "ma_signal", "price_close", "price_z_score", "rsi"] if c in latest_bar.columns]],
@@ -104,10 +103,7 @@ reco_df["upside_pct"] = [clean_upside_pct(t, p, a5) for t, p, a5 in zip(
     reco_df["target_mean_price"], reco_df["price_close"],
     reco_df.get("avg_5y_price", pd.Series(index=reco_df.index, dtype=float)))]
 reco_df["score"] = reco_df["ticker"].map(m_df.set_index("Ticker")["Quality"].to_dict() if "Ticker" in m_df.columns else {})
-_unscored = reco_df["score"].isna()
-if _unscored.any():
-    reco_df.loc[_unscored, "score"] = vectorized_compute_scores(reco_df[_unscored])
-reco_df["score"] = reco_df["score"].astype(int)
+reco_df["score"] = reco_df["score"].fillna(0).astype(int)
 
 # ── Market context: breadth, confidence score, regime ───────────────────────────────────────
 _vix_val = macro.get("VIX", {}).get("val", 20)
@@ -122,9 +118,6 @@ conf_reason_str = "All indicators bullish." if conf_score_global >= 90 else ", "
 _regime = mr.regime_from_score(conf_score_global, _tnx_chg, _dxy_pct, _vix_val)
 regime, regime_ui_color, _macro_regime = _regime["regime"], _regime["color"], _regime["scoring_regime"]
 
-if macro and _macro_regime != "NEUTRAL":
-    reco_df["score"] = reco_df.apply(lambda r: apply_macro_adjustment(r["score"], r.get("sector", ""), _macro_regime,
-                                                                      vix=_vix_val), axis=1)
 market_quality_idx = mr.cap_weighted_quality(reco_df)
 
 movers_df, gainers, losers = mr.movers(prices_full)

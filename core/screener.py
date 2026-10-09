@@ -7,7 +7,8 @@ from core.rating import compute_institutional_rating
 from core.smart_money import get_sm_spirit_unified_v2
 from core.decision import build_decision, load_rules
 from core.valuation import DCF_NOT_APPLICABLE_SECTORS, valuation_inputs
-from etl.utils import clean_upside_pct, compute_score_details
+from core.scoring import score_universe
+from etl.utils import clean_upside_pct
 
 
 def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
@@ -20,6 +21,8 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
     """
     _rules = load_rules()
     _hist_fcf = _hist_fcf if _hist_fcf is not None else pd.DataFrame()
+    # Quality / Value / Momentum for the whole universe at once (percentiles need the peer group)
+    _scores = score_universe(_companies_df, _annual_fin, _prices_df)
     # Exclude non-investable instruments: indices & volatility measures
     _non_equities = {"^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"}
     _non_equity_sectors = {"Benchmark", "Volatility"}
@@ -62,7 +65,7 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
         if ticker in _non_equities: continue
         if str(row.get('sector', '')).strip() in _non_equity_sectors: continue
         ticker_prices = _prices_df[_prices_df['ticker'] == ticker].sort_values('date')
-        if ticker_prices.empty: continue
+        if ticker_prices.empty or ticker not in _scores.index: continue
         
         # RSI (Pre-calculated in transform.py)
         latest_rsi = ticker_prices["rsi"].iloc[-1] if not ticker_prices.empty else 50
@@ -79,28 +82,19 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
         mcap = row.get("market_cap", 0)
         mcap_b = (mcap / 1e9) if pd.notnull(mcap) and mcap > 0 else 0
         
-        # ── AI SCORING (ENRICHED WITH TECHNICALS) ──────────────────────────
         latest_p = ticker_prices.iloc[-1]
-        score_input = row.to_dict()
-        score_input['rsi'] = float(latest_rsi)
-        score_input['ma_signal'] = str(latest_p.get('ma_signal', 'NEUTRAL'))
-        score_input['price_z_score'] = float(latest_p.get('price_z_score', 0))
-        score_input['upside_pct'] = float(upside)
-        
-        # Ensure numeric safety for fundamental scores
-        for col in ['pe_ratio', 'peg_ratio', 'price_to_book', 'roe', 'fcf_margin', 'dividend_yield_pct']:
-            val = score_input.get(col)
-            try: score_input[col] = float(val) if pd.notnull(val) else None
-            except: score_input[col] = None
+        # ── SCORES (core/scoring.py): Quality, Value, Momentum ────────────────────────
+        _sc = _scores.loc[ticker]
+        ai_score = float(_sc["quality"]) if pd.notnull(_sc["quality"]) else 50.0     # no data = neutral
+        value_score = float(_sc["value"]) if pd.notnull(_sc["value"]) else None
+        momentum = float(_sc["momentum"]) if pd.notnull(_sc["momentum"]) else float("nan")
+        _cov = min(_sc["quality_coverage"], _sc["value_coverage"])
 
-        _details  = compute_score_details(score_input)
-        ai_score  = _details["total"]
-        
         # ── Unified 5-Pillar Rating (delegates to compute_institutional_rating) ──
         ma_sig = str(latest_p.get('ma_signal', 'NEUTRAL'))
         # Forward PE preferred over trailing for valuation (forward-looking)
-        pe_v   = float(score_input.get('forward_pe') or score_input.get('pe_ratio') or 0)
-        peg_v  = float(score_input.get('peg_ratio') or 0)
+        pe_v   = float(row.get('forward_pe') or row.get('pe_ratio') or 0)
+        peg_v  = float(row.get('peg_ratio') or 0)
 
         # Use shared tactical metrics (same formula as Deep Dive)
         _tm = get_tactical_metrics(
@@ -127,7 +121,8 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
             rr         = _tm["rr_score"],   # scoring uses raw r1 target
             sm_status  = sm_spirit,
             sm_strength = sm_strength,
-            sm_layer   = sm_layer
+            sm_layer   = sm_layer,
+            value_score = value_score,
         )
         action_label = _rating["action_label"]   # plain text — no emoji
 
@@ -136,8 +131,9 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
         _dec = build_decision(
             price=float(cur_p), base_value=_vin["base"], bear_value=_vin["bear"], bull_value=_vin["bull"],
             stop_loss=_tm["stop_loss"], currency=row.get("currency"), country=row.get("country"),
-            dividend_yield_pct=row.get("dividend_yield_pct"), missing_metrics=_details["missing"],
-            quality_score=ai_score, valuation_reliable=_vin["reliable"], valuation_note=_vin["note"],
+            dividend_yield_pct=row.get("dividend_yield_pct"), missing_metrics=_sc["missing"],
+            quality_score=ai_score, value_score=value_score, risk_flags=_sc["flags"],
+            coverage_pct=_cov, valuation_reliable=_vin["reliable"], valuation_note=_vin["note"],
             rules=_rules)
         _mos = (_vin["base"] / float(cur_p) - 1) * 100 if (_vin["base"] and _vin["reliable"]) else None
 
@@ -184,6 +180,12 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
             "MoS (%)": round(_mos, 0) if _mos is not None else float("nan"),   # numeric column → blank, not "None"
             "Action": action_label,
             "Quality": ai_score,
+            "Value": value_score if value_score is not None else float("nan"),
+            "Momentum": momentum,
+            "Coverage (%)": float(_cov) if pd.notnull(_cov) else 0.0,
+            "Flags": _sc["flags"],
+            "Missing": _sc["missing"],
+            "Components": _sc["components"],
             "Upside (%)": round(upside, 1),
             "1D Chg (%)": round(chg_1d, 2),
             "Price": cur_p,

@@ -2,7 +2,6 @@
 import pandas as pd
 import streamlit as st
 
-from etl.utils import compute_score_details
 from services.db import load_track_record
 from services.user_store import load_portfolio_from_db
 from ui.decision_panel import render_decision_panel
@@ -27,7 +26,7 @@ def render(dd, ctx):
         ticker=dd.ticker, meta=meta, price=float(dd.cur_p),
         price_date=pd.to_datetime(dd.df_deep["date"].iloc[-1]).date(),
         stop_loss=dd.stop_loss, vin=dd.vin, relval=dd.relval,
-        missing=compute_score_details(dd.meta_enriched)["missing"],
+        missing=dd.scores["missing"], scores=dd.scores,
         next_earnings=dd.next_earnings, quality=dd.ai_score,
         snapshots=load_track_record(), prices=prices_full,
         holdings_loader=_holdings_value, companies=ctx["companies_full"])

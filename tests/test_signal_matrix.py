@@ -25,7 +25,7 @@ def test_trend_label_matches_colour(ma, rsi, label, colour):
     assert (r["p_trend"], r["p_trend_c"]) == (label, colour)
 
 
-@pytest.mark.parametrize("score, label", [(80, "ELITE"), (65, "ELITE"), (55, "SOLID"), (40, "FAIR"), (10, "WEAK")])
+@pytest.mark.parametrize("score, label", [(90, "ELITE"), (75, "ELITE"), (65, "SOLID"), (50, "FAIR"), (10, "WEAK")])
 def test_one_quality_tier_definition(score, label):
     assert quality_tier(score)[0] == label
     assert _rate(ai_score=score)["p_qual"] == label

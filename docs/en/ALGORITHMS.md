@@ -12,10 +12,11 @@ The score is calculated by aggregating technical weights of the SPY index (S&P 5
 
 | Factor | Condition | Weight |
 | :--- | :--- | :--- |
-| **SPY Medium-term** | SPY Closing Price > MA50 | +25 points |
-| **SPY Long-term** | SPY Closing Price > MA200 | +25 points |
-| **Market Breadth** | % of stocks in Universe > MA50 exceeds 50% | +30 points |
-| **Macro Alignment** | Macro state (vix, dxy, tnx) is `RISK_ON` | +20 points |
+| **SPY trend** | Close above MA50 and MA200 (one of them = 12) | 25 |
+| **SPY momentum** | 5-day return, scaled -3% → 0 … +3% → 10 | 10 |
+| **Market breadth** | % of stocks above MA50, scaled 25% → 0 … 75% → 30 | 30 |
+| **VIX** | scaled 15 → 10 … 40 → 0 | 10 |
+| **Macro** | DXY 5-day move and 10Y change calm = 10, mild friction = 5 | 10 |
 
 *Note: If Macro is in `NEUTRAL` state, only +10 points are added.*
 
@@ -36,53 +37,24 @@ This indicator represents the "intrinsic quality" of the market or a specific st
 A Market Cap-weighted average of all stocks in the Universe:
 `Market Quality Index = Σ(Quality Score * Market Cap) / Σ(Market Cap)`
 
-### 2.2. Individual Quality Score v4.1 (Scale of 100)
-Each stock is evaluated across **7 financial pillars** (config-driven from `config/scoring_rules.yaml`):
+### 2.2. Stock scores v5: Quality, Value, Momentum
+A stock gets **three independent 0-100 scores** (`core/scoring.py`; every threshold and weight in `config/scoring_rules.yaml`).
+They answer different questions and are never mixed:
 
-#### Pillar 1: Valuation (Max 20 pts)
-- **PEG Ratio:** Preferred < 1.5 (growth at reasonable price). Scores 0-12 pts.
-- **P/E Ratio:** Sector-adjusted bands (Tech: 15-35 ideal, Value: 10-22 ideal). Scores 0-12 pts.
-- **P/B Ratio:** Financials have different norms (1.0-1.8 ideal) vs. Tech/Industrial (< 3.0). Scores 0-8 pts.
-- **Early Stage Logic:** Pre-profit growth stocks (negative P/E + revenue growth > 15% + improving EPS) are exempt from harsh P/E penalties and scored on revenue acceleration instead.
+| Score | Question | Inputs (weight) |
+| :--- | :--- | :--- |
+| **Quality** | Is it a good business? | Return on capital 20 · operating / gross / FCF margin 25 · growth & stability (revenue CAGR, profitable years, margin volatility) 20 · balance sheet (net debt/EBITDA, current ratio) 20 · cash conversion (FCF / net income) 15. Banks and insurers: ROE 40, net margin 25, growth & stability 35. |
+| **Value** | Is the price attractive? | FCF yield 25 · EV/EBITDA 20 · earnings yield 20 · PEG 15 · shareholder yield 10 · P/S 10 (financials: earnings yield, P/B, shareholder yield, PEG). |
+| **Momentum** | What has price been doing? | 12-1 month return rank across the universe (70%) + price above MA200 / golden cross (30%). **Timing only.** |
 
-#### Pillar 2: Profitability (Max 25-30 pts)
-- **FCF Margin:** > 15% = excellent (15 pts), > 8% = good (12 pts), > 5% = fair (6 pts).
-- **ROE:** > 15% = excellent (10 pts), > 10% = good (8 pts), > 5% = fair (4 pts).
-- **Tech Bonus:** +5 pts if FCF > 20% (exceptional cash generation for tech/growth stocks).
-- **Early Stage Credit:** Partial profitability credit (0-7 pts) when losses are shrinking (positive earnings growth).
-- **Cap:** 30 pts for Tech/Growth sectors, 25 pts for others.
-
-#### Pillar 3: Financial Health (Max 15 pts)
-- **Debt/EBITDA Ratio:** < 2.0 = excellent (15 pts), < 4.0 = good (8 pts), > 8.0 = red flag territory.
-- **Sector-adjusted:** Financials/Utilities have higher tolerance (< 6.0 acceptable due to business model).
-
-#### Pillar 4: Net Payout Yield (Max 10 pts, Tech cap 5 pts)
-- **Dividend + Buyback Yield:** 4-6% = ideal (9-10 pts), 2.5-4% = good (6 pts), 1-2.5% = fair (3 pts).
-- **Tech Cap:** Growth stocks capped at 5 pts to avoid penalizing reinvestment strategies.
-
-#### Pillar 5: Context & Momentum (Max 15 pts) — **Reduced from 25 in v3.0**
-- **MA Signal:** Bullish = +8 pts, Neutral = +3 pts, Bearish = 0 pts.
-- **RSI:** 40-60 (neutral zone) = +5 pts, < 30 (oversold) = contrarian bonus (0-3 pts), > 70 (overbought) = penalty (0 to -2 pts).
-- **Z-Score:** < -1.5 (deep value) = +4 pts, > +2.0 (overheated) = -2 to -4 pts.
-
-#### Pillar 6: Analyst Estimates (Max 10 pts) — **Increased from 5 in v3.0**
-- **Upside Potential:** 30%+ = +5 pts, 15-30% = +4 pts, 5-15% = +2 pts, < 5% = +1 pt.
-- **Consensus Quality:** Strong Buy = +5 pts, Buy = +3 pts, Hold = +1 pt, Sell/Underperform = -2 pts.
-- **Rationale:** Collective analyst research reflects deep fundamental due diligence and is a high-signal indicator.
-
-#### Pillar 7: Revenue Consistency (Max 5 pts) — **NEW in v4.0**
-- **Accelerating:** Revenue growth > 15% + Earnings growth > 10% = 5 pts (strong double-digit growth on both).
-- **Stable:** Revenue growth > 5% + Earnings not declining = 3 pts (moderate growth, losses not widening).
-- **Positive:** Revenue growth > 0% = 2 pts (at least top-line is growing).
-- **Declining:** Revenue < -5% = 0 pts (no credit for shrinking business).
-
-#### Red Flags (Instant Penalties) — **Strengthened in v4.0**
-- **Negative P/E:** -3 pts (early stage with high growth), -8 pts (high growth but unprofitable), -15 pts (stagnant unprofitable).
-- **High Debt:** D/EBITDA > 8 = -5 pts, > 12 = -15 pts (critical distress signal). Threshold tightened from 10 in v3.0.
-- **Value Trap:** Z-Score < -1.5 + Sell consensus = -5 pts (cheap for a reason).
-- **Beta Risk:** > 1.8 = -1 to -5 pts (high volatility penalty), < 0.8 (non-tech) = +2 to +5 pts (defensive stability bonus).
-
-**Config-Driven Architecture:** All thresholds and weights are loaded from `config/scoring_rules.yaml`, enabling easy tuning without code changes. Improved error handling with safe fallbacks for missing data.
+**How a score is built**
+- **Peers, not a universal yardstick.** Margins and multiples are percentile-ranked within the industry (sector, then the whole universe, when fewer than 5 peers). Value blends that percentile 50/50 with an absolute band (a whole sector can be expensive). Return on capital, leverage and cash conversion use absolute bands.
+- **Unknown is not zero.** A missing input is excluded and the remaining weights re-normalised. If under 80% of a score's weight is observable the score is shrunk toward 50; the shortfall is shown as *Coverage* and lowers Decision confidence.
+- **Red flags subtract points from Quality** (capped at 25): loss-making (-8), debt with no positive EBITDA (-10), net debt/EBITDA above 5x (-8) or 8x (-15) (relaxed for utilities, REITs, telecom), dividend not covered by free cash flow (-5), negative book equity (-5).
+- **Not scored:** analyst ratings and price targets (consensus skews to "buy", targets lag price), beta, RSI and Z-score (shown for timing, never scored).
+- **Tiers:** Quality ELITE ≥ 75 · SOLID ≥ 60 · FAIR ≥ 45 · WEAK < 45. Value: UNDERVALUED ≥ 65 · FAIR ≥ 50 · FULL ≥ 35 · EXPENSIVE ≥ 20.
+- **Use in the Decision:** a BUY candidate needs Quality ≥ 50 (cheap and weak is the classic value trap); a DCF "cheap" verdict contradicted by a Value score below 30 lowers confidence.
+- **Known limits:** return on capital is net income / (equity + debt) from annual statements (no NOPAT, no cash); net debt is derived from Yahoo's EV; share dilution is not measured; the weights are judgement until the Track Record tab shows each score's information coefficient (snapshots are stamped `score_version`, so pre-v5 history is never mixed in).
 
 ---
 

@@ -27,3 +27,8 @@ valuation:
   required_margin_of_safety: 0.25   # BUY needs base value >= price x 1.25; AVOID needs price > bull case
   stale_price_days: 5         # price older than this lowers confidence
   stale_fundamentals_days: 35
+
+scores:
+  min_quality_for_buy: 50       # a BUY CANDIDATE needs Quality >= this: cheap-and-weak is the classic value trap
+  value_crosscheck_below: 30    # DCF says cheap but the Value score (multiples vs peers) is below this -> confidence note
+  min_coverage_pct: 60          # below this share of observable scoring inputs -> confidence note

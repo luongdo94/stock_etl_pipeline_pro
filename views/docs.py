@@ -29,6 +29,22 @@ def render(ctx):
         - **Prices** are end-of-day (T-1). Not built for intraday trading.
         """)
 
+        st.markdown("### 🧮 Scores: Quality, Value, Momentum")
+        st.markdown("""
+        Three separate 0-100 numbers per stock (`core/scoring.py`, thresholds in `config/scoring_rules.yaml`):
+        - **Quality** — is it a good business? Return on capital, margins, growth & stability, net debt/EBITDA,
+          FCF conversion; red flags (losses, leverage, uncovered dividend, negative equity) subtract points.
+        - **Value** — is the price attractive? FCF yield, EV/EBITDA, earnings yield, PEG, shareholder yield, each
+          half *percentile within the sector/industry*, half an absolute band.
+        - **Momentum** — 12-1 month return rank plus trend. *Timing only*: it never enters Quality or Value.
+        - Analyst ratings/targets are **not scored** (consensus skews to "buy", targets lag price).
+        - Unknown inputs are excluded and the rest re-weighted, never scored as 0; with little data a score is
+          pulled toward 50. Margins/ROE are compared with peers, not with a universal yardstick.
+        - Known limits: return on capital is net income / (equity + debt) from annual statements (no NOPAT or cash);
+          net debt comes from Yahoo's EV; dilution is not measured; weights are judgement until the
+          **Track Record** tab shows each score's information coefficient.
+        """)
+
         st.markdown("### ⚠️ 2. Point-in-time limits (read this)")
         st.warning("""
         - **Fundamentals are a current snapshot**, not a history as of each past date. Anything that
@@ -59,11 +75,14 @@ def render(ctx):
         - **AVOID / TRIM**: price above even the bull-case value. Otherwise **HOLD / WATCH**.
         - The DCF is reported as *not informative* — and cannot produce BUY/AVOID — for banks/insurers,
           when the price implies growth beyond the model's range, or when the value looks implausible.
+        - **Quality floor / Value cross-check**: a BUY CANDIDATE needs Quality ≥ {rules.get('scores', {}).get('min_quality_for_buy', 45):.0f}
+          (cheap and weak is the classic value trap). If the DCF says cheap but the Value score (multiples vs peers)
+          is below {rules.get('scores', {}).get('value_crosscheck_below', 30):.0f}, confidence is reduced. Red flags and thin data also lower confidence.
         - **Sizing**: risk {rules['risk']['account_risk_pct']:.0f}% of the portfolio to the thesis stop
           (wider of technical support and bear-case value, at least {rules['risk'].get('min_stop_pct', 8):.0f}%),
           max {rules['risk']['max_position_pct']:.0f}% per position. All assumptions: `config/decision_rules.yaml`.
-        - **Signal**, **Quality score**, **Smart Money**, LLM narratives and ML forecasts are *inputs or
-          context*; only the Decision is a recommendation.
+        - **Signal** (technical + quality composite), **Momentum**, **Smart Money**, LLM narratives and ML forecasts
+          are *inputs or context*; only the Decision is a recommendation.
         """)
 
         st.markdown("### 🔮 5. Experimental modules")

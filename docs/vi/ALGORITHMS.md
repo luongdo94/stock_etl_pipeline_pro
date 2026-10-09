@@ -12,10 +12,11 @@ Chỉ số này (0-100) đo lường sức mạnh của xu hướng thị trư�
 
 | Yếu tố | Điều kiện | Trọng số |
 | :--- | :--- | :--- |
-| **SPY Medium-term** | Giá đóng cửa SPY > MA50 | +25 điểm |
-| **SPY Long-term** | Giá đóng cửa SPY > MA200 | +25 điểm |
-| **Market Breadth** | % cổ phiếu trong Universe > MA50 vượt mức 50% | +30 điểm |
-| **Macro Alignment** | Trạng thái vĩ mô (vix, dxy, tnx) là `RISK_ON` | +20 điểm |
+| **Xu hướng SPY** | Đóng cửa trên MA50 và MA200 (một trong hai = 12) | 25 |
+| **Động lượng SPY** | Lợi suất 5 ngày, -3% → 0 … +3% → 10 | 10 |
+| **Độ rộng thị trường** | % cổ phiếu trên MA50, 25% → 0 … 75% → 30 | 30 |
+| **VIX** | 15 → 10 … 40 → 0 | 10 |
+| **Vĩ mô** | DXY 5 ngày và thay đổi lãi suất 10Y êm = 10, ma sát nhẹ = 5 | 10 |
 
 *Lưu ý: Nếu Macro ở trạng thái `NEUTRAL`, chỉ cộng +10 điểm.*
 
@@ -36,53 +37,23 @@ Chỉ số này đại diện cho "chất lượng nội tại" của thị trư
 Là giá trị trung bình có trọng số theo vốn hóa (Market Cap) của tất cả cổ phiếu trong Universe:
 `Market Quality Index = Σ(Quality Score * Market Cap) / Σ(Market Cap)`
 
-### 2.2. Individual Quality Score v4.1 (Thang điểm 100)
-Mỗi cổ phiếu được đánh giá qua **7 cột trụ tài chính** (config-driven từ `config/scoring_rules.yaml`):
+### 2.2. Điểm cổ phiếu v5: Quality, Value, Momentum
+Mỗi cổ phiếu có **ba điểm 0-100 độc lập** (`core/scoring.py`; mọi ngưỡng và trọng số nằm trong `config/scoring_rules.yaml`). Mỗi điểm trả lời một câu hỏi khác nhau và không bao giờ bị trộn:
 
-#### Cột trụ 1: Valuation (Tối đa 20 điểm)
-- **PEG Ratio:** Ưu tiên < 1.5 (tăng trưởng với giá hợp lý). Điểm 0-12.
-- **P/E Ratio:** Điều chỉnh theo ngành (Tech: 15-35 lý tưởng, Value: 10-22 lý tưởng). Điểm 0-12.
-- **P/B Ratio:** Ngành tài chính có chuẩn khác (1.0-1.8 lý tưởng) so với Tech/Công nghiệp (< 3.0). Điểm 0-8.
-- **Logic Early Stage:** Cổ phiếu tăng trưởng chưa có lãi (P/E âm + tăng trưởng doanh thu > 15% + EPS đang cải thiện) được miễn trừ hình phạt P/E và chấm điểm dựa trên tốc độ tăng trưởng doanh thu.
+| Điểm | Câu hỏi | Đầu vào (trọng số) |
+| :--- | :--- | :--- |
+| **Quality** | Doanh nghiệp có tốt không? | Lợi suất trên vốn 20 · biên vận hành / gộp / FCF 25 · tăng trưởng & ổn định (CAGR doanh thu, số năm có lãi, biến động biên) 20 · bảng cân đối (nợ ròng/EBITDA, current ratio) 20 · chuyển hóa tiền (FCF / lợi nhuận) 15. Ngân hàng/bảo hiểm: ROE 40, biên ròng 25, tăng trưởng & ổn định 35. |
+| **Value** | Giá có hấp dẫn không? | Lợi suất FCF 25 · EV/EBITDA 20 · lợi suất lợi nhuận 20 · PEG 15 · lợi suất cổ đông 10 · P/S 10 (tài chính: lợi suất lợi nhuận, P/B, lợi suất cổ đông, PEG). |
+| **Momentum** | Giá đang diễn biến thế nào? | Xếp hạng lợi suất 12-1 tháng trong toàn universe (70%) + giá trên MA200 / golden cross (30%). **Chỉ dùng để chọn thời điểm.** |
 
-#### Cột trụ 2: Profitability (Tối đa 25-30 điểm)
-- **FCF Margin:** > 15% = xuất sắc (15đ), > 8% = tốt (12đ), > 5% = khá (6đ).
-- **ROE:** > 15% = xuất sắc (10đ), > 10% = tốt (8đ), > 5% = khá (4đ).
-- **Tech Bonus:** +5 điểm nếu FCF > 20% (khả năng tạo tiền mặt đặc biệt cho tech/growth).
-- **Early Stage Credit:** Điểm khả năng sinh lời một phần (0-7đ) khi lỗ đang thu hẹp (tăng trưởng earnings dương).
-- **Giới hạn:** 30 điểm cho Tech/Growth, 25 điểm cho các ngành khác.
-
-#### Cột trụ 3: Financial Health (Tối đa 15 điểm)
-- **Debt/EBITDA:** < 2.0 = xuất sắc (15đ), < 4.0 = tốt (8đ), > 8.0 = vùng cảnh báo đỏ.
-- **Điều chỉnh ngành:** Tài chính/Tiện ích có ngưỡng chấp nhận cao hơn (< 6.0 chấp nhận được do mô hình kinh doanh).
-
-#### Cột trụ 4: Net Payout Yield (Tối đa 10 điểm, Tech giới hạn 5 điểm)
-- **Dividend + Buyback Yield:** 4-6% = lý tưởng (9-10đ), 2.5-4% = tốt (6đ), 1-2.5% = khá (3đ).
-- **Tech Cap:** Cổ phiếu tăng trưởng giới hạn 5 điểm để tránh phạt chiến lược tái đầu tư.
-
-#### Cột trụ 5: Context & Momentum (Tối đa 15 điểm) — **Giảm từ 25 trong v3.0**
-- **MA Signal:** Bullish = +8đ, Neutral = +3đ, Bearish = 0đ.
-- **RSI:** 40-60 (vùng trung lập) = +5đ, < 30 (quá bán) = bonus nghịch xu hướng (0-3đ), > 70 (quá mua) = phạt (0 đến -2đ).
-- **Z-Score:** < -1.5 (giá trị sâu) = +4đ, > +2.0 (quá nóng) = -2 đến -4đ.
-
-#### Cột trụ 6: Analyst Estimates (Tối đa 10 điểm) — **Tăng từ 5 trong v3.0**
-- **Upside Potential:** 30%+ = +5đ, 15-30% = +4đ, 5-15% = +2đ, < 5% = +1đ.
-- **Consensus Quality:** Strong Buy = +5đ, Buy = +3đ, Hold = +1đ, Sell/Underperform = -2đ.
-- **Lý do:** Nghiên cứu tập thể của các nhà phân tích phản ánh due diligence cơ bản sâu sắc và là tín hiệu chất lượng cao.
-
-#### Cột trụ 7: Revenue Consistency (Tối đa 5 điểm) — **MỚI trong v4.0**
-- **Tăng tốc:** Tăng trưởng doanh thu > 15% + Tăng trưởng earnings > 10% = 5đ (tăng trưởng hai chữ số mạnh mẽ trên cả hai).
-- **Ổn định:** Tăng trưởng doanh thu > 5% + Earnings không giảm = 3đ (tăng trưởng vừa phải, lỗ không mở rộng).
-- **Dương:** Tăng trưởng doanh thu > 0% = 2đ (ít nhất doanh thu đang tăng).
-- **Giảm:** Doanh thu < -5% = 0đ (không có điểm cho doanh nghiệp đang thu hẹp).
-
-#### Hình phạt (Red Flags) — **Tăng cường trong v4.0**
-- **P/E âm:** -3đ (early stage với tăng trưởng cao), -8đ (tăng trưởng cao nhưng chưa có lãi), -15đ (trì trệ và chưa có lãi).
-- **Nợ cao:** D/EBITDA > 8 = -5đ, > 12 = -15đ (tín hiệu khó khăn nghiêm trọng). Ngưỡng thắt chặt từ 10 trong v3.0.
-- **Value Trap:** Z-Score < -1.5 + Sell consensus = -5đ (rẻ vì có lý do).
-- **Beta Risk:** > 1.8 = -1 đến -5đ (phạt biến động cao), < 0.8 (non-tech) = +2 đến +5đ (bonus ổn định phòng thủ).
-
-**Kiến trúc Config-Driven:** Tất cả ngưỡng và trọng số được load từ `config/scoring_rules.yaml`, cho phép điều chỉnh dễ dàng mà không cần thay đổi code. Xử lý lỗi được cải thiện với fallback an toàn cho dữ liệu thiếu.
+**Cách tính**
+- **So với nhóm ngành, không dùng thước đo chung.** Biên lợi nhuận và bội số được xếp hạng phân vị trong ngành (rồi đến sector, rồi toàn universe khi dưới 5 mã cùng nhóm). Value pha 50/50 giữa phân vị này và thang tuyệt đối (cả ngành có thể đắt). Lợi suất trên vốn, đòn bẩy, chuyển hóa tiền dùng thang tuyệt đối.
+- **Thiếu dữ liệu không phải là 0.** Đầu vào thiếu bị loại và các trọng số còn lại được chuẩn hóa lại. Nếu quan sát được dưới 80% trọng số, điểm bị kéo về 50; phần thiếu hiện ở *Coverage* và làm giảm độ tin cậy của Decision.
+- **Cờ đỏ trừ điểm Quality** (tối đa 25): đang lỗ (-8), có nợ nhưng EBITDA không dương (-10), nợ ròng/EBITDA trên 5x (-8) hoặc 8x (-15) (nới cho tiện ích, REIT, viễn thông), cổ tức không được FCF chi trả (-5), vốn chủ sở hữu âm (-5).
+- **Không chấm điểm:** khuyến nghị và giá mục tiêu của analyst (đồng thuận lệch về "mua", giá mục tiêu đi sau giá), beta, RSI và Z-score (chỉ hiển thị để chọn thời điểm).
+- **Hạng:** Quality ELITE ≥ 75 · SOLID ≥ 60 · FAIR ≥ 45 · WEAK < 45. Value: UNDERVALUED ≥ 65 · FAIR ≥ 50 · FULL ≥ 35 · EXPENSIVE ≥ 20.
+- **Dùng trong Decision:** BUY candidate cần Quality ≥ 50 (rẻ mà yếu là bẫy giá trị kinh điển); DCF báo "rẻ" nhưng Value dưới 30 thì giảm độ tin cậy.
+- **Giới hạn:** lợi suất trên vốn = lợi nhuận ròng / (vốn chủ + nợ) từ báo cáo năm (không có NOPAT, không trừ tiền mặt); nợ ròng suy từ EV của Yahoo; chưa đo pha loãng cổ phiếu; trọng số là phán đoán cho đến khi tab Track Record cho thấy IC của từng điểm (snapshot được đóng dấu `score_version` nên lịch sử trước v5 không bị trộn vào).
 
 ---
 

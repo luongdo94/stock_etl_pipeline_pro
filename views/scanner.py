@@ -3,8 +3,10 @@ import pandas as pd
 import streamlit as st
 
 from services.market_data import get_forex_rates
+from core.rating import QUALITY_TIERS
 from ui.icons import render_header
 
+ELITE, SOLID, FAIR = (t[0] for t in QUALITY_TIERS)      # Quality tier cut-offs (core/rating.py)
 UPTREND = {"STRONG BULL", "BULLISH"}       # golden cross (MA50 > MA200)
 DOWNTREND = {"STRONG BEAR", "BEARISH"}     # death cross (MA50 < MA200)
 
@@ -150,12 +152,14 @@ def render(ctx):
     scan_presets = [
         "🔍 All Stock Universe",
         "──────────── 📈 OPPORTUNITY ────────────",
-        "🏆 Institutional Pulse (Quality ≥ 65 & Uptrend)",
+        f"🏆 Institutional Pulse (Quality ≥ {ELITE} & Uptrend)",
+        f"💎 Quality at a Fair Price (Quality ≥ {ELITE} & Value ≥ 50)",
+        f"🏷️ Deep Value (Value ≥ 70 & Quality ≥ {SOLID})",
         "🚀 Buy on Dip (Bullish + Oversold)",
         "🚀 Bullish Momentum (Trend + RSI > 50)",
         "📈 Both Accelerating (EPS + Revenue QoQ, 2 qtrs > +10%)",
-        "🌱 GARP (Growth at Reasonable Price: PEG < 1.5 + Quality > 55)",
-        "💰 High Quality Dividend (Yield > 2.5% + Quality > 65)",
+        f"🌱 GARP (Growth at Reasonable Price: PEG < 1.5 + Quality ≥ {SOLID})",
+        f"💰 High Quality Dividend (Yield > 2.5% + Quality ≥ {SOLID}, covered)",
         "🔥 Short Squeeze Watch (Short % > 15% + Bullish)",
         "🎯 Accumulation Flow (volume heuristic)",
         "🔄 Mean Reversion Elite (Quality + Oversold)",
@@ -166,7 +170,9 @@ def render(ctx):
         "📊 Balanced Growth (Quality + Growth + Reasonable PE)",
         "──────────── ⛔ RISK / WARNING ────────────",
         "⚠️ Earnings Deterioration (EPS + Revenue QoQ, 2 qtrs < -10%)",
-        "⚠️ Structural Caution (Quality < 38 & Bearish)",
+        f"⚠️ Structural Caution (Quality < {FAIR} & Downtrend)",
+        f"🪤 Value Trap Risk (Value ≥ 65 & Quality < {FAIR})",
+        "🚩 Red Flags (any quality penalty)",
         "📉 Negative Momentum (MA20 < MA50 < MA200)",
         "🔥 Overbought Alert (RSI > 65)",
         "🎈 Price Stretch (Z-Score > +2.0 vs 5Y mean)",
@@ -223,8 +229,24 @@ def render(ctx):
     if selected_sector != "🌍 All Sectors":
         f_df = f_df[f_df["Sector"] == selected_sector]
     if "Institutional Pulse" in scan_mode:
-        f_df = f_df[(f_df["Quality"] >= 65) & up]
-        st.success("🏆 Institutional Pulse: Quality ≥ 65 (ELITE tier) in an uptrend (MA50 > MA200)")
+        f_df = f_df[(f_df["Quality"] >= ELITE) & up]
+        st.success(f"🏆 Institutional Pulse: Quality ≥ {ELITE} (ELITE tier) in an uptrend (MA50 > MA200)")
+    elif "Quality at a Fair Price" in scan_mode:
+        f_df = f_df[(f_df["Quality"] >= ELITE) & (f_df["Value"] >= 50)]
+        st.success(f"💎 Quality at a Fair Price: Quality ≥ {ELITE} (ELITE) and Value ≥ 50 vs sector peers — a strong business "
+                   "that is not expensive. Momentum is deliberately not required.")
+    elif "Deep Value" in scan_mode:
+        f_df = f_df[(f_df["Value"] >= 70) & (f_df["Quality"] >= SOLID)]
+        st.success(f"🏷️ Deep Value: Value ≥ 70 (cheap on FCF yield / EV-EBITDA / earnings yield vs peers) with Quality ≥ {SOLID} — "
+                   "cheap but not broken.")
+    elif "Value Trap Risk" in scan_mode:
+        f_df = f_df[(f_df["Value"] >= 65) & (f_df["Quality"] < FAIR)]
+        st.error(f"🪤 Value Trap Risk: looks cheap (Value ≥ 65) but Quality < {FAIR}. Cheap and weak is the classic value trap — "
+                 "the Decision will not call these a BUY.")
+    elif "Red Flags" in scan_mode:
+        f_df = f_df[f_df["Flags"].fillna("") != ""]
+        st.error("🚩 Red Flags: loss-making, debt without EBITDA, high net debt/EBITDA, dividend not covered by FCF, "
+                 "negative book equity. See the Red flags column.")
     elif "Buy on Dip" in scan_mode:
         f_df = f_df[up & (f_df["RSI (14)"] < 40)]
         st.info("🚀 Buy on Dip: uptrend (MA50 > MA200) with RSI cooling below 40")
@@ -232,8 +254,8 @@ def render(ctx):
         f_df = f_df[up & (f_df["RSI (14)"] > 50)]
         st.success("🚀 Bullish Momentum: uptrend (MA50 > MA200) with RSI > 50")
     elif "Structural Caution" in scan_mode:
-        f_df = f_df[(f_df["Quality"] < 38) & down]
-        st.error("⚠️ Structural Caution: WEAK quality (< 38) in a downtrend (MA50 < MA200)")
+        f_df = f_df[(f_df["Quality"] < FAIR) & down]
+        st.error(f"⚠️ Structural Caution: WEAK quality (< {FAIR}) in a downtrend (MA50 < MA200)")
     elif "Negative Momentum" in scan_mode:
         f_df = f_df[down & (f_df["Trend"] == "STRONG BEAR")]
         st.error("📉 Negative Momentum: full bearish alignment (MA20 < MA50 < MA200). Avoid jumping in too early.")
@@ -256,38 +278,39 @@ def render(ctx):
         f_df = f_df[(f_df["EPS Momentum"] == "Decelerating") & (f_df["Rev Momentum"] == "Decelerating")]
         st.error("⚠️ Earnings Deterioration: EPS & Revenue both declining QoQ > -10% for 2 consecutive quarters.")
     elif "GARP" in scan_mode:
-        f_df = f_df[(f_df["PEG"] > 0) & (f_df["PEG"] < 1.5) & (f_df["Quality"] > 55)]
-        st.success("🌱 GARP — Growth at a Reasonable Price: PEG < 1.5 + Quality > 55 (SOLID tier). Peter Lynch-style filter.")
+        f_df = f_df[(f_df["PEG"] > 0) & (f_df["PEG"] < 1.5) & (f_df["Quality"] >= SOLID)]
+        st.success(f"🌱 GARP — Growth at a Reasonable Price: PEG < 1.5 + Quality ≥ {SOLID} (SOLID tier). Peter Lynch-style filter.")
     elif "High Quality Dividend" in scan_mode:
-        f_df = f_df[(f_df["Yield (%)"] > 2.5) & (f_df["Quality"] > 65) & up]
-        st.success("💰 High Quality Dividend: yield > 2.5% + Quality > 65 + uptrend. Check payout cover (FCF) before relying on the yield.")
+        f_df = f_df[(f_df["Yield (%)"] > 2.5) & (f_df["Quality"] >= SOLID) & up
+                    & ~f_df["Flags"].fillna("").str.contains("Dividend not covered")]
+        st.success(f"💰 High Quality Dividend: yield > 2.5% + Quality ≥ {SOLID} + uptrend, and the dividend is covered.")
     elif "Short Squeeze Watch" in scan_mode:
         f_df = f_df[(f_df["Short %"] > 15) & (f_df["RSI (14)"] < 45) & up]
         st.warning("🔥 Short Squeeze Watch: short interest > 15% of float + RSI < 45 inside an uptrend. Event-driven and volatile.")
     elif "Accumulation Flow" in scan_mode:
-        f_df = f_df[(f_df["Smart Money"].str.contains("ACCUMULATION", na=False)) & (f_df["Quality"] >= 55) & (f_df["RSI (14)"] < 50)]
-        st.success("🎯 Accumulation Flow: volume-flow heuristic reads ACCUMULATION (it cannot see who traded) + Quality ≥ 55 + RSI < 50.")
+        f_df = f_df[(f_df["Smart Money"].str.contains("ACCUMULATION", na=False)) & (f_df["Quality"] >= SOLID) & (f_df["RSI (14)"] < 50)]
+        st.success(f"🎯 Accumulation Flow: volume-flow heuristic reads ACCUMULATION (it cannot see who traded) + Quality ≥ {SOLID} + RSI < 50.")
     elif "Mean Reversion Elite" in scan_mode:
-        f_df = f_df[(f_df["Quality"] >= 65) & (f_df["RSI (14)"] < 35) & (f_df["Z-Score"] < -1.0)]
-        st.success("🔄 Mean Reversion Elite: Quality ≥ 65 (ELITE) + RSI < 35 + price more than 1 std dev below its 5Y mean.")
+        f_df = f_df[(f_df["Quality"] >= ELITE) & (f_df["RSI (14)"] < 35) & (f_df["Z-Score"] < -1.0)]
+        st.success(f"🔄 Mean Reversion Elite: Quality ≥ {ELITE} (ELITE) + RSI < 35 + price more than 1 std dev below its 5Y mean.")
     elif "Strong Breakout" in scan_mode:
         f_df = f_df[(f_df["vs MA200 (%)"] > 5) & (f_df["RSI (14)"].between(50, 70)) & up]
         st.success("⚡ Strong Breakout: price 5%+ above MA200, RSI 50-70, uptrend (MA50 > MA200).")
     elif "Contrarian Value" in scan_mode:
-        f_df = f_df[(f_df["Quality"] >= 60) & down & (f_df["Z-Score"] < -1.5) & (f_df["PEG"] > 0) & (f_df["PEG"] < 1.2)]
-        st.warning("💎 Contrarian Value: Quality ≥ 60 in a downtrend + PEG < 1.2 + price 1.5 std dev below its 5Y mean. Wait for a reversal before entry.")
+        f_df = f_df[(f_df["Quality"] >= SOLID) & down & (f_df["Z-Score"] < -1.5) & (f_df["PEG"] > 0) & (f_df["PEG"] < 1.2)]
+        st.warning(f"💎 Contrarian Value: Quality ≥ {SOLID} in a downtrend + PEG < 1.2 + price 1.5 std dev below its 5Y mean. Wait for a reversal before entry.")
     elif "Defensive Moat" in scan_mode:
-        f_df = f_df[(f_df["Debt/EBITDA"] < 2.0) & (f_df["ROE (%)"] > 15) & (f_df["Yield (%)"] > 2.0) & (f_df["Quality"] >= 60)]
-        st.success("🏰 Defensive Moat: Low debt (<2x EBITDA) + High ROE (>15%) + Dividend (>2%) + Quality ≥60. Fortress balance sheet for all-weather portfolio.")
+        f_df = f_df[(f_df["Debt/EBITDA"] < 2.0) & (f_df["ROE (%)"] > 15) & (f_df["Yield (%)"] > 2.0) & (f_df["Quality"] >= SOLID)]
+        st.success(f"🏰 Defensive Moat: Low debt (<2x EBITDA) + High ROE (>15%) + Dividend (>2%) + Quality ≥ {SOLID}. Fortress balance sheet for all-weather portfolio.")
     elif "Oversold Reversal Setup" in scan_mode:
-        f_df = f_df[(f_df["RSI (14)"] < 30) & (f_df["Smart Money"].str.contains("ACCUMULATION", na=False)) & (f_df["Quality"] >= 50)]
-        st.success("🌊 Oversold Reversal: RSI < 30 + accumulation flow + Quality ≥ 50. A setup to watch, not a validated edge.")
+        f_df = f_df[(f_df["RSI (14)"] < 30) & (f_df["Smart Money"].str.contains("ACCUMULATION", na=False)) & (f_df["Quality"] >= FAIR)]
+        st.success(f"🌊 Oversold Reversal: RSI < 30 + accumulation flow + Quality ≥ {FAIR}. A setup to watch, not a validated edge.")
     elif "Balanced Growth" in scan_mode:
-        f_df = f_df[(f_df["Quality"].between(55, 75)) & (f_df["P/E (Fwd)"].between(15, 30)) & (f_df["ROE (%)"] > 12) & up]
-        st.success("📊 Balanced Growth: Quality 55-75 + forward P/E 15-30x + ROE > 12% + uptrend.")
+        f_df = f_df[(f_df["Quality"].between(SOLID, ELITE)) & (f_df["P/E (Fwd)"].between(15, 30)) & (f_df["ROE (%)"] > 12) & up]
+        st.success(f"📊 Balanced Growth: Quality {SOLID}-{ELITE} + forward P/E 15-30x + ROE > 12% + uptrend.")
     elif "Distribution Warning" in scan_mode:
-        f_df = f_df[(f_df["Smart Money"].str.contains("DISTRIBUTION", na=False)) & (f_df["RSI (14)"] > 60) & (f_df["Quality"] < 55)]
-        st.error("🚨 Distribution Warning: volume flow reads DISTRIBUTION + RSI > 60 + Quality < 55.")
+        f_df = f_df[(f_df["Smart Money"].str.contains("DISTRIBUTION", na=False)) & (f_df["RSI (14)"] > 60) & (f_df["Quality"] < SOLID)]
+        st.error(f"🚨 Distribution Warning: volume flow reads DISTRIBUTION + RSI > 60 + Quality < {SOLID}.")
     elif "──" in scan_mode:
         # Just to catch the separator line if selected
         st.warning("Please select a valid screening preset.")
@@ -296,9 +319,11 @@ def render(ctx):
     with st.expander("Custom Refinement Sliders"):
         rcol1, rcol2, rcol3 = st.columns(3)
         with rcol1:
-            min_score = st.slider("Min Quality Score", 0, 100, 0)
-            rsi_range = st.slider("RSI Range", 0, 100, (0, 100))
+            min_score = st.slider("Min Quality", 0, 100, 0)
+            min_value = st.slider("Min Value", 0, 100, 0)
+            min_mom = st.slider("Min Momentum (timing)", 0, 100, 0)
         with rcol2:
+            rsi_range = st.slider("RSI Range", 0, 100, (0, 100))
             max_pe = st.slider("Max Forward P/E", 0, 200, 200)
             z_score_range = st.slider("Z-Score Range", -5.0, 5.0, (-5.0, 5.0), step=0.1)
         with rcol3:
@@ -313,6 +338,10 @@ def render(ctx):
     # (no forward P/E, no PEG) were silently removed from every preset, including "All".
     if min_score > 0:
         f_df = f_df[f_df["Quality"] >= min_score]
+    if min_value > 0:
+        f_df = f_df[f_df["Value"] >= min_value]
+    if min_mom > 0:
+        f_df = f_df[f_df["Momentum"] >= min_mom]
     if rsi_range != (0, 100):
         f_df = f_df[f_df["RSI (14)"].between(*rsi_range)]
     if max_pe < 200:
@@ -328,7 +357,7 @@ def render(ctx):
 
 
     # ── Display Results ───────────────────────────────────────────────────────
-    display_cols = ["Ticker", "Company", "Sector", "Decision", "MoS (%)", "Action", "Quality", "Smart Money",
+    display_cols = ["Ticker", "Company", "Sector", "Decision", "MoS (%)", "Action", "Quality", "Value", "Momentum", "Flags", "Smart Money",
                     "Upside (%)", "RSI (14)", "Z-Score",
                     "vs MA200 (%)", "P/E (Fwd)", "EV/EBITDA", "PEG", "FCF Margin (%)",
                     "ROE (%)", "Yield (%)", "Net Payout (%)", "Debt/EBITDA"]
@@ -437,7 +466,14 @@ def render(ctx):
                                                          help="Margin of safety vs base-case DCF value (blank = DCF not informative)"),
             "Action":          st.column_config.TextColumn("Signal", width="small",
                                                      help="Technical + quality composite — an input to the Decision, not a recommendation"),
-            "Quality":         st.column_config.ProgressColumn("Quality", min_value=0, max_value=100, format="%d", help="Fundamental Quality Score (v4.0)"),
+            "Quality":         st.column_config.ProgressColumn("Quality", min_value=0, max_value=100, format="%d",
+                                                         help=f"How good is the business? Returns on capital, margins, stability, balance sheet, cash conversion (sector-relative). {SOLID}+ = sound, {ELITE}+ = excellent."),
+            "Value":           st.column_config.ProgressColumn("Value", min_value=0, max_value=100, format="%d",
+                                                         help="How cheap is the price? FCF yield, EV/EBITDA, earnings yield, PEG, shareholder yield — vs sector peers and absolute bands. Analyst ratings are not used."),
+            "Momentum":        st.column_config.ProgressColumn("Momentum", min_value=0, max_value=100, format="%d",
+                                                         help="12-1 month return rank + trend. Timing only: never part of Quality or Value."),
+            "Flags":           st.column_config.TextColumn("Red flags", width="medium",
+                                                     help="Loss-making, debt without EBITDA, high net debt/EBITDA, uncovered dividend, negative equity"),
             "Smart Money":     st.column_config.TextColumn("Smart Money", width="small"),
             "Upside (%)":      st.column_config.NumberColumn("Upside", format="%+.1f%%"),
             "RSI (14)":        st.column_config.NumberColumn("RSI", format="%d"),
@@ -464,65 +500,28 @@ def render(ctx):
             st.session_state.radar_limit = 50
             st.rerun()
 
-    # ── Quality Score Methodology Note (v3.0 — synced with etl/utils.py) ────────
-    st.markdown("""
-    <div style='margin-top:16px; padding:14px 18px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:10px;'>
-        <div style='font-size:0.78rem; font-weight:700; color:#8899aa; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:10px;'>
-            Quality Score Methodology v4.0 — 7 Pillars, Max 100 Points
-        </div>
-        <div style='display:grid; grid-template-columns: repeat(7, 1fr); gap:8px;'>
-            <div style='background:rgba(52,152,219,0.08); border-left:3px solid #3498db; padding:8px 10px; border-radius:5px;'>
-                <div style='font-size:0.7rem; color:#3498db; font-weight:700;'>VALUATION</div>
-                <div style='font-size:0.65rem; color:#aaa; margin-top:3px;'>PEG · P/E · P/B<br><span style='color:#f1c40f;'>ROE excluded (no double-count)</span></div>
-                <div style='font-size:1rem; font-weight:800; color:#fff;'>≤ 20 pts</div>
-            </div>
-            <div style='background:rgba(46,204,113,0.08); border-left:3px solid #2ecc71; padding:8px 10px; border-radius:5px;'>
-                <div style='font-size:0.7rem; color:#2ecc71; font-weight:700;'>PROFITABILITY</div>
-                <div style='font-size:0.65rem; color:#aaa; margin-top:3px;'>FCF Margin · ROE<br><span style='color:#f1c40f;'>Tech: ≤ 30 pts</span></div>
-                <div style='font-size:1rem; font-weight:800; color:#fff;'>≤ 25 pts</div>
-            </div>
-            <div style='background:rgba(241,196,15,0.08); border-left:3px solid #f1c40f; padding:8px 10px; border-radius:5px;'>
-                <div style='font-size:0.7rem; color:#f1c40f; font-weight:700;'>FINANCIAL HEALTH</div>
-                <div style='font-size:0.65rem; color:#aaa; margin-top:3px;'>Debt / EBITDA ratio<br>Sector-aware bands</div>
-                <div style='font-size:1rem; font-weight:800; color:#fff;'>≤ 15 pts</div>
-            </div>
-            <div style='background:rgba(155,89,182,0.08); border-left:3px solid #9b59b6; padding:8px 10px; border-radius:5px;'>
-                <div style='font-size:0.7rem; color:#9b59b6; font-weight:700;'>NET PAYOUT YIELD</div>
-                <div style='font-size:0.65rem; color:#aaa; margin-top:3px;'>Dividend + Buyback<br><span style='color:#f1c40f;'>Tech capped: ≤ 5 pts</span></div>
-                <div style='font-size:1rem; font-weight:800; color:#fff;'>≤ 10 pts</div>
-            </div>
-            <div style='background:rgba(0,210,255,0.08); border-left:3px solid #00d2ff; padding:8px 10px; border-radius:5px;'>
-                <div style='font-size:0.7rem; color:#00d2ff; font-weight:700;'>MOMENTUM</div>
-                <div style='font-size:0.65rem; color:#aaa; margin-top:3px;'>MA Signal · RSI · Z-Score<br><span style='color:#f1c40f;'>Reduced 25→15 (tactical)</span></div>
-                <div style='font-size:1rem; font-weight:800; color:#fff;'>≤ 15 pts</div>
-            </div>
-            <div style='background:rgba(231,76,60,0.08); border-left:3px solid #e74c3c; padding:8px 10px; border-radius:5px;'>
-                <div style='font-size:0.7rem; color:#e74c3c; font-weight:700;'>ANALYST ESTIMATES</div>
-                <div style='font-size:0.65rem; color:#aaa; margin-top:3px;'>Upside % + Consensus<br><span style='color:#f1c40f;'>Increased 5→10 (high-signal)</span></div>
-                <div style='font-size:1rem; font-weight:800; color:#fff;'>≤ 10 pts</div>
-            </div>
-            <div style='background:rgba(0,255,160,0.08); border-left:3px solid #00ffa0; padding:8px 10px; border-radius:5px;'>
-                <div style='font-size:0.7rem; color:#00ffa0; font-weight:700;'>REV. CONSISTENCY</div>
-                <div style='font-size:0.65rem; color:#aaa; margin-top:3px;'>Rev. Growth + EPS Growth<br><span style='color:#f1c40f;'>New in v4.0</span></div>
-                <div style='font-size:1rem; font-weight:800; color:#fff;'>≤ 5 pts</div>
-            </div>
-        </div>
-        <div style='margin-top:10px; display:grid; grid-template-columns: 1fr 1fr; gap:8px; font-size:0.68rem;'>
-            <div style='background:rgba(231,76,60,0.07); border-left:2px solid #e74c3c; padding:6px 10px; border-radius:4px; color:#ccc;'>
-                🚨 <b style='color:#e74c3c;'>Red Flag Penalties (v4.0):</b>
-                Pre-profit stagnant (−12) · Early-stage PE&lt;0 (−3) · D/EBITDA &gt; 12 (−15) · D/EBITDA 8–12 (−10) · Value Trap (−5) · High Beta (up to −5)
-            </div>
-            <div style='background:rgba(241,196,15,0.07); border-left:2px solid #f1c40f; padding:6px 10px; border-radius:4px; color:#ccc;'>
-                🏷️ <b style='color:#f1c40f;'>Score Tiers (v4.0):</b>
-                ELITE ≥ 65 · SOLID ≥ 50 · FAIR ≥ 38 · WEAK &lt; 38 — Early Stage flag exempts pre-profit growth stocks from harsh PE penalty
-            </div>
-        </div>
-        <div style='margin-top:6px; font-size:0.65rem; color:#556677;'>
-            Score is fully sector-aware — Tech growth stocks use different P/E bands &amp; profitability weights vs. Utilities/Financials. All thresholds use linear interpolation (np.interp) to eliminate cliff effects. RSI uses real warehouse data (no default bias). P/B sector-adjusted for Financials.
-        </div>
-    </div>
-
-    """, unsafe_allow_html=True)
+    # ── Score methodology (core/scoring.py, thresholds in config/scoring_rules.yaml) ─────────
+    def _card(colour, title, body, extra):
+        return (f"<div style='background:rgba(255,255,255,0.03); border-left:3px solid {colour}; padding:10px 12px; border-radius:6px;'>"
+                f"<div style='font-size:0.78rem; color:{colour}; font-weight:800;'>{title}</div>"
+                f"<div style='font-size:0.72rem; color:#bbb; margin-top:4px;'>{body}</div>"
+                f"<div style='font-size:0.68rem; color:#778; margin-top:6px;'>{extra}</div></div>")
+    st.markdown(
+        "<div style='margin-top:16px; padding:14px 18px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:10px;'>"
+        "<div style='font-size:0.78rem; font-weight:700; color:#8899aa; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:10px;'>"
+        "Scores v5 — three independent 0-100 numbers per stock, ranked against sector peers</div>"
+        "<div style='display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:10px;'>"
+        + _card("#2ecc71", "QUALITY — the business", "Return on capital 20 · margins 25 · growth &amp; stability 20 · balance sheet (net debt/EBITDA) 20 · FCF conversion 15. Banks/insurers: ROE, net margin, stability.",
+                f"Red flags subtract points: loss-making, debt without EBITDA, net debt/EBITDA &gt; 5x, dividend not covered by FCF, negative equity. Tiers: ELITE ≥ {ELITE} · SOLID ≥ {SOLID} · FAIR ≥ {FAIR}.")
+        + _card("#3498db", "VALUE — the price", "FCF yield 25 · EV/EBITDA 20 · earnings yield 20 · PEG 15 · shareholder yield 10 · P/S 10, each half peer percentile, half absolute band.",
+                "No analyst ratings or price targets: consensus skews to “buy” and targets lag price. Shareholder yield is halved when the dividend is not covered.")
+        + _card("#f1c40f", "MOMENTUM — timing only", "12-1 month return rank across the universe (70%) + price above MA200 / golden cross (30%). RSI and Z-score are shown but not scored.",
+                "Never enters Quality or Value. Strong momentum can justify patience, never a BUY on its own.")
+        + "</div>"
+        "<div style='margin-top:8px; font-size:0.68rem; color:#667;'>Unknown inputs are excluded and the rest re-weighted — never scored as zero. "
+        "With less than 80% of a score's inputs observable it is pulled toward 50 (see Coverage in the Decision confidence). "
+        "The Decision uses Quality as a floor (a BUY needs ≥ 50) and Value as a cross-check on the DCF. "
+        "Whether any score predicts returns is tested on the Track Record tab.</div></div>", unsafe_allow_html=True)
 
     with st.expander("💡 Tactical Interpretation Guide"):
         st.write("""

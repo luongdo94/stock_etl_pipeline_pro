@@ -25,7 +25,12 @@ def render(ctx):
                "relative to SPY. Until this shows a statistically positive relationship, treat all "
                "BUY/SELL labels as unproven hypotheses.")
 
-    snaps = load_track_record()
+    all_snaps = load_track_record()
+    snaps = tr.current_definitions(all_snaps)
+    legacy = tr.history_days(all_snaps) - tr.history_days(snaps)
+    if legacy:
+        st.caption(f"ℹ️ {legacy} earlier snapshot day(s) used the pre-v5 Quality score (which mixed valuation, "
+                   f"momentum and analyst ratings) and are not comparable — they are excluded here.")
     days = tr.history_days(snaps)
     if days == 0:
         st.info("No score history yet. Snapshots are recorded automatically from the next ETL run "
@@ -37,9 +42,11 @@ def render(ctx):
                 f"{pd.to_datetime(snaps['as_of_date']).min():%d %b %Y} → {pd.to_datetime(snaps['as_of_date']).max():%d %b %Y}.")
 
     # ── 1. Information coefficient per horizon ─────────────────────────────────
+    avail = [k for k in tr.SCORES if k in fr.columns and fr[k].notna().any()]
+    score_col = st.radio("Score", avail, format_func=lambda k: tr.SCORES[k], horizontal=True) if len(avail) > 1 else "quality"
     cols = st.columns(len(tr.HORIZONS))
     for col, h in zip(cols, tr.HORIZONS):
-        ic = tr.information_coefficient(fr, h)
+        ic = tr.information_coefficient(fr, h, score_col)
         if ic["ic"] is None:
             col.metric(f"IC · {_H_LABEL[h]}", "—", help="Needs snapshots with a known outcome")
         else:
@@ -47,13 +54,14 @@ def render(ctx):
             col.metric(f"IC · {_H_LABEL[h]}", f"{ic['ic']:+.3f}",
                        delta=f"t = {ic['t_stat']:.1f} · {ic['n_days']} days" if ic["t_stat"] is not None else f"{ic['n_days']} days",
                        delta_color="normal" if sig and ic["ic"] > 0 else "off")
-    st.caption("IC = average daily rank correlation between Quality score and the following excess return. "
-               "Rule of thumb: IC > 0.03 with t > 2 is a useful signal; around 0 means no information.")
+    st.caption(f"IC = average daily rank correlation between the {tr.SCORES[score_col]} score and the following excess "
+               f"return. Rule of thumb: IC > 0.03 with t > 2 is a useful signal; around 0 means no information. "
+               f"Quality is expected to pay off slowly, Value over quarters, Momentum over months.")
 
     h = st.radio("Horizon", tr.HORIZONS, format_func=lambda x: _H_LABEL[x], horizontal=True, index=1)
 
     # ── 2. Quintiles ──────────────────────────────────────────────────────────
-    q = tr.quintile_returns(fr, h)
+    q = tr.quintile_returns(fr, h, score_col)
     c1, c2 = st.columns(2)
     with c1:
         st.markdown(f"**Excess return vs SPY by score quintile ({_H_LABEL[h]})**")

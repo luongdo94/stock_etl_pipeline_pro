@@ -11,10 +11,11 @@ Dieser Indikator bewertet die Gesundheit des allgemeinen Markttrends und dient z
 
 | Faktor | Bedingung | Gewichtung |
 | :--- | :--- | :--- |
-| **SPY Medium-term** | SPY-Schlusskurs > MA50 | +25 Punkte |
-| **SPY Long-term** | SPY-Schlusskurs > MA200 | +25 Punkte |
-| **Marktbreite (Breadth)** | % der Aktien im Universum > MA50 liegt über 50% | +30 Punkte |
-| **Makro-Ausrichtung** | Makro-Status (VIX, DXY, TNX) ist `RISK_ON` | +20 Punkte |
+| **SPY-Trend** | Schluss über MA50 und MA200 (eines davon = 12) | 25 |
+| **SPY-Momentum** | 5-Tage-Rendite, -3 % → 0 … +3 % → 10 | 10 |
+| **Marktbreite** | % der Aktien über MA50, 25 % → 0 … 75 % → 30 | 30 |
+| **VIX** | 15 → 10 … 40 → 0 | 10 |
+| **Makro** | DXY-5-Tage-Bewegung und 10Y-Änderung ruhig = 10, leichte Reibung = 5 | 10 |
 
 *Hinweis: Wenn der Makro-Status `NEUTRAL` ist, werden nur +10 Punkte hinzugefügt.*
 
@@ -35,53 +36,22 @@ Dieser Index repräsentiert die "intrinsische Qualität" des Marktes oder einer 
 Alle Daten im System (Preise, Umsatz, Marktkapitalisierung) werden bereits im Extraktionsschritt der ETL-Pipeline in **Euro (EUR)** normalisiert.
 `Market Quality Index = Σ(Quality Score * Market Cap) / Σ(Market Cap)`
 
-### 2.2. Individual Quality Score v4.1 (100-Punkte-Skala)
-Jede Aktie wird anhand von **7 finanziellen Säulen** bewertet (config-driven aus `config/scoring_rules.yaml`):
+### 2.2. Aktien-Scores v5: Quality, Value, Momentum
+Jede Aktie erhält **drei unabhängige Scores von 0-100** (`core/scoring.py`; alle Schwellen und Gewichte in `config/scoring_rules.yaml`). Sie beantworten verschiedene Fragen und werden nie vermischt:
 
-#### Säule 1: Valuation (Max. 20 Punkte)
-- **PEG-Verhältnis:** Bevorzugt < 1.5 (Wachstum zu angemessenem Preis). Punkte 0-12.
-- **KGV (P/E):** Branchenangepasste Bänder (Tech: 15-35 ideal, Value: 10-22 ideal). Punkte 0-12.
-- **KBV (P/B):** Finanzwerte haben andere Normen (1.0-1.8 ideal) vs. Tech/Industrie (< 3.0). Punkte 0-8.
-- **Early-Stage-Logik:** Wachstumsaktien ohne Gewinn (negatives KGV + Umsatzwachstum > 15% + sich verbesserndes EPS) sind von harten KGV-Strafen befreit und werden stattdessen nach Umsatzbeschleunigung bewertet.
+| Score | Frage | Eingaben (Gewicht) |
+| :--- | :--- | :--- |
+| **Quality** | Ist es ein gutes Unternehmen? | Kapitalrendite 20 · Betriebs-/Brutto-/FCF-Marge 25 · Wachstum & Stabilität 20 · Bilanz (Nettoverschuldung/EBITDA, Current Ratio) 20 · Cash-Conversion (FCF / Gewinn) 15. Banken/Versicherer: ROE 40, Nettomarge 25, Wachstum & Stabilität 35. |
+| **Value** | Ist der Preis attraktiv? | FCF-Rendite 25 · EV/EBITDA 20 · Gewinnrendite 20 · PEG 15 · Aktionärsrendite 10 · KUV 10. |
+| **Momentum** | Wie verhält sich der Kurs? | Rang der 12-1-Monats-Rendite im Universum (70 %) + Kurs über MA200 / Golden Cross (30 %). **Nur fürs Timing.** |
 
-#### Säule 2: Profitability (Max. 25-30 Punkte)
-- **FCF-Marge:** > 15% = ausgezeichnet (15 Pkt), > 8% = gut (12 Pkt), > 5% = fair (6 Pkt).
-- **ROE:** > 15% = ausgezeichnet (10 Pkt), > 10% = gut (8 Pkt), > 5% = fair (4 Pkt).
-- **Tech-Bonus:** +5 Punkte bei FCF > 20% (außergewöhnliche Cashgenerierung für Tech/Wachstumswerte).
-- **Early-Stage-Kredit:** Teilweise Rentabilitätspunkte (0-7 Pkt), wenn Verluste schrumpfen (positives Gewinnwachstum).
-- **Obergrenze:** 30 Punkte für Tech/Wachstumssektoren, 25 Punkte für andere.
-
-#### Säule 3: Financial Health (Max. 15 Punkte)
-- **Schulden/EBITDA:** < 2.0 = ausgezeichnet (15 Pkt), < 4.0 = gut (8 Pkt), > 8.0 = Risikozone.
-- **Branchenangepasst:** Finanzwerte/Versorger haben höhere Toleranz (< 6.0 akzeptabel aufgrund des Geschäftsmodells).
-
-#### Säule 4: Net Payout Yield (Max. 10 Punkte, Tech-Obergrenze 5 Punkte)
-- **Dividenden + Rückkaufrendite:** 4-6% = ideal (9-10 Pkt), 2.5-4% = gut (6 Pkt), 1-2.5% = fair (3 Pkt).
-- **Tech-Obergrenze:** Wachstumswerte auf 5 Punkte begrenzt, um Reinvestitionsstrategien nicht zu bestrafen.
-
-#### Säule 5: Context & Momentum (Max. 15 Punkte) — **Reduziert von 25 in v3.0**
-- **MA-Signal:** Bullish = +8 Pkt, Neutral = +3 Pkt, Bearish = 0 Pkt.
-- **RSI:** 40-60 (neutrale Zone) = +5 Pkt, < 30 (überverkauft) = konträrer Bonus (0-3 Pkt), > 70 (überkauft) = Strafe (0 bis -2 Pkt).
-- **Z-Score:** < -1.5 (tiefer Wert) = +4 Pkt, > +2.0 (überhitzt) = -2 bis -4 Pkt.
-
-#### Säule 6: Analyst Estimates (Max. 10 Punkte) — **Erhöht von 5 in v3.0**
-- **Kurspotenzial:** 30%+ = +5 Pkt, 15-30% = +4 Pkt, 5-15% = +2 Pkt, < 5% = +1 Pkt.
-- **Konsensqualität:** Strong Buy = +5 Pkt, Buy = +3 Pkt, Hold = +1 Pkt, Sell/Underperform = -2 Pkt.
-- **Begründung:** Kollektive Analystenforschung spiegelt tiefgreifende fundamentale Due Diligence wider und ist ein hochwertiger Indikator.
-
-#### Säule 7: Revenue Consistency (Max. 5 Punkte) — **NEU in v4.0**
-- **Beschleunigend:** Umsatzwachstum > 15% + Gewinnwachstum > 10% = 5 Pkt (starkes zweistelliges Wachstum bei beiden).
-- **Stabil:** Umsatzwachstum > 5% + Gewinne nicht rückläufig = 3 Pkt (moderates Wachstum, Verluste weiten sich nicht aus).
-- **Positiv:** Umsatzwachstum > 0% = 2 Pkt (zumindest wächst die Topline).
-- **Rückläufig:** Umsatz < -5% = 0 Pkt (keine Punkte für schrumpfendes Geschäft).
-
-#### Strafen (Red Flags) — **Verschärft in v4.0**
-- **Negatives KGV:** -3 Pkt (Early Stage mit hohem Wachstum), -8 Pkt (hohes Wachstum aber unrentabel), -15 Pkt (stagnierendes unrentables Geschäft).
-- **Hohe Verschuldung:** Schulden/EBITDA > 8 = -5 Pkt, > 12 = -15 Pkt (kritisches Notlagesignal). Schwelle verschärft von 10 in v3.0.
-- **Value Trap:** Z-Score < -1.5 + Sell-Konsens = -5 Pkt (billig aus gutem Grund).
-- **Beta-Risiko:** > 1.8 = -1 bis -5 Pkt (hohe Volatilitätsstrafe), < 0.8 (Nicht-Tech) = +2 bis +5 Pkt (defensiver Stabilitätsbonus).
-
-**Config-Driven-Architektur:** Alle Schwellenwerte und Gewichtungen werden aus `config/scoring_rules.yaml` geladen, was eine einfache Anpassung ohne Codeänderungen ermöglicht. Verbesserte Fehlerbehandlung mit sicheren Fallbacks für fehlende Daten.
+**Aufbau**
+- **Peer-Vergleich statt universeller Maßstab.** Margen und Multiplikatoren werden als Perzentil innerhalb der Branche (sonst Sektor, sonst Universum bei weniger als 5 Peers) bewertet; Value mischt dies 50/50 mit einem absoluten Band. Kapitalrendite, Verschuldung und Cash-Conversion nutzen absolute Bänder.
+- **Unbekannt ist nicht null.** Fehlende Eingaben entfallen, die übrigen Gewichte werden neu normiert. Sind weniger als 80 % des Gewichts beobachtbar, wird der Score Richtung 50 gezogen; die Lücke erscheint als *Coverage* und senkt das Vertrauen der Decision.
+- **Rote Flaggen ziehen Quality-Punkte ab** (max. 25): Verlust (-8), Schulden ohne positives EBITDA (-10), Nettoverschuldung/EBITDA über 5x (-8) bzw. 8x (-15), Dividende nicht durch FCF gedeckt (-5), negatives Eigenkapital (-5).
+- **Nicht bewertet:** Analystenempfehlungen und Kursziele, Beta, RSI und Z-Score.
+- **Verwendung in der Decision:** BUY-Kandidaten brauchen Quality ≥ 50; ein DCF-„günstig“, das ein Value-Score unter 30 widerlegt, senkt das Vertrauen.
+- **Grenzen:** Kapitalrendite = Nettogewinn / (Eigenkapital + Schulden) aus Jahresabschlüssen; Nettoverschuldung aus Yahoos EV abgeleitet; Verwässerung wird nicht gemessen; die Gewichte sind Urteil, bis der Track-Record-Tab den IC je Score belegt (Snapshots tragen `score_version`).
 
 ---
 
