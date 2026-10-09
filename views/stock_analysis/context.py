@@ -117,6 +117,15 @@ def build(ctx, deep_ticker):
         "components": dict(_row.iloc[0]["Components"]) if not _row.empty else {},
     }
     ai_score = scores["quality"] if scores["quality"] is not None else 50.0
+    # Upgrade / downgrade counts (30d) shown under the Revisions tile
+    _fe = ctx.get("forward_estimates_full")
+    scores["rev_up"] = scores["rev_down"] = None
+    if _fe is not None and not _fe.empty and {"ticker", "upgrades_30d", "downgrades_30d"} <= set(_fe.columns):
+        _fr = _fe[_fe["ticker"] == deep_ticker]
+        if not _fr.empty:
+            _u, _d_ = _fr.iloc[0]["upgrades_30d"], _fr.iloc[0]["downgrades_30d"]
+            scores["rev_up"] = float(_u) if pd.notnull(_u) else None
+            scores["rev_down"] = float(_d_) if pd.notnull(_d_) else None
 
     # Levels and the 52-week range always use the FULL price history — `df_deep` follows the
     # sidebar horizon (1M → "52-week high" was the 1-month high) and is only used for display.

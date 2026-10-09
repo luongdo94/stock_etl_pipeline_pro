@@ -43,7 +43,7 @@ def render(dd, ctx):
             return float(v) if v is not None and pd.notnull(v) else default
 
         # ── ROW 1: Forward Valuation KPIs ──────────────────────────────────
-        kc1, kc2, kc3, kc4, kc5 = st.columns(5)
+        kc1, kc2, kc3, kc4 = st.columns(4)
 
         # Forward P/E: computed on-the-fly — cur_price (EUR) ÷ eps_est_next_y (native→EUR)
         # NOT read from DB because ETL stored it with a EUR/USD currency mismatch.
@@ -72,7 +72,6 @@ def render(dd, ctx):
         _n_analysts     = _fv("n_analysts_cur_y")
         _upgrades       = _fv("upgrades_30d")
         _downgrades     = _fv("downgrades_30d")
-        _revision_momentum = _fe.get("revision_momentum", "NEUTRAL")
 
         with kc1:
             _pe_color  = "#2ecc71" if (_fwd_pe and _trail_pe and _fwd_pe < _trail_pe) else "#f1c40f"
@@ -107,17 +106,6 @@ def render(dd, ctx):
             </div>""", unsafe_allow_html=True)
 
         with kc4:
-            _mom_color = {"POSITIVE": "#2ecc71", "NEGATIVE": "#e74c3c", "NEUTRAL": "#f1c40f"}.get(_revision_momentum, "#f1c40f")
-            _mom_icon  = {"POSITIVE": "⬆️", "NEGATIVE": "⬇️", "NEUTRAL": "➡️"}.get(_revision_momentum, "➡️")
-            st.markdown(f"""
-            <div style='background:rgba(255,255,255,0.03); border:1px solid {_mom_color}44;
-                        border-radius:8px; padding:12px; text-align:center;'>
-                <div style='color:#8899aa; font-size:0.65rem; text-transform:uppercase;'>Revision Signal</div>
-                <div style='color:{_mom_color}; font-size:1.2rem; font-weight:900;'>{_mom_icon} {_revision_momentum}</div>
-                <div style='color:#556677; font-size:0.65rem;'>{int(_upgrades or 0)}↑ / {int(_downgrades or 0)}↓ (30d)</div>
-            </div>""", unsafe_allow_html=True)
-
-        with kc5:
             st.markdown(f"""
             <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08);
                         border-radius:8px; padding:12px; text-align:center;'>

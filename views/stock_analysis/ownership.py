@@ -12,7 +12,7 @@ def render(dd, ctx):
     meta = dd.meta
     # ── OWNERSHIP & SHORT SQUEEZE RISK ──────────────────────────────
     st.markdown("---")
-    render_header("search", "Smart Money Flow & Short Squeeze Risk")
+    render_header("search", "Ownership & Short-Squeeze Risk")
     
     inst_own = meta.get("inst_ownership", 0)
     insider_own = meta.get("insider_ownership", 0)
@@ -28,7 +28,7 @@ def render(dd, ctx):
     
     col_own1, col_own2 = st.columns([1, 1])
     with col_own1:
-        labels = ['Institutions (Smart Money)', 'Insiders', 'Public/Retail Float']
+        labels = ['Institutions', 'Insiders', 'Public/Retail Float']
         values = [inst_own, insider_own, public_own]
         colors = ['#00d2ff', '#3a7bd5', 'rgba(255,255,255,0.05)']
         

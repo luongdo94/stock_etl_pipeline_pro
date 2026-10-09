@@ -38,7 +38,7 @@ def render(dd, ctx):
         return "N/A" if v is None else fmt.format(v)
 
     with st.container():
-        kcol1, kcol2, kcol3, kcol4, kcol5, kcol6 = st.columns(6)
+        kcol1, kcol2, kcol3, kcol4, kcol5 = st.columns(5)
 
         with kcol1:
             st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Valuation & Size</div>", unsafe_allow_html=True)
@@ -48,9 +48,8 @@ def render(dd, ctx):
             else: m_cap_txt = f"€{m_cap/1e6:.0f}M"
             
             render_metric_row("Market Cap", m_cap_txt)
-            fwd_pe_txt = f"Fwd: {meta.get('forward_pe', 0):.1f}" if pd.notnull(meta.get('forward_pe')) and meta.get('forward_pe', 0) > 0 else ""
             pe_val = f"{meta['pe_ratio']:.1f}" if pd.notnull(meta['pe_ratio']) else "N/A"
-            render_metric_row("P/E", pe_val, delta=fwd_pe_txt)
+            render_metric_row("P/E (trailing)", pe_val, help_text="Forward P/E is in the Analyst expectations section")
             
             peg_raw = meta.get('peg_ratio', 0)
             peg_col = "#2ecc71" if pd.notnull(peg_raw) and 0 < peg_raw <= 1.0 else ("#e74c3c" if pd.notnull(peg_raw) and peg_raw > 2.0 else None)
@@ -104,7 +103,7 @@ def render(dd, ctx):
             st.markdown("</div>", unsafe_allow_html=True)
 
         with kcol3:
-            st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Solvency</div>", unsafe_allow_html=True)
+            st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Risk & Solvency</div>", unsafe_allow_html=True)
             debt_eq_raw = meta.get('debt_to_equity', 0)
             if pd.notnull(debt_eq_raw) and debt_eq_raw != 0:
                 debt_eq_txt = f"{(debt_eq_raw / 100.0):.2f}x"
@@ -133,32 +132,18 @@ def render(dd, ctx):
             render_metric_row("Debt/EBITDA", f"{debt_ebitda:.2f}x" if debt_ebitda > 0 else "N/A", value_color=de_col)
             render_metric_row("Current Ratio", _txt(curr_rat, "{:.2f}"), value_color=c_col)
             render_metric_row("Quick Ratio",   _txt(quick_rat, "{:.2f}"), value_color=q_col)
-            st.markdown("</div>", unsafe_allow_html=True)
-
-        with kcol4:
-            st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Risk & Volume</div>", unsafe_allow_html=True)
             beta_val = meta.get('beta', 1.0)
             if pd.notnull(beta_val) and beta_val != 0:
                 beta_col = "#e74c3c" if beta_val > 1.5 else ("#3498db" if beta_val < 0.8 else None)
                 render_metric_row("Beta", f"{beta_val:.2f}", value_color=beta_col, help_text="🔴 > 1.5 (High Volatility) | 🔵 < 0.8 (Defensive)")
             else:
                 render_metric_row("Beta", "N/A")
-            
-            _io = _num(meta.get('inst_ownership'))
-            inst = _io * 100 if _io is not None else None
-            inst_col = None if inst is None else ("#2ecc71" if inst > 60 else ("#e74c3c" if inst < 10 else None))
-            render_metric_row("Inst Own", _txt(inst, "{:.0f}%"), value_color=inst_col, help_text="🟢 > 60% (Strong Institutional Backing)")
-
-            _sf = _num(meta.get('short_percent_of_float'))
-            short_val = _sf * 100 if _sf is not None else None
-            short_col = None if short_val is None else ("#e74c3c" if short_val > 10 else ("#2ecc71" if short_val <= 2 else None))
-            render_metric_row("Short Float", _txt(short_val, "{:.1f}%"), value_color=short_col, help_text="🔴 > 10% (Squeeze Risk) | 🟢 < 2% (Safe)")
             st.markdown("</div>", unsafe_allow_html=True)
 
-        with kcol5:
+        with kcol4:
             st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Price & Context</div>", unsafe_allow_html=True)
             _tgt = _num(target_p)
-            render_metric_row("Analyst Target", _txt(_tgt if _tgt else None, "€{:.2f}"),
+            render_metric_row("Analyst Target (not in Decision)", _txt(_tgt if _tgt else None, "€{:.2f}"),
                               delta=upside if _tgt else None, is_pct=True)
             
             pe_5y_avg    = meta.get('pe_5y_avg', 0)
@@ -171,7 +156,7 @@ def render(dd, ctx):
             render_metric_row("Z-Score (5Y)",  f"{z_score:.2f}", value_color=zs_col)
             st.markdown("</div>", unsafe_allow_html=True)
 
-        with kcol6:
+        with kcol5:
             # ── EARNINGS CALENDAR (v13.0) ──
             e_row = earnings_cal[earnings_cal['ticker'] == deep_ticker]
             e_header = _header_style
