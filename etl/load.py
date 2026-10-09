@@ -172,6 +172,8 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
     
     ensure_company_info(conn)
     ensure_insider_tables(conn)
+    from etl.earnings_events import ensure_table as ensure_earnings_events
+    ensure_earnings_events(conn)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS raw.historical_financials (
             ticker          VARCHAR,

@@ -19,7 +19,7 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 from tests.synthetic_warehouse import build  # noqa: E402
 from views import scanner as scanner_view  # noqa: E402
 
-TABS = ["🌐 Market Pulse", "🔭 Stock Scanner", "🔬 Stock Analysis", "🎲 Risk Lab",
+TABS = ["🌐 Market Pulse", "🔭 Stock Scanner", "🔬 Stock Analysis", "🗓️ Earnings", "🎲 Risk Lab",
         "🧪 Strategy Lab", "📈 Track Record", "📋 Watchlist", "💼 Portfolio", "📖 Docs"]
 
 pytestmark = pytest.mark.smoke
@@ -155,3 +155,16 @@ def test_risk_lab_computes_a_range_without_forecasting_direction(warehouse):
     assert "calibration" in html.lower() or "Does the range hold up" in html
     for gone in ("STRONG LONG", "BUY / ACCUMULATE", "REDUCE / HEDGE", "ML forecast", "Smart Blend"):
         assert gone not in html, gone
+
+
+def test_earnings_tab_shows_history_upcoming_and_study(warehouse):
+    at = _app("🗓️ Earnings")
+    at.session_state["active_ticker"] = "AAPL"
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    html = " ".join(m.value for m in at.markdown)
+    assert "Beat rate" in html and "Typical move" in html and "Next report" in html
+    assert any("reports from" in m.value for m in at.markdown)               # universe drift study rendered
+    tables = [d.value for d in at.dataframe]
+    assert any("Surprise" in getattr(t, "columns", []) for t in tables)       # per-report history
+    assert any("Typical move" in getattr(t, "columns", []) for t in tables)   # upcoming reports

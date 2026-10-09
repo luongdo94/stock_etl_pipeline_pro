@@ -33,6 +33,7 @@ RAW_TICKER_TABLES = (
     "raw.stock_prices", "raw.company_info", "raw.historical_financials", "raw.quarterly_financials",
     "raw.cashflows", "raw.earnings_calendar", "raw.earnings_surprise", "raw.forward_estimates",
     "raw.hist_fcf", "raw.hist_fcf_quarterly", "raw.insider_summary", "raw.insider_transactions",
+    "raw.earnings_events",
 )
 
 
