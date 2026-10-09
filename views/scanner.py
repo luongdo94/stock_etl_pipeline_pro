@@ -7,9 +7,9 @@ from core import scan_presets as presets
 from core.scan_presets import ELITE, FAIR, SOLID
 
 # Fixed column set: the three scores already summarise the detail columns, which stay one click away.
-DEFAULT_COLS = ["Ticker", "Company", "Decision", "MoS (%)", "Quality", "Value", "Momentum", "Revisions", "Flags",
-                "ADV (EUR M)", "Action", "RSI (14)"]
-EXTRA_COLS = ["Sector", "Smart Money", "Z-Score", "vs MA200 (%)", "P/E (Fwd)", "EV/EBITDA", "PEG", "FCF Margin (%)",
+DEFAULT_COLS = ["Ticker", "Company", "Verdict", "MoS (%)", "Quality", "Value", "Momentum", "Revisions", "Flags",
+                "ADV (EUR M)", "RSI (14)"]
+EXTRA_COLS = ["Sector", "Action", "Smart Money", "Z-Score", "vs MA200 (%)", "P/E (Fwd)", "EV/EBITDA", "PEG", "FCF Margin (%)",
               "ROE (%)", "Yield (%)", "Net Payout (%)", "Debt/EBITDA"]
 from ui.icons import render_header
 
@@ -231,6 +231,8 @@ def render(ctx):
                   [display_cols])
 
     st.markdown(f"**Found {len(display_df)} stocks** — sorted by Decision, then margin of safety, then Quality")
+    st.caption("▲ timing context supportive · neutral ▼ against (trend, quality, value, volume flow). "
+               "The label is the recommendation; the arrow is context only.")
     
     # ── PAGINATION / LIMIT LOGIC ──────────────────────────────────────────────
     if 'radar_limit' not in st.session_state:
@@ -305,7 +307,7 @@ def render(ctx):
         def on(*cols):
             return [c for c in cols if c in df.columns]
 
-        styler = df.style.map(highlight_action, subset=on("Decision", "Action")) \
+        styler = df.style.map(highlight_action, subset=on("Verdict", "Action")) \
                          .map(highlight_smart_money, subset=on("Smart Money")) \
                          .map(color_pos_neg, subset=on("vs MA200 (%)")) \
                          .map(color_zscore, subset=on("Z-Score")) \
@@ -322,8 +324,10 @@ def render(ctx):
             "Ticker":          st.column_config.TextColumn("Ticker", width="small"),
             "Company":         st.column_config.TextColumn("Company", width="medium"),
             "Sector":          st.column_config.TextColumn("Sector", width="small"),
-            "Decision":        st.column_config.TextColumn("Decision", width="small",
-                                                       help="The single recommendation (same logic as the Decision Summary in Stock Analysis)"),
+            "Verdict":         st.column_config.TextColumn("Decision", width="medium",
+                                                       help="The recommendation (same as the Decision Summary in Stock Analysis). "
+                                                            "▲ / · / ▼ = timing context (trend, quality, value, volume flow) supportive / neutral / against. "
+                                                            "The arrow never changes the recommendation."),
             "MoS (%)":         st.column_config.NumberColumn("MoS", format="%+d%%",
                                                          help="Margin of safety vs base-case DCF value (blank = DCF not informative)"),
             "Action":          st.column_config.TextColumn("Signal", width="small",
@@ -393,7 +397,7 @@ def render(ctx):
     with st.expander("💡 How to read the table"):
         st.write("""
         - **Decision** is the recommendation; **MoS** (margin of safety vs the DCF base value) is its evidence. Blank = DCF not informative.
-        - **Signal** is context (trend, quality, value, reward/risk, volume flow) — an input to the Decision, never a recommendation.
+        - The arrow after the Decision is the **timing context** (the Signal): ▲ supportive, · neutral, ▼ against — trend, quality, value, reward/risk, volume flow. Add the "Action" column for the full Signal label.
         - **Quality / Value / Momentum** are independent 0-100 ranks vs sector peers; **Revisions** is the 30-day change in analysts' EPS estimates.
         - A cheap stock with Quality below 45 is a value-trap candidate; a high Quality stock with RSI < 30 is a pullback to research, not a signal.
         """)
