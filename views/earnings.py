@@ -125,6 +125,8 @@ def render(ctx):
         ])
         st.markdown(f"<div style='display:grid; grid-template-columns:repeat(5,1fr); gap:8px; margin:8px 0;'>{tiles}</div>",
                     unsafe_allow_html=True)
+        st.caption("Upcoming dates and times come from Yahoo and can be estimates until the company confirms them; "
+                   "times are shown in the exchange's time zone.")
 
         if rt.empty:
             st.info("No reported quarter with price data to measure a reaction.")
