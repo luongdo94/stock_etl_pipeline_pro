@@ -77,3 +77,10 @@ def test_overextended_needs_both_rsi_and_z_score():
 def test_value_trap_and_red_flags():
     assert hits(label("🪤"), row(Value=70, Quality=40), row(Value=70, Quality=60), row(Value=np.nan, Quality=10)) == ["T0"]
     assert hits(label("🚩"), row(Flags="Loss-making"), row(Flags=np.nan), row()) == ["T0"]
+
+def test_scanner_table_has_a_slim_fixed_default_and_unique_columns():
+    from views import scanner
+    assert len(scanner.DEFAULT_COLS) == 12
+    assert len(set(scanner.DEFAULT_COLS + scanner.EXTRA_COLS)) == len(scanner.DEFAULT_COLS + scanner.EXTRA_COLS)
+    assert "Upside (%)" not in scanner.DEFAULT_COLS + scanner.EXTRA_COLS           # analyst target: not used by Value / Decision
+    assert {"Decision", "MoS (%)", "Quality", "Value", "Momentum", "Flags"} <= set(scanner.DEFAULT_COLS)
