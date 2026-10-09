@@ -1,6 +1,7 @@
 # etl/extract.py
 import yfinance as yf
 import pandas as pd
+import inspect
 import logging
 import yaml
 from datetime import datetime, timedelta
@@ -346,6 +347,30 @@ def _statement_currency(t_data: pd.DataFrame, ticker: str) -> str:
         if not codes.empty:
             return str(codes.iloc[-1])
     return major_currency(_guess_currency(ticker))
+
+
+def _fetch_statement(yq, method: str, frequency: str) -> pd.DataFrame:
+    """
+    Call a yahooquery financial-statement method (income_statement / balance_sheet / cash_flow).
+
+    - `trailing=False` is passed only if the installed yahooquery accepts it: balance_sheet() has no
+      such parameter (TypeError otherwise), income_statement()/cash_flow() do.
+    - yahooquery returns a str/dict error payload instead of a DataFrame when Yahoo has no data
+      for a symbol; that is "no data" (empty frame), not a crash.
+    """
+    fn = getattr(yq, method)
+    try:
+        accepts_trailing = "trailing" in inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        accepts_trailing = False
+    kwargs = {"frequency": frequency}
+    if accepts_trailing:
+        kwargs["trailing"] = False
+    result = fn(**kwargs)
+    if not isinstance(result, pd.DataFrame):
+        logger.debug(f"   ↳ {method}({frequency}) returned {type(result).__name__} (no data): {str(result)[:120]}")
+        return pd.DataFrame()
+    return result
 
 
 def _safe_float(val):
@@ -938,8 +963,8 @@ def extract_historical_financials(tickers: dict = None) -> pd.DataFrame:
         logger.info(f"   📊 Fetching financials batch {i//batch_size + 1}/{len(ticker_keys)//batch_size + 1}...")
         try:
             yq = YQTicker(batch, asynchronous=True)
-            inc_df = yq.income_statement(frequency='a', trailing=False)
-            bal_df = yq.balance_sheet(frequency='a')
+            inc_df = _fetch_statement(yq, 'income_statement', 'a')
+            bal_df = _fetch_statement(yq, 'balance_sheet', 'a')
             
             # Merge Income Statement and Balance Sheet
             if isinstance(inc_df, pd.DataFrame) and not inc_df.empty and isinstance(bal_df, pd.DataFrame) and not bal_df.empty:
@@ -966,8 +991,8 @@ def extract_historical_financials(tickers: dict = None) -> pd.DataFrame:
             waited = _backoff_sleep(attempt=1)
             try:
                 yq = YQTicker(ticker, asynchronous=False)
-                inc_df = yq.income_statement(frequency='a', trailing=False)
-                bal_df = yq.balance_sheet(frequency='a', trailing=False)
+                inc_df = _fetch_statement(yq, 'income_statement', 'a')
+                bal_df = _fetch_statement(yq, 'balance_sheet', 'a')
                 if isinstance(inc_df, pd.DataFrame) and not inc_df.empty and isinstance(bal_df, pd.DataFrame) and not bal_df.empty:
                     if 'symbol' in inc_df.index.names: inc_df = inc_df.reset_index()
                     if 'symbol' in bal_df.index.names: bal_df = bal_df.reset_index()
@@ -992,8 +1017,8 @@ def extract_historical_financials(tickers: dict = None) -> pd.DataFrame:
                 session, headers = _make_evasion_session()
                 yq = YQTicker(ticker, asynchronous=False, session=session)
                 # ✅ Fetch BOTH statements (bal_df was missing in old Pass 3)
-                inc_df = yq.income_statement(frequency='a', trailing=False)
-                bal_df = yq.balance_sheet(frequency='a', trailing=False)
+                inc_df = _fetch_statement(yq, 'income_statement', 'a')
+                bal_df = _fetch_statement(yq, 'balance_sheet', 'a')
                 if isinstance(inc_df, pd.DataFrame) and not inc_df.empty and isinstance(bal_df, pd.DataFrame) and not bal_df.empty:
                     if 'symbol' in inc_df.index.names: inc_df = inc_df.reset_index()
                     if 'symbol' in bal_df.index.names: bal_df = bal_df.reset_index()
@@ -1083,8 +1108,8 @@ def extract_quarterly_financials(tickers: dict = None) -> pd.DataFrame:
         logger.info(f"   🕒 Fetching quarterly batch {i//batch_size + 1}/{len(ticker_keys)//batch_size + 1}...")
         try:
             yq = YQTicker(batch, asynchronous=True)
-            inc_df = yq.income_statement(frequency='q', trailing=False)
-            bal_df = yq.balance_sheet(frequency='q')
+            inc_df = _fetch_statement(yq, 'income_statement', 'q')
+            bal_df = _fetch_statement(yq, 'balance_sheet', 'q')
             
             if isinstance(inc_df, pd.DataFrame) and not inc_df.empty and isinstance(bal_df, pd.DataFrame) and not bal_df.empty:
                 if 'symbol' in inc_df.index.names: inc_df = inc_df.reset_index()
@@ -1108,8 +1133,8 @@ def extract_quarterly_financials(tickers: dict = None) -> pd.DataFrame:
             waited = _backoff_sleep(attempt=1)
             try:
                 yq = YQTicker(ticker, asynchronous=False)
-                inc_df = yq.income_statement(frequency='q', trailing=False)
-                bal_df = yq.balance_sheet(frequency='q', trailing=False)
+                inc_df = _fetch_statement(yq, 'income_statement', 'q')
+                bal_df = _fetch_statement(yq, 'balance_sheet', 'q')
                 if isinstance(inc_df, pd.DataFrame) and not inc_df.empty and isinstance(bal_df, pd.DataFrame) and not bal_df.empty:
                     if 'symbol' in inc_df.index.names: inc_df = inc_df.reset_index()
                     if 'symbol' in bal_df.index.names: bal_df = bal_df.reset_index()
@@ -1134,8 +1159,8 @@ def extract_quarterly_financials(tickers: dict = None) -> pd.DataFrame:
                 session, headers = _make_evasion_session()
                 yq = YQTicker(ticker, asynchronous=False, session=session)
                 # ✅ Fetch BOTH statements (bal_df was missing in old Pass 3)
-                inc_df = yq.income_statement(frequency='q', trailing=False)
-                bal_df = yq.balance_sheet(frequency='q', trailing=False)
+                inc_df = _fetch_statement(yq, 'income_statement', 'q')
+                bal_df = _fetch_statement(yq, 'balance_sheet', 'q')
                 if isinstance(inc_df, pd.DataFrame) and not inc_df.empty and isinstance(bal_df, pd.DataFrame) and not bal_df.empty:
                     if 'symbol' in inc_df.index.names: inc_df = inc_df.reset_index()
                     if 'symbol' in bal_df.index.names: bal_df = bal_df.reset_index()
@@ -1179,7 +1204,7 @@ def extract_cashflows(tickers: dict = TICKERS) -> pd.DataFrame:
                 yq = YQTicker(ticker, session=session)
             else:
                 yq = YQTicker(ticker)
-            cf_df = yq.cash_flow(frequency='a', trailing=False)
+            cf_df = _fetch_statement(yq, 'cash_flow', 'a')
             if cf_df is None or (isinstance(cf_df, pd.DataFrame) and cf_df.empty):
                 return None
             
@@ -1357,7 +1382,7 @@ def extract_historical_fcf(tickers: dict = None) -> pd.DataFrame:
         logger.info(f"   💵 Fetching FCF batch {i//batch_size + 1}/{(len(ticker_keys)//batch_size)+1}...")
         try:
             yq = YQTicker(batch, asynchronous=True)
-            cf_df = yq.cash_flow(frequency='a', trailing=False)
+            cf_df = _fetch_statement(yq, 'cash_flow', 'a')
             process_fcf_df(cf_df, records, successful_tickers)
         except Exception as e:
             logger.warning(f"  ⚠️ FCF batch {i//batch_size + 1} failed: {e}")
@@ -1373,7 +1398,7 @@ def extract_historical_fcf(tickers: dict = None) -> pd.DataFrame:
             waited = _backoff_sleep(attempt=1)
             try:
                 yq = YQTicker(ticker, asynchronous=False)
-                cf_df = yq.cash_flow(frequency='a', trailing=False)
+                cf_df = _fetch_statement(yq, 'cash_flow', 'a')
                 process_fcf_df(cf_df, records, successful_tickers)
                 if ticker in successful_tickers:
                     logger.info(f"   ✅ Recovered FCF (Pass 2): {ticker} (after {waited:.1f}s)")
@@ -1391,7 +1416,7 @@ def extract_historical_fcf(tickers: dict = None) -> pd.DataFrame:
             try:
                 session, headers = _make_evasion_session()
                 yq = YQTicker(ticker, asynchronous=False, session=session)
-                cf_df = yq.cash_flow(frequency='a', trailing=False)
+                cf_df = _fetch_statement(yq, 'cash_flow', 'a')
                 process_fcf_df(cf_df, records, successful_tickers)
                 if ticker in successful_tickers:
                     logger.info(f"   🔥 RECOVERED FCF (Pass 3): {ticker} (after {waited:.1f}s)")
@@ -1472,7 +1497,7 @@ def extract_quarterly_fcf(tickers: dict = None) -> pd.DataFrame:
         logger.info(f"   💵 Fetching Quarterly FCF batch {i//batch_size + 1}/{(len(ticker_keys)//batch_size)+1}...")
         try:
             yq = YQTicker(batch, asynchronous=True)
-            cf_df = yq.cash_flow(frequency='q', trailing=False)
+            cf_df = _fetch_statement(yq, 'cash_flow', 'q')
             process_q_fcf_df(cf_df, records, successful_tickers)
         except Exception as e:
             logger.warning(f"  ⚠️ Quarterly FCF batch {i//batch_size + 1} failed: {e}")
@@ -1488,7 +1513,7 @@ def extract_quarterly_fcf(tickers: dict = None) -> pd.DataFrame:
             waited = _backoff_sleep(attempt=1)
             try:
                 yq = YQTicker(ticker, asynchronous=False)
-                cf_df = yq.cash_flow(frequency='q', trailing=False)
+                cf_df = _fetch_statement(yq, 'cash_flow', 'q')
                 process_q_fcf_df(cf_df, records, successful_tickers)
                 if ticker in successful_tickers:
                     logger.info(f"   ✅ Recovered Quarterly FCF (Pass 2): {ticker} (after {waited:.1f}s)")
@@ -1506,7 +1531,7 @@ def extract_quarterly_fcf(tickers: dict = None) -> pd.DataFrame:
             try:
                 session, headers = _make_evasion_session()
                 yq = YQTicker(ticker, asynchronous=False, session=session)
-                cf_df = yq.cash_flow(frequency='q', trailing=False)
+                cf_df = _fetch_statement(yq, 'cash_flow', 'q')
                 process_q_fcf_df(cf_df, records, successful_tickers)
                 if ticker in successful_tickers:
                     logger.info(f"   🔥 RECOVERED Quarterly FCF (Pass 3): {ticker} (after {waited:.1f}s)")

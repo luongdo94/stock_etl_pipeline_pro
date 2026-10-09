@@ -17,6 +17,7 @@ from etl.extract import (
     extract_earnings_calendar,
     extract_earnings_history,
     _guess_currency,
+    _fetch_statement,
     _safe_float,
     get_equity_tickers,
     load_tickers_config
@@ -391,6 +392,120 @@ class TestErrorHandling:
         
         # Should handle gracefully
         assert isinstance(result, pd.DataFrame)
+
+
+class _FakeYQ:
+    """yahooquery 2.4.x statement signatures: balance_sheet has NO `trailing` parameter."""
+    calls = []
+
+    def __init__(self, symbols, asynchronous=False, session=None, **_kw):
+        self._with_session = session is not None
+
+    def _respond(self, name, frame):
+        # Only the Pass-3 client (built with a session) gets real data; earlier passes get an error payload
+        type(self).calls.append(name)
+        return frame if self._with_session else {"AAPL": "No fundamentals data found for symbol: AAPL"}
+
+    def income_statement(self, frequency='a', trailing=True):
+        return self._respond("income_statement", pd.DataFrame({
+            'symbol': ['AAPL'], 'asOfDate': ['2023-12-31'], 'currencyCode': ['USD'],
+            'TotalRevenue': [400.0], 'BasicEPS': [6.5]}))
+
+    def balance_sheet(self, frequency='a'):
+        return self._respond("balance_sheet", pd.DataFrame({
+            'symbol': ['AAPL'], 'asOfDate': ['2023-12-31'], 'currencyCode': ['USD'],
+            'StockholdersEquity': [50.0]}))
+
+    def cash_flow(self, frequency='a', trailing=True):
+        return self._respond("cash_flow", pd.DataFrame({
+            'symbol': ['AAPL'], 'asOfDate': ['2023-12-31'], 'currencyCode': ['USD'],
+            'FreeCashFlow': [90.0], 'OperatingCashFlow': [110.0], 'CapitalExpenditure': [-20.0]}))
+
+
+@pytest.fixture
+def offline_extract():
+    """No sleeps, no network FX, no real evasion session."""
+    _FakeYQ.calls = []
+    with patch('time.sleep'), \
+         patch('etl.extract._backoff_sleep', return_value=0.0), \
+         patch('etl.extract._make_evasion_session', return_value=(object(), {})), \
+         patch('etl.extract.fx_to_eur', return_value=1.0):
+        yield
+
+
+TICKER = {"AAPL": {"name": "Apple", "sector": "Technology", "region": "US"}}
+
+
+@pytest.mark.usefixtures("offline_extract")
+class TestStatementSignatureAndErrorPayloads:
+    """yahooquery signature drift (balance_sheet(trailing=...)) and dict/str error payloads."""
+
+    def test_fetch_statement_passes_trailing_only_when_supported(self):
+        yq = _FakeYQ("AAPL", session=object())
+        # Would raise TypeError if `trailing` were forwarded to balance_sheet
+        assert not _fetch_statement(yq, 'balance_sheet', 'a').empty
+        assert not _fetch_statement(yq, 'income_statement', 'q').empty
+        assert not _fetch_statement(yq, 'cash_flow', 'a').empty
+
+    def test_fetch_statement_forwards_trailing_false_when_supported(self):
+        seen = {}
+
+        def cash_flow(frequency='a', trailing=True):
+            seen.update(frequency=frequency, trailing=trailing)
+            return pd.DataFrame({'x': [1]})
+
+        _fetch_statement(Mock(cash_flow=cash_flow), 'cash_flow', 'a')
+        assert seen == {'frequency': 'a', 'trailing': False}
+
+    @pytest.mark.parametrize("payload", [
+        {"AAPL": "No fundamentals data found"},      # dict error payload
+        "No fundamentals data found",                # str payload (str.index is a builtin method)
+        None,
+    ])
+    def test_fetch_statement_non_dataframe_is_no_data(self, payload):
+        yq = Mock()
+        yq.balance_sheet = Mock(side_effect=lambda frequency='a': payload)
+        out = _fetch_statement(yq, 'balance_sheet', 'a')
+        assert isinstance(out, pd.DataFrame) and out.empty
+
+    @patch('etl.extract.YQTicker', _FakeYQ)
+    def test_pass3_historical_financials_new_signature(self, caplog):
+        """Pass 3 must recover via the new signature instead of 'unexpected keyword argument trailing'."""
+        with caplog.at_level("WARNING", logger="etl.extract"):
+            result = extract_historical_financials(TICKER)
+        assert "unexpected keyword argument" not in caplog.text
+        assert "Pass 3 Error" not in caplog.text
+        assert list(result["ticker"]) == ["AAPL"]
+        assert result["revenue"].iloc[0] == 400.0
+
+    @patch('etl.extract.YQTicker', _FakeYQ)
+    def test_pass3_quarterly_financials_new_signature(self, caplog):
+        with caplog.at_level("WARNING", logger="etl.extract"):
+            result = extract_quarterly_financials(TICKER)
+        assert "Pass 3 Error" not in caplog.text
+        assert "AAPL" in set(result["ticker"])
+
+    @patch('etl.extract.YQTicker')
+    def test_dict_error_payload_financials_is_no_data(self, mock_yq, caplog):
+        mock_yq.return_value = Mock(
+            income_statement=Mock(return_value={"AAPL": "Unauthorized"}),
+            balance_sheet=Mock(return_value={"AAPL": "Unauthorized"}))
+        with caplog.at_level("WARNING", logger="etl.extract"):
+            assert extract_historical_financials(TICKER).empty
+            assert extract_quarterly_financials(TICKER).empty
+        assert "Pass 3 Error" not in caplog.text
+
+    @patch('etl.extract.YQTicker')
+    def test_dict_error_payload_cashflow_does_not_crash(self, mock_yq, caplog):
+        mock_yq.return_value = Mock(cash_flow=Mock(return_value={"AAPL": "No fundamentals data found"}))
+        with caplog.at_level("WARNING", logger="etl.extract"):
+            cf = extract_cashflows(TICKER)
+            fcf = extract_historical_fcf(TICKER)
+            qfcf = extract_quarterly_fcf(TICKER)
+        assert cf.empty and fcf.empty and qfcf.empty
+        assert "Cashflow fetch failed" not in caplog.text
+        assert "has no attribute" not in caplog.text
+        assert "Pass 3 Error" not in caplog.text
 
 
 if __name__ == "__main__":
