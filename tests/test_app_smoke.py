@@ -19,7 +19,7 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 from tests.synthetic_warehouse import build  # noqa: E402
 from views import scanner as scanner_view  # noqa: E402
 
-TABS = ["🌐 Market Pulse", "🔭 Stock Scanner", "🔬 Stock Analysis", "🤖 ML Predictor",
+TABS = ["🌐 Market Pulse", "🔭 Stock Scanner", "🔬 Stock Analysis", "🎲 Risk Lab",
         "🧪 Strategy Lab", "📈 Track Record", "📋 Watchlist", "💼 Portfolio", "📖 Docs"]
 
 pytestmark = pytest.mark.smoke
@@ -56,8 +56,6 @@ def _app(tab):
 
 @pytest.mark.parametrize("tab", TABS)
 def test_tab_renders_without_exception(warehouse, tab):
-    if tab == "🤖 ML Predictor":
-        pytest.importorskip("torch")
     at = _app(tab).run()
     assert not at.exception, [e.value for e in at.exception]
     assert len(at.markdown) > 10  # header, KPI grid and tab body actually rendered
@@ -143,18 +141,17 @@ def test_deep_dive_shows_each_number_once(warehouse):
         assert kept in html or kept.replace("&", "&amp;") in html, kept
 
 
-def test_ml_experiment_runs_and_withholds_an_unvalidated_forecast(warehouse):
-    """End to end: the form runs, the risk range is drawn, and without a passed walk-forward test the ML forecast is NOT a headline."""
-    at = _app("🤖 ML Predictor").run()
+def test_risk_lab_computes_a_range_without_forecasting_direction(warehouse):
+    at = _app("🎲 Risk Lab").run()
     assert not at.exception, [e.value for e in at.exception]
-    at.session_state["fc_selector_form"] = "AAPL"
-    at.session_state["fc_days_form"] = 7
-    at.session_state["n_sims_form"] = 500
-    at.session_state["engine_mode_form"] = "LSTM Core"
-    next(b for b in at.button if "ML EXPERIMENT" in str(b.label)).click().run()
+    at.session_state["risk_ticker_form"] = "AAPL"
+    at.session_state["risk_days_form"] = 10
+    at.session_state["risk_sims_form"] = 1000
+    next(b for b in at.button if "COMPUTE RISK RANGE" in str(b.label)).click().run()
     assert not at.exception, [e.value for e in at.exception]
     html = " ".join(m.value for m in at.markdown)
-    assert "ML Experiment Summary" in html and "Risk range" in html
-    assert "STRONG LONG" not in html and "BUY / ACCUMULATE" not in html and "REDUCE / HEDGE" not in html
-    assert ("ML forecast", "not shown") in [(m.label, m.value) for m in at.metric]
-    assert "ai_target_for_de_AAPL" not in at.session_state          # no leak into Stock Analysis
+    assert "VaR 95%" in html and "Low (P10)" in html and "High (P90)" in html and "Median" in html
+    assert any("Model:" in c.value for c in at.caption)
+    assert "calibration" in html.lower() or "Does the range hold up" in html
+    for gone in ("STRONG LONG", "BUY / ACCUMULATE", "REDUCE / HEDGE", "ML forecast", "Smart Blend"):
+        assert gone not in html, gone

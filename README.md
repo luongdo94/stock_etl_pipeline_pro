@@ -40,21 +40,18 @@ The backbone of Honest Quant is a robust, production-ready Data Engineering pipe
 
 ## 🧠 2. AI Predictive Suite
 
-The ML Lab is an **experiment**: nothing on it feeds the Decision Summary or the scores, and the forecasts have to prove themselves before they are shown as a headline.
+The **Risk Lab** tab estimates *how far a price can wander*; it forecasts no direction and nothing on it feeds the Decision Summary.
 
-### Volatility risk range (the part with a solid theory)
-- **GARCH(1,1) + Monte Carlo**: daily volatility forecast from a GARCH fit on the last 500 returns, then geometric-Brownian-motion paths with **zero drift**. It answers *"how far can the price wander?"* (P10 / P90 and a 90% interval), not *"where will it go?"*. Logic and tests: `core/ml_forecast.py`, `tests/test_ml_forecast.py`.
+### Volatility risk range
+- **GJR-GARCH(1,1,1) with Student-t errors** fitted on the last 500 daily returns (volatility clusters, falls make it jump, tails are fat), then **zero-drift Monte Carlo** paths. Outputs: P5 / P10 / median / P90 / P95, VaR and expected shortfall at 95%, P(loss > 10%).
+- **Calibration check**: the model is re-fitted on 8 earlier windows and the realised price is compared with the P10-P90 range (expected: inside about 80% of the time). The tab says in plain words if the range is too narrow or too wide.
+- Logic and tests: `core/risk_range.py`, `tests/test_risk_range.py`.
 
-### Neural forecasts (LSTM, Transformer, PatchTST, Smart Blend)
-- PyTorch models on price, return, market (SPY, VIX, regime score), RSI, Z-score, volume surge and OBV rate of change. Fundamentals are *not* inputs (constant for a single ticker, and today's values would leak into the past).
-- **Smart Blend** trains on data *before* a real holdout (the last forecast-horizon days), scores each model there against a no-change forecast and gives weight 0 to models that do not beat it. Seeds are fixed; hyper-parameters are chosen on a validation split.
-- The ML forecast is shown as a headline only if the optional **walk-forward test** passes: re-train on ~5 earlier windows; mean skill vs no-change must be positive and at least 60% of windows (and at least 3) must beat it.
+### Why there are no neural price forecasts
+The former ML Predictor (LSTM, Transformer, PatchTST, ARIMA, a direction classifier) was removed. A walk-forward test on 12 real stocks / 36 windows (21-day horizon) found none of them better than a no-change forecast: mean skill LSTM -17%, Transformer -30%, ARIMA -22%, PatchTST -41% (significantly worse). The code is kept at the git tag `archive/ml-neural-lab` and the test is reproducible with `python utils/ml_walkforward.py` (the ARIMA row needs `pmdarima`, which is no longer in requirements.txt).
 
-### Direction classifier
-- Gradient-boosted trees (scikit-learn; no extra dependency) on return / volatility / momentum ratios, tested walk-forward with purged labels. A BUY / SELL is reported only if it beats the majority-class baseline; otherwise the tab says *no edge*. On 59 stocks the original feature set did not (accuracy 44.4% vs 46.3% for always guessing the common class).
-
-### Sentiment
-- FinBERT over recent headlines is shown as context and as one of four equal, unvalidated pillars of the *ML Experiment Summary* (no BUY / SELL wording).
+### Context shown next to the range
+- FinBERT sentiment of recent headlines and the volume-flow reading are shown as unvalidated context; they do not change the range.
 
 ---
 

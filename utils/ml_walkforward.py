@@ -1,5 +1,5 @@
 """
-Walk-forward experiment: do the ML Predictor's neural engines beat a no-change forecast on real stocks?
+Walk-forward experiment: do the former ML Predictor's neural engines beat a no-change forecast on real stocks?
 
     python utils/ml_walkforward.py --tickers 20 --horizon 21 --windows 4 --spacing 63 --out logs/ml_walkforward.csv
 
@@ -9,7 +9,7 @@ recent last) the engines are trained ONLY on data before the window and asked fo
   naive        price stays at the last known close
   drift        last close grown at the mean daily log return of the previous 120 days
   arima        pmdarima auto_arima on the last 500 closes
-  lstm / transformer / patchtst   the architectures of views/ml_predictor.py (same inputs, residual-to-last-price output,
+  lstm / transformer / patchtst   the architectures of the former views/ml_predictor.py (archived at git tag archive/ml-neural-lab; same inputs, residual-to-last-price output,
                Huber loss, 30 epochs, fixed seed). Inputs: price, return, SPY and VIX returns, volume surge, RSI, Z-score,
                OBV rate of change (the market-regime score of the app is left out: it needs the breadth series).
 
@@ -34,7 +34,7 @@ import pandas as pd  # noqa: E402
 import torch  # noqa: E402
 from sklearn.preprocessing import MinMaxScaler  # noqa: E402
 
-from core import ml_forecast as mlf  # noqa: E402
+from core import risk_range as mlf  # noqa: E402
 
 
 class StockLSTM(torch.nn.Module):

@@ -93,7 +93,7 @@ def render(ctx):
 
         st.markdown("### 🔮 5. Experimental modules")
         st.markdown("""
-        - **ML Predictor** forecasts are an experiment: they are shown as a headline only after a walk-forward test beats a no-change forecast;
+        - **Risk Lab** estimates a volatility range (GJR-GARCH + Monte Carlo) and checks its calibration; it forecasts no direction. The neural price forecasts were removed after failing a walk-forward test against a no-change forecast;
           the Decision ignores them.
         - **Market regime gauge** and *regime read* texts are heuristics, not validated against returns.
         - **Smart Money** is a volume-flow heuristic on daily data (it cannot see who traded);
