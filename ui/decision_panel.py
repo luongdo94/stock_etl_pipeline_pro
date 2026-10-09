@@ -51,9 +51,12 @@ def render_score_strip(scores):
     v_label, v_col = value_tier(v) if v is not None else ("n/a", "#8899aa")
     m_col = "#8899aa" if m is None else ("#2ecc71" if m >= 60 else ("#e74c3c" if m < 40 else "#f1c40f"))
     cov = scores.get("coverage")
-    tiles = (_score_tile("Quality — the business", f"{q_label} · decides if it is worth owning", q, q_col)
-             + _score_tile("Value — the price", f"{v_label} · vs sector peers", v, v_col)
-             + _score_tile("Momentum — timing only", "12-1 month return rank + trend; not part of Quality or Value", m, m_col))
+    rv = scores.get("revisions")
+    rv_col = "#8899aa" if rv is None else ("#2ecc71" if rv >= 60 else ("#e74c3c" if rv < 40 else "#f1c40f"))
+    tiles = (_score_tile("Quality — the business", f"{q_label} · a floor for any BUY", q, q_col)
+             + _score_tile("Value — the price", f"{v_label} · vs sector peers, no analyst forecasts", v, v_col)
+             + _score_tile("Momentum — timing only", "12-1 month return (local currency) + trend", m, m_col)
+             + _score_tile("Revisions — estimate changes", "30-day change in analysts' EPS estimates; context only", rv, rv_col))
     st.markdown(f"<div style='display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px;'>{tiles}</div>",
                 unsafe_allow_html=True)
     if scores.get("flags"):
@@ -142,9 +145,58 @@ def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, re
     return d
 
 
+def _render_financial_valuation(meta, price, vin):
+    """Banks, insurers, financial services: justified P/B (residual income) instead of a cash-flow DCF."""
+    from ui.icons import render_header
+    st.markdown("---")
+    render_header("gem", "Intrinsic Valuation (Justified P/B) — Banks & Insurers")
+    if vin["note"]:
+        st.warning("⚠️ " + vin["note"])
+    if not vin["book_per_share"]:
+        st.info("Book value per share is not available, so a P/B-based value cannot be computed.")
+        return
+    st.caption(f"{vin['model_note']} Rates: {vin['currency']} risk-free {vin['risk_free']:.1%} ({vin['rate_source']}), "
+               f"cost of equity {vin['cost_of_equity']:.1%}, long-run growth {vin['terminal_growth']:.1%}.")
+    c1, c2, c3 = st.columns(3)
+    roe = c1.number_input("Sustainable ROE (%)", value=round((vin["roe"] or 0) * 100, 1), step=0.5,
+                          key=f"pb_roe_{meta.get('ticker')}") / 100
+    tg = c2.number_input("Long-run growth (%)", value=round(vin["terminal_growth"] * 100, 2), step=0.25,
+                         key=f"pb_g_{meta.get('ticker')}") / 100
+    r = c3.number_input("Cost of equity (%)", value=round(vin["cost_of_equity"] * 100, 1), step=0.5,
+                        key=f"pb_r_{meta.get('ticker')}") / 100
+    if r <= tg:
+        st.warning("Cost of equity must exceed long-run growth.")
+        return
+    bv = vin["book_per_share"]
+    cols = st.columns(3)
+    for col, (key, d_roe, d_r, color) in zip(cols, (("bear", -0.03, +0.01, "#e74c3c"), ("base", 0.0, 0.0, "#3498db"),
+                                                    ("bull", +0.03, -0.01, "#2ecc71"))):
+        value = val.justified_pb_value(bv, max(roe + d_roe, 0), max(r + d_r, tg + 0.01), tg)
+        mos = value / price - 1 if value else None
+        body = (f"€{value:,.2f}</div><div style='color:{color}; font-weight:700;'>{mos:+.0%} vs price · "
+                f"{val.valuation_verdict(mos)}") if value else "n/a</div><div style='color:#8899aa;'>ROE not above growth"
+        col.markdown(f"""<div style='border-top:3px solid {color}; background:rgba(255,255,255,0.03);
+            border-radius:8px; padding:10px 12px;'>
+            <div style='color:#8899aa; font-size:0.7rem; text-transform:uppercase;'>{key} · ROE {max(roe + d_roe, 0):.1%} · r {max(r + d_r, tg + 0.01):.1%}</div>
+            <div style='color:#fff; font-size:1.5rem; font-weight:800;'>{body}</div></div>""", unsafe_allow_html=True)
+    implied = tg + (price / bv) * (r - tg)
+    st.markdown(f"**Reverse model:** at €{price:,.2f} (book €{bv:,.2f}, P/B {price / bv:.2f}x) the market prices in a perpetual "
+                f"ROE of **{implied:.1%}** (your base case {roe:.1%}).")
+    rois = [roe - 0.04, roe - 0.02, roe, roe + 0.02, roe + 0.04]
+    rates = [x for x in (r - 0.02, r - 0.01, r, r + 0.01, r + 0.02) if x > tg]
+    table = pd.DataFrame({f"{x:.1%}": [val.justified_pb_value(bv, max(o, 0), x, tg) for o in rois] for x in rates},
+                         index=[f"{o:.1%}" for o in rois])
+    st.markdown("**Sensitivity — value per share (rows: sustainable ROE, columns: cost of equity)**")
+    st.dataframe(table.style.format("€{:,.2f}", na_rep="—")
+                 .map(lambda v: "color:#2ecc71" if v and v >= price * (1 + val.REQUIRED_MARGIN_OF_SAFETY)
+                      else ("color:#e74c3c" if v and v < price else "")), width="stretch")
+
+
 def render_valuation_section(*, meta, price, vin, relval):
     """Replaces the old one-size DCF: company-anchored inputs, scenarios, sensitivity, reverse DCF."""
     from ui.icons import render_header
+    if vin.get("model") == "justified_pb":
+        return _render_financial_valuation(meta, price, vin)
     st.markdown("---")
     render_header("gem", "Intrinsic Valuation (FCFE DCF) — Scenarios & Sensitivity")
     if not vin["fcfe"] or vin["fcfe"] <= 0 or not vin["shares"]:
@@ -154,13 +206,14 @@ def render_valuation_section(*, meta, price, vin, relval):
     if not vin["reliable"] and vin["note"]:
         st.warning("⚠️ " + vin["note"])
     st.caption(f"Free cash flow is after interest, so it is discounted at the cost of equity "
-               f"(CAPM: rf {vin['risk_free']:.1%} + Blume-adjusted β×5% ERP) and debt is not subtracted again. "
+               f"(CAPM: {vin['currency']} risk-free {vin['risk_free']:.1%} [{vin['rate_source']}] + Blume-adjusted β×"
+               f"{val.EQUITY_RISK_PREMIUM:.0%} ERP) and debt is not subtracted again. "
                f"Base cash flow: {vin['fcf_source']}. Starting growth anchored on: "
                f"{', '.join(vin['growth_sources'])}; it fades to the terminal rate over {val.EXPLICIT_YEARS} years.")
     c1, c2, c3 = st.columns(3)
     g = c1.number_input("Starting FCF growth (%)", value=round(vin["growth"] * 100, 1), step=1.0,
                         key=f"dcf_g_{meta.get('ticker')}") / 100
-    tg = c2.number_input("Terminal growth (%)", value=val.TERMINAL_GROWTH * 100, step=0.5,
+    tg = c2.number_input("Terminal growth (%)", value=round(vin["terminal_growth"] * 100, 2), step=0.25,
                          key=f"dcf_tg_{meta.get('ticker')}") / 100
     r = c3.number_input("Cost of equity (%)", value=round(vin["cost_of_equity"] * 100, 1), step=0.5,
                         key=f"dcf_r_{meta.get('ticker')}") / 100

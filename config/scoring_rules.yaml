@@ -1,11 +1,12 @@
-# scoring_rules.yaml — v5: three independent scores per stock (core/scoring.py)
+# scoring_rules.yaml — v6: three independent scores per stock (core/scoring.py)
 #
 #   QUALITY  (0-100)  How good is the business?   returns, margins, stability, balance sheet, cash conversion
-#   VALUE    (0-100)  How cheap is the price?     FCF yield, EV/EBITDA, earnings yield, PEG, shareholder yield
+#   VALUE    (0-100)  How cheap is the price?     FCF yield (after stock comp), EV/EBITDA, earnings yield, realised-growth PEG, shareholder yield
 #   MOMENTUM (0-100)  What has price been doing?  12-1 month return (cross-sectional) + trend      -> timing only
 #
 # Decision uses Quality (floor) and Value (cross-check). Momentum never enters Quality or Value.
-# Analyst consensus is NOT scored: ratings skew to "buy" and targets lag price.
+# Analyst consensus is NOT scored: ratings skew to "buy" and targets lag price. Value uses no analyst forecast at all
+# (trailing + 3-year-median earnings, realised-growth PEG); only the separate Revisions score reads their estimate CHANGES.
 # Units: margins, ROE, yields are percentages (12.5 = 12.5%); each `bands` entry is a piecewise-linear
 # map x -> points (np.interp), x must be increasing.
 
@@ -71,6 +72,17 @@ value:
     ps:                {x: [1, 3, 6, 12, 20],         y: [100, 70, 40, 10, 0]}
     pb:                {x: [0.6, 1.0, 1.5, 2.5, 4.0], y: [80, 90, 70, 40, 10]}
   uncovered_dividend_factor: 0.5   # shareholder yield is halved when the dividend is not covered by FCF
+
+liquidity:             # informational flags (no score penalty) that lower the Decision's confidence
+  min_adv_eur: 1000000     # median traded value of the last 60 sessions
+  micro_cap_eur: 300000000
+
+revisions:             # change in analysts' estimates (a flow, unlike their level) — shown beside the scores, not part of any of them
+  weights: {eps_cur_y: 40, eps_next_y: 20, net_revisions: 40}
+  bands:
+    eps_change_pct:   {x: [-5, -1, 0, 1, 5], y: [0, 35, 50, 65, 100]}     # 30-day change of the EPS estimate, %
+    net_revisions:    {x: [-1, 0, 1],        y: [0, 50, 100]}              # (upgrades - downgrades) / (upgrades + downgrades)
+  min_revisions: 3         # fewer up+down moves than this -> the revision balance is ignored
 
 momentum:
   lookback_days: 252   # trading days; the most recent skip_days are excluded (12-1 month momentum)

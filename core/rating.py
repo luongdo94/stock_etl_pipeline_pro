@@ -11,6 +11,15 @@ VALUE_TIERS = ((65, "UNDERVALUED", "#2ecc71"), (50, "FAIR VS PEERS", "#f1c40f"),
                (35, "FULL VALUATION", "#e67e22"), (20, "EXPENSIVE", "#e74c3c"))
 
 
+# The Signal (technical trend + quality + value + reward/risk + volume flow) is CONTEXT for the Decision, not a
+# recommendation. Its labels deliberately avoid BUY / SELL so the two can never be mistaken for each other.
+SIGNAL_LABELS = {"strong": "STRONG SETUP", "favourable": "FAVOURABLE", "neutral": "NEUTRAL",
+                 "weakening": "WEAKENING", "unfavourable": "UNFAVOURABLE"}
+SIGNAL_COLOURS = {"STRONG SETUP": "#00ffcc", "FAVOURABLE": "#2ecc71", "NEUTRAL": "#f1c40f",
+                  "WEAKENING": "#e67e22", "UNFAVOURABLE": "#e74c3c"}
+BULLISH_SIGNALS = ("STRONG SETUP", "FAVOURABLE")
+
+
 def value_tier(score):
     """(label, colour) for a 0-100 Value score."""
     for cut, label, colour in VALUE_TIERS:
@@ -36,35 +45,31 @@ def compute_institutional_rating(
     peg_v: float,
     sector: str,
     w52_pos: float,
-    rr: float,
+    rr: float = None,
     sm_status: str = "N/A",
     sm_strength: int = 0,
     sm_layer: str = "NONE",
     value_score: float = None,
 ) -> dict:
     """
-    Unified 6-Pillar Institutional Rating Engine (v15.0).
-    Used by BOTH Opportunity Radar Screener and Deep Dive tab to ensure
-    consistent Action labels across the entire dashboard.
+    Signal engine — technical trend, quality, value and reward/risk, confirmed by volume flow.
 
-    v15.0 anti-bias patch (2 changes):
-    1. Smart Money max points capped at ±1.0 (was ±1.25).
-       Previously SM had 25% overweight vs. all other pillars (each worth 1.0).
-       Now SM is a confirming signal, not a deciding vote.
-    2. STRONG BUY requires p_qual_c == "#00ffcc" (AI Score >= 65).
-       - Strong cash flow alone cannot elevate a low-fundamental stock to top tier.
-
-    Smart Money soft scoring (v15.0):
-    - Strength < 40:  0 points (weak signal, ignore)
-    - Strength 40-65: 0.5 points (moderate signal)
-    - Strength >= 65: 1.0 points (strong signal — hard cap, no overweight bonus)
+    v16 (replaces the 6-pillar v15):
+    * It is context for the Decision and is labelled that way (STRONG SETUP … UNFAVOURABLE, never BUY / SELL).
+    * Reward/risk comes from the Decision (thesis stop vs the valuation upside) and is passed in as `rr`;
+      with no usable value (None) the pillar is "N/A" and earns no point instead of using a short-term
+      support/resistance ratio that disagrees with the Decision.
+    * The 52-week position is shown but no longer scored: stocks near their 52-week high tend to keep
+      outperforming (George & Hwang 2004), so "near the low = low risk" was the wrong sign.
+    * Pillars worth a point: trend, quality, value, reward/risk (max 4) + volume flow (-1..+1).
+      STRONG SETUP needs ELITE quality; thresholds are the old ones scaled by 4/5.
 
     Returns:
         dict with keys:
-            action_label  (str)  — plain text: STRONG BUY / BUY / HOLD / SELL / REDUCE
+            action_label  (str)  — STRONG SETUP / FAVOURABLE / NEUTRAL / WEAKENING / UNFAVOURABLE
             action_color  (str)  — hex color for UI rendering
-            p_trend_c, p_qual_c, p_val_c, p_risk_c, p_conv_c, p_sm_c  (str)
-            sm_label (str) — Smart Money display label with strength
+            p_trend_c, p_qual_c, p_val_c, p_risk_c, p_conv_c, p_sm_c  (str); matching p_* labels
+            sm_label (str) — volume-flow display label with strength
     """
     # ── PILLAR 1: TECHNICAL TREND ──────────────────────────────────────────
     # Known limitation: Golden Cross / Death Cross are lagging indicators (MA50 vs MA200).
@@ -133,33 +138,26 @@ def compute_institutional_rating(
     else:
         p_val, p_val_c = "AVERAGE", "#95a5a6"
 
-    # ── PILLAR 4: RISK (52-Week Position) ───────────────────────────────
-    # CANSLIM Breakout Exception: near 52-week high is a BUY signal — not a risk —
-    # when confirmed by STRONG BULL trend (MA alignment) + institutional accumulation (SM).
-    # Per O'Neil CANSLIM methodology: stocks breaking to new highs on volume are leaders,
-    # not laggards. Penalizing them here would systematically exclude momentum leaders.
-    # Requires 3 concurrent conditions to avoid false positives:
-    #   1. w52_pos > 80  — price near 52-week high
-    #   2. STRONG BULL trend — MA50 > MA200 with positive spread (confirms structural uptrend)
-    #   3. SM ACCUMULATION — institutional buying detected (volume proxy for CANSLIM criterion)
-    _is_canslim_breakout = (
-        w52_pos > 80 and
-        _ma_upper == "STRONG BULL" and
-        sm_status.upper() == "ACCUMULATION"
-    )
+    # ── PILLAR 4: 52-WEEK POSITION (context, not scored) ───────────────────
+    _is_canslim_breakout = w52_pos > 80 and _ma_upper == "STRONG BULL" and sm_status.upper() == "ACCUMULATION"
     if _is_canslim_breakout:
-        p_risk, p_risk_c = "BREAKOUT", "#3498db"     # neutral-positive, not a penalty
+        p_risk, p_risk_c = "BREAKOUT", "#3498db"         # new highs on volume in a confirmed uptrend
     elif w52_pos > 80:
-        p_risk, p_risk_c = "ELEVATED", "#e74c3c"     # near the high without confirmation
+        p_risk, p_risk_c = "NEAR 52W HIGH", "#95a5a6"    # momentum, but little room to the old ceiling
     elif w52_pos < 20:
-        p_risk, p_risk_c = "LOW RISK", "#2ecc71"     # deep in the range
+        p_risk, p_risk_c = "NEAR 52W LOW", "#95a5a6"     # cheap for a reason? check the trend and the news
     else:
-        p_risk, p_risk_c = "MODERATE", "#f1c40f"
+        p_risk, p_risk_c = "MID-RANGE", "#95a5a6"
 
-    # ── PILLAR 5: CONVICTION (Risk / Reward) ────────────────────────────
-    if rr > 2.5:   p_conv, p_conv_c = "HIGH", "#00ffcc"
-    elif rr > 1.2: p_conv, p_conv_c = "MEDIUM", "#2ecc71"
-    else:          p_conv, p_conv_c = "LOW", "#e74c3c"
+    # ── PILLAR 5: REWARD / RISK (from the Decision) ─────────────────────────
+    if rr is None or rr != rr:
+        p_conv, p_conv_c = "N/A", "#95a5a6"
+    elif rr > 2.5:
+        p_conv, p_conv_c = "HIGH", "#00ffcc"
+    elif rr > 1.2:
+        p_conv, p_conv_c = "MEDIUM", "#2ecc71"
+    else:
+        p_conv, p_conv_c = "LOW", "#e74c3c"
 
     # ── PILLAR 6: SMART MONEY (Soft Scoring v14.0) ──────────────────────
     # Determine Smart Money contribution based on signal + strength
@@ -204,42 +202,32 @@ def compute_institutional_rating(
     if sm_layer != "NONE":
         sm_label = f"{sm_label} ({sm_layer})"
 
-    # ── SYNTHESIS: Final Action Label (Updated for soft scoring) ─────────
-    # Base points from binary pillars (max 5.0)
+    # ── SYNTHESIS ──────────────────────────────────────────────────────────
+    L = SIGNAL_LABELS
     pts = (
         (1 if p_trend_c in ["#2ecc71", "#00ffcc"] else 0) +
         (1 if p_qual_c  in ["#2ecc71", "#00ffcc"] else 0) +
-        (1 if p_val_c   in ["#2ecc71", "#00ffcc", "#3498db"] else 0) +
-        (1 if p_risk_c  == "#2ecc71" else 0) +
+        (1 if p_val_c   in ["#2ecc71", "#00ffcc"] else 0) +
         (1 if p_conv_c  in ["#2ecc71", "#00ffcc"] else 0)
-    )
-    
-    # Add Smart Money soft points (can be -1.0 to +1.0, capped since v15.0)
-    pts += sm_points
+    ) + sm_points
 
-    # Total possible: 5.0 (binary) + 1.0 (SM) = 6.0
-    # Thresholds (v15.0):
-    # - STRONG BUY: >= 5.0 AND AI Quality must be top-tier (#00ffcc = ai_score >= 65)
-    #   SM alone cannot elevate a weak-fundamental stock to top tier
-    # - BUY: >= 3.5 with trend not bearish
-    # - SELL: triggered by weak quality + low pts, or strong distribution
-
-    if pts >= 5.0 and p_qual_c == "#00ffcc":
-        action_label, action_color = "STRONG BUY",          "#00ffcc"
-    elif pts >= 3.5 and p_trend_c != "#e74c3c":
-        action_label, action_color = "BUY / ACCUMULATE",    "#2ecc71"
-    elif p_trend_c == "#e74c3c" and p_val_c == "#e74c3c":
-        action_label, action_color = "SELL / AVOID",        "#e74c3c"
-    elif pts <= 2.0 and p_qual_c == "#e74c3c":
-        action_label, action_color = "SELL / AVOID",        "#e74c3c"
-    elif pts <= 2.0 and sm_points <= -0.5:  # Strong distribution warning
-        action_label, action_color = "SELL / AVOID",        "#e74c3c"
-    elif pts <= 2.5 and p_qual_c in ["#2ecc71", "#00ffcc"]:
-        action_label, action_color = "HOLD / NEUTRAL",      "#f1c40f"
-    elif latest_rsi > 70 and pts <= 4.5:
-        action_label, action_color = "REDUCE / UNDERPERFORM","#e67e22"
+    if pts >= 4.0 and p_qual_c == "#00ffcc":
+        action_label = L["strong"]
+    elif pts >= 3.0 and p_trend_c not in ("#e74c3c", "#c0392b"):
+        action_label = L["favourable"]
+    elif p_trend_c in ("#e74c3c", "#c0392b") and p_val_c == "#e74c3c":
+        action_label = L["unfavourable"]
+    elif pts <= 1.5 and p_qual_c == "#e74c3c":
+        action_label = L["unfavourable"]
+    elif pts <= 1.5 and sm_points <= -0.5:
+        action_label = L["unfavourable"]
+    elif pts <= 2.0 and p_qual_c in ["#2ecc71", "#00ffcc"]:
+        action_label = L["neutral"]
+    elif latest_rsi > 70 and pts <= 3.5:
+        action_label = L["weakening"]
     else:
-        action_label, action_color = "HOLD / NEUTRAL",      "#f1c40f"
+        action_label = L["neutral"]
+    action_color = SIGNAL_COLOURS[action_label]
 
     return {
         "action_label":  action_label,

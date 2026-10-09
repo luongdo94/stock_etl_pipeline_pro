@@ -32,6 +32,7 @@ _DDL = """
         quality      INTEGER,
         value        INTEGER,
         momentum     INTEGER,
+        revisions    INTEGER,
         score_version VARCHAR,
         action       VARCHAR,
         decision     VARCHAR,
@@ -57,7 +58,8 @@ def build_snapshot(db_path: str = DB_PATH) -> pd.DataFrame:
     if prices.empty:
         return pd.DataFrame()
     hist_fcf = frames[7]
-    table = build_screener_table(companies, prices, quarterly, annual, hist_fcf)
+    estimates = frames[13] if len(frames) > 13 else None
+    table = build_screener_table(companies, prices, quarterly, annual, hist_fcf, None, estimates)
     if table.empty:
         return pd.DataFrame()
     as_of = pd.to_datetime(prices["date"]).max().date()
@@ -68,6 +70,7 @@ def build_snapshot(db_path: str = DB_PATH) -> pd.DataFrame:
         "quality": table["Quality"].round().astype(int),
         "value": table["Value"].round().astype("Int64"),
         "momentum": table["Momentum"].round().astype("Int64"),
+        "revisions": table["Revisions"].round().astype("Int64"),
         "score_version": SCORE_VERSION,
         "action": table["Action"].astype(str),
         "decision": table["Decision"].astype(str),
@@ -86,8 +89,8 @@ def save_snapshot(rows: pd.DataFrame, track_db_path: str = TRACK_DB_PATH, db_pat
     cols = list(rows.columns)
     with duckdb.connect(track_db_path) as tconn:
         tconn.execute(_DDL)
-        # older track-record files predate these columns; their rows keep NULL = pre-v5 definitions
-        for ddl in ("decision VARCHAR", "value INTEGER", "momentum INTEGER", "score_version VARCHAR"):
+        # older track-record files predate these columns; their rows keep NULL = earlier definitions
+        for ddl in ("decision VARCHAR", "value INTEGER", "momentum INTEGER", "revisions INTEGER", "score_version VARCHAR"):
             tconn.execute(f"ALTER TABLE signals.score_snapshots ADD COLUMN IF NOT EXISTS {ddl}")
         tconn.register("snap_rows", rows)
         tconn.execute(f"INSERT OR REPLACE INTO signals.score_snapshots ({', '.join(cols)}) "

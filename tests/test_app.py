@@ -174,11 +174,11 @@ class TestTacticalMetrics:
 
 
 # Higher = more bullish. Labels documented in compute_institutional_rating's docstring.
-_ACTION_RANK = {"SELL": 0, "REDUCE": 1, "HOLD": 2, "BUY": 3, "STRONG BUY": 4}
+_ACTION_RANK = {"UNFAVOURABLE": 0, "WEAKENING": 1, "NEUTRAL": 2, "FAVOURABLE": 3, "STRONG SETUP": 4}
 
 
 def _rank(label: str) -> int:
-    return next(v for k, v in sorted(_ACTION_RANK.items(), key=lambda kv: -len(kv[0])) if k in label.upper())
+    return _ACTION_RANK[label]
 
 
 class TestInstitutionalRating:
@@ -197,14 +197,29 @@ class TestInstitutionalRating:
         weak = self._rate(ai_score=25, ma_sig="STRONG BEAR", latest_rsi=75, upside=-15, pe_v=60,
                           peg_v=4.0, w52_pos=10, rr=0.4, sm_status="DISTRIBUTION", sm_strength=80)
         assert {"action_label", "action_color"} <= set(strong)
-        assert _rank(strong["action_label"]) >= _ACTION_RANK["BUY"]
-        assert _rank(weak["action_label"]) <= _ACTION_RANK["REDUCE"]
+        assert _rank(strong["action_label"]) >= _ACTION_RANK["FAVOURABLE"]
+        assert _rank(weak["action_label"]) <= _ACTION_RANK["WEAKENING"]
 
-    def test_strong_buy_requires_quality(self):
-        """v15 rule: STRONG BUY needs AI Score >= 65, whatever the other pillars say."""
+    def test_strong_setup_requires_elite_quality(self):
+        """STRONG SETUP needs ELITE quality, whatever the other pillars say."""
         r = self._rate(ai_score=50, ma_sig="STRONG BULL", latest_rsi=55, upside=40, pe_v=12,
-                       peg_v=0.5, w52_pos=70, rr=4.0, sm_status="ACCUMULATION", sm_strength=90)
-        assert "STRONG BUY" not in r["action_label"].upper()
+                       peg_v=0.5, w52_pos=70, rr=4.0, sm_status="ACCUMULATION", sm_strength=90, value_score=80)
+        assert r["action_label"] != "STRONG SETUP"
+
+    def test_signal_words_never_collide_with_the_decision(self):
+        """The Signal is context: its labels must not read as a recommendation."""
+        from core.rating import SIGNAL_LABELS
+        assert not any(w in label for label in SIGNAL_LABELS.values() for w in ("BUY", "SELL", "AVOID", "HOLD"))
+
+    def test_52_week_position_no_longer_scores(self):
+        """Near the 52-week LOW used to earn a point ('low risk'); stocks near highs tend to keep winning."""
+        base = dict(ai_score=80, ma_sig="BULLISH", latest_rsi=50, rr=3.0, value_score=70)
+        low, mid, high = (self._rate(w52_pos=p, **base)["pts"] for p in (5, 50, 95))
+        assert low == mid == high
+
+    def test_reward_risk_comes_from_the_decision_and_none_earns_no_point(self):
+        r = self._rate(ai_score=80, ma_sig="BULLISH", latest_rsi=50, value_score=70, rr=None)
+        assert r["p_conv"] == "N/A" and r["pts"] == self._rate(ai_score=80, ma_sig="BULLISH", latest_rsi=50, value_score=70, rr=1.0)["pts"]
 
 
 class TestPortfolioManagement:

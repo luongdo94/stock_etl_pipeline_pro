@@ -37,20 +37,23 @@ Chỉ số này đại diện cho "chất lượng nội tại" của thị trư
 Là giá trị trung bình có trọng số theo vốn hóa (Market Cap) của tất cả cổ phiếu trong Universe:
 `Market Quality Index = Σ(Quality Score * Market Cap) / Σ(Market Cap)`
 
-### 2.2. Điểm cổ phiếu v5: Quality, Value, Momentum
+### 2.2. Điểm cổ phiếu v6: Quality, Value, Momentum
 Mỗi cổ phiếu có **ba điểm 0-100 độc lập** (`core/scoring.py`; mọi ngưỡng và trọng số nằm trong `config/scoring_rules.yaml`). Mỗi điểm trả lời một câu hỏi khác nhau và không bao giờ bị trộn:
 
 | Điểm | Câu hỏi | Đầu vào (trọng số) |
 | :--- | :--- | :--- |
 | **Quality** | Doanh nghiệp có tốt không? | Lợi suất trên vốn 20 · biên vận hành / gộp / FCF 25 · tăng trưởng & ổn định (CAGR doanh thu, số năm có lãi, biến động biên) 20 · bảng cân đối (nợ ròng/EBITDA, current ratio) 20 · chuyển hóa tiền (FCF / lợi nhuận) 15. Ngân hàng/bảo hiểm: ROE 40, biên ròng 25, tăng trưởng & ổn định 35. |
-| **Value** | Giá có hấp dẫn không? | Lợi suất FCF 25 · EV/EBITDA 20 · lợi suất lợi nhuận 20 · PEG 15 · lợi suất cổ đông 10 · P/S 10 (tài chính: lợi suất lợi nhuận, P/B, lợi suất cổ đông, PEG). |
+| **Value** | Giá có hấp dẫn không? | Lợi suất FCF (sau thù lao bằng cổ phiếu) 25 · EV/EBITDA 20 · lợi suất lợi nhuận (hiện tại + trung vị 3 năm) 20 · PEG theo tăng trưởng thực tế 15 · lợi suất cổ đông 10 · P/S 10 (tài chính: lợi suất lợi nhuận, P/B, lợi suất cổ đông, PEG). |
 | **Momentum** | Giá đang diễn biến thế nào? | Xếp hạng lợi suất 12-1 tháng trong toàn universe (70%) + giá trên MA200 / golden cross (30%). **Chỉ dùng để chọn thời điểm.** |
 
 **Cách tính**
 - **So với nhóm ngành, không dùng thước đo chung.** Biên lợi nhuận và bội số được xếp hạng phân vị trong ngành (rồi đến sector, rồi toàn universe khi dưới 5 mã cùng nhóm). Value pha 50/50 giữa phân vị này và thang tuyệt đối (cả ngành có thể đắt). Lợi suất trên vốn, đòn bẩy, chuyển hóa tiền dùng thang tuyệt đối.
 - **Thiếu dữ liệu không phải là 0.** Đầu vào thiếu bị loại và các trọng số còn lại được chuẩn hóa lại. Nếu quan sát được dưới 80% trọng số, điểm bị kéo về 50; phần thiếu hiện ở *Coverage* và làm giảm độ tin cậy của Decision.
 - **Cờ đỏ trừ điểm Quality** (tối đa 25): đang lỗ (-8), có nợ nhưng EBITDA không dương (-10), nợ ròng/EBITDA trên 5x (-8) hoặc 8x (-15) (nới cho tiện ích, REIT, viễn thông), cổ tức không được FCF chi trả (-5), vốn chủ sở hữu âm (-5).
-- **Không chấm điểm:** khuyến nghị và giá mục tiêu của analyst (đồng thuận lệch về "mua", giá mục tiêu đi sau giá), beta, RSI và Z-score (chỉ hiển thị để chọn thời điểm).
+- **Không dùng dự báo của analyst trong bất kỳ điểm nào:** không khuyến nghị, không giá mục tiêu, không forward P/E, không PEG của Yahoo. Điểm **Revisions** riêng (thay đổi 30 ngày của ước tính EPS, cân bằng nâng/hạ hạng) hiển thị bên cạnh. Beta, RSI, Z-score không được chấm điểm.
+- **Momentum** tính theo nội tệ của cổ phiếu. Mã kém thanh khoản (< 1 triệu EUR/ngày) hoặc vốn hóa siêu nhỏ (< 300 triệu EUR) bị gắn cờ và làm giảm độ tin cậy của Decision.
+- **Signal** (STRONG SETUP … UNFAVOURABLE) chỉ là bối cảnh: xu hướng, chất lượng, giá trị, R/R của *Decision* và dòng khối lượng; vị trí 52 tuần chỉ hiển thị, không chấm điểm.
+- **Định giá của Decision:** lãi suất chiết khấu và tăng trưởng dài hạn theo đồng tiền của dòng tiền (USD dùng 10Y trực tiếp; EUR, JPY, GBP, CHF… cấu hình sẵn); ngân hàng/bảo hiểm dùng P/B hợp lý = (ROE − g)/(r − g), ROE chuẩn hóa 4 năm và giảm dần về chi phí vốn; FCF tính sau thù lao bằng cổ phiếu.
 - **Hạng:** Quality ELITE ≥ 75 · SOLID ≥ 60 · FAIR ≥ 45 · WEAK < 45. Value: UNDERVALUED ≥ 65 · FAIR ≥ 50 · FULL ≥ 35 · EXPENSIVE ≥ 20.
 - **Dùng trong Decision:** BUY candidate cần Quality ≥ 50 (rẻ mà yếu là bẫy giá trị kinh điển); DCF báo "rẻ" nhưng Value dưới 30 thì giảm độ tin cậy.
 - **Giới hạn:** lợi suất trên vốn = lợi nhuận ròng / (vốn chủ + nợ) từ báo cáo năm (không có NOPAT, không trừ tiền mặt); nợ ròng suy từ EV của Yahoo; chưa đo pha loãng cổ phiếu; trọng số là phán đoán cho đến khi tab Track Record cho thấy IC của từng điểm (snapshot được đóng dấu `score_version` nên lịch sử trước v5 không bị trộn vào).

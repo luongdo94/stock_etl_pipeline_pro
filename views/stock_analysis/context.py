@@ -37,6 +37,9 @@ class DeepDive:
     act_str: str
     act_color: str
     act_desc: str
+    decision_rr: object = None     # reward/risk of the Decision (thesis stop vs base-case value), None = no usable value
+    thesis_stop: object = None
+    target_value: object = None
     extra: dict = field(default_factory=dict)
 
     # short aliases for the ladder — used everywhere
@@ -107,7 +110,7 @@ def build(ctx, deep_ticker):
     _row = m_df[m_df["Ticker"] == deep_ticker]
     _num = lambda k: (float(_row.iloc[0][k]) if (not _row.empty and pd.notnull(_row.iloc[0][k])) else None)  # noqa: E731
     scores = {
-        "quality": _num("Quality"), "value": _num("Value"), "momentum": _num("Momentum"),
+        "quality": _num("Quality"), "value": _num("Value"), "momentum": _num("Momentum"), "revisions": _num("Revisions"),
         "coverage": _num("Coverage (%)"),
         "flags": str(_row.iloc[0]["Flags"]) if not _row.empty else "",
         "missing": list(_row.iloc[0]["Missing"]) if not _row.empty else [],
@@ -135,13 +138,22 @@ def build(ctx, deep_ticker):
         _future = _future[_future >= date.today()]
         next_er = _future.min() if not _future.empty else None
 
+    # The Decision's reward/risk feeds the Signal (same inputs as the Decision Summary; the track-record and
+    # data-gap notes of that panel do not change it)
+    from core.decision import build_decision, load_rules
+    _d = build_decision(price=float(cur_p), base_value=vin["base"], bear_value=vin["bear"], bull_value=vin["bull"],
+                        stop_loss=tm["stop_loss"], currency=meta.get("currency"), country=meta.get("country"),
+                        dividend_yield_pct=meta.get("dividend_yield_pct"), valuation_reliable=vin["reliable"],
+                        valuation_note=vin["note"], rules=load_rules())
+    usable = bool(vin["base"] and vin["reliable"])
+
     # Smart money on the full history (OBV is path-dependent)
     sm = get_sm_spirit_unified_v2(_df_levels, sector=str(meta.get("sector", "Unknown")))
     rating = compute_institutional_rating(
         ai_score=ai_score, ma_sig=ma_sig, latest_rsi=tm["rsi"], upside=float(upside),
         pe_v=float(meta_enriched.get("forward_pe") or meta_enriched.get("pe_ratio") or 0),
         peg_v=float(meta_enriched.get("peg_ratio") or 0), sector=str(meta.get("sector", "")),
-        w52_pos=tm["w52_pos"], rr=tm["rr_score"], sm_status=sm["signal"],
+        w52_pos=tm["w52_pos"], rr=_d.reward_risk, sm_status=sm["signal"],
         sm_strength=sm["strength"], sm_layer=sm["layer"], value_score=scores["value"])
     act_str = rating["action_label"]
     from core.signal_matrix import ACTION_COLOURS, action_description
@@ -153,4 +165,5 @@ def build(ctx, deep_ticker):
                     df_fin=df_fin, cur_p=cur_p, target_p=target_p, upside=upside, z_score=z_score,
                     ai_score=ai_score, scores=scores, tm=tm, ma_sig=ma_sig, tp1=tp1, tp2=tp2, vin=vin, relval=relval,
                     next_earnings=next_er, sm=sm, rating=rating, act_str=act_str, act_color=act_color,
-                    act_desc=act_desc)
+                    act_desc=act_desc, decision_rr=_d.reward_risk, thesis_stop=_d.stop,
+                    target_value=vin["base"] if usable else None)

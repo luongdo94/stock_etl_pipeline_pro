@@ -25,16 +25,53 @@ import pandas as pd
 RISK_FREE = 0.04             # fallback when no live 10Y yield is available
 
 
-def _configured(key: str, default: float) -> float:
-    """Override from config/decision_rules.yaml → valuation.<key> (DCF results are very sensitive)."""
+def _valuation_config() -> dict:
+    """config/decision_rules.yaml → valuation section (DCF results are very sensitive to it)."""
     try:
         import yaml
         from pathlib import Path
         cfg = yaml.safe_load(open(Path(__file__).resolve().parent.parent / "config" / "decision_rules.yaml",
                                   encoding="utf-8")) or {}
-        return float(cfg.get("valuation", {}).get(key, default))
-    except (OSError, TypeError, ValueError):
+        return cfg.get("valuation", {}) or {}
+    except OSError:
+        return {}
+
+
+def _configured(key: str, default: float) -> float:
+    try:
+        return float(_valuation_config().get(key, default))
+    except (TypeError, ValueError):
         return default
+
+
+_MINOR_UNITS = {"GBp": "GBP", "GBX": "GBP", "GBx": "GBP", "ZAc": "ZAR", "ILA": "ILS"}
+
+
+def major_currency(ccy) -> Optional[str]:
+    if not ccy or str(ccy).strip() in ("", "nan", "None"):
+        return None
+    c = str(ccy).strip()
+    return _MINOR_UNITS.get(c, c.upper())
+
+
+def currency_assumptions(ccy, macro: Optional[dict] = None) -> dict:
+    """
+    {risk_free, terminal_growth, currency, source} for cash flows earned in `ccy`.
+
+    The risk-free rate and the long-run growth rate must come from the same monetary regime as the cash
+    flows (an inflation-consistent pair). USD (and the pegged HKD) use the live US 10Y when the macro feed
+    has it; every other currency uses its configured level, never the US yield.
+    """
+    cfg = _valuation_config().get("currencies", {}) or {}
+    c = major_currency(ccy)
+    entry = cfg.get(c) or cfg.get("default") or {"risk_free": RISK_FREE, "terminal_growth": 0.025}
+    rf, tg = float(entry["risk_free"]), float(entry["terminal_growth"])
+    source = f"{c or 'default'} assumptions (config)"
+    if c in ("USD", "HKD"):
+        live = risk_free_from_macro(macro)
+        if macro and (macro.get("US10Y") or {}).get("val") and live != RISK_FREE:
+            rf, source = live, "live US 10Y"
+    return {"risk_free": rf, "terminal_growth": tg, "currency": c or "default", "source": source}
 
 
 EQUITY_RISK_PREMIUM = _configured("equity_risk_premium", 0.05)   # mature-market ERP
@@ -43,6 +80,7 @@ EXPLICIT_YEARS = 10
 GROWTH_FLOOR, GROWTH_CAP = -0.05, 0.20
 GROWTH_BAND = 0.05   # earnings / FCF may move the anchor by at most ±5pp around revenue growth
 REQUIRED_MARGIN_OF_SAFETY = _configured("required_margin_of_safety", 0.25)
+FADE_KEEP = 0.7                   # share of a bank's normalised ROE assumed to persist (the rest converges to the cost of equity)
 IMPLAUSIBLE_MARGIN = 1.5          # value > 2.5x price → suspect the inputs, not the market
 # Sectors where free-cash-flow DCF is not meaningful (cash flow includes customer deposits / float)
 DCF_NOT_APPLICABLE_SECTORS = {"banks", "capital markets", "financial services", "financials", "insurance"}
@@ -107,12 +145,29 @@ def revenue_cagr(annual_fin: Optional[pd.DataFrame], ticker: str, years: int = 3
     return fcf_cagr(r) if len(r) >= 3 else None
 
 
+def _after_sbc(rows: pd.DataFrame) -> pd.Series:
+    """Free cash flow minus stock-based compensation (SBC is added back in operating cash flow although it is a
+    real cost to owners — dilution). Years without an SBC figure are left unadjusted."""
+    fcf = pd.to_numeric(rows["free_cash_flow"], errors="coerce")
+    if "stock_based_comp" in rows.columns:
+        fcf = fcf - pd.to_numeric(rows["stock_based_comp"], errors="coerce").fillna(0.0)
+    return fcf
+
+
 def normalized_statement_fcf(hist_fcf: pd.DataFrame, ticker: str, years: int = 3) -> Optional[float]:
-    """Median of the last `years` annual statement FCFs (EUR) — damps one-off spikes and cycles."""
+    """Median of the last `years` annual statement FCFs after stock-based compensation (EUR) — damps one-off spikes and cycles."""
     if hist_fcf is None or hist_fcf.empty or "free_cash_flow" not in hist_fcf.columns:
         return None
     rows = hist_fcf[(hist_fcf["ticker"] == ticker) & hist_fcf["free_cash_flow"].notna()].sort_values("year")
-    return _finite(rows["free_cash_flow"].tail(years).median()) if not rows.empty else None
+    return _finite(_after_sbc(rows).tail(years).median()) if not rows.empty else None
+
+
+def sbc_available(hist_fcf: pd.DataFrame, ticker: str, years: int = 3) -> bool:
+    """True when the recent annual rows carry a stock-based-compensation figure (so the FCF above is adjusted)."""
+    if hist_fcf is None or hist_fcf.empty or "stock_based_comp" not in hist_fcf.columns:
+        return False
+    rows = hist_fcf[(hist_fcf["ticker"] == ticker) & hist_fcf["free_cash_flow"].notna()].sort_values("year").tail(years)
+    return bool(rows["stock_based_comp"].notna().any())
 
 
 def dcf_equity_value(fcfe: float, growth: float, discount_rate: float,
@@ -231,6 +286,73 @@ def relative_valuation(companies: pd.DataFrame, ticker: str,
     }
 
 
+def justified_pb_value(book_per_share, roe, discount_rate, growth) -> Optional[float]:
+    """
+    Value per share of a bank / insurer: book value x justified P/B, with P/B = (ROE - g) / (r - g).
+    (Equivalent to a residual-income model with a constant ROE.) None when the franchise earns no more than
+    it grows (ROE <= g) — then book value is not worth more than its parts and the formula is meaningless.
+    """
+    bv, roe, r, g = _finite(book_per_share), _finite(roe), _finite(discount_rate), _finite(growth)
+    if bv is None or bv <= 0 or roe is None or r is None or g is None or r <= g or roe <= g:
+        return None
+    return bv * (roe - g) / (r - g)
+
+
+def normalized_roe(annual_fin: Optional[pd.DataFrame], ticker: str, fallback=None, years: int = 4) -> Optional[float]:
+    """Median of the last `years` annual net income / equity (through the cycle), clipped to [0, 25%]."""
+    roes = []
+    if annual_fin is not None and not annual_fin.empty and {"net_income", "total_equity"} <= set(annual_fin.columns):
+        t = annual_fin[annual_fin["ticker"] == ticker].sort_values("year").tail(years)
+        roes = [n / e for n, e in zip(t["net_income"], t["total_equity"])
+                if _finite(n) is not None and _finite(e) is not None and e > 0]
+    r = float(np.median(roes)) if len(roes) >= 2 else _finite(fallback)
+    return None if r is None else float(np.clip(r, 0.0, 0.25))
+
+
+def _financial_inputs(meta, price: float, annual_fin, ticker: str, coe: float, tg: float, ass: dict) -> dict:
+    mcap = _finite(meta.get("market_cap"))
+    shares = mcap / price if mcap and price else None
+    pb = _finite(meta.get("price_to_book"))
+    bvps = price / pb if pb and pb > 0 else None
+    roe_norm = normalized_roe(annual_fin, ticker, fallback=meta.get("roe"))
+    # Competitive fade: a return above (or below) the cost of equity does not last forever, so the sustainable ROE
+    # is pulled 30% of the way toward it (only when above it). Without this, a reinsurer earning 20% is capitalised at 20% for ever.
+    # Only EXCESS returns fade: a franchise below its cost of equity is not rescued by assuming it converges up.
+    roe = None if roe_norm is None else (FADE_KEEP * roe_norm + (1 - FADE_KEEP) * coe if roe_norm > coe else roe_norm)
+    scen = {}
+    for name, d_roe, d_r in (("bear", -0.03, +0.01), ("base", 0.0, 0.0), ("bull", +0.03, -0.01)):
+        r = max(coe + d_r, tg + 0.01)
+        rr = None if roe is None else max(roe + d_roe, 0.0)
+        scen[name] = Scenario(name, rr if rr is not None else 0.0, r, justified_pb_value(bvps, rr, r, tg))
+    base, bear, bull = (scen[k].value_per_share for k in ("base", "bear", "bull"))
+    implied = tg + (price / bvps) * (coe - tg) if bvps else None          # ROE the price already assumes
+    if base is None:
+        reliable, note = False, ("The sustainable ROE is not above long-run growth (or book value / ROE is missing) — "
+                                 "a justified-P/B value cannot be computed. Judge on P/B, ROE trend and credit quality.")
+    elif base / price - 1 > IMPLAUSIBLE_MARGIN:
+        reliable, note = False, "Value is >2.5x the price — verify book value and ROE before acting."
+    elif implied is not None and implied > 0.35:
+        reliable, note = False, (f"The price implies a perpetual ROE of {implied:.0%} — beyond what a lender or insurer "
+                                 f"can sustain; the model is not informative here.")
+    else:
+        reliable, note = True, None
+    return {
+        "model": "justified_pb", "fcfe": None, "fcf_source": "n/a (bank / insurer: cash flows include deposits and float)",
+        "shares": shares, "growth": roe or 0.0,
+        "growth_sources": [f"normalised ROE {roe_norm:.1%} (median of up to 4 annual ROEs), faded 30% toward the cost of equity"
+                           if roe_norm is not None else "ROE unavailable"],
+        "reliable": reliable, "note": note,
+        "model_note": ("Justified P/B = (ROE − g) / (r − g) on current book value per share. ROE is the 4-year median "
+                       "faded 30% toward the cost of equity (excess returns do not last); still sensitive to the credit "
+                       "or underwriting cycle."),
+        "risk_free": ass["risk_free"], "cost_of_equity": coe, "terminal_growth": tg, "currency": ass["currency"],
+        "rate_source": ass["source"], "scenarios": scen, "base": base, "bear": bear, "bull": bull,
+        "implied_growth": implied, "roe": roe, "roe_normalised": roe_norm, "book_per_share": bvps,
+        "justified_pb": (roe - tg) / (coe - tg) if roe is not None and coe > tg else None,
+        "sbc_adjusted": False,
+    }
+
+
 def latest_statement_fcf(hist_fcf: pd.DataFrame, ticker: str) -> Optional[float]:
     """Most recent annual cash-flow-statement FCF (EUR) for the ticker, if any."""
     if hist_fcf is None or hist_fcf.empty or "free_cash_flow" not in hist_fcf.columns:
@@ -265,33 +387,44 @@ def risk_free_from_macro(macro: dict) -> float:
 
 def valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, macro: dict,
                      annual_fin: Optional[pd.DataFrame] = None) -> dict:
-    """Company-anchored DCF inputs + scenarios + reverse DCF (EUR, per share)."""
-    # Cash-flow-statement FCF (EUR) first; Yahoo's levered FCF only as a fallback
+    """
+    Company-anchored intrinsic value inputs + scenarios + reverse model (EUR, per share).
+
+    Industrials and tech: FCFE DCF. Banks, insurers and other financials: justified P/B (residual income).
+    The risk-free rate and terminal growth come from the currency the cash flows are earned in.
+    """
+    ass = currency_assumptions(meta.get("currency"), macro)
+    rf, tg = ass["risk_free"], ass["terminal_growth"]
+    coe = cost_of_equity(meta.get("beta"), risk_free=rf)
+    if str(meta.get("sector") or "").strip().lower() in DCF_NOT_APPLICABLE_SECTORS:
+        return _financial_inputs(meta, price, annual_fin, ticker, coe, tg, ass)
+
+    # Cash-flow-statement FCF after stock-based compensation (EUR) first; Yahoo's levered FCF only as a fallback
     statement_fcf = normalized_statement_fcf(hist_fcf, ticker)
+    sbc = sbc_available(hist_fcf, ticker)
     fcfe = statement_fcf if statement_fcf is not None else _finite(meta.get("free_cashflow"))
-    fcf_source = ("cash-flow statement FCF (OCF − capex), median of last 3 years"
+    fcf_source = (("cash-flow statement FCF (OCF − capex − stock-based comp), median of last 3 years" if sbc
+                   else "cash-flow statement FCF (OCF − capex; stock comp not available), median of last 3 years")
                   if statement_fcf is not None else "Yahoo levered FCF")
     mcap = _finite(meta.get("market_cap"))
     shares = mcap / price if mcap and price else None
-    hist = hist_fcf[hist_fcf["ticker"] == ticker].sort_values("year")["free_cash_flow"].tail(5) \
+    hist = _after_sbc(hist_fcf[hist_fcf["ticker"] == ticker].sort_values("year")).tail(5) \
         if hist_fcf is not None and not hist_fcf.empty else []
     growth, sources = anchor_growth(meta.get("revenue_growth"), meta.get("earnings_growth"),
                                     fcf_cagr(hist), revenue_cagr=revenue_cagr(annual_fin, ticker))
-    rf = risk_free_from_macro(macro)
-    coe = cost_of_equity(meta.get("beta"), risk_free=rf)
-    applicable = str(meta.get("sector") or "").strip().lower() not in DCF_NOT_APPLICABLE_SECTORS
-    valuable = bool(applicable and fcfe and fcfe > 0 and shares)
-    scen = dcf_scenarios(fcfe, shares, growth, coe) if valuable else {}
+    valuable = bool(fcfe and fcfe > 0 and shares)
+    scen = dcf_scenarios(fcfe, shares, growth, coe, tg) if valuable else {}
     base = scen["base"].value_per_share if scen else None
     bull = scen["bull"].value_per_share if scen else None
-    implied = reverse_dcf_growth(price, fcfe, shares, coe) if valuable else None
+    implied = reverse_dcf_growth(price, fcfe, shares, coe, tg) if valuable else None
     reliable, note = dcf_reliability(meta.get("sector"), price, base, bull, implied)
     return {
-        "fcfe": fcfe if applicable else None, "fcf_source": fcf_source, "shares": shares,
+        "model": "dcf", "fcfe": fcfe, "fcf_source": fcf_source, "shares": shares,
         "growth": growth, "growth_sources": sources, "reliable": reliable, "note": note,
-        "risk_free": rf, "cost_of_equity": coe, "scenarios": scen,
+        "risk_free": rf, "cost_of_equity": coe, "terminal_growth": tg, "currency": ass["currency"],
+        "rate_source": ass["source"], "scenarios": scen,
         "base": base,
         "bear": scen["bear"].value_per_share if scen else None,
         "bull": bull,
-        "implied_growth": implied,
+        "implied_growth": implied, "sbc_adjusted": sbc,
     }

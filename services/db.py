@@ -298,18 +298,22 @@ def load_data():
 def read_warehouse(conn):
     """All dashboard frames from an open DuckDB connection (no Streamlit) — shared with the ETL
     snapshot job so the stored daily scores are exactly what the dashboard showed."""
-    prices_f = conn.execute("""
+    _prices_sql = """
         SELECT f.date, f.ticker, d.company, d.sector, d.region,
                f.price_open, f.price_high, f.price_low, f.price_close, 
                f.daily_return_pct, f.volume,
                f.ma_20, f.ma_50, f.ma_200, f.ma_signal, 
                f.price_z_score, f.pct_from_ma200, f.pct_from_52w_high,
-               f.is_volume_spike, f.cap_category
+               f.is_volume_spike, f.cap_category{extra}
         FROM marts.fct_daily_returns f
         LEFT JOIN marts.dim_companies d USING (ticker)
         WHERE f.date >= CURRENT_DATE - INTERVAL 3 YEAR
         ORDER BY f.date
-    """).df()
+    """
+    try:      # fx_rate / price_scale: EUR conversion of each close, so momentum can be measured in local currency
+        prices_f = conn.execute(_prices_sql.format(extra=", f.fx_rate, f.price_scale")).df()
+    except duckdb.Error:      # warehouse / cloud snapshot built before the conversion was recorded
+        prices_f = conn.execute(_prices_sql.format(extra="")).df()
 
 
     companies_f = conn.execute("""
@@ -344,9 +348,12 @@ def read_warehouse(conn):
         dq_warnings_f = pd.DataFrame()
 
     try:
-        hist_fcf_f = conn.execute("SELECT ticker, year, free_cash_flow, operating_cash_flow FROM raw.hist_fcf ORDER BY ticker, year").df()
-    except Exception:
-        hist_fcf_f = pd.DataFrame()
+        hist_fcf_f = conn.execute("SELECT ticker, year, free_cash_flow, operating_cash_flow, stock_based_comp FROM raw.hist_fcf ORDER BY ticker, year").df()
+    except duckdb.Error:
+        try:
+            hist_fcf_f = conn.execute("SELECT ticker, year, free_cash_flow, operating_cash_flow FROM raw.hist_fcf ORDER BY ticker, year").df()
+        except duckdb.Error:
+            hist_fcf_f = pd.DataFrame()
 
     try:
         hist_fcf_q_f = conn.execute("SELECT ticker, year, quarter, free_cash_flow, operating_cash_flow FROM raw.hist_fcf_quarterly ORDER BY ticker, year, quarter").df()
@@ -390,6 +397,11 @@ def read_warehouse(conn):
     except duckdb.Error:
         tv_sector_rotation_f = pd.DataFrame()
         
+    try:
+        forward_estimates_f = conn.execute("SELECT * FROM marts.dim_forward_estimates").df()
+    except duckdb.Error:
+        forward_estimates_f = pd.DataFrame()
+
     # ── PRE-PROCESSING INSIDE CACHE ──
     prices_f["date"] = pd.to_datetime(prices_f["date"])
     monthly_f["month"] = pd.to_datetime(monthly_f["month"])
@@ -410,7 +422,7 @@ def read_warehouse(conn):
     return (
         prices_f, companies_f, monthly_f, annual_f, quarterly_f, earnings_calendar,
         dq_warnings_f, hist_fcf_f, hist_fcf_q_f, etl_audit_f, total_tickers_f, earnings_surprise_f,
-        tv_sector_rotation_f
+        tv_sector_rotation_f, forward_estimates_f
     )
 
 

@@ -36,20 +36,23 @@ Dieser Index repräsentiert die "intrinsische Qualität" des Marktes oder einer 
 Alle Daten im System (Preise, Umsatz, Marktkapitalisierung) werden bereits im Extraktionsschritt der ETL-Pipeline in **Euro (EUR)** normalisiert.
 `Market Quality Index = Σ(Quality Score * Market Cap) / Σ(Market Cap)`
 
-### 2.2. Aktien-Scores v5: Quality, Value, Momentum
+### 2.2. Aktien-Scores v6: Quality, Value, Momentum
 Jede Aktie erhält **drei unabhängige Scores von 0-100** (`core/scoring.py`; alle Schwellen und Gewichte in `config/scoring_rules.yaml`). Sie beantworten verschiedene Fragen und werden nie vermischt:
 
 | Score | Frage | Eingaben (Gewicht) |
 | :--- | :--- | :--- |
 | **Quality** | Ist es ein gutes Unternehmen? | Kapitalrendite 20 · Betriebs-/Brutto-/FCF-Marge 25 · Wachstum & Stabilität 20 · Bilanz (Nettoverschuldung/EBITDA, Current Ratio) 20 · Cash-Conversion (FCF / Gewinn) 15. Banken/Versicherer: ROE 40, Nettomarge 25, Wachstum & Stabilität 35. |
-| **Value** | Ist der Preis attraktiv? | FCF-Rendite 25 · EV/EBITDA 20 · Gewinnrendite 20 · PEG 15 · Aktionärsrendite 10 · KUV 10. |
+| **Value** | Ist der Preis attraktiv? | FCF-Rendite (nach aktienbasierter Vergütung) 25 · EV/EBITDA 20 · Gewinnrendite (aktuell + 3-Jahres-Median) 20 · PEG auf realisiertes Wachstum 15 · Aktionärsrendite 10 · KUV 10. |
 | **Momentum** | Wie verhält sich der Kurs? | Rang der 12-1-Monats-Rendite im Universum (70 %) + Kurs über MA200 / Golden Cross (30 %). **Nur fürs Timing.** |
 
 **Aufbau**
 - **Peer-Vergleich statt universeller Maßstab.** Margen und Multiplikatoren werden als Perzentil innerhalb der Branche (sonst Sektor, sonst Universum bei weniger als 5 Peers) bewertet; Value mischt dies 50/50 mit einem absoluten Band. Kapitalrendite, Verschuldung und Cash-Conversion nutzen absolute Bänder.
 - **Unbekannt ist nicht null.** Fehlende Eingaben entfallen, die übrigen Gewichte werden neu normiert. Sind weniger als 80 % des Gewichts beobachtbar, wird der Score Richtung 50 gezogen; die Lücke erscheint als *Coverage* und senkt das Vertrauen der Decision.
 - **Rote Flaggen ziehen Quality-Punkte ab** (max. 25): Verlust (-8), Schulden ohne positives EBITDA (-10), Nettoverschuldung/EBITDA über 5x (-8) bzw. 8x (-15), Dividende nicht durch FCF gedeckt (-5), negatives Eigenkapital (-5).
-- **Nicht bewertet:** Analystenempfehlungen und Kursziele, Beta, RSI und Z-Score.
+- **Keine Analystenprognosen in einem Score:** weder Empfehlungen und Kursziele noch Forward-KGV oder Yahoos PEG. Ein eigener **Revisions**-Score (30-Tage-Änderung der EPS-Schätzungen) steht daneben. Beta, RSI und Z-Score werden nicht bewertet.
+- **Momentum** wird in der Eigenwährung der Aktie gemessen; illiquide (< 1 Mio. EUR Umsatz/Tag) und Micro-Caps (< 300 Mio. EUR) werden markiert.
+- **Signal** (STRONG SETUP … UNFAVOURABLE) ist nur Kontext; die 52-Wochen-Position wird angezeigt, aber nicht bewertet.
+- **Bewertung der Decision:** Diskontsatz und langfristiges Wachstum je Währung der Cashflows; Banken/Versicherer mit gerechtfertigtem KBV = (ROE − g)/(r − g); FCF nach aktienbasierter Vergütung.
 - **Verwendung in der Decision:** BUY-Kandidaten brauchen Quality ≥ 50; ein DCF-„günstig“, das ein Value-Score unter 30 widerlegt, senkt das Vertrauen.
 - **Grenzen:** Kapitalrendite = Nettogewinn / (Eigenkapital + Schulden) aus Jahresabschlüssen; Nettoverschuldung aus Yahoos EV abgeleitet; Verwässerung wird nicht gemessen; die Gewichte sind Urteil, bis der Track-Record-Tab den IC je Score belegt (Snapshots tragen `score_version`).
 

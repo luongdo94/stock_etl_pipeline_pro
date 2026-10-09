@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 import yaml
 
-SCORE_VERSION = "v5"   # bump when the meaning of a score changes; snapshots are stamped with it
+SCORE_VERSION = "v6"   # bump when the meaning of a score changes; snapshots are stamped with it
 _RULES_PATH = Path(__file__).resolve().parent.parent / "config" / "scoring_rules.yaml"
 _NON_EQUITY_SECTORS = {"benchmark", "volatility", "index"}
 _UPTREND = {"STRONG BULL", "BULLISH"}
@@ -39,6 +39,7 @@ FLAG_LABELS = {
     "net_debt_ebitda_high": "Net debt/EBITDA high", "net_debt_ebitda_critical": "Net debt/EBITDA critical",
     "dividend_uncovered": "Dividend not covered by free cash flow", "negative_equity": "Negative book equity",
     "gaap_loss_cash_positive": "GAAP loss but cash-positive (impairment?)",
+    "illiquid": "Illiquid (median daily turnover under EUR 1M)", "micro_cap": "Micro-cap (market cap under EUR 300M)",
 }
 
 
@@ -120,11 +121,14 @@ def _history_features(annual: pd.DataFrame) -> pd.DataFrame:
     def agg(df):
         df = df.tail(5)
         rev, ni = df["revenue"].to_numpy(float), df["net_income"].to_numpy(float)
-        out = {"rev_cagr": np.nan, "profit_years": np.nan, "margin_vol": np.nan, "ni_median": np.nan}
+        out = {"rev_cagr": np.nan, "profit_years": np.nan, "margin_vol": np.nan, "ni_median": np.nan, "ni_cagr": np.nan}
         n = len(df)
         if n >= 3 and rev[0] > 0 and rev[-1] > 0:
             out["rev_cagr"] = ((rev[-1] / rev[0]) ** (1 / (n - 1)) - 1) * 100
         ok = ~np.isnan(ni)
+        pos = ni[ok]
+        if len(pos) >= 3 and pos[0] > 0 and pos[-1] > 0:
+            out["ni_cagr"] = ((pos[-1] / pos[0]) ** (1 / (len(pos) - 1)) - 1) * 100       # realised earnings growth
         if ok.sum() >= 2:
             out["ni_median"] = float(np.median(ni[ok][-3:]))      # through-the-cycle: one impairment year is not the story
         if ok.sum() >= 3:
@@ -149,15 +153,33 @@ def _momentum_features(prices: pd.DataFrame, rules: dict) -> pd.DataFrame:
         c = s.to_numpy(float)
         return c[-1 - m["skip_days"]] / c[-need] - 1 if len(c) >= need else np.nan
 
-    out = pd.DataFrame({"ret_12_1": p.groupby("ticker")["price_close"].apply(ret) * 100})
+    eur = p.groupby("ticker")["price_close"].apply(ret)
+    # Momentum is a statement about the STOCK, not the currency: when the EUR conversion of each close is known
+    # (fx_rate, price_scale) the return is measured in the stock's own currency.
+    if {"fx_rate", "price_scale"} <= set(p.columns):
+        local = p["price_close"] * p["price_scale"] / p["fx_rate"]
+        local_ret = local.groupby(p["ticker"]).apply(ret)
+        eur = local_ret.where(local_ret.notna(), eur)
+    out = pd.DataFrame({"ret_12_1": eur * 100})
+    if "volume" in p.columns:     # liquidity: median traded value of the last 60 sessions (EUR)
+        traded = (p["price_close"] * p["volume"]).groupby(p["ticker"]).apply(lambda s: s.tail(60).median())
+        out["adv_eur"] = traded
     last = p.groupby("ticker").tail(1).set_index("ticker")
     out["pct_from_ma200"] = _col(last, "pct_from_ma200")
     out["ma_signal"] = last["ma_signal"].astype(str) if "ma_signal" in last.columns else np.nan
     return out
 
 
+def _sbc_last(hist_fcf) -> pd.Series:
+    """Most recent annual stock-based compensation per ticker (EUR); empty when the warehouse has none yet."""
+    if hist_fcf is None or hist_fcf.empty or "stock_based_comp" not in hist_fcf.columns:
+        return pd.Series(dtype=float)
+    h = hist_fcf.dropna(subset=["stock_based_comp"]).sort_values(["ticker", "year"])
+    return h.groupby("ticker")["stock_based_comp"].last().astype(float)
+
+
 def build_features(companies: pd.DataFrame, annual_fin: pd.DataFrame = None, prices: pd.DataFrame = None,
-                   rules: dict = None) -> pd.DataFrame:
+                   rules: dict = None, hist_fcf: pd.DataFrame = None) -> pd.DataFrame:
     """Derived inputs per investable ticker (index = ticker). Amounts are EUR, ratios currency-free."""
     rules = rules or load_rules()
     c = companies.drop_duplicates("ticker", keep="last").set_index("ticker")
@@ -176,7 +198,7 @@ def build_features(companies: pd.DataFrame, annual_fin: pd.DataFrame = None, pri
     f["group"] = np.where(f["is_financial"], "financial", np.where(in_group("capex_heavy"), "capex_heavy", "standard"))
 
     mcap = _col(c, "market_cap").where(lambda s: s > 0)
-    pe, fpe, eps = _col(c, "pe_ratio"), _col(c, "forward_pe"), _col(c, "trailing_eps")
+    pe, eps = _col(c, "pe_ratio"), _col(c, "trailing_eps")
     ebitda, debt, fcf = _col(c, "ebitda"), _col(c, "total_debt"), _col(c, "free_cashflow")
     ev = _col(c, "ev_to_ebitda").where(lambda s: s > 0)
 
@@ -188,22 +210,25 @@ def build_features(companies: pd.DataFrame, annual_fin: pd.DataFrame = None, pri
     f["gaap_loss_cash_positive"] = gaap_loss & cash_ok & ~f["is_reit"]
     f["gaap_loss"] = gaap_loss
     earn_ttm = (mcap / pe).where(pe > 0)
-    # earnings yield (%): forward P/E preferred; negative earnings = 0 (a fact, not a gap)
-    base = fpe.where(fpe.notna(), pe)
-    ey = (100 / base).where(base > 0, 0.0).where(base.notna())
-    f["earn_yield"] = ey.where(ey.notna() | ~f["gaap_loss"], 0.0)
-    f["fcf_yield"] = fcf / mcap * 100
-    f["fcf_margin"] = _col(c, "fcf_margin")
+
+    # Free cash flow AFTER stock-based compensation: SBC is added back in operating cash flow but is paid by
+    # owners through dilution. Without an SBC figure (older warehouse) the reported FCF is used and flagged.
+    sbc = _sbc_last(hist_fcf).reindex(c.index)
+    f["sbc_adjusted"] = sbc.notna()
+    fcf_adj = fcf - sbc.fillna(0.0)
+    f["fcf_yield"] = fcf_adj / mcap * 100
+    rev_ttm = _col(c, "revenue_ttm").where(lambda s: s > 0)
+    f["fcf_margin"] = (fcf_adj / rev_ttm * 100).where(sbc.notna() & rev_ttm.notna(), _col(c, "fcf_margin"))
     f["ev_ebitda"] = ev.where(ebitda > 0)
     f["ebitda_pos"] = ebitda.gt(0).where(ebitda.notna())          # NaN = unknown
-    f["peg"] = _col(c, "peg_ratio").where(lambda s: s > 0)
+    f["peg"] = np.nan                       # filled below from realised earnings growth (no analyst growth)
     f["ps"] = _col(c, "price_to_sales").where(lambda s: s > 0)
     f["pb"] = _col(c, "price_to_book").where(lambda s: s > 0)
     f["op_margin"], f["gross_margin"] = _col(c, "operating_margin"), _col(c, "gross_margin")
     f["roe"] = _col(c, "roe") * 100
     f["net_margin"] = (earn_ttm / _col(c, "revenue_ttm").where(lambda s: s > 0) * 100)
     f["current_ratio"] = _col(c, "current_ratio")
-    f["fcf_conversion"] = (fcf / earn_ttm).where(earn_ttm > 0)
+    f["fcf_conversion"] = (fcf_adj / earn_ttm).where(earn_ttm > 0)
 
     # Net debt = Yahoo's EV (which already nets cash) - market cap; EV = EV/EBITDA x EBITDA also works when
     # both are negative. Gross debt is the fallback (cash unknown -> conservative).
@@ -236,9 +261,24 @@ def build_features(companies: pd.DataFrame, annual_fin: pd.DataFrame = None, pri
             f[col] = h[col]
     denom = (f["last_equity"] + debt).where(lambda s: s > 0)
     f["roc"] = f["ni_median"] / denom * 100        # median of the last 3 reported net incomes
+    if "ni_cagr" not in f:
+        f["ni_cagr"] = np.nan
+
+    # Earnings yield (%): trailing earnings and 3-year median earnings (through the cycle), averaged. No forward
+    # P/E: it is an analyst forecast. Negative earnings = 0 (a fact, not a gap).
+    trailing_ey = (100 / pe).where(pe > 0)
+    normal_ey = (f["ni_median"] / mcap * 100).where(f["ni_median"] > 0)
+    ey = pd.concat([trailing_ey, normal_ey], axis=1).mean(axis=1, skipna=True)
+    ey = ey.where(~f["loss_making"], 0.0)                         # an economic loss earns nothing, whatever it earned before
+    ey = ey.where(~f["gaap_loss_cash_positive"], ey * 0.5)        # impairment year: half credit for through-the-cycle earnings
+    f["earn_yield"] = ey.where(ey.notna() | ~f["gaap_loss"], 0.0)
+    # PEG on REALISED growth: trailing P/E over the 3-year earnings CAGR (Yahoo's PEG uses analyst growth)
+    growth = f["ni_cagr"].where(f["ni_cagr"] >= 2.0).clip(upper=60.0)
+    f["peg"] = (pe / growth).where(pe > 0)
     f["negative_equity"] = (f["last_equity"] < 0).fillna(False)
 
-    f["ret_12_1"], f["pct_from_ma200"], f["ma_signal"] = np.nan, np.nan, np.nan
+    f["ret_12_1"], f["pct_from_ma200"], f["ma_signal"], f["adv_eur"] = np.nan, np.nan, np.nan, np.nan
+    f["micro_cap"] = (mcap < rules["liquidity"]["micro_cap_eur"]).fillna(False)
     if prices is not None and not prices.empty:
         mo = _momentum_features(prices, rules).reindex(f.index)
         for col in mo.columns:
@@ -312,6 +352,34 @@ def value_components(f: pd.DataFrame, rules: dict) -> pd.DataFrame:
     return c
 
 
+def revisions_score(estimates: pd.DataFrame, index, rules: dict) -> pd.Series:
+    """
+    0-100 from the CHANGE in analysts' estimates over 30 days (marts.dim_forward_estimates): revision of the
+    current- and next-year EPS estimate, and the balance of upgrades vs downgrades. 50 = no change.
+    Estimate revisions are a flow with a documented drift; the level of the consensus (ratings, targets) is not used.
+    """
+    out = pd.Series(np.nan, index=index, dtype=float)
+    if estimates is None or estimates.empty:
+        return out
+    r = rules["revisions"]
+    e = estimates.drop_duplicates("ticker", keep="last").set_index("ticker").reindex(index)
+
+    def pct(now, ago):
+        now, ago = _col(e, now), _col(e, ago)
+        return ((now - ago) / ago.abs().where(ago.abs() > 0) * 100)
+
+    up, down = _col(e, "upgrades_30d"), _col(e, "downgrades_30d")
+    moves = up + down
+    balance = ((up - down) / moves).where(moves >= r["min_revisions"])
+    comps = pd.DataFrame({
+        "eps_cur_y": band(pct("eps_trend_cur_y", "eps_trend_cur_y_30d"), r["bands"]["eps_change_pct"]),
+        "eps_next_y": band(pct("eps_trend_next_y", "eps_trend_next_y_30d"), r["bands"]["eps_change_pct"]),
+        "net_revisions": band(balance, r["bands"]["net_revisions"]),
+    })
+    raw, cov = _weighted(comps, r["weights"])
+    return _shrink(raw, cov, rules["coverage"]["full_at"]).where(cov >= 0.4)
+
+
 def momentum_score(f: pd.DataFrame, rules: dict):
     m = rules["momentum"]["weights"]
     rank = peer_percentile(f["ret_12_1"], pd.Series("", index=f.index), pd.Series("", index=f.index),
@@ -324,7 +392,7 @@ def momentum_score(f: pd.DataFrame, rules: dict):
 
 
 def score_universe(companies: pd.DataFrame, annual_fin: pd.DataFrame = None, prices: pd.DataFrame = None,
-                   rules: dict = None) -> pd.DataFrame:
+                   rules: dict = None, hist_fcf: pd.DataFrame = None, estimates: pd.DataFrame = None) -> pd.DataFrame:
     """
     Quality / Value / Momentum for every investable ticker (index = ticker).
 
@@ -333,10 +401,10 @@ def score_universe(companies: pd.DataFrame, annual_fin: pd.DataFrame = None, pri
     that matter), components (dict of sub-scores, None = unknown).
     """
     rules = rules or load_rules()
-    f = build_features(companies, annual_fin, prices, rules)
+    f = build_features(companies, annual_fin, prices, rules, hist_fcf)
     if f.empty:
-        return pd.DataFrame(columns=["quality", "value", "momentum", "quality_coverage", "value_coverage",
-                                     "flags", "missing", "components"])
+        return pd.DataFrame(columns=["quality", "value", "momentum", "revisions", "quality_coverage", "value_coverage",
+                                     "flags", "missing", "components", "adv_eur", "sbc_adjusted"])
     full_at = rules["coverage"]["full_at"]
     group = f["group"]
 
@@ -351,6 +419,12 @@ def score_universe(companies: pd.DataFrame, annual_fin: pd.DataFrame = None, pri
     value = _shrink(v_raw, v_cov, full_at).clip(0, 100)
 
     momentum, mc = momentum_score(f, rules)
+    revisions = revisions_score(estimates, f.index, rules)
+    liq = rules["liquidity"]
+    info_flags = pd.DataFrame({
+        "illiquid": (f["adv_eur"] < liq["min_adv_eur"]).fillna(False),
+        "micro_cap": f["micro_cap"],
+    })
 
     min_w = rules["missing_report_min_weight"]
     all_comps = pd.concat([qc.add_prefix("q_"), vc.add_prefix("v_"), mc.add_prefix("m_")], axis=1)
@@ -360,11 +434,13 @@ def score_universe(companies: pd.DataFrame, annual_fin: pd.DataFrame = None, pri
         miss = [COMPONENT_LABELS[k] for k, w in qw[g].items() if w >= min_w and pd.isna(qc.at[t, k])]
         miss += [COMPONENT_LABELS[k] for k, w in vw[g].items() if w >= min_w and pd.isna(vc.at[t, k])]
         rows_missing.append(miss)
-        rows_flags.append("; ".join(FLAG_LABELS[k] for k in flags.columns if flags.at[t, k]))
+        rows_flags.append("; ".join([FLAG_LABELS[k] for k in flags.columns if flags.at[t, k]]
+                                    + [FLAG_LABELS[k] for k in info_flags.columns if info_flags.at[t, k]]))
         rows_comps.append({k: (None if pd.isna(v) else round(float(v), 1)) for k, v in all_comps.loc[t].items()})
 
     out = pd.DataFrame({
-        "quality": quality.round(), "value": value.round(), "momentum": momentum.round(),
+        "quality": quality.round(), "value": value.round(), "momentum": momentum.round(), "revisions": revisions.round(),
+        "adv_eur": f["adv_eur"], "sbc_adjusted": f["sbc_adjusted"],
         "quality_coverage": (q_cov * 100).round(), "value_coverage": (v_cov * 100).round(),
         "flags": rows_flags, "missing": rows_missing, "components": rows_comps,
     }, index=f.index)

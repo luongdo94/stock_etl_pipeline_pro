@@ -83,7 +83,7 @@ def test_expensive_value_cannot_earn_a_rating_point():
 # ── Track record: only current definitions count ─────────────────────────────────────────────
 def _snaps(version, days=3):
     rows = [dict(as_of_date=date(2026, 1, 1 + d), ticker=f"T{i}", quality=50 + i, value=40 + i, momentum=30 + i,
-                 score_version=version, action="HOLD / NEUTRAL") for d in range(days) for i in range(12)]
+                 score_version=version, action="NEUTRAL") for d in range(days) for i in range(12)]
     return pd.DataFrame(rows)
 
 
@@ -100,7 +100,7 @@ def test_tables_without_a_version_column_are_left_alone():
 
 
 def test_ic_can_be_computed_for_each_score():
-    assert set(tr.SCORES) == {"quality", "value", "momentum"}
+    assert set(tr.SCORES) == {"quality", "value", "momentum", "revisions"}
 
 
 # ── Screener / snapshot wiring ───────────────────────────────────────────────────────────────
@@ -110,7 +110,7 @@ def test_snapshot_rows_carry_all_three_scores_and_the_version(tmp_path):
     from tests.synthetic_warehouse import build
     db = build(str(tmp_path / "dw.duckdb"))
     rows = snapshot.build_snapshot(db)
-    assert {"quality", "value", "momentum", "score_version"} <= set(rows.columns)
+    assert {"quality", "value", "momentum", "revisions", "score_version"} <= set(rows.columns)
     assert (rows["score_version"] == scoring.SCORE_VERSION).all()
     assert rows["quality"].between(0, 100).all()
     track = str(tmp_path / "track.duckdb")

@@ -12,7 +12,7 @@ from etl.utils import clean_upside_pct
 
 
 def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
-                         _hist_fcf=None, _macro=None) -> pd.DataFrame:
+                         _hist_fcf=None, _macro=None, _estimates=None) -> pd.DataFrame:
     """
     One row per investable ticker. Two distinct outputs:
       - "Signal"   (column "Action"): 6-pillar technical + quality composite — an INPUT
@@ -22,7 +22,7 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
     _rules = load_rules()
     _hist_fcf = _hist_fcf if _hist_fcf is not None else pd.DataFrame()
     # Quality / Value / Momentum for the whole universe at once (percentiles need the peer group)
-    _scores = score_universe(_companies_df, _annual_fin, _prices_df)
+    _scores = score_universe(_companies_df, _annual_fin, _prices_df, hist_fcf=_hist_fcf, estimates=_estimates)
     # Exclude non-investable instruments: indices & volatility measures
     _non_equities = {"^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"}
     _non_equity_sectors = {"Benchmark", "Volatility"}
@@ -90,43 +90,17 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
         momentum = float(_sc["momentum"]) if pd.notnull(_sc["momentum"]) else float("nan")
         _cov = min(_sc["quality_coverage"], _sc["value_coverage"])
 
-        # ── Unified 5-Pillar Rating (delegates to compute_institutional_rating) ──
+        # ── Decision (single recommendation; identical logic to the Stock Analysis panel) ──
         ma_sig = str(latest_p.get('ma_signal', 'NEUTRAL'))
-        # Forward PE preferred over trailing for valuation (forward-looking)
         pe_v   = float(row.get('forward_pe') or row.get('pe_ratio') or 0)
         peg_v  = float(row.get('peg_ratio') or 0)
 
-        # Use shared tactical metrics (same formula as Deep Dive)
+        # Technical levels (same formula as Deep Dive): the stop is one input of the Decision's thesis stop
         _tm = get_tactical_metrics(
             ticker_prices,
             cur_p,
             analyst_target=float(row.get('target_mean_price') or 0)
         )
-
-        # Smart Money Spirit (Unified v6.0 with sector awareness)
-        sm_result = get_sm_spirit_unified_v2(ticker_prices, sector=str(row.get('sector', 'Unknown')))
-        sm_spirit = sm_result["signal"]
-        sm_strength = sm_result["strength"]
-        sm_layer = sm_result["layer"]
-
-        _rating = compute_institutional_rating(
-            ai_score   = ai_score,
-            ma_sig     = ma_sig,
-            latest_rsi = _tm["rsi"],
-            upside     = float(upside),
-            pe_v       = pe_v,
-            peg_v      = peg_v,
-            sector     = str(row.get('sector', '')),
-            w52_pos    = _tm["w52_pos"],
-            rr         = _tm["rr_score"],   # scoring uses raw r1 target
-            sm_status  = sm_spirit,
-            sm_strength = sm_strength,
-            sm_layer   = sm_layer,
-            value_score = value_score,
-        )
-        action_label = _rating["action_label"]   # plain text — no emoji
-
-        # ── Decision (single recommendation; identical logic to the Stock Analysis panel) ──
         _vin = valuation_inputs(row, float(cur_p), _hist_fcf, ticker, _macro or {}, _annual_fin)
         _dec = build_decision(
             price=float(cur_p), base_value=_vin["base"], bear_value=_vin["bear"], bull_value=_vin["bull"],
@@ -137,8 +111,30 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
             rules=_rules)
         _mos = (_vin["base"] / float(cur_p) - 1) * 100 if (_vin["base"] and _vin["reliable"]) else None
 
+        # Volume flow (Unified v6.0 with sector awareness)
+        sm_result = get_sm_spirit_unified_v2(ticker_prices, sector=str(row.get('sector', 'Unknown')))
+        sm_spirit = sm_result["signal"]
+        sm_strength = sm_result["strength"]
+        sm_layer = sm_result["layer"]
 
-        
+        # ── Signal: context for the Decision (reward/risk is the Decision's own) ──
+        _rating = compute_institutional_rating(
+            ai_score   = ai_score,
+            ma_sig     = ma_sig,
+            latest_rsi = _tm["rsi"],
+            upside     = float(upside),
+            pe_v       = pe_v,
+            peg_v      = peg_v,
+            sector     = str(row.get('sector', '')),
+            w52_pos    = _tm["w52_pos"],
+            rr         = _dec.reward_risk,
+            sm_status  = sm_spirit,
+            sm_strength = sm_strength,
+            sm_layer   = sm_layer,
+            value_score = value_score,
+        )
+        action_label = _rating["action_label"]
+
         # Additional metrics
         div_yield = float(row.get('dividend_yield_pct', 0)) if pd.notnull(row.get('dividend_yield_pct')) else 0
         # Unknown stays NaN (blank in the table) — sentinels like 999 / 99 / 0 used to be filtered
@@ -182,6 +178,8 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
             "Quality": ai_score,
             "Value": value_score if value_score is not None else float("nan"),
             "Momentum": momentum,
+            "Revisions": float(_sc["revisions"]) if pd.notnull(_sc["revisions"]) else float("nan"),
+            "ADV (EUR M)": round(float(_sc["adv_eur"]) / 1e6, 1) if pd.notnull(_sc["adv_eur"]) else float("nan"),
             "Coverage (%)": float(_cov) if pd.notnull(_cov) else 0.0,
             "Flags": _sc["flags"],
             "Missing": _sc["missing"],

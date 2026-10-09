@@ -29,7 +29,7 @@ def render(ctx):
     snaps = tr.current_definitions(all_snaps)
     legacy = tr.history_days(all_snaps) - tr.history_days(snaps)
     if legacy:
-        st.caption(f"ℹ️ {legacy} earlier snapshot day(s) used the pre-v5 Quality score (which mixed valuation, "
+        st.caption(f"ℹ️ {legacy} earlier snapshot day(s) used an earlier score definition (the first Quality score mixed valuation, "
                    f"momentum and analyst ratings) and are not comparable — they are excluded here.")
     days = tr.history_days(snaps)
     if days == 0:

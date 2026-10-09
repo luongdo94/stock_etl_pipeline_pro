@@ -106,7 +106,7 @@ def history_days(snapshots: pd.DataFrame) -> int:
     return int(pd.to_datetime(snapshots["as_of_date"]).nunique()) if not snapshots.empty else 0
 
 
-SCORES = {"quality": "Quality", "value": "Value", "momentum": "Momentum"}
+SCORES = {"quality": "Quality", "value": "Value", "momentum": "Momentum", "revisions": "Revisions"}
 
 
 def current_definitions(snapshots: pd.DataFrame) -> pd.DataFrame:
@@ -136,7 +136,7 @@ def evidence_status(snapshots: pd.DataFrame, prices: pd.DataFrame, h: int = 63) 
     if days == 0:
         label = "no score history yet — snapshots start with the next ETL run."
         if legacy_days:
-            label = (f"scores were redefined (Quality / Value / Momentum, v5): {legacy_days} earlier snapshot day(s) "
+            label = (f"the scores were redefined (see SCORE_VERSION in core/scoring.py): {legacy_days} earlier snapshot day(s) "
                      f"measured something else and are ignored — evidence restarts with the next ETL runs.")
         return {"ok": False, "ic": None, "t_stat": None, "n_days": 0, "label": label}
     ic = information_coefficient(forward_returns(snapshots, prices, horizons=(h,)), h)

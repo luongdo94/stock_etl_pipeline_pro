@@ -130,7 +130,7 @@ def _snapshot_history(conn, prices: pd.DataFrame, rng: np.random.Generator, days
     for d in dates:
         q = rng.integers(20, 90, len(eq))
         for t, qi in zip(eq, q):
-            act = "BUY / ACCUMULATE" if qi >= 60 else ("HOLD / NEUTRAL" if qi >= 40 else "REDUCE / UNDERPERFORM")
+            act = "FAVOURABLE" if qi >= 60 else ("NEUTRAL" if qi >= 40 else "WEAKENING")
             rows.append({"as_of_date": pd.Timestamp(d).date(), "ticker": t, "price_close": float(px[(d, t)]),
                          "quality": int(qi), "action": act, "upside_pct": 10.0, "smart_money": "NEUTRAL",
                          "rsi": 50.0, "trend": "BULLISH", "sector": UNIVERSE[t][1]})

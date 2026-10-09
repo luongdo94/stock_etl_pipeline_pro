@@ -50,6 +50,11 @@ def _create_staging(conn, active_tickers=None):
     else:
         active_filter = ""
     
+    # FX provenance columns exist on warehouses loaded since the conversion was recorded; older ones get NULLs
+    price_cols = {r[0] for r in conn.execute(
+        "SELECT column_name FROM information_schema.columns WHERE table_schema = 'raw' AND table_name = 'stock_prices'").fetchall()}
+    fx_select = ("fx_rate, price_scale," if {"fx_rate", "price_scale"} <= price_cols
+                 else "CAST(NULL AS DOUBLE) AS fx_rate, CAST(NULL AS DOUBLE) AS price_scale,")
     conn.execute(f"""
         CREATE OR REPLACE VIEW staging.stg_stock_prices AS
         SELECT
@@ -64,6 +69,7 @@ def _create_staging(conn, active_tickers=None):
             ROUND(low,   4) AS low,
             ROUND(close, 4) AS close,
             volume,
+            {fx_select}
             -- Data quality flags
             CASE WHEN close <= 0 THEN TRUE ELSE FALSE END AS _is_invalid_price,
             CASE WHEN volume = 0 THEN TRUE ELSE FALSE END AS _is_zero_volume,
@@ -193,7 +199,7 @@ def _create_intermediate(conn):
                 company,
                 sector,
                 region,
-                open, high, low, close, volume,
+                open, high, low, close, volume, fx_rate, price_scale,
                 -- Daily return %
                 ROUND(
                     (close - LAG(close) OVER w) / 
@@ -344,6 +350,8 @@ def _create_marts(conn):
             m.close                 AS price_close,
             m.daily_return_pct,
             m.volume,
+            m.fx_rate,
+            m.price_scale,
             m.ma_7,
             m.ma_20,
             m.ma_50,
