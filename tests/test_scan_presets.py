@@ -80,7 +80,8 @@ def test_value_trap_and_red_flags():
 
 def test_scanner_table_has_a_slim_fixed_default_and_unique_columns():
     from views import scanner
-    assert len(scanner.DEFAULT_COLS) == 12
+    assert len(scanner.DEFAULT_COLS) == 11
     assert len(set(scanner.DEFAULT_COLS + scanner.EXTRA_COLS)) == len(scanner.DEFAULT_COLS + scanner.EXTRA_COLS)
     assert "Upside (%)" not in scanner.DEFAULT_COLS + scanner.EXTRA_COLS           # analyst target: not used by Value / Decision
-    assert {"Decision", "MoS (%)", "Quality", "Value", "Momentum", "Flags"} <= set(scanner.DEFAULT_COLS)
+    assert {"Verdict", "MoS (%)", "Quality", "Value", "Momentum", "Flags"} <= set(scanner.DEFAULT_COLS)
+    assert "Decision" not in scanner.DEFAULT_COLS and "Action" not in scanner.DEFAULT_COLS     # one label, not two

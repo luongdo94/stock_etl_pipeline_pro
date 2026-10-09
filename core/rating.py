@@ -18,6 +18,19 @@ SIGNAL_LABELS = {"strong": "STRONG SETUP", "favourable": "FAVOURABLE", "neutral"
 SIGNAL_COLOURS = {"STRONG SETUP": "#00ffcc", "FAVOURABLE": "#2ecc71", "NEUTRAL": "#f1c40f",
                   "WEAKENING": "#e67e22", "UNFAVOURABLE": "#e74c3c"}
 BULLISH_SIGNALS = ("STRONG SETUP", "FAVOURABLE")
+# One label for the user: the Decision, plus an arrow for the Signal's timing context (supportive / neutral / against).
+TIMING_ARROWS = {"STRONG SETUP": "▲", "FAVOURABLE": "▲", "NEUTRAL": "·", "WEAKENING": "▼", "UNFAVOURABLE": "▼"}
+
+
+def timing_arrow(signal_label) -> str:
+    return TIMING_ARROWS.get(signal_label, "·")
+
+
+def verdict(decision, signal_label) -> str:
+    """'BUY CANDIDATE ▲' — the recommendation (Decision) with the timing context (Signal) as a suffix, never a second label."""
+    return f"{decision} {timing_arrow(signal_label)}"
+
+
 DECISION_AVOID, DECISION_BUY = "AVOID / TRIM", "BUY CANDIDATE"      # stances of core.decision.Decision
 
 

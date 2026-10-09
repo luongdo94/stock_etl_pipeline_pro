@@ -115,11 +115,18 @@ def test_scanner_keeps_stocks_with_unknown_fundamentals(warehouse):
     assert pd.isna(t.at["JNJ", "Debt/EBITDA"])
 
 def test_decision_and_signal_never_contradict_across_the_universe(warehouse):
-    """AVOID / TRIM never sits next to a favourable Signal, nor BUY CANDIDATE next to an unfavourable one."""
+    """The scanner shows ONE label (Decision + timing arrow): AVOID / TRIM is never next to a supportive arrow, and the
+    arrow always matches the Signal label that is available as an extra column."""
     at = _app("🔭 Stock Scanner").run()
+    at.multiselect(key="scan_extra_cols").select("Action").run()
     assert not at.exception, [e.value for e in at.exception]
     t = [d.value for d in at.dataframe if "Ticker" in getattr(d.value, "columns", [])][-1]
-    assert len(t) > 0 and {"Decision", "Action"} <= set(t.columns)
-    bad = t[((t["Decision"] == "AVOID / TRIM") & t["Action"].isin(["STRONG SETUP", "FAVOURABLE"]))
-            | ((t["Decision"] == "BUY CANDIDATE") & (t["Action"] == "UNFAVOURABLE"))]
-    assert bad.empty, bad[["Ticker", "Decision", "Action"]].to_string()
+    assert len(t) > 0 and {"Verdict", "Action"} <= set(t.columns) and "Decision" not in t.columns
+    arrow = t["Verdict"].str[-1]
+    decision = t["Verdict"].str[:-2]
+    assert set(decision) <= {"BUY CANDIDATE", "HOLD / WATCH", "AVOID / TRIM", "NOT ENOUGH DATA"}
+    assert set(arrow) <= {"▲", "·", "▼"}
+    expected = t["Action"].map({"STRONG SETUP": "▲", "FAVOURABLE": "▲", "NEUTRAL": "·", "WEAKENING": "▼", "UNFAVOURABLE": "▼"})
+    assert (arrow == expected).all()
+    bad = t[((decision == "AVOID / TRIM") & (arrow == "▲")) | ((decision == "BUY CANDIDATE") & (t["Action"] == "UNFAVOURABLE"))]
+    assert bad.empty, bad[["Ticker", "Verdict", "Action"]].to_string()

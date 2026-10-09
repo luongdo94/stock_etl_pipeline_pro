@@ -1,6 +1,7 @@
 """Layer 2 — 360° signal matrix (inputs to the Decision Summary)."""
 import streamlit as st
 
+from core.rating import timing_arrow
 from core.signal_matrix import rr_explainer
 from ui.icons import render_header
 from views.stock_analysis.layout import layer_banner
@@ -52,8 +53,8 @@ def render(dd, ctx):
     <div style='background:rgba(10,15,25,0.6); border:1px solid rgba(255,255,255,0.1); border-radius:12px; padding:20px; margin-bottom:25px;'>
         <div style='display:flex; justify-content:space-between; text-align:center; margin-bottom:20px; flex-wrap:wrap; gap:10px;'>{pillars}</div>
         <div style='background:rgba({bg},0.12); border-left:6px solid {dd.act_color}; padding:20px; border-radius:8px; box-shadow:0 4px 15px rgba(0,0,0,0.3);'>
-            <div style='font-size:0.75em; color:#bbb; text-transform:uppercase; letter-spacing:2px; margin-bottom:6px;'>Signal — context only; the recommendation is the Decision Summary above</div>
-            <div style='font-size:1.6em; font-weight:900; color:{dd.act_color}; margin-bottom:8px; text-shadow: 0px 2px 10px rgba({bg}, 0.5);'>{dd.act_str}</div>
+            <div style='font-size:0.75em; color:#bbb; text-transform:uppercase; letter-spacing:2px; margin-bottom:6px;'>Timing context (Signal) — the recommendation is the Decision Summary above</div>
+            <div style='font-size:1.6em; font-weight:900; color:{dd.act_color}; margin-bottom:8px; text-shadow: 0px 2px 10px rgba({bg}, 0.5);'>{timing_arrow(dd.act_str)} {dd.act_str}</div>
             <div style='color:#e0e0e0; font-size:1.0em; line-height:1.5; margin-bottom:15px;'>{dd.act_desc}</div>
             <hr style='border:0; height:1px; background:linear-gradient(90deg, rgba(255,255,255,0.15), transparent); margin-bottom:15px;'>
             <div style='display:flex; justify-content:space-between; flex-wrap:wrap; gap:8px; font-family:"Courier New", monospace; font-size:0.95em; background:rgba(0,0,0,0.4); padding:12px; border-radius:6px;'>

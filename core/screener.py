@@ -3,7 +3,7 @@ Pure (no Streamlit) so the ETL can snapshot exactly what the dashboard shows."""
 import pandas as pd
 
 from core.levels import get_tactical_metrics
-from core.rating import compute_institutional_rating
+from core.rating import compute_institutional_rating, verdict
 from core.smart_money import get_sm_spirit_unified_v2
 from core.decision import decide, load_rules, to_date
 from core.valuation import uses_book_model, valuation_inputs
@@ -176,6 +176,7 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
             "Confidence": _dec.confidence,
             "MoS (%)": round(_mos, 0) if _mos is not None else float("nan"),   # numeric column → blank, not "None"
             "Action": action_label,
+            "Verdict": verdict(_dec.stance, action_label),
             "Quality": ai_score,
             "Value": value_score if value_score is not None else float("nan"),
             "Momentum": momentum,

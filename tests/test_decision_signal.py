@@ -114,3 +114,12 @@ def test_exchanges_with_positive_fcf_use_the_dcf_but_brokers_and_banks_keep_book
     vin = v.valuation_inputs(company(), 100.0, pd.DataFrame(), "X", MACRO)
     assert vin["model"] == "dcf" and vin["base"] is not None
     assert v.valuation_inputs(company(industry="Capital Markets"), 100.0, pd.DataFrame(), "X", MACRO)["model"] == "justified_pb"
+
+def test_verdict_is_the_decision_plus_one_timing_arrow():
+    from core.rating import TIMING_ARROWS, timing_arrow, verdict
+    assert verdict("BUY CANDIDATE", "STRONG SETUP") == "BUY CANDIDATE ▲"
+    assert verdict("HOLD / WATCH", "NEUTRAL") == "HOLD / WATCH ·"
+    assert verdict("AVOID / TRIM", "WEAKENING") == "AVOID / TRIM ▼"
+    assert timing_arrow("something new") == "·"                              # unknown label degrades to neutral
+    from core.rating import SIGNAL_LABELS
+    assert set(SIGNAL_LABELS.values()) == set(TIMING_ARROWS)                # every Signal label has an arrow
