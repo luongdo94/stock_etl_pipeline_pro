@@ -46,6 +46,17 @@ st.session_state.setdefault("active_ticker", "AAPL")
 inject_global_css()
 
 # ── Data ────────────────────────────────────────────────────────────────────────────────────
+if auth.local_dev_mode() and not os.path.exists(DB_PATH):
+    import json
+    st.title("Warehouse not built yet")
+    try:
+        with open(os.path.join(os.path.dirname(DB_PATH), "..", "logs", "last_run.json"), encoding="utf-8") as f:
+            st.caption(f"Last pipeline run: {json.load(f)}")
+    except (OSError, ValueError):
+        pass
+    st.info("There is no local data yet. If the pipeline is running (`python run.py --no-sync`), wait for it to finish "
+            "(about an hour for the full universe), then reload this page.")
+    st.stop()
 (prices_full, companies_full, monthly_full, annual_fin, quarterly_fin, earnings_cal, dq_warnings,
  hist_fcf_full, hist_fcf_q_full, etl_audit, total_universe_size, earnings_surprise_full,
  tv_sector_rotation, forward_estimates_full) = load_data()

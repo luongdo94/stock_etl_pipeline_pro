@@ -821,3 +821,8 @@ streamlit run app.py
 ---
 
 *For additional support, check the test files in `tests/` for working examples of all major functions.*
+
+## Local run without login
+
+Set LOCAL_DEV_MODE=1 (environment variable only) to skip Supabase login on your own machine. It is refused unless Streamlit is served from localhost and `SUPABASE_REMOTE_MODE` is not true. Watchlist, portfolio and alerts are then saved in `warehouse/local_user/` (git-ignored). Never set it on a deployed app.
+

@@ -80,6 +80,8 @@ def _verify_session(token) -> Optional[dict]:
 
 
 def get_cookie_manager():
+    if local_dev_mode():
+        return None                                  # no login → no cookie round-trip
     import extra_streamlit_components as stx
     return stx.CookieManager(key="hqi_cookie_manager")
 
@@ -221,10 +223,40 @@ def _login_form(cm):
                             st.error(f"Initialization Error: {e}")
 
 
+LOCAL_USER_ID = "00000000-0000-0000-0000-00000000dev1"
+_LOCAL_HOSTS = (None, "", "localhost", "127.0.0.1", "::1")
+
+
+def local_dev_mode() -> bool:
+    """
+    True only when LOCAL_DEV_MODE=1 is set in the environment AND the app is served from this machine and is not
+    in cloud (remote warehouse) mode. A secret / config file cannot switch it on, and it can never be on for a
+    deployed app: the login stays mandatory everywhere else.
+    """
+    import os
+    if os.environ.get("LOCAL_DEV_MODE") != "1":
+        return False
+    if os.environ.get("SUPABASE_REMOTE_MODE", "false").lower() == "true":
+        return False
+    try:
+        address = st.get_option("server.address")
+    except Exception:
+        address = None
+    return address in _LOCAL_HOSTS
+
+
 def require_auth(cm=None):
     """
     Authentication gateway.
     """
+    import os
+    if os.environ.get("LOCAL_DEV_MODE") == "1" and not local_dev_mode():
+        st.error("LOCAL_DEV_MODE is only allowed when the app is served from localhost and is not in cloud mode. "
+                 "Unset it, or sign in normally.")
+        st.stop()
+    if local_dev_mode():
+        st.session_state.update(authenticated=True, user_id=LOCAL_USER_ID, user_email="local@dev (no login)")
+        return
     if cm is None:
         cm = get_cookie_manager()
     
@@ -263,6 +295,11 @@ def require_auth(cm=None):
 
 def render_user_profile(cm=None):
     if not st.session_state.get("authenticated"):
+        return
+
+    if local_dev_mode():
+        st.sidebar.markdown("👤 **Local dev mode**")
+        st.sidebar.caption("No login. Watchlist, portfolio and alerts are saved to `warehouse/local_user/` on this machine.")
         return
 
     if cm is None:

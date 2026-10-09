@@ -55,3 +55,7 @@ warehouse/*.parquet
 # macOS metadata
 ._*
 .DS_Store
+
+warehouse/local_user/
+warehouse/etl.lock
+warehouse/*.wal
