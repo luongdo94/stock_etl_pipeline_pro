@@ -21,6 +21,7 @@ _DEFAULT_RULES = {
              "earnings_blackout_days": 7, "min_stop_pct": 8.0},
     "valuation": {"required_margin_of_safety": 0.25, "stale_price_days": 5,
                   "stale_fundamentals_days": 35},
+    "scores": {"min_quality_for_buy": 50, "value_crosscheck_below": 30, "min_coverage_pct": 60},
 }
 
 
@@ -92,6 +93,8 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
                    fundamentals_date: Optional[date] = None, next_earnings: Optional[date] = None,
                    track_record_ok: bool = False, quality_score: Optional[float] = None,
                    valuation_reliable: bool = True, valuation_note: Optional[str] = None,
+                   value_score: Optional[float] = None, risk_flags: str = "",
+                   coverage_pct: Optional[float] = None,
                    today: Optional[date] = None, rules: Optional[dict] = None) -> Decision:
     rules = rules or load_rules()
     today = today or date.today()
@@ -136,6 +139,14 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
         notes.append(f"Price data is {(today - price_date).days} days old.")
     if fundamentals_date and (today - fundamentals_date).days > rules["valuation"]["stale_fundamentals_days"]:
         notes.append(f"Fundamentals last refreshed {(today - fundamentals_date).days} days ago.")
+    sc = rules.get("scores", _DEFAULT_RULES["scores"])
+    if risk_flags:
+        notes.append(f"Red flags: {risk_flags}.")
+    if coverage_pct is not None and coverage_pct < sc["min_coverage_pct"]:
+        notes.append(f"Only {coverage_pct:.0f}% of the scoring inputs are available.")
+    if (value_score is not None and value_score < sc["value_crosscheck_below"]
+            and base_value and valuation_reliable and base_value / price - 1 >= req_mos):
+        notes.append(f"DCF cushion not confirmed by multiples: Value score {value_score:.0f}/100 vs peers.")
     n = len(notes)
     confidence = "HIGH" if n == 0 else ("MEDIUM" if n <= 2 else "LOW")
     if not track_record_ok and confidence == "HIGH":
@@ -154,7 +165,8 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
         mos = base_value / price - 1
         reasons.append(f"Base-case value {base_value:,.2f} vs price {price:,.2f} → margin of safety {mos:+.0%}"
                        f" (required {req_mos:.0%}).")
-        if mos >= req_mos and rr is not None and rr >= min_rr and confidence != "LOW":
+        weak_quality = quality_score is not None and quality_score < sc["min_quality_for_buy"]
+        if mos >= req_mos and rr is not None and rr >= min_rr and confidence != "LOW" and not weak_quality:
             stance = "BUY CANDIDATE"
         elif (bull_value is not None and price > bull_value) or (bull_value is None and mos <= -0.15):
             # Symmetric with BUY (which needs a 25% cushion on the BASE case): only call AVOID when even
@@ -170,8 +182,12 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
                 reasons.append(f"Reward/risk {rr:.1f} below the {min_rr:.1f} minimum.")
             if confidence == "LOW":
                 reasons.append("Confidence too low to act.")
+            if weak_quality and mos >= req_mos:
+                reasons.append(f"Quality {quality_score:.0f}/100 is below the {sc['min_quality_for_buy']:.0f} floor — "
+                               f"cheap and weak is the classic value trap.")
     if quality_score is not None:
-        reasons.append(f"Quality score {quality_score:.0f}/100.")
+        reasons.append(f"Quality {quality_score:.0f}/100"
+                       + (f" · Value {value_score:.0f}/100 (vs peers)." if value_score is not None else "."))
 
     # ── Thesis invalidation & timing ───────────────────────────────────────────────
     invalidation = []

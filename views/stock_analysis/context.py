@@ -9,7 +9,6 @@ from core.levels import get_tactical_metrics
 from core.rating import compute_institutional_rating
 from core.smart_money import get_sm_spirit_unified_v2
 from core.valuation import relative_valuation
-from etl.utils import compute_score
 from ui.decision_panel import valuation_inputs
 
 
@@ -24,7 +23,8 @@ class DeepDive:
     target_p: float
     upside: float
     z_score: float
-    ai_score: float
+    ai_score: float                # Quality 0-100 (core/scoring.py)
+    scores: dict                   # quality / value / momentum / flags / coverage / missing / components
     tm: dict                       # core.levels.get_tactical_metrics on the FULL history
     ma_sig: str
     tp1: float
@@ -103,9 +103,17 @@ def build(ctx, deep_ticker):
     meta_enriched['price_z_score'] = float(z_score)
     meta_enriched['upside_pct'] = float(upside)
 
-    # m_df["Quality"] is the single score source across tabs; compute only if the screener skipped it
-    _m_quality_row = m_df[m_df["Ticker"] == deep_ticker]
-    ai_score = float(_m_quality_row.iloc[0]["Quality"]) if not _m_quality_row.empty else compute_score(meta_enriched)
+    # The screener table is the single score source across tabs (percentiles need the whole universe)
+    _row = m_df[m_df["Ticker"] == deep_ticker]
+    _num = lambda k: (float(_row.iloc[0][k]) if (not _row.empty and pd.notnull(_row.iloc[0][k])) else None)  # noqa: E731
+    scores = {
+        "quality": _num("Quality"), "value": _num("Value"), "momentum": _num("Momentum"),
+        "coverage": _num("Coverage (%)"),
+        "flags": str(_row.iloc[0]["Flags"]) if not _row.empty else "",
+        "missing": list(_row.iloc[0]["Missing"]) if not _row.empty else [],
+        "components": dict(_row.iloc[0]["Components"]) if not _row.empty else {},
+    }
+    ai_score = scores["quality"] if scores["quality"] is not None else 50.0
 
     # Levels and the 52-week range always use the FULL price history — `df_deep` follows the
     # sidebar horizon (1M → "52-week high" was the 1-month high) and is only used for display.
@@ -134,7 +142,7 @@ def build(ctx, deep_ticker):
         pe_v=float(meta_enriched.get("forward_pe") or meta_enriched.get("pe_ratio") or 0),
         peg_v=float(meta_enriched.get("peg_ratio") or 0), sector=str(meta.get("sector", "")),
         w52_pos=tm["w52_pos"], rr=tm["rr_score"], sm_status=sm["signal"],
-        sm_strength=sm["strength"], sm_layer=sm["layer"])
+        sm_strength=sm["strength"], sm_layer=sm["layer"], value_score=scores["value"])
     act_str = rating["action_label"]
     from core.signal_matrix import ACTION_COLOURS, action_description
     act_color = ACTION_COLOURS.get(act_str, rating["action_color"])
@@ -143,6 +151,6 @@ def build(ctx, deep_ticker):
 
     return DeepDive(ticker=deep_ticker, meta=meta, meta_enriched=meta_enriched, df_deep=df_deep,
                     df_fin=df_fin, cur_p=cur_p, target_p=target_p, upside=upside, z_score=z_score,
-                    ai_score=ai_score, tm=tm, ma_sig=ma_sig, tp1=tp1, tp2=tp2, vin=vin, relval=relval,
+                    ai_score=ai_score, scores=scores, tm=tm, ma_sig=ma_sig, tp1=tp1, tp2=tp2, vin=vin, relval=relval,
                     next_earnings=next_er, sm=sm, rating=rating, act_str=act_str, act_color=act_color,
                     act_desc=act_desc)

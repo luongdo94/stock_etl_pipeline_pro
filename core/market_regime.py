@@ -8,9 +8,12 @@ from datetime import date, timedelta
 import numpy as np
 import pandas as pd
 
+from core.rating import QUALITY_TIERS
+
 INDICES = ["^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"]
 BREADTH_EXCLUDE = INDICES + ["^TNX", "^IRX"]
 
+ELITE, WEAK = QUALITY_TIERS[0][0], QUALITY_TIERS[-1][0]    # Quality tier cut-offs (core/rating.py)
 HORIZON_DAYS = {"1D": 1, "1W": 7, "1M": 30, "3M": 90, "6M": 180, "1Y": 365, "3Y": 1095, "5Y": 1825}
 
 
@@ -63,13 +66,13 @@ def hot_alerts(prices_full, reco_df, movers_df):
         if r["price_close"] >= 0.98 * r["high_52w"]:
             found.append({**base, "type": "52W PEAK", "color": "#f1c40f", "icon": "🏔️",
                           "desc": f"Price: €{r['price_close']:.2f} (Near High)"})
-        if r["rsi"] < 35 and r["score"] >= 75:
+        if r["rsi"] < 35 and r["score"] >= ELITE:
             found.append({**base, "type": "GOLDEN BUY", "color": "#2ecc71", "icon": "💎",
                           "desc": f"RSI: {r['rsi']:.1f} | Score: {r['score']}"})
         if r["rsi"] > 75:
             found.append({**base, "type": "EXIT / RISK", "color": "#ff4b4b", "icon": "",
                           "desc": f"Extreme Overbought (RSI: {r['rsi']:.1f})"})
-        if r["score"] < 35 and r["ma_signal"] in ("BEARISH", "STRONG BEAR"):
+        if r["score"] < WEAK and r["ma_signal"] in ("BEARISH", "STRONG BEAR"):
             found.append({**base, "type": "BEARISH BLOW", "color": "#ffa500", "icon": "",
                           "desc": "Weak Fundamentals + Bearish Trend"})
         if spike and r["chg_24h"] < -3:
@@ -146,7 +149,7 @@ def market_confidence(spy, breadth_pct, vix, dxy_5d_move, tnx_chg):
 
 
 def regime_from_score(score, tnx_chg=0.0, dxy_pct=0.0, vix=20.0):
-    """→ dict(regime, color, advice, scoring_regime) — scoring_regime feeds apply_macro_adjustment."""
+    """→ dict(regime, color, advice, scoring_regime) — scoring_regime is the label shown on Market Pulse."""
     for cut, label, colour, advice in REGIMES:
         if score >= cut:
             break

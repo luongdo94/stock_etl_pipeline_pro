@@ -1,7 +1,22 @@
 """Institutional rating engine (pure)."""
 
-# Quality tiers on the 0-100 score — the one definition used by the rating, the deep dive and the radar
-QUALITY_TIERS = ((65, "ELITE", "#00ffcc"), (50, "SOLID", "#2ecc71"), (38, "FAIR", "#f1c40f"))
+# Quality tiers on the 0-100 Quality score (core/scoring.py) — the one definition used by the rating,
+# the deep dive, the alerts and the scanner. Scores are anchored on absolute standards (returns on
+# capital, leverage, cash conversion) and sector percentiles; on a real 90-stock sample (large caps, 11 sectors)
+# about a quarter score >= 75 and a seventh < 45.
+QUALITY_TIERS = ((75, "ELITE", "#00ffcc"), (60, "SOLID", "#2ecc71"), (45, "FAIR", "#f1c40f"))
+
+# Value tiers on the 0-100 Value score: (min score, label, colour). Green / blue earn a rating point.
+VALUE_TIERS = ((65, "UNDERVALUED", "#2ecc71"), (50, "FAIR VS PEERS", "#f1c40f"),
+               (35, "FULL VALUATION", "#e67e22"), (20, "EXPENSIVE", "#e74c3c"))
+
+
+def value_tier(score):
+    """(label, colour) for a 0-100 Value score."""
+    for cut, label, colour in VALUE_TIERS:
+        if score >= cut:
+            return label, colour
+    return "VERY EXPENSIVE", "#e74c3c"
 
 
 def quality_tier(score):
@@ -24,7 +39,8 @@ def compute_institutional_rating(
     rr: float,
     sm_status: str = "N/A",
     sm_strength: int = 0,
-    sm_layer: str = "NONE"
+    sm_layer: str = "NONE",
+    value_score: float = None,
 ) -> dict:
     """
     Unified 6-Pillar Institutional Rating Engine (v15.0).
@@ -78,7 +94,15 @@ def compute_institutional_rating(
     # v4.0 thresholds: scores shifted slightly lower due to momentum weight reduction
     p_qual, p_qual_c = quality_tier(ai_score)
 
-    # ── PILLAR 3: VALUATION (Sector-Aware) ──────────────────────────────
+    # ── PILLAR 3: VALUATION ─────────────────────────────────────────────
+    # With a Value score (core/scoring.py: sector-relative multiples + absolute bands, no analyst
+    # inputs) the pillar is read straight from it. The legacy P/E / PEG / analyst-upside path below
+    # is kept only for callers that have no Value score.
+    if value_score is not None and value_score == value_score:
+        p_val, p_val_c = value_tier(value_score)
+    else:
+        p_val, p_val_c = None, None
+    # ── legacy valuation (Sector-Aware) ─────────────────────────────────
     _sector_lc = str(sector or "").lower()
     _is_growth = any(s in _sector_lc for s in ["tech", "semi", "software", "cloud", "ai", "comm", "social media", "digital advertising"])
     _pe_cheap_limit      = 28.0 if _is_growth else 18.0
@@ -92,7 +116,9 @@ def compute_institutional_rating(
     _val_compounder = (upside > 5) and (ai_score >= 50) and (not _val_expensive)
     _val_fair       = (upside > 0) and (not _val_expensive)
 
-    if _val_cheap:
+    if p_val is not None:
+        pass
+    elif _val_cheap:
         p_val, p_val_c = "UNDERVALUED", "#2ecc71"
     elif _val_premium_ok:
         p_val, p_val_c = "PREMIUM / JUSTIFIED", "#3498db"

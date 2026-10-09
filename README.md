@@ -55,20 +55,22 @@ Honest Quant doesn't just analyze the past; it attempts to project the future ut
 
 ---
 
-## 🧮 3. Canonical Scoring Engine (Quant Diagnostics)
+## 🧮 3. Scoring Engine (Quality · Value · Momentum)
 
-Located in `etl/utils.py`, the core proprietary logic quantifies stocks based on complex mathematics. 
+`core/scoring.py` (pure pandas; every threshold and weight in `config/scoring_rules.yaml`) gives each stock **three
+independent 0-100 scores**. They answer different questions and are never mixed:
 
-### 🟢 Quality Score (0-100)
-A rigorous safety and fundamental moat check, designed to find "Wonderful companies at a fair price":
-1. **Valuation**: Penalizes high Forward P/E multiples but rewards low PEG (Price/Earnings-to-Growth) ratios to adjust for intrinsic value.
-2. **Growth**: Evaluates the 4-year Compound Annual Growth Rate (CAGR) of Revenue & EPS.
-3. **Profitability**: Strictly requires positive Free Cash Flow, high Operating Margins, and exceptional Return on Equity (ROE).
-4. **Safety & Risk Mitigation**: 
-   - Punishes excessive Debt-to-Equity ratios.
-   - Adjusts for Beta (Systematic Risk).
-   - Computes **Net Payout Yield** (Dividends + Share Buybacks) to ensure companies returning capital directly to shareholders (like Apple or Meta) are highly ranked.
-   - **Linear Interpolation**: Eliminates "Cliff Effects" (e.g., P/E 19.9 vs 20.1) by scaling points mathematically rather than using hard cutoffs.
+| Score | Question | What goes in |
+| :--- | :--- | :--- |
+| **Quality** | Is it a good business? | Return on capital · operating/gross/FCF margin · growth & stability · net debt/EBITDA · FCF conversion. Banks/insurers: ROE, net margin, stability. Red flags subtract points (loss-making, debt without EBITDA, high leverage, uncovered dividend, negative equity). |
+| **Value** | Is the price attractive? | FCF yield · EV/EBITDA · earnings yield · PEG · shareholder yield · P/S, each half *percentile within the industry/sector*, half an absolute band. |
+| **Momentum** | What has price been doing? | 12-1 month return rank + trend. **Timing only** — never part of Quality or Value. |
+
+- **Peers, not one yardstick**: margins and multiples are ranked against the industry (sector, then universe, when under 5 peers).
+- **Unknown ≠ 0**: missing inputs are excluded and the rest re-weighted; with under 80% of the weight observable the score is pulled toward 50 and *Coverage* lowers Decision confidence.
+- **Not scored**: analyst ratings/targets (consensus skews to "buy", targets lag price), beta, RSI, Z-score.
+- **In the Decision**: a BUY candidate needs Quality ≥ 50 (cheap and weak is a value trap); a DCF "cheap" contradicted by Value < 30 lowers confidence.
+- **Validation**: each daily snapshot stores all three scores stamped with `score_version`; the Track Record tab reports the information coefficient of each. Until it shows t > 2 the weights are judgement, not evidence.
 
 ### 🚀 Fundamental Momentum Index (FMI) (0-100)
 A CANSLIM-style growth accelerator index. Because free APIs often suffer from delayed/sparse data, FMI utilizes a hyper-dynamic *Live-Computed Engine*:
@@ -95,39 +97,43 @@ A high-density **Streamlit** control room, heavily styled with custom CSS to pro
 
 ### Tab 2: Single Stock Deep Dive
 - A meticulously designed full-page tear sheet.
-- **Radar Charts**: Powered by Plotly, breaks down the exact anatomy of the Quality Score.
+- **Radar Charts**: Powered by Plotly, breaks down Quality (returns, margins, stability, balance sheet, cash conversion) next to Value and Momentum.
 - **Progress Panels**: Neon-colored metric bars displaying the real-time FMI Acceleration breakdown.
 - Evaluates Short Interest vulnerability and Institutional accumulation flow.
 
 ### Tab 3: AI Market Scanner
 - A dynamic, multi-condition screener. Filter thousands of stocks in milliseconds using DuckDB's backend.
-- **23 Curated Strategy Presets** covering momentum, value, quality, and risk scenarios (optimized to eliminate redundancy):
+- **Curated Strategy Presets** covering momentum, value, quality, and risk scenarios (optimized to eliminate redundancy):
 
-#### Opportunity Strategies (15 presets)
-- `🏆 Institutional Pulse` - Quality ≥70 (ELITE) + Bullish trend
+#### Opportunity Strategies
+- `🏆 Institutional Pulse` - Quality ≥75 (ELITE) + uptrend (MA50 > MA200)
+- `💎 Quality at a Fair Price` - Quality ≥75 + Value ≥50
+- `🏷️ Deep Value` - Value ≥70 + Quality ≥60
 - `🚀 Buy on Dip` - Bullish trend + RSI cooling (<40)
 - `🚀 Bullish Momentum` - Strong uptrend + RSI >50 confirmation
 - `📈 Both Accelerating` - EPS + Revenue both growing QoQ >+10% for 2 quarters
-- `🌱 GARP` - Growth at Reasonable Price (PEG <1.5 + Quality >55)
-- `💰 High Quality Dividend` - Yield >2.5% + Quality >65 + Bullish
+- `🌱 GARP` - Growth at Reasonable Price (PEG <1.5 + Quality ≥60)
+- `💰 High Quality Dividend` - Yield >2.5% + Quality ≥60 + uptrend, dividend covered
 - `🔥 Short Squeeze Watch` - High short interest + oversold + bullish reversal
-- `🎯 Smart Money Accumulation` - Institutional buying + Quality ≥55 + RSI <50
-- `🔄 Mean Reversion Elite` - High Quality (≥65) + Oversold (RSI<35) + Below Mean (Z<-1.0)
+- `🎯 Accumulation Flow` - volume-flow heuristic reads accumulation + Quality ≥60 + RSI <50
+- `🔄 Mean Reversion Elite` - Quality ≥75 + Oversold (RSI<35) + Below Mean (Z<-1.0)
 - `⚡ Strong Breakout` - Price >MA200 by 5%+ with healthy RSI (50-70)
 - `💎 Contrarian Value` - Quality ≥60 in downtrend + cheap valuation (Z<-1.5, PEG<1.2)
 - `🏰 Defensive Moat` - Low debt (<2x) + High ROE (>15%) + Dividend (>2%) + Quality ≥60
-- `🌊 Oversold Reversal Setup` - Extreme oversold (RSI<30) + Smart Money buying + Quality ≥50
-- `📊 Balanced Growth` - Quality 55-75 + PE 15-30x + ROE >12% + Bullish
+- `🌊 Oversold Reversal Setup` - RSI<30 + accumulation flow + Quality ≥45
+- `📊 Balanced Growth` - Quality 60-75 + forward P/E 15-30x + ROE >12% + uptrend
 
-#### Risk & Warning Strategies (8 presets)
+#### Risk & Warning Strategies
 - `⚠️ Earnings Deterioration` - EPS + Revenue declining QoQ >-10% for 2 quarters
-- `⚠️ Structural Caution` - Quality <38 + Bearish trend
-- `📉 Negative Momentum` - MA20 < MA50 bearish alignment
+- `⚠️ Structural Caution` - Quality <45 + downtrend
+- `🪤 Value Trap Risk` - Value ≥65 but Quality <45
+- `🚩 Red Flags` - any Quality penalty (loss-making, leverage, uncovered dividend…)
+- `📉 Negative Momentum` - MA20 < MA50 < MA200
 - `🔥 Overbought Alert` - RSI >65, elevated pullback risk
-- `🎈 Valuation Exhaustion` - Z-Score >+2.0, likely overvalued
+- `🎈 Price Stretch` - Z-Score >+2.0 vs the 5Y mean (a price statistic, not a valuation)
 - `⚔️ Exit on Strength` - Bearish trend + short-term rally (RSI >60)
 - `💔 Multi-Indicator Breakdown` - Bearish + RSI <50, falling knife
-- `🚨 Distribution Warning` - Institutions selling + Overbought (RSI>60) + Weak Quality (<55)
+- `🚨 Distribution Warning` - volume flow reads distribution + RSI>60 + Quality <60
 
 ### Tab 4: Strategy Backtester V2
 An institutional-grade simulation engine that allows you to directly trade your fundamental setups via Technical triggers.
@@ -281,7 +287,7 @@ stock_etl_pipeline/
 │   ├── extract.py         # ThreadPool API scrapers (yfinance)
 │   ├── transform.py       # DuckDB Star Schema generation 
 │   ├── load.py            # Local warehouse persistor
-│   └── utils.py           # Core mathematics, Z-Scores, FMI, Quality Score algorithms
+│   └── utils.py           # Watermarks, refresh rules, upside cleaning, email report (scores live in core/scoring.py)
 │
 ├── core/                  # Pure analytics — no Streamlit, unit-testable
 │   ├── indicators.py      # Wilder RSI (shared by ETL + dashboard)
@@ -360,7 +366,7 @@ streamlit cache clear
 
 **Prevention:**
 - Memory optimization is automatically applied to large DataFrames
-- Vectorized scoring reduces computation time by 10x
+- Scores are computed for the whole universe at once (~800 tickers in about a second)
 - Cache TTL is set to 10 minutes for optimal performance
 
 ---
@@ -467,32 +473,24 @@ print(f"Coverage: {result[1]/result[0]*100:.1f}%")
 
 ---
 
-#### 5. **Vectorized Scoring Errors**
+#### 5. **Scores Missing or Looking Neutral**
 
 **Symptoms:**
-- Error: "KeyError: 'sector'"
-- Scores showing as NaN
-- Fallback to slow row-by-row scoring
+- Quality / Value show 50 or very similar values for many stocks
+- `Coverage (%)` is low in the scanner; the Decision lists "Only N% of the scoring inputs are available"
 
-**Solutions:**
+**Why:** unknown inputs are excluded (never scored as 0) and, with under 80% of a score's weight observable, the
+score is pulled toward 50. Peer percentiles also need at least 5 stocks per industry/sector (otherwise the whole
+universe is the peer group).
+
+**Check what the engine sees:**
 ```python
-# Check required columns
-required_cols = [
-    'pe_ratio', 'peg_ratio', 'roe', 'fcf_margin',
-    'total_debt', 'ebitda', 'revenue_growth', 'earnings_growth',
-    'rsi', 'price_z_score', 'sector'
-]
-
-# Verify DataFrame has all columns
-missing = [col for col in required_cols if col not in df.columns]
-if missing:
-    print(f"Missing columns: {missing}")
+from core.scoring import build_features, score_universe
+f = build_features(companies, annual_fin, prices)      # derived inputs per ticker
+f[["roc", "net_debt_ebitda", "fcf_yield", "ev_ebitda", "ret_12_1"]].isna().mean()   # share unknown
+score_universe(companies, annual_fin, prices)[["quality", "value", "momentum", "quality_coverage", "missing"]]
 ```
-
-**Fallback Behavior:**
-- System automatically falls back to row-by-row scoring if vectorized fails
-- Check logs for specific error message
-- Ensure all required columns exist in DataFrame
+Momentum needs 253 trading days of prices; return on capital and the growth/stability pillar need ≥3 annual statements.
 
 ---
 
@@ -649,8 +647,9 @@ df = optimize_dataframe_memory(df)
 
 ✅ **Vectorized Operations**
 ```python
-# Use vectorized scoring (10x faster)
-df['score'] = vectorized_compute_scores(df)
+# Score the whole universe at once (peer percentiles need the full set)
+from core.scoring import score_universe
+scores = score_universe(companies, annual_fin, prices)   # quality / value / momentum
 ```
 
 ✅ **Batch Processing**

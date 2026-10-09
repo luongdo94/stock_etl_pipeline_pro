@@ -10,23 +10,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-def vectorized_compute_scores(df: pd.DataFrame) -> pd.Series:
-    """
-    Quality Score for every row of df — delegates to the canonical etl.utils.compute_score.
-
-    This used to be a separate NumPy re-implementation that had drifted from compute_score:
-    it lacked the P/B, Net Payout, Analyst and MA-signal pillars and the beta adjustment
-    (max ~77 instead of 100), and defaulted a missing EBITDA to 1 (→ critical-debt penalty).
-    The same stock scored 55 here and 77 in the screener. One engine = one number everywhere;
-    row-wise scoring of the ~600-ticker universe takes well under a second.
-    """
-    from etl.utils import compute_score
-
-    if df.empty:
-        return pd.Series(dtype=int, index=df.index)
-    return df.apply(compute_score, axis=1).astype(int)
-
-
 @lru_cache(maxsize=128)
 def get_cached_config(config_name: str):
     """

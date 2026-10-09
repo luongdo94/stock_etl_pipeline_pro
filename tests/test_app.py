@@ -21,31 +21,18 @@ class TestDataLoading:
 class TestScoreCalculation:
     """Test scoring integration in dashboard."""
     
-    def test_vectorized_scoring_fallback(self):
-        """Test that vectorized scoring has proper fallback."""
-        # Create sample data
+    def test_scoring_degrades_gracefully_on_sparse_input(self):
+        """Only a handful of columns: scores stay bounded and the stock is not scored as the worst case."""
+        from core.scoring import score_universe
         df = pd.DataFrame({
-            'ticker': ['AAPL', 'MSFT'],
-            'pe_ratio': [30, 35],
-            'peg_ratio': [1.5, 1.8],
-            'roe': [0.30, 0.25],
-            'fcf_margin': [20, 15],
-            'total_debt': [100000000000, 80000000000],
-            'ebitda': [120000000000, 100000000000],
-            'revenue_growth': [0.10, 0.08],
-            'earnings_growth': [0.12, 0.10],
-            'rsi': [55, 60],
-            'price_z_score': [0.5, 0.3],
-            'sector': ['Technology', 'Technology']
+            "ticker": [f"T{i}" for i in range(8)], "sector": "Technology", "industry": "Software",
+            "market_cap": 1e10, "pe_ratio": [30, 35, 12, 18, 25, 40, 22, 28],
+            "operating_margin": [0.1, 0.2, 0.3, 0.15, 0.25, 0.05, 0.12, 0.18],
         })
-        
-        # Test that we can import and use the scoring
-        from etl.performance_utils import vectorized_compute_scores
-        
-        scores = vectorized_compute_scores(df)
-        
-        assert len(scores) == 2
-        assert all(0 <= score <= 100 for score in scores)
+        scores = score_universe(df)
+        assert len(scores) == 8
+        assert scores["quality"].between(0, 100).all() and scores["value"].between(0, 100).all()
+        assert (scores["quality_coverage"] < 100).all()
 
 
 def _yf_close_frame(columns, rows):
@@ -285,44 +272,26 @@ class TestPerformanceOptimizations:
         # Should reduce memory usage
         assert optimized_memory <= original_memory
     
-    def test_vectorized_vs_apply_performance(self):
-        """Test that vectorized scoring is faster than apply."""
+    def test_scoring_scales_to_the_full_universe(self):
+        """~800 tickers (the real universe size) are scored in a couple of seconds."""
         import time
-        from etl.utils import compute_score
-        from etl.performance_utils import vectorized_compute_scores
-        
-        # Create test data
+        from core.scoring import score_universe
+        n = 800
+        rng = np.random.default_rng(0)
         df = pd.DataFrame({
-            'ticker': [f'TICK{i}' for i in range(1000)],
-            'pe_ratio': np.random.uniform(10, 50, 1000),
-            'peg_ratio': np.random.uniform(0.5, 3, 1000),
-            'roe': np.random.uniform(0.05, 0.40, 1000),
-            'fcf_margin': np.random.uniform(0, 30, 1000),
-            'total_debt': np.random.uniform(1e9, 1e11, 1000),
-            'ebitda': np.random.uniform(1e9, 1e11, 1000),
-            'revenue_growth': np.random.uniform(-0.1, 0.5, 1000),
-            'earnings_growth': np.random.uniform(-0.1, 0.5, 1000),
-            'rsi': np.random.uniform(20, 80, 1000),
-            'price_z_score': np.random.uniform(-3, 3, 1000),
-            'sector': np.random.choice(['Technology', 'Finance', 'Healthcare'], 1000)
+            "ticker": [f"TICK{i}" for i in range(n)], "company": "x",
+            "sector": rng.choice(["Software", "Banks", "Retail", "Regulated Utilities"], n),
+            "industry": rng.choice(["a", "b", "c", "d", "e", "f"], n),
+            "market_cap": rng.uniform(1e9, 1e12, n), "pe_ratio": rng.uniform(8, 50, n),
+            "forward_pe": rng.uniform(8, 40, n), "roe": rng.uniform(0.02, 0.4, n),
+            "fcf_margin": rng.uniform(-5, 30, n), "free_cashflow": rng.uniform(-1e9, 5e10, n),
+            "total_debt": rng.uniform(1e8, 1e11, n), "ebitda": rng.uniform(1e8, 1e11, n),
+            "ev_to_ebitda": rng.uniform(5, 25, n), "peg_ratio": rng.uniform(0.4, 3, n),
         })
-        
-        # Time vectorized version
         start = time.time()
-        vectorized_scores = vectorized_compute_scores(df)
-        vectorized_time = time.time() - start
-        
-        # Time apply version (on smaller subset to save time)
-        df_small = df.head(100)
-        start = time.time()
-        apply_scores = df_small.apply(compute_score, axis=1)
-        apply_time = time.time() - start
-        
-        # Vectorized should be significantly faster
-        # (comparing 1000 rows vectorized vs 100 rows apply)
-        print(f"Vectorized (1000 rows): {vectorized_time:.3f}s")
-        print(f"Apply (100 rows): {apply_time:.3f}s")
-        print(f"Estimated speedup: {(apply_time * 10) / vectorized_time:.1f}x")
+        scores = score_universe(df)
+        assert time.time() - start < 10
+        assert len(scores) == n and scores["quality"].between(0, 100).all()
 
 
 if __name__ == "__main__":

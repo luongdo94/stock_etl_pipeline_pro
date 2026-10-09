@@ -16,6 +16,7 @@ from pathlib import Path
 import duckdb
 import pandas as pd
 
+from core.scoring import SCORE_VERSION
 from etl.load import DB_PATH
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,9 @@ _DDL = """
         ticker       VARCHAR,
         price_close  DOUBLE,
         quality      INTEGER,
+        value        INTEGER,
+        momentum     INTEGER,
+        score_version VARCHAR,
         action       VARCHAR,
         decision     VARCHAR,
         upside_pct   DOUBLE,
@@ -61,7 +65,10 @@ def build_snapshot(db_path: str = DB_PATH) -> pd.DataFrame:
         "as_of_date": as_of,
         "ticker": table["Ticker"],
         "price_close": table["Price"].astype(float),
-        "quality": table["Quality"].astype(int),
+        "quality": table["Quality"].round().astype(int),
+        "value": table["Value"].round().astype("Int64"),
+        "momentum": table["Momentum"].round().astype("Int64"),
+        "score_version": SCORE_VERSION,
         "action": table["Action"].astype(str),
         "decision": table["Decision"].astype(str),
         "upside_pct": table["Upside (%)"].astype(float),
@@ -79,7 +86,9 @@ def save_snapshot(rows: pd.DataFrame, track_db_path: str = TRACK_DB_PATH, db_pat
     cols = list(rows.columns)
     with duckdb.connect(track_db_path) as tconn:
         tconn.execute(_DDL)
-        tconn.execute("ALTER TABLE signals.score_snapshots ADD COLUMN IF NOT EXISTS decision VARCHAR")
+        # older track-record files predate these columns; their rows keep NULL = pre-v5 definitions
+        for ddl in ("decision VARCHAR", "value INTEGER", "momentum INTEGER", "score_version VARCHAR"):
+            tconn.execute(f"ALTER TABLE signals.score_snapshots ADD COLUMN IF NOT EXISTS {ddl}")
         tconn.register("snap_rows", rows)
         tconn.execute(f"INSERT OR REPLACE INTO signals.score_snapshots ({', '.join(cols)}) "
                       f"SELECT {', '.join(cols)} FROM snap_rows")

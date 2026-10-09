@@ -149,23 +149,6 @@ pe_threshold = config["valuation"]["pe_good"]
 
 ---
 
-#### `get_scoring_config()`
-
-Get scoring rules configuration with defaults.
-
-**Returns:**
-- `dict`: Scoring configuration with categories: valuation, profitability, financial_health, momentum, growth, red_flags, sector_adjustments
-
-**Example:**
-```python
-from etl.config_manager import get_scoring_config
-
-config = get_scoring_config()
-print(f"PE Good Threshold: {config['valuation']['pe_good']}")
-```
-
----
-
 #### `get_etl_config()`
 
 Get ETL pipeline configuration.
@@ -274,30 +257,6 @@ except Exception as e:
 
 Performance optimization utilities.
 
-#### `vectorized_compute_scores(df)`
-
-Vectorized score calculation for entire DataFrame.
-
-**Parameters:**
-- `df` (pd.DataFrame): DataFrame with required columns
-
-**Returns:**
-- `pd.Series`: Series of scores (0-100)
-
-**Performance:**
-- 10x faster than `df.apply(compute_score, axis=1)`
-- Processes 10,000 rows in ~0.5s vs ~5s
-
-**Example:**
-```python
-from etl.performance_utils import vectorized_compute_scores
-
-scores = vectorized_compute_scores(df)
-df['score'] = scores
-```
-
----
-
 #### `optimize_dataframe_memory(df)`
 
 Optimize DataFrame memory usage by downcasting numeric types.
@@ -336,52 +295,38 @@ Process large DataFrame in batches to reduce memory usage.
 
 ---
 
-### utils.py
+### core/scoring.py
 
-Core scoring and transformation utilities.
+Quality / Value / Momentum scores (pure pandas; thresholds in `config/scoring_rules.yaml`).
 
-#### `compute_score(row)`
+#### `score_universe(companies, annual_fin=None, prices=None, rules=None)`
 
-Calculate Quality Score (0-100) for a single stock.
+Score every investable ticker at once (peer percentiles need the whole universe).
 
 **Parameters:**
-- `row` (pd.Series): Stock data with required columns
+- `companies` (pd.DataFrame): `marts.dim_companies`
+- `annual_fin` (pd.DataFrame, optional): `marts.dim_annual_financials` (return on capital, growth/stability)
+- `prices` (pd.DataFrame, optional): daily prices with `price_close`, `ma_signal`, `pct_from_ma200` (momentum)
 
-**Returns:**
-- `int`: Quality Score (0-100)
+**Returns:** DataFrame indexed by ticker with `quality`, `value`, `momentum` (0-100, NaN if nothing is observable),
+`quality_coverage`, `value_coverage` (% of weight observable), `flags` (red-flag text), `missing` (unknown inputs that
+matter) and `components` (dict of sub-scores, `None` = unknown).
 
-**Example:**
 ```python
-from etl.utils import compute_score
-
-score = df.apply(compute_score, axis=1)
+from core.scoring import score_universe
+scores = score_universe(companies, annual_fin, prices)
+scores.loc["AAPL", ["quality", "value", "momentum", "flags"]]
 ```
+
+#### `build_features(companies, annual_fin=None, prices=None, rules=None)`
+
+The derived inputs behind the scores (return on capital, net debt/EBITDA, FCF yield, dividend cover, 12-1 month return, …).
 
 ---
 
-#### `compute_score_details(row)`
+### etl/utils.py
 
-Calculate detailed Quality Score with breakdown.
-
-**Parameters:**
-- `row` (pd.Series): Stock data
-
-**Returns:**
-- `dict`: Dictionary with keys:
-  - `total` (int): Total score
-  - `breakdown` (dict): Score by category
-  - `tier` (str): Quality tier (EXCEPTIONAL, STRONG, QUALITY, etc.)
-  - `action` (str): Recommended action
-
-**Example:**
-```python
-from etl.utils import compute_score_details
-
-details = compute_score_details(row)
-print(f"Total: {details['total']}")
-print(f"Breakdown: {details['breakdown']}")
-print(f"Tier: {details['tier']}")
-```
+Watermarks, refresh rules, `clean_upside_pct` and the email report (scores themselves live in `core/scoring.py`).
 
 ---
 
@@ -535,16 +480,11 @@ Calculate unified institutional rating.
 
 ### config/scoring_rules.yaml
 
-Business logic configuration for Quality Score calculation.
+Single source for the score definitions (v5).
 
-**Categories:**
-- `valuation`: P/E, PEG, P/B thresholds
-- `profitability`: FCF margin, ROE thresholds
-- `financial_health`: Debt/EBITDA thresholds
-- `momentum`: RSI, Z-Score thresholds
-- `growth`: Revenue/earnings growth thresholds
-- `red_flags`: Penalty points
-- `sector_adjustments`: Sector-specific caps
+**Sections:** `peers` (minimum peer-group size), `coverage` (shrink toward 50 below 80% observable weight),
+`sector_groups` (financial / capital-intensive), `quality` (weights, bands, penalties, leverage thresholds),
+`value` (weights, bands, peer blend), `momentum` (lookback, skip, weights).
 
 ---
 
@@ -587,12 +527,10 @@ pytest tests/ --cov=etl --cov=utils --cov-report=html
 
 ## Performance Benchmarks
 
-### Vectorized Scoring
+### Scoring
 
-- **Dataset**: 10,000 stocks
-- **Row-by-row (apply)**: ~5.2 seconds
-- **Vectorized**: ~0.48 seconds
-- **Speedup**: 10.8x
+- **Dataset**: ~800 tickers (the real universe)
+- **`score_universe`** (all three scores, peer percentiles included): about one second
 
 ### Memory Optimization
 
@@ -623,9 +561,9 @@ Circuit breakers prevent cascading failures:
 
 ✅ **DO**: Use config files for business logic
 ```python
-from etl.config_manager import get_scoring_config
-config = get_scoring_config()
-threshold = config["valuation"]["pe_good"]
+from core.scoring import load_rules
+rules = load_rules()
+threshold = rules["quality"]["net_debt_thresholds"]["standard"]["high"]
 ```
 
 ❌ **DON'T**: Hardcode thresholds
@@ -653,14 +591,14 @@ for i in range(3):  # Bad: duplicate code
 
 ### Performance
 
-✅ **DO**: Use vectorized operations
+DO: score the universe in one call (peer percentiles need every peer)
 ```python
-df['score'] = vectorized_compute_scores(df)
+scores = score_universe(companies, annual_fin, prices)
 ```
 
-❌ **DON'T**: Use apply() for large DataFrames
+DON'T: score tickers one by one — a single row has no peer group
 ```python
-df['score'] = df.apply(compute_score, axis=1)  # 10x slower
+for _, row in companies.iterrows(): ...   # no percentiles possible
 ```
 
 ---

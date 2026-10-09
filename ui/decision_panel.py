@@ -13,6 +13,7 @@ from core import decision as dec
 from core import valuation as val
 from core.valuation import risk_free_from_macro, valuation_inputs  # noqa: F401 (re-exported)
 from core.portfolio_risk import candidate_impact
+from core.rating import quality_tier, value_tier
 from core.track_record import evidence_status
 
 _STANCE_COLORS = {"BUY CANDIDATE": "#2ecc71", "HOLD / WATCH": "#f1c40f",
@@ -33,8 +34,37 @@ def _cached_evidence(snapshots: pd.DataFrame, prices: pd.DataFrame) -> dict:
     return evidence_status(snapshots, prices)
 
 
+def _score_tile(title, sub, score, colour):
+    shown = "N/A" if score is None else f"{score:.0f}"
+    return (f"<div style='flex:1; min-width:150px; background:rgba(255,255,255,0.03); padding:10px 12px; "
+            f"border-radius:8px; border-top:3px solid {colour};'>"
+            f"<div style='font-size:0.65em; color:#aab; text-transform:uppercase; letter-spacing:1px;'>{title}</div>"
+            f"<div style='font-weight:900; font-size:1.3em; color:{colour};'>{shown}"
+            f"<span style='font-size:0.55em; color:#667;'> /100</span></div>"
+            f"<div style='font-size:0.65em; color:#778;'>{sub}</div></div>")
+
+
+def render_score_strip(scores):
+    """Quality / Value / Momentum tiles + red flags. `scores` = dict(quality, value, momentum, flags, coverage)."""
+    q, v, m = scores.get("quality"), scores.get("value"), scores.get("momentum")
+    q_label, q_col = quality_tier(q) if q is not None else ("n/a", "#8899aa")
+    v_label, v_col = value_tier(v) if v is not None else ("n/a", "#8899aa")
+    m_col = "#8899aa" if m is None else ("#2ecc71" if m >= 60 else ("#e74c3c" if m < 40 else "#f1c40f"))
+    cov = scores.get("coverage")
+    tiles = (_score_tile("Quality — the business", f"{q_label} · decides if it is worth owning", q, q_col)
+             + _score_tile("Value — the price", f"{v_label} · vs sector peers", v, v_col)
+             + _score_tile("Momentum — timing only", "12-1 month return rank + trend; not part of Quality or Value", m, m_col))
+    st.markdown(f"<div style='display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px;'>{tiles}</div>",
+                unsafe_allow_html=True)
+    if scores.get("flags"):
+        st.warning(f"Red flags: {scores['flags']}", icon="🚩")
+    if cov is not None and cov < 60:
+        st.caption(f"⚠️ Only {cov:.0f}% of the scoring inputs are available — scores are pulled toward neutral.")
+
+
 def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, relval, missing,
-                          next_earnings, quality, snapshots, prices, holdings_loader, companies):
+                          next_earnings, quality, snapshots, prices, holdings_loader, companies,
+                          scores=None):
     ev = _cached_evidence(snapshots, prices[["date", "ticker", "price_close"]])
     d = dec.build_decision(
         price=price, base_value=vin["base"], bear_value=vin["bear"], bull_value=vin["bull"], stop_loss=stop_loss,
@@ -42,7 +72,9 @@ def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, re
         dividend_yield_pct=_f(meta.get("dividend_yield_pct")), missing_metrics=missing,
         price_date=price_date, fundamentals_date=_to_date(meta.get("info_updated_at")),
         next_earnings=next_earnings, track_record_ok=ev["ok"], quality_score=quality,
-        valuation_reliable=vin["reliable"], valuation_note=vin["note"])
+        valuation_reliable=vin["reliable"], valuation_note=vin["note"],
+        value_score=(scores or {}).get("value"), risk_flags=(scores or {}).get("flags", ""),
+        coverage_pct=(scores or {}).get("coverage"))
 
     sc, cc = _STANCE_COLORS.get(d.stance, "#8899aa"), _CONF_COLORS[d.confidence]
     fmt = lambda v, s="%": f"{v:+.1f}{s}" if v is not None else "N/A"
@@ -66,6 +98,8 @@ def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, re
       </div>
     </div>""", unsafe_allow_html=True)
 
+    if scores:
+        render_score_strip(scores)
     for w in d.warnings:
         st.warning(w, icon="⏳")
     c1, c2 = st.columns(2)

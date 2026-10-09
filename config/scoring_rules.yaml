@@ -1,81 +1,78 @@
-# scoring_rules.yaml — Business logic configuration for Quality Score calculation
-# All thresholds can be adjusted here without modifying code
+# scoring_rules.yaml — v5: three independent scores per stock (core/scoring.py)
+#
+#   QUALITY  (0-100)  How good is the business?   returns, margins, stability, balance sheet, cash conversion
+#   VALUE    (0-100)  How cheap is the price?     FCF yield, EV/EBITDA, earnings yield, PEG, shareholder yield
+#   MOMENTUM (0-100)  What has price been doing?  12-1 month return (cross-sectional) + trend      -> timing only
+#
+# Decision uses Quality (floor) and Value (cross-check). Momentum never enters Quality or Value.
+# Analyst consensus is NOT scored: ratings skew to "buy" and targets lag price.
+# Units: margins, ROE, yields are percentages (12.5 = 12.5%); each `bands` entry is a piecewise-linear
+# map x -> points (np.interp), x must be increasing.
 
-valuation:
-  # P/E Ratio thresholds
-  pe_excellent: 15      # Below this = excellent valuation
-  pe_good: 20           # Below this = good valuation
-  pe_fair: 35           # Below this = fair valuation
-  pe_poor: 50           # Above this = poor valuation
-  
-  # PEG Ratio thresholds
-  peg_excellent: 0.8    # Below this = undervalued growth
-  peg_good: 1.5         # Below this = fair growth valuation
-  peg_fair: 2.5         # Below this = acceptable
-  
-  # P/B Ratio thresholds
-  pb_excellent_tech: 3.5    # Tech stocks: below this = excellent
-  pb_excellent_value: 1.0   # Value stocks: below this = excellent
-  pb_good: 6.0
-  pb_fair: 10.0
+peers:
+  min_size: 5          # smallest peer group for a percentile; industry -> sector -> whole universe
+coverage:
+  full_at: 0.8         # share of the score's weight that must be observable for full confidence;
+                       # below it the score is shrunk toward 50 (little evidence -> near-neutral)
+missing_report_min_weight: 15   # a missing input is reported (Decision confidence) only if its weight >= this
 
-profitability:
-  # FCF Margin thresholds (%)
-  fcf_margin_excellent: 20
-  fcf_margin_good: 12
-  fcf_margin_fair: 5
-  
-  # ROE thresholds (decimal)
-  roe_excellent: 0.30   # 30%+
-  roe_good: 0.18        # 18%+
-  roe_fair: 0.10        # 10%+
-  roe_poor: 0.05        # 5%+
+sector_groups:         # lower-case sector / industry names (config/tickers.yaml)
+  financial:           # scored on ROE / net margin; no FCF, EBITDA or leverage tests
+    [banks, capital markets, financial services, financials, insurance]
+  leveraged_ok:        # structurally levered: relaxed net-debt/EBITDA bands
+    [regulated utilities, nuclear & clean utilities, reits, tower & data reits, real estate, telecom, renewables]
+  capex_heavy:         # free cash flow is negative by design (growth capex funded by debt): scored without FCF tests
+    [regulated utilities, nuclear & clean utilities, reits, tower & data reits, real estate, renewables]
+  reit:                # GAAP earnings are depressed by depreciation: no loss / dividend-cover flags
+    [reits, tower & data reits, real estate]
 
-financial_health:
-  # Debt/EBITDA thresholds
-  debt_ebitda_excellent: 2.5
-  debt_ebitda_good: 4.5
-  debt_ebitda_fair: 7.0
-  debt_ebitda_poor: 12.0
-  debt_ebitda_critical: 12.0  # Above this = red flag
+quality:
+  weights:
+    standard:  {roc: 20, op_margin: 10, gross_margin: 5, fcf_margin: 10, growth_stability: 20, balance_sheet: 20, earnings_quality: 15}
+    financial: {roe: 40, net_margin: 25, growth_stability: 35}
+    capex_heavy: {roc: 25, op_margin: 15, growth_stability: 30, balance_sheet: 30}
+  bands:
+    roc:            {x: [-5, 0, 8, 15, 25],            y: [0, 10, 40, 70, 100]}     # net income / (equity + debt), %
+    roe:            {x: [0, 5, 10, 15, 20],            y: [0, 15, 50, 80, 100]}
+    fcf_margin:     {x: [0, 5, 15, 25],                y: [0, 40, 75, 100]}         # blended 50/50 with the peer percentile
+    rev_cagr:       {x: [-5, 0, 5, 10, 20],            y: [0, 30, 60, 80, 100]}     # multi-year revenue CAGR, %
+    profit_years:   {x: [0, 0.5, 0.75, 1.0],           y: [0, 30, 60, 100]}         # share of reported years with net income > 0
+    margin_vol:     {x: [0, 2, 5, 10, 20],             y: [100, 90, 60, 25, 0]}     # st.dev of net margin, pp (lower = steadier)
+    net_debt_ebitda_standard: {x: [0, 1, 2, 3, 4, 6, 8],   y: [100, 90, 75, 55, 35, 10, 0]}
+    net_debt_ebitda_relaxed:  {x: [0, 2, 4, 5, 6.5, 8, 10], y: [100, 90, 70, 50, 30, 10, 0]}
+    current_ratio:  {x: [0.5, 1.0, 1.5, 2.5],          y: [0, 40, 80, 100]}
+    fcf_conversion: {x: [-0.5, 0, 0.5, 0.8, 1.0, 1.3], y: [0, 10, 40, 75, 90, 100]}  # FCF / net income (TTM)
+  growth_stability_weights: {rev_cagr: 0.5, profit_years: 0.3, margin_vol: 0.2}
+  net_debt_weight_in_balance_sheet: 0.75   # remainder: current ratio
+  penalties:           # points subtracted from Quality (capped at max_total)
+    loss_making: 8                # net loss AND no positive EBITDA / free cash flow (an economic loss)
+    gaap_loss_cash_positive: 3    # net loss but EBITDA and FCF positive (typically an impairment)
+    debt_without_ebitda: 10
+    net_debt_ebitda_high: 8       # > high_x
+    net_debt_ebitda_critical: 15  # > critical_x (replaces the line above)
+    dividend_uncovered: 5
+    negative_equity: 5
+    max_total: 25
+    material_net_debt_pct_of_mcap: 0.10   # "debt without EBITDA" only counts when net debt exceeds this share of market cap
+  net_debt_thresholds: {standard: {high: 5, critical: 8}, relaxed: {high: 6.5, critical: 9}}
+
+value:
+  weights:
+    standard:  {fcf_yield: 25, ev_ebitda: 20, earn_yield: 20, peg: 15, shareholder_yield: 10, ps: 10}
+    financial: {earn_yield: 40, pb: 30, shareholder_yield: 15, peg: 15}
+    capex_heavy: {ev_ebitda: 40, earn_yield: 20, shareholder_yield: 20, pb: 10, peg: 10}
+  peer_blend: 0.5      # component = peer_blend x sector-relative percentile + (1 - peer_blend) x absolute band
+  bands:
+    fcf_yield:         {x: [-2, 0, 3, 6, 10],         y: [0, 15, 45, 75, 100]}
+    ev_ebitda:         {x: [5, 10, 15, 20, 30, 40],   y: [100, 75, 55, 35, 10, 0]}
+    earn_yield:        {x: [0, 2, 4, 6, 10],          y: [0, 25, 50, 75, 100]}
+    peg:               {x: [0.5, 1, 1.5, 2, 3, 4],    y: [100, 80, 55, 35, 10, 0]}
+    shareholder_yield: {x: [0, 2, 4, 6, 8],           y: [0, 35, 65, 90, 100]}
+    ps:                {x: [1, 3, 6, 12, 20],         y: [100, 70, 40, 10, 0]}
+    pb:                {x: [0.6, 1.0, 1.5, 2.5, 4.0], y: [80, 90, 70, 40, 10]}
+  uncovered_dividend_factor: 0.5   # shareholder yield is halved when the dividend is not covered by FCF
 
 momentum:
-  # RSI thresholds
-  rsi_oversold: 30
-  rsi_neutral_low: 35
-  rsi_neutral_high: 60
-  rsi_overbought: 70
-  
-  # Z-Score thresholds (standard deviations)
-  z_score_deep_value: -2.0
-  z_score_fair: 0.0
-  z_score_expensive: 1.8
-  z_score_bubble: 3.0
-
-growth:
-  # Revenue growth thresholds (decimal)
-  revenue_growth_excellent: 0.50  # 50%+
-  revenue_growth_good: 0.15       # 15%+
-  revenue_growth_fair: 0.05       # 5%+
-  
-  # Earnings growth thresholds (decimal)
-  earnings_growth_excellent: 0.50
-  earnings_growth_good: 0.20
-  earnings_growth_fair: 0.10
-
-red_flags:
-  # Penalty points for various red flags
-  negative_pe_early_stage: -3     # Pre-profit growth company
-  negative_pe_high_growth: -5     # Unprofitable but growing fast
-  negative_pe_stagnant: -12       # Unprofitable and stagnant
-  high_debt_moderate: -10         # Debt/EBITDA > 8
-  high_debt_critical: -15         # Debt/EBITDA > 12
-  value_trap: -5                  # Low price + bearish consensus
-
-sector_adjustments:
-  # Sector-specific caps and adjustments
-  tech_profitability_cap: 30      # Max profitability points for tech
-  tech_payout_cap: 5              # Max payout yield points for tech
-  financial_pb_low: 0.5           # Banks: P/B below this may signal distress
-  financial_pb_ideal_low: 1.0
-  financial_pb_ideal_high: 1.8
+  lookback_days: 252   # trading days; the most recent skip_days are excluded (12-1 month momentum)
+  skip_days: 21
+  weights: {return_rank: 0.7, trend: 0.3}
