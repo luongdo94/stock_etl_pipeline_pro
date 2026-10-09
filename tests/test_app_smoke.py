@@ -17,6 +17,7 @@ sys.path.insert(0, ROOT)
 from streamlit.testing.v1 import AppTest  # noqa: E402
 
 from tests.synthetic_warehouse import build  # noqa: E402
+from views import scanner as scanner_view  # noqa: E402
 
 TABS = ["🌐 Market Pulse", "🔭 Stock Scanner", "🔬 Stock Analysis", "🤖 ML Predictor",
         "🧪 Strategy Lab", "📈 Track Record", "📋 Watchlist", "💼 Portfolio", "📖 Docs"]
@@ -101,6 +102,10 @@ def test_track_record_tab_scores_history(warehouse):
 def test_scanner_keeps_stocks_with_unknown_fundamentals(warehouse):
     """Missing forward P/E used to become 999 and every such stock vanished from the scanner."""
     at = _app("🔭 Stock Scanner").run()
+    assert not at.exception, [e.value for e in at.exception]
+    default = [d.value for d in at.dataframe if "Ticker" in getattr(d.value, "columns", [])][-1]
+    assert list(default.columns) == scanner_view.DEFAULT_COLS            # slim fixed default; detail columns hidden
+    at.multiselect(key="scan_extra_cols").select("P/E (Fwd)").select("Debt/EBITDA").run()
     assert not at.exception, [e.value for e in at.exception]
     tables = [d.value for d in at.dataframe if "Ticker" in getattr(d.value, "columns", [])]
     assert tables, "scanner table not rendered"

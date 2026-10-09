@@ -5,6 +5,12 @@ import streamlit as st
 from services.market_data import get_forex_rates
 from core import scan_presets as presets
 from core.scan_presets import ELITE, FAIR, SOLID
+
+# Fixed column set: the three scores already summarise the detail columns, which stay one click away.
+DEFAULT_COLS = ["Ticker", "Company", "Decision", "MoS (%)", "Quality", "Value", "Momentum", "Revisions", "Flags",
+                "ADV (EUR M)", "Action", "RSI (14)"]
+EXTRA_COLS = ["Sector", "Smart Money", "Z-Score", "vs MA200 (%)", "P/E (Fwd)", "EV/EBITDA", "PEG", "FCF Margin (%)",
+              "ROE (%)", "Yield (%)", "Net Payout (%)", "Debt/EBITDA"]
 from ui.icons import render_header
 
 
@@ -215,17 +221,16 @@ def render(ctx):
 
 
     # ── Display Results ───────────────────────────────────────────────────────
-    display_cols = ["Ticker", "Company", "Sector", "Decision", "MoS (%)", "Action", "Quality", "Value", "Momentum", "Revisions", "Flags", "ADV (EUR M)", "Smart Money",
-                    "Upside (%)", "RSI (14)", "Z-Score",
-                    "vs MA200 (%)", "P/E (Fwd)", "EV/EBITDA", "PEG", "FCF Margin (%)",
-                    "ROE (%)", "Yield (%)", "Net Payout (%)", "Debt/EBITDA"]
+    extras = st.multiselect("More columns", EXTRA_COLS, key="scan_extra_cols",
+                            help="Detail behind the scores. Hidden by default: Quality, Value and Momentum already summarise them.")
+    display_cols = DEFAULT_COLS + [c for c in EXTRA_COLS if c in extras]
     # Sort by the recommendation first (BUY → HOLD → AVOID → n/a), then margin of safety, then Quality
     _decision_rank = {"BUY CANDIDATE": 0, "HOLD / WATCH": 1, "AVOID / TRIM": 2, "NOT ENOUGH DATA": 3}
     display_df = (f_df.assign(_r=f_df["Decision"].map(_decision_rank).fillna(4))
                   .sort_values(["_r", "MoS (%)", "Quality"], ascending=[True, False, False], na_position="last")
                   [display_cols])
 
-    st.markdown(f"**Found {len(display_df)} active opportunities** — sorted by Decision, then margin of safety, then Quality")
+    st.markdown(f"**Found {len(display_df)} stocks** — sorted by Decision, then margin of safety, then Quality")
     
     # ── PAGINATION / LIMIT LOGIC ──────────────────────────────────────────────
     if 'radar_limit' not in st.session_state:
@@ -297,25 +302,23 @@ def render(ctx):
             except: pass
             return ''
 
-        styler = df.style.map(highlight_action, subset=['Decision', 'Action']) \
-                         .map(highlight_smart_money, subset=['Smart Money']) \
-                         .map(color_pos_neg, subset=['Upside (%)', 'vs MA200 (%)']) \
-                         .map(color_zscore, subset=['Z-Score']) \
-                         .map(color_rsi, subset=['RSI (14)']) \
-                         .map(color_peg, subset=['PEG']) \
-                         .map(color_debt, subset=['Debt/EBITDA']) \
-                         .map(lambda x: color_high_good(x, 3.0), subset=['Yield (%)']) \
-                         .map(lambda x: color_high_good(x, 15.0), subset=['ROE (%)'])
+        def on(*cols):
+            return [c for c in cols if c in df.columns]
+
+        styler = df.style.map(highlight_action, subset=on("Decision", "Action")) \
+                         .map(highlight_smart_money, subset=on("Smart Money")) \
+                         .map(color_pos_neg, subset=on("vs MA200 (%)")) \
+                         .map(color_zscore, subset=on("Z-Score")) \
+                         .map(color_rsi, subset=on("RSI (14)")) \
+                         .map(color_peg, subset=on("PEG")) \
+                         .map(color_debt, subset=on("Debt/EBITDA")) \
+                         .map(lambda x: color_high_good(x, 3.0), subset=on("Yield (%)")) \
+                         .map(lambda x: color_high_good(x, 15.0), subset=on("ROE (%)"))
         return styler
 
     styled_df = style_opportunity_df(paged_df)
 
-    st.dataframe(
-        styled_df,
-        use_container_width=True, 
-        height=550,
-        hide_index=True,
-        column_config={
+    col_cfg = {
             "Ticker":          st.column_config.TextColumn("Ticker", width="small"),
             "Company":         st.column_config.TextColumn("Company", width="medium"),
             "Sector":          st.column_config.TextColumn("Sector", width="small"),
@@ -338,7 +341,6 @@ def render(ctx):
             "Flags":           st.column_config.TextColumn("Red flags", width="medium",
                                                      help="Loss-making, debt without EBITDA, high net debt/EBITDA, uncovered dividend, negative equity"),
             "Smart Money":     st.column_config.TextColumn("Smart Money", width="small"),
-            "Upside (%)":      st.column_config.NumberColumn("Upside", format="%+.1f%%"),
             "RSI (14)":        st.column_config.NumberColumn("RSI", format="%d"),
             "Z-Score":         st.column_config.NumberColumn("Z-Score", format="%+.2f"),
             "vs MA200 (%)":    st.column_config.NumberColumn("vs MA200", format="%+.1f%%"),
@@ -350,8 +352,9 @@ def render(ctx):
             "Yield (%)":       st.column_config.NumberColumn("Yield", format="%.2f%%"),
             "Net Payout (%)":  st.column_config.NumberColumn("Net Payout", format="%.2f%%"),
             "Debt/EBITDA":     st.column_config.NumberColumn("Debt/EBITDA", format="%.2fx"),
-        }
-    )
+    }
+    st.dataframe(styled_df, use_container_width=True, height=550, hide_index=True,
+                 column_config={c: v for c, v in col_cfg.items() if c in display_cols})
 
     # Load All Button
     if len(display_df) > st.session_state.radar_limit:
@@ -369,26 +372,28 @@ def render(ctx):
                 f"<div style='font-size:0.78rem; color:{colour}; font-weight:800;'>{title}</div>"
                 f"<div style='font-size:0.72rem; color:#bbb; margin-top:4px;'>{body}</div>"
                 f"<div style='font-size:0.68rem; color:#778; margin-top:6px;'>{extra}</div></div>")
-    st.markdown(
-        "<div style='margin-top:16px; padding:14px 18px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:10px;'>"
-        "<div style='font-size:0.78rem; font-weight:700; color:#8899aa; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:10px;'>"
-        "Scores v6 — independent 0-100 numbers per stock, ranked against sector peers</div>"
-        "<div style='display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:10px;'>"
-        + _card("#2ecc71", "QUALITY — the business", "Return on capital 20 · margins 25 · growth &amp; stability 20 · balance sheet (net debt/EBITDA) 20 · FCF conversion 15. Banks/insurers: ROE, net margin, stability.",
-                f"Red flags subtract points: loss-making, debt without EBITDA, net debt/EBITDA &gt; 5x, dividend not covered by FCF, negative equity. Tiers: ELITE ≥ {ELITE} · SOLID ≥ {SOLID} · FAIR ≥ {FAIR}.")
-        + _card("#3498db", "VALUE — the price", "FCF yield 25 · EV/EBITDA 20 · earnings yield 20 · PEG 15 · shareholder yield 10 · P/S 10, each half peer percentile, half absolute band.",
-                "No analyst forecasts at all (not even forward P/E): trailing and 3-year-median earnings, PEG on realised growth, FCF after stock compensation. Shareholder yield is halved when the dividend is not covered.")
-        + _card("#f1c40f", "MOMENTUM — timing only", "12-1 month return rank across the universe (70%) + price above MA200 / golden cross (30%). RSI and Z-score are shown but not scored.",
-                "Measured in the stock's own currency. Never enters Quality or Value. A separate Revisions score tracks changes in analysts' estimates.")
-        + "</div>"
-        "<div style='margin-top:8px; font-size:0.68rem; color:#667;'>Unknown inputs are excluded and the rest re-weighted — never scored as zero. "
-        "With less than 80% of a score's inputs observable it is pulled toward 50 (see Coverage in the Decision confidence). "
-        "The Decision uses Quality as a floor (a BUY needs ≥ 50) and Value as a cross-check on the DCF. "
-        "Whether any score predicts returns is tested on the Track Record tab.</div></div>", unsafe_allow_html=True)
+    with st.expander("ℹ️ How the scores work"):
+        st.markdown(
+            "<div style='margin-top:16px; padding:14px 18px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:10px;'>"
+            "<div style='font-size:0.78rem; font-weight:700; color:#8899aa; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:10px;'>"
+            "Scores v6 — independent 0-100 numbers per stock, ranked against sector peers</div>"
+            "<div style='display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:10px;'>"
+            + _card("#2ecc71", "QUALITY — the business", "Return on capital 20 · margins 25 · growth &amp; stability 20 · balance sheet (net debt/EBITDA) 20 · FCF conversion 15. Banks/insurers: ROE, net margin, stability.",
+                    f"Red flags subtract points: loss-making, debt without EBITDA, net debt/EBITDA &gt; 5x, dividend not covered by FCF, negative equity. Tiers: ELITE ≥ {ELITE} · SOLID ≥ {SOLID} · FAIR ≥ {FAIR}.")
+            + _card("#3498db", "VALUE — the price", "FCF yield 25 · EV/EBITDA 20 · earnings yield 20 · PEG 15 · shareholder yield 10 · P/S 10, each half peer percentile, half absolute band.",
+                    "No analyst forecasts at all (not even forward P/E): trailing and 3-year-median earnings, PEG on realised growth, FCF after stock compensation. Shareholder yield is halved when the dividend is not covered.")
+            + _card("#f1c40f", "MOMENTUM — timing only", "12-1 month return rank across the universe (70%) + price above MA200 / golden cross (30%). RSI and Z-score are shown but not scored.",
+                    "Measured in the stock's own currency. Never enters Quality or Value. A separate Revisions score tracks changes in analysts' estimates.")
+            + "</div>"
+            "<div style='margin-top:8px; font-size:0.68rem; color:#667;'>Unknown inputs are excluded and the rest re-weighted — never scored as zero. "
+            "With less than 80% of a score's inputs observable it is pulled toward 50 (see Coverage in the Decision confidence). "
+            "The Decision uses Quality as a floor (a BUY needs ≥ 50) and Value as a cross-check on the DCF. "
+            "Whether any score predicts returns is tested on the Track Record tab.</div></div>", unsafe_allow_html=True)
 
-    with st.expander("💡 Tactical Interpretation Guide"):
+    with st.expander("💡 How to read the table"):
         st.write("""
-        - **If Strong Buy + High Upside**: Consider Scaling In.
-        - **If High Upside but Neutral/Bearish Trend**: Potential Value Trap. Wait for MA20 breakout.
-        - **If High Quality + RSI < 30**: Extreme Oversold opportunity for mean reversion.
+        - **Decision** is the recommendation; **MoS** (margin of safety vs the DCF base value) is its evidence. Blank = DCF not informative.
+        - **Signal** is context (trend, quality, value, reward/risk, volume flow) — an input to the Decision, never a recommendation.
+        - **Quality / Value / Momentum** are independent 0-100 ranks vs sector peers; **Revisions** is the 30-day change in analysts' EPS estimates.
+        - A cheap stock with Quality below 45 is a value-trap candidate; a high Quality stock with RSI < 30 is a pullback to research, not a signal.
         """)
