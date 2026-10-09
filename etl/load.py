@@ -66,31 +66,7 @@ def get_connection(retries: int = 5, delay: float = 1.0, use_shadow: bool = Fals
     """Direct connection - no context manager needed for pipeline.py"""
     return _connect_with_retries(retries, delay, use_shadow)
 
-def create_raw_schema(conn: duckdb.DuckDBPyConnection):
-    """Create raw schema — stores unmodified data from the Extract step."""
-    conn.execute("CREATE SCHEMA IF NOT EXISTS raw")
-    
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS raw.stock_prices (
-            date            DATE,
-            open            DOUBLE,
-            high            DOUBLE,
-            low             DOUBLE,
-            close           DOUBLE,
-            volume          BIGINT,
-            ticker          VARCHAR,
-            company         VARCHAR,
-            sector          VARCHAR,
-            region          VARCHAR,
-            _extracted_at   TIMESTAMP,
-            _loaded_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    
-    # Bug #2 FIX: Use IF NOT EXISTS — never drop live data.
-    # Full refresh is now handled by load_company_info() via atomic staging swap.
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS raw.company_info (
+_COMPANY_INFO_COLUMNS = """
             ticker          VARCHAR PRIMARY KEY,
             quote_type      VARCHAR DEFAULT 'EQUITY',
             company         VARCHAR,
@@ -133,17 +109,50 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
             ex_dividend_date VARCHAR,
             pay_date         VARCHAR,
             _loaded_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        """
+# columns added after the first release: ALTER ... ADD COLUMN IF NOT EXISTS keeps old warehouses working
+_COMPANY_INFO_MIGRATIONS = ("quote_type VARCHAR DEFAULT 'EQUITY'", "industry VARCHAR",
+                            "ex_dividend_date VARCHAR", "pay_date VARCHAR",
+                            "fx_fin_to_eur DOUBLE", "fx_quote_to_eur DOUBLE")
+
+
+def ensure_company_info(conn: duckdb.DuckDBPyConnection):
+    """Create raw.company_info and add any columns an older warehouse is missing (single definition)."""
+    conn.execute("CREATE SCHEMA IF NOT EXISTS raw")
+    conn.execute(f"CREATE TABLE IF NOT EXISTS raw.company_info ({_COMPANY_INFO_COLUMNS})")
+    for col_ddl in _COMPANY_INFO_MIGRATIONS:
+        conn.execute(f"ALTER TABLE raw.company_info ADD COLUMN IF NOT EXISTS {col_ddl}")
+
+
+def create_raw_schema(conn: duckdb.DuckDBPyConnection):
+    """Create raw schema — stores unmodified data from the Extract step."""
+    conn.execute("CREATE SCHEMA IF NOT EXISTS raw")
+    
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS raw.stock_prices (
+            date            DATE,
+            open            DOUBLE,
+            high            DOUBLE,
+            low             DOUBLE,
+            close           DOUBLE,
+            volume          BIGINT,
+            ticker          VARCHAR,
+            company         VARCHAR,
+            sector          VARCHAR,
+            region          VARCHAR,
+            _extracted_at   TIMESTAMP,
+            _loaded_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            currency        VARCHAR,
+            fx_rate         DOUBLE,
+            price_scale     DOUBLE
         )
     """)
-    # Migrate existing tables that predate newer columns. staging.stg_company_info reads
-    # ex_dividend_date / pay_date, so they must exist even before load_company_info() runs
-    # (fresh warehouse, or a run where metadata extraction returned nothing).
-    for col_ddl in ("quote_type VARCHAR DEFAULT 'EQUITY'", "industry VARCHAR",
-                    "ex_dividend_date VARCHAR", "pay_date VARCHAR"):
-        try:
-            conn.execute(f"ALTER TABLE raw.company_info ADD COLUMN IF NOT EXISTS {col_ddl}")
-        except Exception:
-            pass  # Column already exists or not supported — safe to ignore
+    # provenance of the EUR conversion: close_eur = close_local * fx_rate / price_scale
+    for col_ddl in ("currency VARCHAR", "fx_rate DOUBLE", "price_scale DOUBLE"):
+        conn.execute(f"ALTER TABLE raw.stock_prices ADD COLUMN IF NOT EXISTS {col_ddl}")
+    
+    ensure_company_info(conn)
+    ensure_insider_tables(conn)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS raw.historical_financials (
             ticker          VARCHAR,
@@ -154,6 +163,8 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
             eps             DOUBLE,
             eps_diluted     DOUBLE,
             _loaded_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            src_currency    VARCHAR,
+            fx_to_eur       DOUBLE,
             PRIMARY KEY (ticker, date)
         )
     """)
@@ -167,6 +178,8 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
             eps             DOUBLE,
             eps_diluted     DOUBLE,
             _loaded_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            src_currency    VARCHAR,
+            fx_to_eur       DOUBLE,
             PRIMARY KEY (ticker, date)
         )
     """)
@@ -175,6 +188,8 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
         try:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS net_income DOUBLE")
             conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS total_equity DOUBLE")
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS src_currency VARCHAR")
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS fx_to_eur DOUBLE")
         except Exception as e:
             logger.debug(f"Migration for {table} skipped or failed: {e}")
 
@@ -348,58 +363,55 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
     logger.info("✅ Raw schema created")
 
 
-def load_insider_transactions(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
-    """Load insider transactions into raw.insider_transactions table."""
-    if df.empty:
-        logger.warning("⚠️ No insider transactions to load.")
-        return
-    
-    # Create table if not exists
+_INSIDER_TX_COLUMNS = ("ticker", "insider_name", "position", "transaction_type", "shares", "value",
+                       "transaction_date", "ownership_type", "text", "_extracted_at")
+_INSIDER_SUM_COLUMNS = ("ticker", "insider_purchases_6m", "insider_sales_6m", "net_shares", "pct_buy", "pct_sell",
+                        "_extracted_at")
+
+
+def ensure_insider_tables(conn: duckdb.DuckDBPyConnection):
+    """The transform layer reads raw.insider_summary, so it must exist even before any insider data was loaded."""
+    conn.execute("CREATE SCHEMA IF NOT EXISTS raw")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS raw.insider_transactions (
-            ticker              VARCHAR,
-            insider_name        VARCHAR,
-            position            VARCHAR,
-            transaction_type    VARCHAR,
-            shares              BIGINT,
-            value               DOUBLE,
-            transaction_date    DATE,
-            ownership_type      VARCHAR,
-            text                VARCHAR,
-            _extracted_at       TIMESTAMP
-        )
-    """)
-    
-    # Insert data
-    conn.execute("INSERT INTO raw.insider_transactions SELECT * FROM df")
-    logger.info(f"✅ Loaded {len(df)} insider transactions into raw.insider_transactions")
+            ticker VARCHAR, insider_name VARCHAR, position VARCHAR, transaction_type VARCHAR, shares BIGINT,
+            value DOUBLE, transaction_date DATE, ownership_type VARCHAR, text VARCHAR, _extracted_at TIMESTAMP
+        )""")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS raw.insider_summary (
+            ticker VARCHAR, insider_purchases_6m BIGINT, insider_sales_6m BIGINT, net_shares BIGINT,
+            pct_buy DOUBLE, pct_sell DOUBLE, _extracted_at TIMESTAMP
+        )""")
+
+
+def _replace_by_ticker(conn, table: str, columns: tuple, df: pd.DataFrame) -> int:
+    """Replace the rows of every ticker present in df (a re-run never duplicates)."""
+    ensure_insider_tables(conn)
+    if df is None or df.empty:
+        logger.info(f"  ⚠️ No rows to load into {table}")
+        return 0
+    df = df.copy()
+    for col in columns:
+        if col not in df.columns:
+            df[col] = None
+    conn.execute(f"DELETE FROM {table} WHERE ticker = ANY(?)", [df["ticker"].unique().tolist()])
+    conn.register("df_tmp", df[list(columns)])
+    try:
+        conn.execute(f"INSERT INTO {table} ({', '.join(columns)}) SELECT {', '.join(columns)} FROM df_tmp")
+    finally:
+        conn.unregister("df_tmp")
+    logger.info(f"✅ Loaded {len(df)} rows → {table}")
+    return len(df)
+
+
+def load_insider_transactions(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
+    """Load insider transactions into raw.insider_transactions (replacing the tickers' previous rows)."""
+    return _replace_by_ticker(conn, "raw.insider_transactions", _INSIDER_TX_COLUMNS, df)
 
 
 def load_insider_summary(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
-    """Load insider trading summary into raw.insider_summary table."""
-    if df.empty:
-        logger.warning("⚠️ No insider summary to load.")
-        return
-    
-    # Create table if not exists
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS raw.insider_summary (
-            ticker                  VARCHAR,
-            insider_purchases_6m    BIGINT,
-            insider_sales_6m        BIGINT,
-            net_shares              BIGINT,
-            pct_buy                 DOUBLE,
-            pct_sell                DOUBLE,
-            _extracted_at           TIMESTAMP
-        )
-    """)
-    
-    # Upsert logic: delete old data for these tickers, then insert new
-    tickers_list = df['ticker'].unique().tolist()
-    placeholders = ','.join(['?' for _ in tickers_list])
-    conn.execute(f"DELETE FROM raw.insider_summary WHERE ticker IN ({placeholders})", tickers_list)
-    conn.execute("INSERT INTO raw.insider_summary SELECT * FROM df")
-    logger.info(f"✅ Loaded insider summary for {len(df)} tickers into raw.insider_summary")
+    """Load the 6-month insider summary into raw.insider_summary (replacing the tickers' previous rows)."""
+    return _replace_by_ticker(conn, "raw.insider_summary", _INSIDER_SUM_COLUMNS, df)
 
 
 def load_cashflows(
@@ -655,24 +667,30 @@ def load_stock_prices(
         post_count = conn.execute("SELECT COUNT(*) FROM raw.stock_prices").fetchone()[0]
         logger.info(f"  🧹 Safe Upsert: Deleted {pre_count - post_count:,} rows (exact date+ticker match only).")
     
-    # Explicitly register DataFrame to avoid fragile scope-based lookup in DuckDB
-    conn.register("df_tmp", df)
-    conn.execute("""
-        INSERT INTO raw.stock_prices (date, open, high, low, close, volume, ticker, company, sector, region, _extracted_at, _loaded_at)
-        SELECT
-            CAST(date AS DATE),
-            open, high, low, close,
-            CAST(volume AS BIGINT),
-            ticker, company, sector, region,
-            _extracted_at,
-            CURRENT_TIMESTAMP
-        FROM df_tmp
-    """)
-    conn.unregister("df_tmp")
-    
+    insert_stock_prices(conn, df)
     total_count = conn.execute("SELECT COUNT(*) FROM raw.stock_prices").fetchone()[0]
     logger.info(f"✅ Loaded {len(df):,} rows → raw.stock_prices (total: {total_count:,})")
     return len(df)
+
+
+def insert_stock_prices(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
+    """Append price rows (no delete). Missing provenance columns are stored as NULL."""
+    df = df.copy()
+    for col in ("currency", "fx_rate", "price_scale"):
+        if col not in df.columns:
+            df[col] = None
+    conn.register("df_tmp", df)
+    try:
+        conn.execute("""
+            INSERT INTO raw.stock_prices (date, open, high, low, close, volume, ticker, company, sector, region,
+                                          _extracted_at, _loaded_at, currency, fx_rate, price_scale)
+            SELECT CAST(date AS DATE), open, high, low, close, CAST(volume AS BIGINT),
+                   ticker, company, sector, region, _extracted_at, CURRENT_TIMESTAMP,
+                   CAST(currency AS VARCHAR), CAST(fx_rate AS DOUBLE), CAST(price_scale AS DOUBLE)
+            FROM df_tmp
+        """)
+    finally:
+        conn.unregister("df_tmp")
 
 
 def load_company_info(
@@ -688,69 +706,7 @@ def load_company_info(
         logger.warning("  ⚠️ No company info data to load — skipping metadata update")
         return 0
 
-    # 1. Ensure the table exists with the rigid schema
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS raw.company_info (
-            ticker          VARCHAR PRIMARY KEY,
-            quote_type      VARCHAR DEFAULT 'EQUITY',
-            company         VARCHAR,
-            sector          VARCHAR,
-            industry        VARCHAR,
-            region          VARCHAR,
-            market_cap      BIGINT,
-            pe_ratio        DOUBLE,
-            forward_pe      DOUBLE,
-            revenue_ttm     BIGINT,
-            employees       INTEGER,
-            country         VARCHAR,
-            currency        VARCHAR,
-            total_debt      BIGINT,
-            ebitda          BIGINT,
-            gross_margin    DOUBLE,
-            operating_margin DOUBLE,
-            trailing_eps    DOUBLE,
-            forward_eps     DOUBLE,
-            roe             DOUBLE,
-            free_cashflow   DOUBLE,
-            price_to_book   DOUBLE,
-            beta            DOUBLE,
-            target_mean_price DOUBLE,
-            recommendation_key VARCHAR,
-            peg_ratio       DOUBLE,
-            price_to_sales  DOUBLE,
-            ev_to_ebitda    DOUBLE,
-            revenue_growth  DOUBLE,
-            earnings_growth DOUBLE,
-            current_ratio   DOUBLE,
-            quick_ratio     DOUBLE,
-            debt_to_equity  DOUBLE,
-            short_ratio     DOUBLE,
-            short_percent_of_float DOUBLE,
-            inst_ownership  DOUBLE,
-            insider_ownership DOUBLE,
-            _extracted_at   TIMESTAMP,
-            dividend_yield  DOUBLE,
-            ex_dividend_date VARCHAR,
-            pay_date         VARCHAR,
-            _loaded_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
-    try:
-        conn.execute("ALTER TABLE raw.company_info ADD COLUMN IF NOT EXISTS quote_type VARCHAR DEFAULT 'EQUITY'")
-    except Exception:
-        pass
-    try:
-        conn.execute("ALTER TABLE raw.company_info ADD COLUMN IF NOT EXISTS industry VARCHAR")
-    except Exception:
-        pass
-    try:
-        conn.execute("ALTER TABLE raw.company_info ADD COLUMN IF NOT EXISTS ex_dividend_date VARCHAR")
-    except Exception:
-        pass
-    try:
-        conn.execute("ALTER TABLE raw.company_info ADD COLUMN IF NOT EXISTS pay_date VARCHAR")
-    except Exception:
-        pass
+    ensure_company_info(conn)
 
     conn.execute("BEGIN TRANSACTION")
     try:
@@ -774,6 +730,14 @@ def load_company_info(
         raise e
 
 
+def _with_provenance(df: pd.DataFrame) -> pd.DataFrame:
+    df = df.copy()
+    for col in ("src_currency", "fx_to_eur"):
+        if col not in df.columns:
+            df[col] = None
+    return df
+
+
 def load_historical_financials(
     conn: duckdb.DuckDBPyConnection,
     df: pd.DataFrame
@@ -787,11 +751,12 @@ def load_historical_financials(
     tickers = df["ticker"].unique().tolist()
     conn.execute("DELETE FROM raw.historical_financials WHERE ticker = ANY(?)", [tickers])
     
+    df = _with_provenance(df)
     conn.register("df_tmp", df)
     
     # Bug Fix: Ensure columns are explicitly selected for stability
     conn.execute("""
-        INSERT INTO raw.historical_financials (ticker, date, revenue, net_income, total_equity, eps, eps_diluted, _loaded_at)
+        INSERT INTO raw.historical_financials (ticker, date, revenue, net_income, total_equity, eps, eps_diluted, _loaded_at, src_currency, fx_to_eur)
         SELECT 
             ticker, 
             CAST(date AS DATE), 
@@ -800,7 +765,9 @@ def load_historical_financials(
             total_equity,
             eps, 
             eps_diluted, 
-            CURRENT_TIMESTAMP 
+            CURRENT_TIMESTAMP,
+            CAST(src_currency AS VARCHAR),
+            CAST(fx_to_eur AS DOUBLE)
         FROM df_tmp
     """)
     conn.unregister("df_tmp")
@@ -816,11 +783,12 @@ def load_quarterly_financials(
         logger.info("  ⚠️ No quarterly financials to load")
         return 0
 
+    df = _with_provenance(df)
     conn.register("df_tmp", df)
     # INSERT OR REPLACE uses PRIMARY KEY (ticker, date) — does NOT wipe historical rows
     # that are absent from the current extract (e.g. 2022 data won't be deleted when 2025 is fetched)
     conn.execute("""
-        INSERT OR REPLACE INTO raw.quarterly_financials (ticker, date, revenue, net_income, total_equity, eps, eps_diluted, _loaded_at)
+        INSERT OR REPLACE INTO raw.quarterly_financials (ticker, date, revenue, net_income, total_equity, eps, eps_diluted, _loaded_at, src_currency, fx_to_eur)
         SELECT 
             ticker, 
             CAST(date AS DATE), 
@@ -829,7 +797,9 @@ def load_quarterly_financials(
             total_equity,
             eps, 
             eps_diluted, 
-            CURRENT_TIMESTAMP 
+            CURRENT_TIMESTAMP,
+            CAST(src_currency AS VARCHAR),
+            CAST(fx_to_eur AS DOUBLE)
         FROM df_tmp
     """)
     conn.unregister("df_tmp")
@@ -837,82 +807,70 @@ def load_quarterly_financials(
     return len(df)
 
 
-def cleanup_stale_tv_tickers(conn: duckdb.DuckDBPyConnection):
-    """
-    Garbage Collection: Removes auto-discovered TV tickers that haven't been
-    updated in 7 days (meaning they fell out of the Top 20 rankings).
-    Base tickers from tickers.yaml are strictly protected.
-    """
-    from etl.extract import load_tickers_config
-    base_tickers = list(load_tickers_config().keys())
-    
-    if not base_tickers:
-        logger.warning("  ⚠️ Could not load base tickers. Skipping GC to prevent accidental wipe.")
-        return 0
-
-    # Find tickers in company_info older than 7 days
-    # (Using stock_prices MAX(date) is also good, but _extracted_at is safer)
-    stale_query = """
-        SELECT ticker 
-        FROM raw.company_info 
-        WHERE _extracted_at < CURRENT_TIMESTAMP - INTERVAL 7 DAY
-          AND ticker NOT IN (SELECT * FROM UNNEST(?))
-    """
-    
-    try:
-        stale_tickers = [row[0] for row in conn.execute(stale_query, [base_tickers]).fetchall()]
-        
-        if not stale_tickers:
-            logger.info("  🧹 Garbage Collection: No stale TV tickers to clean up.")
-            return 0
-            
-        logger.info(f"  🧹 Garbage Collection: Found {len(stale_tickers)} stale TV tickers. Deleting...")
-        
-        # Delete from all raw tables
-        tables = [
-            "raw.stock_prices", "raw.company_info", "raw.historical_financials",
-            "raw.quarterly_financials", "raw.cashflows", "raw.earnings_calendar",
-            "raw.earnings_surprise", "raw.forward_estimates", "raw.hist_fcf",
-            "raw.hist_fcf_quarterly"
-        ]
-        
-        for table in tables:
-            try:
-                conn.execute(f"DELETE FROM {table} WHERE ticker = ANY(?)", [stale_tickers])
-            except Exception as e:
-                pass # Table might not exist yet
-                
-        logger.info(f"  ✅ Garbage Collection Complete: {len(stale_tickers)} tickers removed.")
-        return len(stale_tickers)
-        
-    except Exception as e:
-        logger.error(f"  ❌ Garbage Collection failed: {e}")
-        return 0
+def cleanup_stale_tv_tickers(conn: duckdb.DuckDBPyConnection, retention_days: int = 30):
+    """Garbage-collect discovered tickers unseen for `retention_days` (see etl.universe). Base tickers are protected."""
+    from etl.universe import garbage_collect
+    return garbage_collect(conn, retention_days)
 
 
-def perform_atomic_swap():
+PENDING_DB_PATH = str(_WAREHOUSE_DIR / "stock_dw_pending.duckdb")
+
+
+def _replace_with_retries(src: str, dst: str, attempts: int, wait: float) -> bool:
+    """os.replace(src, dst), retrying while a reader holds `dst` (Windows refuses to replace an open file)."""
+    for i in range(attempts):
+        try:
+            os.replace(src, dst)
+            return True
+        except PermissionError as e:           # a dashboard connection still has the file open
+            if i == attempts - 1:
+                logger.error(f"❌ Could not replace {Path(dst).name} after {attempts} attempts: {e}")
+                return False
+            if i % 5 == 0:
+                logger.warning(f"⚠️ Production DB is in use. Retrying swap in {wait:.0f}s... ({i + 1}/{attempts})")
+            time.sleep(wait)
+    return False
+
+
+def _drop_stale_wal(db_path: str):
+    """A leftover write-ahead log of the replaced file would be replayed against the new one."""
+    wal = Path(db_path + ".wal")
+    if wal.exists():
+        try:
+            wal.unlink()
+            logger.warning(f"   🧹 Removed stale {wal.name}")
+        except OSError:
+            pass
+
+
+def perform_atomic_swap(attempts: int = 60, wait: float = 2.0) -> bool:
     """
-    Sub-millisecond file swap.
-    Replaces the production database with the shadow database.
+    Promote the shadow warehouse to production.
+
+    The swap needs the production file to be free (the dashboard opens it briefly while querying), so it
+    retries for attempts x wait seconds. If it still fails, the finished shadow is kept as
+    stock_dw_pending.duckdb and promoted at the start of the next run — a full extract is never thrown away.
+    Returns True when production now is the new warehouse.
     """
     if not os.path.exists(SHADOW_DB_PATH):
         logger.warning(f"⚠️ Shadow DB not found at {SHADOW_DB_PATH}. Skipping swap.")
-        return
+        return False
+    if _replace_with_retries(SHADOW_DB_PATH, DB_PATH, attempts, wait):
+        _drop_stale_wal(DB_PATH)
+        logger.info("📡 ATOMIC SWAP COMPLETE: Shadow DB is now Production.")
+        return True
+    os.replace(SHADOW_DB_PATH, PENDING_DB_PATH)
+    logger.error(f"❌ Swap postponed: the validated warehouse is saved as {Path(PENDING_DB_PATH).name} "
+                 f"and will be promoted by the next run (or run `python run.py --promote`).")
+    return False
 
-    # If the production DB already exists, we use a loop to retry the swap 
-    # (it might be locked for a split second by a reader).
-    for i in range(10):
-        try:
-            # os.replace is atomic on Unix. 
-            # It will overwrite DB_PATH with SHADOW_DB_PATH.
-            os.replace(SHADOW_DB_PATH, DB_PATH)
-            logger.info("📡 ATOMIC SWAP COMPLETE: Shadow DB is now Production.")
-            return
-        except OSError as e:
-            if i < 9:
-                wait_time = 1.0
-                logger.warning(f"⚠️ Production DB is locked. Retrying swap in {wait_time}s... ({i+1}/10)")
-                time.sleep(wait_time)
-            else:
-                logger.error(f"❌ ATOMIC SWAP FAILED: Could not replace production DB: {e}")
-                raise e
+
+def promote_pending_swap(attempts: int = 5, wait: float = 2.0) -> bool:
+    """Promote a validated warehouse left behind by a postponed swap, if there is one."""
+    if not os.path.exists(PENDING_DB_PATH):
+        return False
+    if _replace_with_retries(PENDING_DB_PATH, DB_PATH, attempts, wait):
+        _drop_stale_wal(DB_PATH)
+        logger.info("📡 Pending warehouse from a postponed swap is now Production.")
+        return True
+    return False

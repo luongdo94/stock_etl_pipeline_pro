@@ -23,8 +23,9 @@ $action = New-ScheduledTaskAction -Execute "cmd.exe" `
     -Argument "/c set PYTHONIOENCODING=utf-8 && `"$Python`" $runArgs >> `"$log`" 2>&1" `
     -WorkingDirectory $project
 $trigger = New-ScheduledTaskTrigger -Weekly -DaysOfWeek Monday,Tuesday,Wednesday,Thursday,Friday,Saturday -At $Time
+# IgnoreNew: a slow run must never overlap the next trigger (the ETL also holds its own file lock)
 $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -ExecutionTimeLimit (New-TimeSpan -Hours 3) `
-    -RunOnlyIfNetworkAvailable
+    -RunOnlyIfNetworkAvailable -MultipleInstances IgnoreNew
 
 Register-ScheduledTask -TaskName "StockETL-Daily" -Action $action -Trigger $trigger -Settings $settings `
     -Description "Stock ETL pipeline + daily score snapshot ($project)" -Force | Out-Null

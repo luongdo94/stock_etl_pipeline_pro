@@ -20,6 +20,9 @@ def run_dq_validations(db_path: str = None):
     logger.info(f"🛡️ Running Data Quality Audit on {os.path.basename(db_path)}...")
     
     os.makedirs(_DOCS_DIR, exist_ok=True)
+    from etl.config_manager import get_etl_config
+    _dq = get_etl_config()["data_quality"]
+    _jump, _jump_k = float(_dq["jump_pct"]), int(_dq["jump_systemic_tickers"])
     
     try:
         # 🔗 Connect in Read/Write mode to persist warnings to Shadow DB
@@ -71,7 +74,24 @@ def run_dq_validations(db_path: str = None):
                 "critical": True
             },
             
+            {
+                "id": "fct_price_jumps_systemic",
+                "name": "FCT: No Systemic Price Jumps (last 10 days)",
+                "query": f"""SELECT CASE WHEN n > GREATEST({_jump_k}, 0.02 * t) THEN n ELSE 0 END FROM (
+                              SELECT COUNT(DISTINCT CASE WHEN ABS(daily_return_pct) > {_jump} AND date >= _d - INTERVAL 10 DAY THEN ticker END) n,
+                                     COUNT(DISTINCT ticker) t FROM marts.fct_daily_returns, (SELECT MAX(date) _d FROM marts.fct_daily_returns))""",
+                "ticker_query": f"SELECT DISTINCT ticker FROM marts.fct_daily_returns WHERE ABS(daily_return_pct) > {_jump} AND date >= (SELECT MAX(date) FROM marts.fct_daily_returns) - INTERVAL 10 DAY LIMIT 50",
+                "critical": True
+            },
+
             # --- SOFT (Dashboard Telemetry) ---
+            {
+                "id": "fct_price_jumps",
+                "name": "FCT: Large Daily Moves (last 10 days)",
+                "query": f"SELECT COUNT(*) FROM marts.fct_daily_returns WHERE ABS(daily_return_pct) > {_jump} AND date >= (SELECT MAX(date) FROM marts.fct_daily_returns) - INTERVAL 10 DAY",
+                "ticker_query": f"SELECT DISTINCT ticker FROM marts.fct_daily_returns WHERE ABS(daily_return_pct) > {_jump} AND date >= (SELECT MAX(date) FROM marts.fct_daily_returns) - INTERVAL 10 DAY LIMIT 50",
+                "critical": False
+            },
             {
                 "id": "dim_no_null_revenue", 
                 "name": "DIM: Revenue Visibility", 

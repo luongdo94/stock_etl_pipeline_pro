@@ -50,46 +50,31 @@ def load_config(config_name: str, reload: bool = False) -> dict:
 
 
 def get_etl_config() -> dict:
-    """Get ETL pipeline configuration with defaults."""
+    """Pipeline configuration: config/etl_config.yaml merged over these defaults (section by section)."""
     default_config = {
-        "extraction": {
-            "batch_size": 40,
-            "max_workers": 8,
-            "retry_attempts": 3,
-            "backoff_base": 2.0,
-            "request_delay": 1.0,
+        "extraction": {"max_workers": 8, "insiders": True},
+        "incremental_load": {"lookback_days_full": 1825, "overlap_buffer_days": 2},
+        "refresh_intervals": {"fundamentals_hours": 168, "metadata_hours": 168, "earnings_hours": 168, "insider_hours": 168},
+        "price_integrity": {"drift_tolerance": 0.002, "rebase_every_days": 7, "min_rebase_ratio": 0.5},
+        "universe": {"discovery_retention_days": 30},
+        "gates": {
+            "min_universe_coverage": 0.90, "min_vs_previous_tickers": 0.95, "min_vs_previous_rows": 0.97,
+            "max_stale_days": 5, "min_fresh_share": 0.90, "critical_fresh_share": 0.50, "min_compared": 20, "min_moved": 3,
+            "max_jump_pct_systemic": 0.02,
+            "continuity_move": 0.25, "mcap_ratio_bounds": [0.5, 2.0], "max_mcap_share": 0.05,
+            "min_company_coverage": 0.80,
         },
-        "incremental_load": {
-            "lookback_days_full": 1825,  # 5 years
-            "lookback_days_incremental": 7,
-            "overlap_buffer_days": 2,
-        },
-        "refresh_intervals": {
-            "prices_hours": 0,  # Always refresh
-            "fundamentals_hours": 168,  # 7 days
-            "metadata_hours": 168,  # 7 days (reduced from 720)
-            "earnings_hours": 168,  # 7 days
-        },
-        "coverage_thresholds": {
-            "metadata_min_pct": 0.95,
-            "fundamentals_min_pct": 0.90,
-            "earnings_min_pct": 0.95,
-        },
-        "data_quality": {
-            "min_price": 0.01,
-            "max_pe_ratio": 1000,
-            "max_debt_ebitda": 50,
-            "min_market_cap": 1_000_000,
-        }
+        "swap": {"attempts": 60, "wait_seconds": 2.0},
+        "data_quality": {"min_price": 0.01, "max_pe_ratio": 1000, "max_debt_ebitda": 50,
+                         "min_market_cap": 1_000_000, "jump_pct": 60, "jump_systemic_tickers": 3},
     }
-    
+
     config = load_config("etl_config")
-    
     if config:
         for category, values in default_config.items():
-            if category in config:
+            if isinstance(config.get(category), dict):
                 values.update(config[category])
-    
+
     return default_config
 
 
