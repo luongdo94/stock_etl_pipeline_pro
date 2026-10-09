@@ -5,21 +5,23 @@ import pandas as pd
 from core.levels import get_tactical_metrics
 from core.rating import compute_institutional_rating
 from core.smart_money import get_sm_spirit_unified_v2
-from core.decision import build_decision, load_rules
-from core.valuation import DCF_NOT_APPLICABLE_SECTORS, valuation_inputs
+from core.decision import decide, load_rules, to_date
+from core.valuation import uses_book_model, valuation_inputs
 from core.scoring import score_universe
 from etl.utils import clean_upside_pct
 
 
 def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
-                         _hist_fcf=None, _macro=None, _estimates=None) -> pd.DataFrame:
+                         _hist_fcf=None, _macro=None, _estimates=None,
+                         track_record_ok=False) -> pd.DataFrame:
     """
     One row per investable ticker. Two distinct outputs:
       - "Signal"   (column "Action"): 6-pillar technical + quality composite — an INPUT
-      - "Decision": the single recommendation, from core.decision.build_decision — the same
+      - "Decision": the single recommendation, from core.decision.decide — the same
                     function and inputs as the Decision Summary in the Stock Analysis tab
     """
     _rules = load_rules()
+    _track_record_ok = bool(track_record_ok)
     _hist_fcf = _hist_fcf if _hist_fcf is not None else pd.DataFrame()
     # Quality / Value / Momentum for the whole universe at once (percentiles need the peer group)
     _scores = score_universe(_companies_df, _annual_fin, _prices_df, hist_fcf=_hist_fcf, estimates=_estimates)
@@ -102,13 +104,11 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
             analyst_target=float(row.get('target_mean_price') or 0)
         )
         _vin = valuation_inputs(row, float(cur_p), _hist_fcf, ticker, _macro or {}, _annual_fin)
-        _dec = build_decision(
-            price=float(cur_p), base_value=_vin["base"], bear_value=_vin["bear"], bull_value=_vin["bull"],
-            stop_loss=_tm["stop_loss"], currency=row.get("currency"), country=row.get("country"),
-            dividend_yield_pct=row.get("dividend_yield_pct"), missing_metrics=_sc["missing"],
-            quality_score=ai_score, value_score=value_score, risk_flags=_sc["flags"],
-            coverage_pct=_cov, valuation_reliable=_vin["reliable"], valuation_note=_vin["note"],
-            rules=_rules)
+        _dec = decide(
+            price=float(cur_p), vin=_vin, stop_loss=_tm["stop_loss"], meta=row,
+            scores={"quality": ai_score, "value": value_score, "flags": _sc["flags"], "coverage": _cov,
+                    "missing": _sc["missing"]},
+            price_date=to_date(latest_p.get("date")), track_record_ok=_track_record_ok, rules=_rules)
         _mos = (_vin["base"] / float(cur_p) - 1) * 100 if (_vin["base"] and _vin["reliable"]) else None
 
         # Volume flow (Unified v6.0 with sector awareness)
@@ -132,6 +132,7 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
             sm_strength = sm_strength,
             sm_layer   = sm_layer,
             value_score = value_score,
+            decision_stance = _dec.stance,
         )
         action_label = _rating["action_label"]
 
@@ -164,7 +165,7 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
         short_pct = (row.get('short_percent_of_float', 0) * 100) if pd.notnull(row.get('short_percent_of_float')) else 0
 
         # Cash-flow and leverage ratios are meaningless for banks/insurers (deposits, float)
-        if str(row.get('sector', '')).strip().lower() in DCF_NOT_APPLICABLE_SECTORS:
+        if uses_book_model(row, _hist_fcf, ticker):
             fcf_margin, debt_ebitda = float("nan"), float("nan")
 
         screener_rows.append({

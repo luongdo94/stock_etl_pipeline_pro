@@ -436,6 +436,17 @@ def load_track_record():
         return pd.DataFrame(columns=["as_of_date", "ticker", "price_close", "quality", "action"])
 
 
+@st.cache_data(ttl=3600, show_spinner=False)
+def track_record_ok(_prices, rows_key=None) -> bool:
+    """Is the Quality score statistically validated yet? One answer for every tab (it changes Decision confidence).
+    `rows_key` only feeds the cache key (a DataFrame prefixed with _ is not hashed)."""
+    from core.track_record import evidence_status
+    try:
+        return bool(evidence_status(load_track_record(), _prices[["date", "ticker", "price_close"]])["ok"])
+    except Exception:
+        return False
+
+
 def insider_tickers():
     """Tickers with SEC Form 4 rows (US listings only)."""
     with get_db_connection(read_only=True) as conn:

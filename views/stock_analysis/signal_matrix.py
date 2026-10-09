@@ -27,7 +27,8 @@ def render(dd, ctx):
     stop = dd.thesis_stop or dd.stop_loss
     level, colour, bullets = rr_explainer(rr=dd.decision_rr, price=float(dd.cur_p), stop=stop,
                                           target=dd.target_value or dd.cur_p, s1=dd.s1, rsi=dd.rsi,
-                                          w52_pos=dd.w52_pos, pe=_pe, quality=dd.ai_score)
+                                          w52_pos=dd.w52_pos, pe=_pe, quality=dd.ai_score,
+                                          overvalued=bool(r.get("overvalued")))
     rgb = _hex_rgb(colour)
     items = "".join(f"<li style='margin-bottom:7px; line-height:1.55;'>{b}</li>" for b in bullets)
     rr_html = (f"<div style='margin-top:14px; padding:14px 16px; background:rgba({rgb},0.07); "
