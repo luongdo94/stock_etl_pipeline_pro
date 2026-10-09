@@ -126,7 +126,7 @@ Trả về dictionary với ba thành phần:
 ### Tích hợp với Chiến lược
 - Chiến lược **Smart Money Accumulation** nhắm vào tín hiệu ACCUMULATION với strength ≥40
 - Chiến lược **Distribution Warning** cảnh báo tín hiệu DISTRIBUTION với strength ≥40
-- Chiến lược **Oversold Reversal Setup** yêu cầu xác nhận ACCUMULATION với strength ≥50
+- Market Scanner không còn preset nào chỉ dựa vào chỉ báo này; dùng bộ lọc Smart Money trong Custom Refinement
 
 ### Ưu điểm so với Phương pháp Truyền thống
 - **Thích ứng với volatility**: Kích thước cửa sổ tự động điều chỉnh
