@@ -1,30 +1,52 @@
-# etl_config.yaml — ETL pipeline configuration
+# etl_config.yaml — ETL pipeline configuration (read by etl/config_manager.get_etl_config)
+# Every value here is used by the pipeline; defaults live in config_manager.py.
 
 extraction:
-  batch_size: 40              # Number of tickers per batch
-  max_workers: 8              # ThreadPoolExecutor workers
-  retry_attempts: 3           # Max retry attempts per ticker
-  backoff_base: 2.0           # Exponential backoff base (seconds)
-  request_delay: 1.0          # Delay between batches (seconds)
+  max_workers: 8              # threads for per-ticker price-currency lookups (other extractors keep their own conservative pools)
+  insiders: true              # SEC Form 4 insider transactions / 6-month summary (US listings only)
 
 incremental_load:
-  lookback_days_full: 1825        # 5 years for full refresh
-  lookback_days_incremental: 7    # 1 week for incremental
-  overlap_buffer_days: 2          # Overlap to handle timezone gaps
+  lookback_days_full: 1825        # history pulled on a full refresh and when a ticker's price history is rebased
+  overlap_buffer_days: 2          # days re-downloaded before each ticker's watermark (also used to detect dividend/split drift)
 
 refresh_intervals:
-  prices_hours: 0           # Always refresh prices
-  fundamentals_hours: 168   # 7 days (quarterly data, cashflows)
-  metadata_hours: 168       # 7 days (company info, analyst targets)
-  earnings_hours: 168       # 7 days (earnings calendar)
+  fundamentals_hours: 168   # quarterly statements, cash flows, forward estimates
+  metadata_hours: 168       # company info, annual statements
+  earnings_hours: 168       # earnings calendar
+  insider_hours: 168        # insider transactions + summary
 
-coverage_thresholds:
-  metadata_min_pct: 0.95        # 95% coverage required for metadata
-  fundamentals_min_pct: 0.90    # 90% coverage required for fundamentals
-  earnings_min_pct: 0.95        # 95% coverage required for earnings
+price_integrity:
+  drift_tolerance: 0.002    # median |new/stored - 1| over the overlap days that triggers a full re-pull of that ticker
+  rebase_every_days: 7      # every ticker's price history is re-pulled at least this often (adjusted closes drift with every dividend)
+  min_rebase_ratio: 0.5     # a re-pull returning fewer than this share of the stored rows is ignored (keeps the old history)
+
+universe:
+  discovery_retention_days: 30   # an auto-discovered ticker stays in the universe this long after it last appeared in a TradingView screen
+
+# Gates on the shadow warehouse before it replaces production. critical = abort the swap, warning = logged + shown in the dashboard.
+gates:
+  min_universe_coverage: 0.90      # tickers with prices / tickers in the universe
+  min_vs_previous_tickers: 0.95    # tickers with prices / tickers in the previous production warehouse
+  min_vs_previous_rows: 0.97       # raw price rows / previous production rows
+  max_stale_days: 5                # newest price date must be at most this old (weekends/holidays fit in 5)
+  min_fresh_share: 0.90            # tickers whose last price is within 4 days of the newest date -> warning below this
+  critical_fresh_share: 0.50       # ... and critical below this (a partial download that left most tickers stale)
+  min_compared: 20                 # continuity checks need at least this many tickers present in both warehouses
+  min_moved: 3                     # ... and a break needs at least this many tickers (one split is a corporate action, not a bug)
+  max_jump_pct_systemic: 0.02      # share of tickers whose last close moved > continuity_move vs the previous warehouse -> critical
+  continuity_move: 0.25            # one-run move that counts as a discontinuity (unit / FX / split bug)
+  mcap_ratio_bounds: [0.5, 2.0]    # market cap vs previous warehouse; outside bounds counts as a unit / FX discontinuity
+  max_mcap_share: 0.05             # share of tickers outside the bounds above -> critical
+  min_company_coverage: 0.80       # company_info rows / tickers in the universe
+
+swap:
+  attempts: 60            # os.replace retries while a dashboard connection still holds the production file
+  wait_seconds: 2.0
 
 data_quality:
-  min_price: 0.01               # Minimum valid price
-  max_pe_ratio: 1000            # Maximum valid P/E ratio
-  max_debt_ebitda: 50           # Maximum valid Debt/EBITDA
-  min_market_cap: 1_000_000     # Minimum market cap (€1M)
+  min_price: 0.01
+  max_pe_ratio: 1000
+  max_debt_ebitda: 50
+  min_market_cap: 1000000
+  jump_pct: 60            # |daily return| above this in the last 10 days is flagged (split / unit error candidate)
+  jump_systemic_tickers: 3  # ... and is critical when more than max(this, 2% of the universe) tickers jump

@@ -34,7 +34,7 @@ The backbone of Honest Quant is a robust, production-ready Data Engineering pipe
   - **`marts.dim_companies`**: The master static dimension table containing aggregated fundamental markers (Market Cap, Sub-Sector, Beta, Short Interest).
   - **`marts.fct_daily_returns`**: The time-series fact table computing daily logarithmic returns, Technical Indicators ($MA_{20}, MA_{50}, MA_{200}$, RSI), and Rolling Volatility arrays.
   - **`marts.dim_quarterly_financials` & `dim_annual_financials`**: Financial statements optimized for longitudinal queries.
-- **Automation**: Fully containerized using **Apache Airflow** (via Docker). DAGs are scheduled to run daily exactly 2 hours before market open, ensuring the data is strictly point-in-time.
+- **Automation**: `python run.py` is the single entry point; schedule it with Windows Task Scheduler (`register_daily_etl.ps1`) or cron. Each run is locked against overlap, validated against the universe and the previous production warehouse, and swapped in atomically (see *ETL reliability* below).
 
 ---
 
@@ -215,7 +215,7 @@ A comprehensive test suite powered by `pytest` ensures the pipeline's logic rema
 
 ### Global Requirements
 - Python 3.9+ 
-- Docker & Docker Compose (for Airflow Orchestration)
+- Docker & Docker Compose (optional: run the ETL in a container)
 
 ### Step 1. Environment Setup
 ```bash
@@ -270,12 +270,11 @@ To run the dashboard on the web (e.g., Streamlit Cloud) without pushing the data
     - In `.streamlit/secrets.toml`: `COOKIE_SECRET` (a long random string, e.g. `python -c "import secrets; print(secrets.token_hex(32))"`) — signs the 7-day login cookie. Without it, users must log in again in every new browser session. Optionally `SUPABASE_ANON_KEY` for the login client.
 4. The dashboard will now stream data directly from the cloud via HTTP Parquet querying.
 
-### Step 5. Continuous Integration (Airflow)
-To set up completely automated daily ETL runs so your data is always fresh:
-```bash
-docker-compose up -d
-# Access the Airflow UI at http://localhost:8080 to trigger the master DAG.
+### Step 5. Scheduling
+```powershell
+powershell -ExecutionPolicy Bypass -File .\register_daily_etl.ps1     # Windows, Mon–Sat 07:00
 ```
+or `docker compose run --rm pipeline` from cron. Failures are alerted (see *ETL reliability*).
 
 ---
 
@@ -336,7 +335,23 @@ rate leaves the value empty instead of storing it unconverted. Annual/quarterly 
 EUR. After upgrading, run one full refresh (`python run.py --full`) so older rows are re-converted.
 
 **Daily schedule** (needed for the Track Record): `powershell -ExecutionPolicy Bypass -File .\register_daily_etl.ps1`
-registers a Windows task (Mon–Sat 07:00) that runs `run.py` and logs to `logs/scheduled_etl.log`.
+registers a Windows task (Mon–Sat 07:00, never overlapping) that runs `run.py` and logs to `logs/scheduled_etl.log`.
+
+### ETL reliability
+
+| Concern | What the pipeline does |
+| :--- | :--- |
+| **Overlapping runs** | One run at a time (OS file lock `warehouse/etl.lock`); a second `run.py` exits immediately. |
+| **Dividend / split restatements** | Prices are downloaded split- and dividend-adjusted, so Yahoo restates history after every corporate action. Each run re-downloads a few overlap days; a ticker whose overlap differs from what is stored (> 0.2%) has its whole history re-pulled, and every ticker is re-pulled weekly (`price_integrity` in `config/etl_config.yaml`). |
+| **Universe** | Resolved once per run (config tickers + TradingView screens) and recorded in `raw.universe` with `last_seen`. A TradingView outage never shrinks it; a discovered ticker expires only after 30 days unseen. Nothing touches the network at import time. |
+| **Release gates** | Before the swap the new warehouse is compared with the universe and with the previous production file (ticker/row counts, freshness, price and market-cap continuity, partial downloads). Critical findings abort the swap and leave production untouched; warnings appear in the dashboard's data-quality list. The structural DQ audit is fail-closed. |
+| **Swap** | Shadow file → production with retries while the dashboard holds the file (up to 2 min). If it still cannot swap, the validated warehouse is kept as `stock_dw_pending.duckdb` and promoted by the next run or by `python run.py --promote`. |
+| **Cloud sync** | Immutable snapshots under `snapshots/<version>/` plus a `manifest.json` uploaded last, so readers never mix two runs. Large tables are chunked deterministically (250k rows). The warehouse is opened read-only; any failed upload fails the sync (exit code 2) and the previous snapshot stays live. |
+| **Provenance** | Every price row stores `currency`, `fx_rate` and `price_scale`; company and statement rows store the FX rate used, so a conversion can be audited or redone without downloading again. A price that cannot be converted is skipped, never stored as EUR. |
+| **Alerts** | `logs/last_run.json` always records the outcome. A failed run sends an alert by e-mail (`SMTP_HOST`, `SMTP_USER`, `SMTP_PASSWORD`, `ALERT_EMAIL_TO`) and/or webhook (`ETL_WEBHOOK_URL`); `ETL_NOTIFY_SUCCESS=1` also sends the morning report. |
+| **Exit codes** | `0` success · `1` ETL failed or refused (previous data untouched) · `2` ETL ok, cloud sync failed. |
+
+All thresholds live in `config/etl_config.yaml`.
 
 ---
 *Architected and Engineered by GIA LUONG DO.*
@@ -446,7 +461,7 @@ Edit `locales/en.json` or `locales/vi.json`:
 **Solutions:**
 ```bash
 # Force full refresh of all data
-python run.py --full-refresh
+python run.py --full
 
 # Or clear warehouse and rebuild
 rm warehouse/stock_dw.duckdb
@@ -795,7 +810,7 @@ find . -type f -name "*.pyc" -delete
 pip install --upgrade --force-reinstall -r requirements.txt
 
 # 5. Rebuild warehouse from scratch
-python run.py --full-refresh
+python run.py --full
 
 # 6. Restart dashboard
 streamlit run app.py

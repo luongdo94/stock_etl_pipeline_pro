@@ -1,4 +1,7 @@
-version: "3.9"
+# One-shot ETL container:   docker compose run --rm pipeline            (add `python run.py --full` to rebuild)
+# Schedule it with the host's scheduler (cron / Windows Task Scheduler: register_daily_etl.ps1) — there is no
+# Airflow service any more: its dags/ folder was never part of this repository.
+# Notifications and cloud sync read their settings from .env (SMTP_*, ETL_WEBHOOK_URL, SUPABASE_*).
 services:
   pipeline:
     image: python:3.11-slim
@@ -6,34 +9,12 @@ services:
     volumes:
       - .:/app
       - ./warehouse:/app/warehouse
-    command: >
-      bash -c "
-        pip install -r requirements.txt -q &&
-        python run.py
-      "
+    env_file:
+      - path: .env
+        required: false
     environment:
       - PYTHONPATH=/app
-
-  airflow:
-    image: apache/airflow:2.9.0-python3.11
-    ports:
-      - "8080:8080"
-    volumes:
-      - .:/opt/project
-      - ./airflow/dags:/opt/airflow/dags
-      - ./airflow/start_airflow.sh:/start_airflow.sh
-      - ./warehouse:/opt/airflow/warehouse
-    environment:
-      AIRFLOW__CORE__EXECUTOR: SequentialExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////opt/airflow/airflow.db
-      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-      PYTHONPATH: /opt/project
-      # Gmail SMTP configuration
-      AIRFLOW__SMTP__SMTP_HOST: smtp.gmail.com
-      AIRFLOW__SMTP__SMTP_STARTTLS: "true"
-      AIRFLOW__SMTP__SMTP_SSL: "false"
-      AIRFLOW__SMTP__SMTP_PORT: "587"
-      AIRFLOW__SMTP__SMTP_USER: "${SMTP_USER}"
-      AIRFLOW__SMTP__SMTP_PASSWORD: "${SMTP_PASSWORD}"
-      AIRFLOW__SMTP__SMTP_MAIL_FROM: "${SMTP_USER}"
-    command: bash /start_airflow.sh
+      - PYTHONIOENCODING=utf-8
+    command: >
+      bash -c "pip install -r requirements.txt -q && python run.py"
+    restart: "no"

@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 import duckdb
 import logging
-from datetime import date
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -32,27 +31,15 @@ def get_last_price_dates(conn: duckdb.DuckDBPyConnection) -> dict:
     except Exception:
         return {}
 
-def needs_full_refresh(conn: duckdb.DuckDBPyConnection, force_weekly: bool = True) -> bool:
+def needs_full_refresh(conn: duckdb.DuckDBPyConnection) -> bool:
     """
-    Determines if a full historical refresh is needed.
+    A full bootstrap is needed only when there is no price history at all.
 
-    Rules:
-      1. If raw.stock_prices is empty or missing → Full refresh needed.
-      2. If force_weekly=True and the oldest 'last_date' is > 6 days ago
-         (i.e., the DB hasn't done a full refresh in a week) → Full refresh.
-      3. Otherwise → Incremental is sufficient.
+    (This used to take `force_weekly` and compute a staleness it then ignored — both branches returned
+    False.) Keeping the stored history consistent with Yahoo's restated, split/dividend-adjusted closes is
+    the job of etl.integrity: per-ticker drift detection plus a weekly rebase of every ticker.
     """
-    watermarks = get_last_price_dates(conn)
-    if not watermarks:
-        return True  # No data at all — need full bootstrap
-
-    if force_weekly:
-        oldest = min(watermarks.values())
-        days_since = (date.today() - oldest).days
-        if days_since > 6:
-            return False  # Historical data still valid; just do incremental
-
-    return False
+    return not get_last_price_dates(conn)
 
 
 def get_total_ticker_count() -> int:
@@ -67,6 +54,17 @@ def get_total_ticker_count() -> int:
     except Exception:
         pass
     return 600 # Fallback default
+
+
+def needs_insider_refresh(conn: duckdb.DuckDBPyConnection, threshold_hours: int = 168) -> bool:
+    """True when insider data was never loaded or is older than `threshold_hours`."""
+    try:
+        last = conn.execute("SELECT MAX(_extracted_at) FROM raw.insider_summary").fetchone()[0]
+    except duckdb.Error:
+        return True
+    if last is None:
+        return True
+    return (pd.Timestamp.now() - pd.Timestamp(last)).total_seconds() / 3600 > threshold_hours
 
 
 def needs_earnings_refresh(conn: duckdb.DuckDBPyConnection, threshold_hours: int = 168) -> bool:

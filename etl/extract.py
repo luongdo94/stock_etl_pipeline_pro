@@ -244,7 +244,10 @@ def get_combined_tickers():
         logger.error(f"⚠️ Error during TV auto-discovery: {e}")
         return base_tickers
 
-TICKERS = get_combined_tickers()
+# Static universe from config/tickers.yaml. The TradingView-discovered tickers are resolved once per
+# pipeline run (etl.universe.resolve_universe) and passed explicitly — this module no longer touches the
+# network when it is imported (the dashboard and every test import it).
+TICKERS = load_tickers_config()
 
 def get_equity_tickers(tickers_pool: dict = TICKERS) -> dict:
     """
@@ -355,6 +358,12 @@ def _safe_float(val):
     except (TypeError, ValueError):
         return None
 
+def _overlap_days() -> int:
+    """Days re-downloaded before the watermark (config/etl_config.yaml: incremental_load.overlap_buffer_days)."""
+    from etl.config_manager import get_etl_config
+    return int(get_etl_config()["incremental_load"]["overlap_buffer_days"])
+
+
 def extract_stock_prices(
     tickers: dict = TICKERS,
     lookback_days: int = 365,
@@ -381,7 +390,7 @@ def extract_stock_prices(
         # while still being much narrower than lookback_days.
         min_watermark = min(watermarks.values())
         # Subtract 2 days as overlap buffer for safety (timezone, holidays)
-        incremental_start = datetime.combine(min_watermark, datetime.min.time()) - timedelta(days=2)
+        incremental_start = datetime.combine(min_watermark, datetime.min.time()) - timedelta(days=_overlap_days())
         start_date = incremental_start
         new_tickers = [t for t in all_ticker_list if t not in watermarks]
         if new_tickers:
@@ -491,7 +500,8 @@ def extract_stock_prices(
     # Pass 2: API for ambiguous tickers only (most are genuine USD stocks)
     if ambiguous:
         logger.info(f"   💱 Resolving currency for {len(ambiguous)} ambiguous tickers via API...")
-        max_workers = 8   # Higher concurrency OK — mostly US stocks → fast response
+        from etl.config_manager import get_etl_config
+        max_workers = int(get_etl_config()["extraction"]["max_workers"])
         batch_size  = 80  # Larger batch since we expect fewer failures
         for i in range(0, len(ambiguous), batch_size):
             batch = ambiguous[i:i + batch_size]
@@ -551,30 +561,35 @@ def extract_stock_prices(
                 df = df.reset_index()
                 df.columns = [c.lower() for c in df.columns]
 
-                # Apply FX normalization (EUR is the baseline for ETL)
+                # Apply FX normalization (EUR is the baseline for ETL). The conversion is recorded per row
+                # (currency, fx_rate, price_scale): close_eur = close_local * fx_rate / price_scale, so it can be
+                # audited or reversed without downloading again.
                 currency = currencies.get(ticker, "EUR")
-                if currency != "EUR" and not fx_data.empty:
+                scale_factor = 1.0
+                if currency != "EUR":
                     fx_col = f"{currency}EUR=X" if f"{currency}EUR=X" in fx_data.columns else None
-                    
                     # yfinance resolves GBpEUR=X to GBPEUR=X implicitly, which is the *pound* rate.
                     # We must use the pound rate but we need to divide the final pence price by 100.
-                    if fx_col is None and currency.upper() in ["GBP", "GBP"]:
-                         fx_col = "GBPEUR=X" if "GBPEUR=X" in fx_data.columns else None
-                         
-                    if fx_col:
-                        rates = fx_data[[fx_col]].reset_index()
-                        rates.columns = ["date", "fx_rate"]
-                        df = pd.merge(df, rates, on="date", how="left")
-                        df["fx_rate"] = df["fx_rate"].ffill().bfill().fillna(1.0)
-                        
-                        scale_factor = 1.0
-                        if currency == "GBp":
-                            scale_factor = 100.0  # GBp (pence) to GBP (pound) ratio
-                            
-                        for col in ["open", "high", "low", "close"]:
-                            df[col] = (df[col] * df["fx_rate"]) / scale_factor
-                            
-                        df = df.drop(columns=["fx_rate"])
+                    if fx_col is None and currency.upper() == "GBP":
+                        fx_col = "GBPEUR=X" if "GBPEUR=X" in fx_data.columns else None
+                    if fx_data.empty or fx_col is None:
+                        logger.error(f"  ❌ {ticker}: no EUR rate for {currency} — ticker skipped (a price is never stored unconverted)")
+                        continue
+                    rates = fx_data[[fx_col]].reset_index()
+                    rates.columns = ["date", "fx_rate"]
+                    df = pd.merge(df, rates, on="date", how="left")
+                    df["fx_rate"] = df["fx_rate"].ffill().bfill()
+                    if df["fx_rate"].isna().any():
+                        logger.error(f"  ❌ {ticker}: EUR rate for {currency} has no value for its dates — ticker skipped")
+                        continue
+                    if currency == "GBp":
+                        scale_factor = 100.0  # GBp (pence) to GBP (pound) ratio
+                    for col in ["open", "high", "low", "close"]:
+                        df[col] = (df[col] * df["fx_rate"]) / scale_factor
+                else:
+                    df["fx_rate"] = 1.0
+                df["currency"] = currency
+                df["price_scale"] = scale_factor
 
                 # Metadata
                 meta = tickers[ticker]
@@ -701,6 +716,8 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
             "short_percent_of_float": stats.get('shortPercentOfFloat'),
             "inst_ownership":  stats.get('heldPercentInstitutions'),
             "insider_ownership":stats.get('heldPercentInsiders'),
+            "fx_fin_to_eur":   fin_fx_rate,    # rate applied to the financial-currency amounts above
+            "fx_quote_to_eur": quote_fx_rate,  # rate applied to quotes (target price)
             "_extracted_at":   datetime.now(),
         }
 
@@ -907,6 +924,8 @@ def extract_historical_financials(tickers: dict = None) -> pd.DataFrame:
                     t_filtered[col] = t_filtered[col] * fx_rate
             
             t_filtered["ticker"] = ticker
+            t_filtered["src_currency"] = currency      # provenance: amounts above = reported * fx_to_eur
+            t_filtered["fx_to_eur"] = fx_rate
             all_data.append(t_filtered)
             successful_set.add(ticker)
 
@@ -1050,6 +1069,8 @@ def extract_quarterly_financials(tickers: dict = None) -> pd.DataFrame:
                     t_filtered[col] = t_filtered[col] * fx_rate
             
             t_filtered["ticker"] = ticker
+            t_filtered["src_currency"] = currency      # provenance: amounts above = reported * fx_to_eur
+            t_filtered["fx_to_eur"] = fx_rate
             all_data.append(t_filtered)
             successful_set.add(ticker)
 

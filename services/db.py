@@ -21,12 +21,16 @@ logger = logging.getLogger(__name__)
 DB_PATH = os.environ.get("STOCK_DW_PATH") or os.path.join(ROOT, "warehouse", "stock_dw.duckdb")
 
 # ── LOCAL SHADOW CACHE (Remote Mode Optimization) ───────────────────────────
+# The ETL publishes immutable snapshots (etl/supabase_manager.py): snapshots/<version>/<file>.parquet plus a
+# manifest.json at the bucket root that names the current version and every file per table. The dashboard
+# fetches the (tiny) manifest at most every _MANIFEST_TTL_MINUTES and downloads a version's files once —
+# they never change, so there is no per-file TTL and no way to mix two runs.
 _CACHE_DIR = Path(os.path.join(ROOT, ".cache", "parquet"))
-_CACHE_TTL_MINUTES = 10  # Refresh cache from Supabase every 10 minutes
+_MANIFEST_TTL_MINUTES = 5
+_MANIFEST_PATH = _CACHE_DIR / "manifest.json"
 
-
-# Map Supabase Storage filenames → DuckDB view names
-_PARQUET_TABLE_MAP = {
+# Pre-manifest layout (flat, overwritten files). Used only until the first snapshot has been published.
+_LEGACY_TABLE_MAP = {
     "marts.fct_daily_returns": ["fct_daily_returns_p1.parquet", "fct_daily_returns_p2.parquet"],
     "marts.dim_companies":          ["dim_companies.parquet"],
     "marts.dq_warnings":            ["dq_warnings.parquet"],
@@ -45,78 +49,124 @@ _PARQUET_TABLE_MAP = {
 }
 
 
-def _ensure_local_cache() -> bool:
-    """
-    Downloads Parquet files from Supabase Storage to a local .cache/ directory
-    if they are missing or older than _CACHE_TTL_MINUTES.
-    Downloads all files in parallel using ThreadPoolExecutor.
-    Returns True if cache is ready, False on unrecoverable error.
-    """
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-    import time
-
-    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-
-    # Collect all unique filenames to download
-    all_files = set()
-    for files in _PARQUET_TABLE_MAP.values():
-        all_files.update(files)
-
-    # Determine which files need refreshing
-    now = time.time()
-    ttl_seconds = _CACHE_TTL_MINUTES * 60
-    stale_files = [
-        f for f in all_files
-        if not (_CACHE_DIR / f).exists()
-        or (now - (_CACHE_DIR / f).stat().st_mtime) > ttl_seconds
-    ]
-
-    if not stale_files:
-        return True  # All files are fresh — nothing to do
-
-    # Build Supabase client for storage download
+def _supabase_bucket():
+    """(client, bucket) or None when Supabase is not configured."""
     try:
         import supabase as _sb
         from dotenv import load_dotenv as _lde
+        from etl.supabase_manager import supabase_credentials
         _lde()
-        _url = os.environ.get("SUPABASE_URL")
-        _key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY") or os.environ.get("SUPABASE_SERVICE_KEY") or os.environ.get("SUPABASE_KEY")
-        _bucket = os.environ.get("S3_BUCKET_NAME", "warehouse")
-        if not _url or not _key:
-            return False
-        _client = _sb.create_client(_url, _key)
+        url, key = supabase_credentials()
+        if not url or not key:
+            return None
+        return _sb.create_client(url, key), os.environ.get("S3_BUCKET_NAME", "warehouse")
     except Exception:
-        return False
+        return None
 
-    def _download_one(filename: str) -> tuple:
-        local_path = _CACHE_DIR / filename
+
+def _cached_manifest():
+    """The manifest last downloaded (no network), or None."""
+    import json
+    try:
+        return json.loads(_MANIFEST_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _refresh_manifest(client, bucket):
+    """Current manifest: cached if younger than the TTL, otherwise re-fetched (falls back to the cached copy)."""
+    import json
+    import time
+    fresh = _MANIFEST_PATH.exists() and (time.time() - _MANIFEST_PATH.stat().st_mtime) < _MANIFEST_TTL_MINUTES * 60
+    if fresh:
+        return _cached_manifest()
+    try:
+        data = client.storage.from_(bucket).download("manifest.json")
+        _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        _MANIFEST_PATH.write_bytes(data)
+        return json.loads(data)
+    except Exception:
+        return _cached_manifest()          # no manifest published yet (legacy layout) or offline
+
+
+def _remote_tables() -> dict:
+    """{table: [remote paths relative to the bucket]} for the current snapshot (legacy flat names without one)."""
+    m = _cached_manifest()
+    if m:
+        return {t: [f"{m['prefix']}/{n}" for n in files] for t, files in m["tables"].items()}
+    return dict(_LEGACY_TABLE_MAP)
+
+
+def _local_tables() -> dict:
+    """{table: [local parquet paths that exist]} for the current snapshot."""
+    m = _cached_manifest()
+    if m:
+        base = _CACHE_DIR / m["version"]
+        return {t: [str(base / n) for n in files if (base / n).exists()] for t, files in m["tables"].items()}
+    return {t: [str(_CACHE_DIR / f) for f in files if (_CACHE_DIR / f).exists()] for t, files in _LEGACY_TABLE_MAP.items()}
+
+
+def _ensure_local_cache() -> bool:
+    """
+    Make the local parquet cache hold the current published snapshot. Returns True when it is ready.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+    import shutil
+    import time
+
+    _CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    conn_info = _supabase_bucket()
+    manifest_local = _cached_manifest()
+    if conn_info is None:
+        return manifest_local is not None or any(_CACHE_DIR.glob("*.parquet"))     # offline: use what is cached
+    client, bucket = conn_info
+    manifest = _refresh_manifest(client, bucket)
+
+    if manifest:
+        target = _CACHE_DIR / manifest["version"]
+        target.mkdir(parents=True, exist_ok=True)
+        wanted = [(f"{manifest['prefix']}/{n}", target / n) for files in manifest["tables"].values() for n in files]
+        missing = [(r, l) for r, l in wanted if not l.exists()]
+    else:                                                                            # legacy flat layout
+        ttl = _MANIFEST_TTL_MINUTES * 60
+        names = {f for files in _LEGACY_TABLE_MAP.values() for f in files}
+        missing = [(n, _CACHE_DIR / n) for n in names
+                   if not (_CACHE_DIR / n).exists() or time.time() - (_CACHE_DIR / n).stat().st_mtime > ttl]
+
+    def _download(item):
+        remote, local = item
         try:
-            data = _client.storage.from_(_bucket).download(filename)
-            local_path.write_bytes(data)
-            return filename, True
+            data = client.storage.from_(bucket).download(remote)
+            tmp = local.with_suffix(local.suffix + ".part")
+            tmp.write_bytes(data)
+            tmp.replace(local)             # never leave a half-written file that looks complete
+            return remote, True
         except Exception:
-            return filename, False
+            return remote, False
 
-    # Parallel download
     errors = []
-    with ThreadPoolExecutor(max_workers=6) as executor:
-        futures = {executor.submit(_download_one, f): f for f in stale_files}
-        for future in as_completed(futures):
-            fname, ok = future.result()
-            if not ok:
-                errors.append(fname)
-
-    if errors:
-        print(f"[Cache] Failed to download: {errors}")
-
-    return len(errors) == 0
+    if missing:
+        with ThreadPoolExecutor(max_workers=6) as executor:
+            errors = [r for r, ok in executor.map(_download, missing) if not ok]
+        if errors:
+            logger.warning(f"[Cache] Failed to download: {errors}")
+    if manifest and not errors:
+        for old in _CACHE_DIR.iterdir():   # drop superseded snapshots
+            if old.is_dir() and old.name != manifest["version"]:
+                shutil.rmtree(old, ignore_errors=True)
+    return not errors
 
 
 def clear_local_cache():
-    """Removes all locally cached Parquet files so the next Dashboard load pulls fresh data."""
+    """Removes the cached snapshot and manifest so the next Dashboard load pulls fresh data."""
+    import shutil
     if _CACHE_DIR.exists():
         for f in _CACHE_DIR.glob("*.parquet"):
             f.unlink(missing_ok=True)
+        _MANIFEST_PATH.unlink(missing_ok=True)
+        for d in _CACHE_DIR.iterdir():
+            if d.is_dir():
+                shutil.rmtree(d, ignore_errors=True)
 
 
 @contextlib.contextmanager
@@ -144,8 +194,7 @@ def get_db_connection(read_only=False):
             try:
                 conn = duckdb.connect(":memory:")
                 conn.execute("CREATE SCHEMA IF NOT EXISTS marts; CREATE SCHEMA IF NOT EXISTS raw;")
-                for table, files in _PARQUET_TABLE_MAP.items():
-                    local_paths = [str(_CACHE_DIR / f) for f in files if (_CACHE_DIR / f).exists()]
+                for table, local_paths in _local_tables().items():
                     if not local_paths:
                         continue
                     if len(local_paths) == 1:
@@ -189,7 +238,7 @@ def get_db_connection(read_only=False):
             conn.execute("SET s3_url_style='path';")
 
             conn.execute("CREATE SCHEMA IF NOT EXISTS marts; CREATE SCHEMA IF NOT EXISTS raw;")
-            for table, files in _PARQUET_TABLE_MAP.items():
+            for table, files in _remote_tables().items():
                 if len(files) == 1:
                     s3_path = f"s3://{bucket}/{files[0]}"
                     conn.execute(f"CREATE VIEW {table} AS SELECT * FROM read_parquet('{s3_path}')")
@@ -313,27 +362,32 @@ def read_warehouse(conn):
     except Exception:
         earnings_surprise_f = pd.DataFrame(columns=["ticker", "quarter_date", "eps_actual", "eps_estimate", "eps_difference", "surprise_pct", "currency", "period"])
 
-    # ── Pipeline Health Data ──
+    # ── Pipeline Health Data ── (marts.etl_audit travels with the warehouse and the cloud snapshot)
+    etl_audit_f = pd.DataFrame()
     try:
-        audit_db = str(Path(ROOT) / "warehouse" / "etl_audit.duckdb")
-        with duckdb.connect(audit_db, read_only=True) as a_conn:
-            etl_audit_f = a_conn.execute("""
-                SELECT status, start_time, rows_processed
-                FROM etl.audit_log 
-                ORDER BY start_time DESC 
-                LIMIT 1
-            """).df()
-    except:
-        etl_audit_f = pd.DataFrame()
+        etl_audit_f = conn.execute("""
+            SELECT status, start_time, rows_processed FROM marts.etl_audit
+            WHERE status <> 'STARTED' ORDER BY start_time DESC LIMIT 1""").df()
+    except duckdb.Error:
+        pass
+    if etl_audit_f.empty:
+        try:
+            audit_db = str(Path(ROOT) / "warehouse" / "etl_audit.duckdb")
+            with duckdb.connect(audit_db, read_only=True) as a_conn:
+                etl_audit_f = a_conn.execute("""
+                    SELECT status, start_time, rows_processed FROM etl.audit_log
+                    ORDER BY start_time DESC LIMIT 1""").df()
+        except duckdb.Error:
+            etl_audit_f = pd.DataFrame()
 
     try:
         total_tickers_f = conn.execute("SELECT COUNT(*) FROM marts.dim_companies").fetchone()[0]
-    except:
+    except duckdb.Error:
         total_tickers_f = 0
         
     try:
         tv_sector_rotation_f = conn.execute("SELECT * FROM raw.tv_sector_rotation").df()
-    except:
+    except duckdb.Error:
         tv_sector_rotation_f = pd.DataFrame()
         
     # ── PRE-PROCESSING INSIDE CACHE ──

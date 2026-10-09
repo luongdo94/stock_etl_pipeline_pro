@@ -2,12 +2,20 @@ import logging, time, shutil, os, duckdb, traceback, uuid
 from logging.handlers import RotatingFileHandler
 import pandas as pd
 from pathlib import Path
-from etl.extract   import extract_stock_prices, extract_company_info, extract_historical_financials, extract_quarterly_financials, extract_cashflows, extract_historical_fcf, extract_quarterly_fcf, extract_earnings_calendar, extract_earnings_history, extract_forward_estimates
+from etl.config_manager import get_etl_config
+from etl.extract   import extract_stock_prices, extract_company_info, extract_historical_financials, extract_quarterly_financials, extract_cashflows, extract_historical_fcf, extract_quarterly_fcf, extract_earnings_calendar, extract_earnings_history, extract_forward_estimates, get_equity_tickers
+from etl.gates     import collect_stats, evaluate_gates, has_critical, persist_warnings
+from etl.integrity import mark_rebased, replace_ticker_prices, tickers_to_rebase
 from etl.load      import get_connection, create_raw_schema, \
-                          load_stock_prices, load_company_info, load_historical_financials, load_quarterly_financials, load_cashflows, load_historical_fcf, load_quarterly_fcf, load_earnings_calendar, load_earnings_surprise, load_forward_estimates, cleanup_stale_tv_tickers, \
-                          perform_atomic_swap, DB_PATH, SHADOW_DB_PATH, AUDIT_DB_PATH
+                          load_stock_prices, load_company_info, load_historical_financials, load_quarterly_financials, load_cashflows, load_historical_fcf, load_quarterly_fcf, load_earnings_calendar, load_earnings_surprise, load_forward_estimates, load_insider_summary, load_insider_transactions, cleanup_stale_tv_tickers, \
+                          perform_atomic_swap, promote_pending_swap, DB_PATH, SHADOW_DB_PATH, AUDIT_DB_PATH, _WAREHOUSE_DIR
+from etl.runlock   import AlreadyRunning, RunLock
 from etl.transform import run_transforms
-from etl.utils     import get_last_price_dates, needs_full_refresh, needs_earnings_refresh, needs_fundamentals_refresh, needs_metadata_refresh, get_smart_recovery_targets
+from etl.universe  import resolve_universe
+from etl.utils     import get_last_price_dates, needs_full_refresh, needs_earnings_refresh, needs_fundamentals_refresh, needs_metadata_refresh, get_smart_recovery_targets, needs_insider_refresh
+from etl.insider_trading import extract_insider_summary, extract_insider_transactions
+
+LOCK_PATH = str(_WAREHOUSE_DIR / "etl.lock")
 
 
 # --- LOGGING SETUP ---
@@ -27,7 +35,7 @@ if not root_logger.handlers:
     root_logger.addHandler(c_handler)
 
     # 2. Rotating File Handler (Persistence)
-    f_handler = RotatingFileHandler(LOG_FILE, maxBytes=2*1024*1024, backupCount=5)
+    f_handler = RotatingFileHandler(LOG_FILE, maxBytes=2*1024*1024, backupCount=5, encoding="utf-8")   # emoji in messages: the cp1252 default raised on every such line
     f_handler.setFormatter(logging.Formatter("%(asctime)s | %(levelname)s | [%(name)s] %(message)s"))
     root_logger.addHandler(f_handler)
 
@@ -49,6 +57,11 @@ class AuditManager:
         self.rows_processed = 0
         self.status = "STARTED"
         self.failure_reason = None
+
+    def mark_success(self):
+        """Record SUCCESS now, so the row copied into the production warehouse (and the cloud) is final."""
+        self.status = "SUCCESS"
+        self._log_to_db(pd.Timestamp.now(), None)
 
     def mark_failed(self, reason: str):
         """Record a controlled abort (no exception raised) as FAILED instead of SUCCESS."""
@@ -147,7 +160,7 @@ def _prepare_shadow_db(is_incremental: bool):
     prod_path   = Path(DB_PATH)
 
     if is_incremental and prod_path.exists():
-        logger.info(f"   📋 Copying production DB → shadow (preserving history)...")
+        logger.info("   📋 Copying production DB → shadow (preserving history)...")
         t0 = time.time()
         shutil.copy2(str(prod_path), str(shadow_path))
         logger.info(f"   ✅ Shadow DB ready in {time.time()-t0:.2f}s ({shadow_path.stat().st_size / 1e6:.1f} MB)")
@@ -158,73 +171,175 @@ def _prepare_shadow_db(is_incremental: bool):
         logger.info("   🆕 Fresh shadow DB (full refresh mode)")
 
 
-def validate_shadow_integrity(conn: duckdb.DuckDBPyConnection) -> bool:
+def _run_data_quality(audit) -> bool:
     """
-    Final sanity check of the shadow database before atomic swap.
-    Returns False if data looks suspiciously incomplete.
+    Structural data-quality audit of the shadow warehouse. Fail-CLOSED: an unexpected error in the audit
+    aborts the swap (set ETL_DQ_FAIL_OPEN=1 to override while debugging). Only a missing optional
+    dependency is skipped.
+    """
+    from etl.dq_engine import run_dq_validations
+    logger.info("\n🛡️ STEP 4/6 — DATA QUALITY AUDIT")
+    try:
+        if not run_dq_validations(SHADOW_DB_PATH):
+            logger.error("❌ DATA QUALITY AUDIT FAILED: aborting swap.")
+            audit.mark_failed("Data-quality audit failed — swap aborted")
+            return False
+    except ImportError as e:
+        logger.warning(f"   ⚠️ Data-quality dependency missing ({e}) — audit skipped.")
+    except Exception as e:
+        if os.environ.get("ETL_DQ_FAIL_OPEN") == "1":
+            logger.warning(f"   ⚠️ Data-quality audit error ignored (ETL_DQ_FAIL_OPEN=1): {e}")
+        else:
+            logger.error(f"❌ Data-quality audit crashed: {e} — aborting swap to protect production.")
+            audit.mark_failed(f"Data-quality audit crashed: {e}")
+            return False
+    return True
+
+
+def _extract_all(conn, universe, watermarks, is_incremental, lookback_days, fast_mode, cfg):
+    """STEP 1 — everything the run needs from the outside world, for exactly the tickers of `universe`."""
+    refresh = cfg["refresh_intervals"]
+    equities = get_equity_tickers(universe)
+    t0 = time.time()
+
+    prices_df = extract_stock_prices(tickers=universe, lookback_days=lookback_days,
+                                     watermarks=watermarks if is_incremental else None)
+
+    # 🔗 SMART RECOVERY: always check for absolute data gaps regardless of mode
+    recovery = get_smart_recovery_targets(conn, all_tickers=universe)
+
+    # Metadata (company info / annual statements)
+    if fast_mode:
+        meta_targets = recovery["metadata"]
+    elif is_incremental and not needs_metadata_refresh(conn, threshold_hours=refresh["metadata_hours"]):
+        meta_targets = recovery["metadata"]
+    else:
+        meta_targets = None              # None = refresh everything
+    if meta_targets is None or meta_targets:
+        if meta_targets:
+            logger.info(f"   🩹 SMART RECOVERY: patching {len(meta_targets)} tickers with missing metadata.")
+        company_df = extract_company_info(tickers=meta_targets or universe)
+        financials_df = extract_historical_financials(tickers=meta_targets or equities)
+    else:
+        company_df, financials_df = pd.DataFrame(), pd.DataFrame()
+
+    # Fundamentals (quarterly statements, FCF, cash flows, estimates)
+    if fast_mode:
+        fund_targets = recovery["fundamentals"]
+    elif is_incremental and not needs_fundamentals_refresh(conn, threshold_hours=refresh["fundamentals_hours"]):
+        fund_targets = recovery["fundamentals"]
+    else:
+        fund_targets = None
+    if fund_targets is None or fund_targets:
+        if fund_targets:
+            logger.info(f"   🩹 SMART RECOVERY: patching {len(fund_targets)} tickers with missing fundamentals.")
+        eq_or_targets = fund_targets or equities
+        quarterly_df = extract_quarterly_financials(tickers=eq_or_targets)
+        fcf_df = extract_historical_fcf(tickers=eq_or_targets)
+        fcf_q_df = extract_quarterly_fcf(tickers=eq_or_targets)
+        cashflow_df = extract_cashflows(tickers=fund_targets or universe)
+        earnings_surprise_df = extract_earnings_history(tickers=eq_or_targets)
+        forward_estimates_df = extract_forward_estimates(tickers=eq_or_targets)
+    else:
+        quarterly_df = fcf_df = fcf_q_df = cashflow_df = earnings_surprise_df = forward_estimates_df = pd.DataFrame()
+
+    # Earnings calendar
+    if fast_mode:
+        earnings_df = pd.DataFrame()
+    elif is_incremental and not needs_earnings_refresh(conn, threshold_hours=refresh["earnings_hours"]):
+        logger.debug("   🕒 Earnings data is fresh.")
+        earnings_df = pd.DataFrame()
+    else:
+        earnings_df = extract_earnings_calendar(tickers=equities)
+
+    # Insider activity (SEC Form 4): US listings only, weekly. A failure here must never fail the run.
+    insider_sum = insider_tx = pd.DataFrame()
+    if (cfg["extraction"].get("insiders", True) and not fast_mode
+            and needs_insider_refresh(conn, threshold_hours=refresh["insider_hours"])):
+        us = [t for t in equities if "." not in t and not t.endswith("=X")]
+        try:
+            insider_sum, insider_tx = extract_insider_summary(us), extract_insider_transactions(us)
+        except Exception as e:
+            logger.warning(f"   ⚠️ Insider extraction failed ({e}) — previous insider data kept")
+
+    logger.info(f"   ⏱  Extract: {time.time() - t0:.1f}s | Prices: {len(prices_df):,} rows")
+    return dict(insider_summary=insider_sum, insider_tx=insider_tx, prices=prices_df, company=company_df, financials=financials_df, quarterly=quarterly_df,
+                fcf=fcf_df, fcf_q=fcf_q_df, cashflow=cashflow_df, earnings=earnings_df,
+                surprise=earnings_surprise_df, estimates=forward_estimates_df)
+
+
+def _rebase_prices(conn, universe, data, is_incremental, lookback_days, cfg):
+    """
+    STEP 2 — keep the stored price history on the same adjustment basis as the new rows.
+    Returns (prices to append incrementally, full-history frame for the rebased tickers or None, weekly?).
+    """
+    prices_df = data["prices"]
+    if not is_incremental:
+        return prices_df, None, False                       # a full extract is already one consistent basis
+    pcfg = cfg["price_integrity"]
+    tickers, info = tickers_to_rebase(conn, universe, prices_df, pcfg)
+    if not tickers:
+        return prices_df, None, False
+    weekly = info["reason"] == "weekly rebase"
+    if weekly:
+        logger.info(f"   🔁 Weekly price rebase: re-pulling {len(tickers)} tickers (adjusted closes drift with every dividend).")
+    else:
+        worst = sorted(info["drifted"].items(), key=lambda kv: -kv[1])[:8]
+        logger.warning(f"   🔁 Restated history for {len(tickers)} ticker(s) (dividend / split?): "
+                       + ", ".join(f"{t} {d:.1%}" for t, d in worst))
+    try:
+        full_df = extract_stock_prices(tickers={t: universe[t] for t in tickers}, lookback_days=lookback_days)
+    except Exception as e:                                  # never fail a run because a repair download failed
+        logger.warning(f"   ⚠️ Price rebase download failed ({e}) — keeping stored history, retrying next run")
+        return prices_df, None, weekly
+    if not prices_df.empty:
+        prices_df = prices_df[~prices_df["ticker"].isin(tickers)]
+    return prices_df, full_df, weekly
+
+
+def run_pipeline(lookback_days: int = None, force_full: bool = False, fast_mode: bool = False):
+    """
+    Intelligent ETL orchestrator with incremental load.
+
+      INCREMENTAL (default): appends new price rows after each ticker's watermark; fundamentals follow their
+                             own refresh intervals (config/etl_config.yaml). Price history is re-pulled when a
+                             dividend / split restated it, and for every ticker at least weekly.
+      FULL REFRESH:          rebuilds everything; automatic on the first run or with force_full=True.
+
+    Only one run can be active at a time (file lock). The new warehouse is built in a shadow file, checked
+    against the universe and the previous production warehouse, and only then swapped in.
+    Returns True on success, False when the run was aborted (previous production data is untouched).
     """
     try:
-        # 1. Check price data
-        price_count = conn.execute("SELECT COUNT(*) FROM raw.stock_prices").fetchone()[0]
-        if price_count < 1000: # We expect much more for 640 tickers
-            logger.warning(f"  ⚠️ Suspiciously low price count: {price_count}")
-            return False
-            
-        # 2. Check company info
-        company_count = conn.execute("SELECT COUNT(*) FROM raw.company_info").fetchone()[0]
-        if company_count < 100: # Threshold for major failure
-             logger.warning(f"  ⚠️ Suspiciously low company meta count: {company_count}")
-             return False
-             
-        # 3. Check returns mart (if it exists)
-        try:
-             mart_count = conn.execute("SELECT COUNT(*) FROM marts.fct_daily_returns").fetchone()[0]
-             if mart_count == 0:
-                 logger.warning("  ⚠️ Mart fct_daily_returns is empty")
-                 return False
-        except:
-             pass # Mart might not be created yet on first run
-                 
-        return True
-    except Exception as e:
-        logger.error(f"  ⚠️ Error during integrity check: {e}")
+        with RunLock(LOCK_PATH):
+            return _run_pipeline_locked(lookback_days, force_full, fast_mode)
+    except AlreadyRunning as e:
+        logger.error(f"⛔ Not started: {e}. Wait for the running ETL to finish.")
         return False
 
 
-def run_pipeline(lookback_days: int = 1825, force_full: bool = False, fast_mode: bool = False):
-
-    """
-    Intelligent ETL Orchestrator with Incremental Load Support.
-
-    Modes:
-      - INCREMENTAL (default): Only downloads new data since last run.
-                               ~3-5s for daily updates vs ~45s for full load.
-      - FULL REFRESH:          Downloads the complete historical window.
-                               Triggered automatically on first run, or when
-                               force_full=True is passed.
-
-    Args:
-        lookback_days:  Days of history for full refresh (default: 5 years).
-        force_full:     Override to always run a full refresh.
-    """
+def _run_pipeline_locked(lookback_days, force_full, fast_mode):
+    cfg = get_etl_config()
+    lookback_days = lookback_days or cfg["incremental_load"]["lookback_days_full"]
     start_time = time.time()
     logger.info("🚀 STARTING ETL PIPELINE")
     logger.info("=" * 55)
 
-    # ── PRE-FLIGHT: Determine run mode using a temporary read-only connection ─
-    watermarks = {}
-    is_incremental = False
+    # A previous run may have validated a warehouse but could not swap it in (dashboard held the file)
+    promote_pending_swap()
 
+    # ── PRE-FLIGHT: run mode + fingerprint of the current production warehouse ──────────
+    watermarks, prev_stats, is_incremental = {}, {}, False
     if not force_full and Path(DB_PATH).exists():
         logger.info("\n🔍 PRE-FLIGHT — Checking watermarks...")
         try:
             with duckdb.connect(DB_PATH, read_only=True) as probe_conn:
                 watermarks = get_last_price_dates(probe_conn)
+                prev_stats = collect_stats(probe_conn)
                 is_incremental = bool(watermarks) and not needs_full_refresh(probe_conn)
         except Exception as e:
             logger.warning(f"   ⚠️ Could not read watermarks: {e} → falling back to full refresh")
-            watermarks    = {}
-            is_incremental = False
+            watermarks, prev_stats, is_incremental = {}, {}, False
 
     mode_label = "⚡ INCREMENTAL" if is_incremental else "🔄 FULL REFRESH"
     logger.info(f"   Mode: {mode_label}")
@@ -232,202 +347,133 @@ def run_pipeline(lookback_days: int = 1825, force_full: bool = False, fast_mode:
         dates = sorted(set(watermarks.values()))
         logger.info(f"   Watermarks: {len(watermarks)} tickers, latest={max(dates)}, oldest={min(dates)}")
 
-    # ── SHADOW DB PREP ────────────────────────────────────────────────────────
-    logger.info("\n📁 STEP 0/5 — SHADOW DB PREP")
+    logger.info("\n📁 STEP 0/6 — SHADOW DB PREP")
     _prepare_shadow_db(is_incremental)
 
     with AuditManager(mode=mode_label) as audit:
         conn = get_connection(use_shadow=True)
         try:
+            create_raw_schema(conn)
+            universe = resolve_universe(conn, retention_days=cfg["universe"]["discovery_retention_days"])
+
             # ── STEP 1: EXTRACT ──────────────────────────────────────────────────
-            logger.info(f"\n📥 STEP 1/5 — EXTRACT ({mode_label})")
-            t0 = time.time()
+            logger.info(f"\n📥 STEP 1/6 — EXTRACT ({mode_label})")
+            data = _extract_all(conn, universe, watermarks, is_incremental, lookback_days, fast_mode, cfg)
 
-            prices_df    = extract_stock_prices(
-                lookback_days=lookback_days,
-                watermarks=watermarks if is_incremental else None
-            )
-            
-            # 🔗 SMART RECOVERY: Always check for absolute data gaps regardless of mode
-            from etl.extract import TICKERS
-            recovery = get_smart_recovery_targets(conn, all_tickers=TICKERS)
-
-            # Metadata Section (Info/Annuals - 30d cycle)
-            if fast_mode:
-                meta_targets = recovery["metadata"]
-            elif is_incremental and not needs_metadata_refresh(conn):
-                meta_targets = recovery["metadata"]
-            else:
-                meta_targets = None # Full refresh signals default tickers
-
-            if meta_targets is None or meta_targets:
-                if meta_targets:
-                    logger.info(f"   🩹 SMART RECOVERY: Patching {len(meta_targets)} tickers with missing metadata.")
-                company_df    = extract_company_info(tickers=meta_targets) if meta_targets else extract_company_info()
-                financials_df = extract_historical_financials(tickers=meta_targets) if meta_targets else extract_historical_financials()
-            else:
-                company_df, financials_df = pd.DataFrame(), pd.DataFrame()
-
-            # Fundamentals Section (Q/FCF/Cashflow - 7d cycle)
-            if fast_mode:
-                fund_targets = recovery["fundamentals"]
-            elif is_incremental and not needs_fundamentals_refresh(conn):
-                fund_targets = recovery["fundamentals"]
-            else:
-                fund_targets = None # Full refresh signals default tickers
-
-            if fund_targets is None or fund_targets:
-                if fund_targets:
-                    logger.info(f"   🩹 SMART RECOVERY: Patching {len(fund_targets)} tickers with missing fundamentals.")
-                quarterly_df  = extract_quarterly_financials(tickers=fund_targets) if fund_targets else extract_quarterly_financials()
-                fcf_df        = extract_historical_fcf(tickers=fund_targets) if fund_targets else extract_historical_fcf()
-                fcf_q_df      = extract_quarterly_fcf(tickers=fund_targets) if fund_targets else extract_quarterly_fcf()
-                cashflow_df   = extract_cashflows(tickers=fund_targets) if fund_targets else extract_cashflows()
-                earnings_surprise_df  = extract_earnings_history(tickers=fund_targets) if fund_targets else extract_earnings_history()
-                forward_estimates_df  = extract_forward_estimates(tickers=fund_targets) if fund_targets else extract_forward_estimates()
-            else:
-                quarterly_df, fcf_df, fcf_q_df, cashflow_df, earnings_surprise_df, forward_estimates_df = pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-
-            
-            # Earnings Section (7d cycle)
-            if fast_mode:
-                earnings_df = pd.DataFrame()
-            elif is_incremental and not needs_earnings_refresh(conn):
-                logger.debug("   🕒 Earnings data is fresh.")
-                earnings_df = pd.DataFrame()
-            else:
-                earnings_df = extract_earnings_calendar()
-
-            extract_time = time.time() - t0
-            logger.info(f"   ⏱  Extract: {extract_time:.1f}s | Prices: {len(prices_df):,} rows")
-
-            # ── STEP 2: VALIDATE ─────────────────────────────────────────────────
-            logger.info("\n🔍 STEP 2/5 — VALIDATE")
-            other_dfs = [company_df, financials_df, quarterly_df, fcf_df, fcf_q_df, cashflow_df,
-                         earnings_df, earnings_surprise_df, forward_estimates_df]
+            # ── STEP 2: VALIDATE + PRICE INTEGRITY ───────────────────────────────
+            logger.info("\n🔍 STEP 2/6 — VALIDATE")
+            prices_df = data["prices"]
+            other = [data[k] for k in ("company", "financials", "quarterly", "fcf", "fcf_q", "cashflow",
+                                       "earnings", "surprise", "estimates")]
             if prices_df.empty:
                 if not is_incremental:
                     raise AssertionError("No price data extracted in full refresh mode!")
-                # Incremental with no new prices (market closed, weekend, ...). Only stop if nothing
-                # else was fetched either — otherwise the weekly/monthly fundamentals refresh would be
-                # thrown away on every non-trading-day run and never reach the warehouse.
-                if all(df.empty for df in other_dfs):
-                    logger.info("   ℹ️  No new data — market may be closed. Pipeline complete.")
-                    return True
-                logger.info("   ℹ️  No new price data, but fundamentals/metadata were fetched — loading those.")
+                if all(df.empty for df in other):
+                    logger.info("   ℹ️  No new data — market may be closed.")
             else:
                 assert "close" in prices_df.columns, "Missing 'close' column!"
                 assert prices_df["close"].gt(0).all(), "Negative prices found!"
                 logger.info(f"   ✅ Validation passed — {len(prices_df):,} rows clean")
+            prices_df, rebased_full, weekly = _rebase_prices(conn, universe, data, is_incremental, lookback_days, cfg)
 
             # ── STEP 3: LOAD ─────────────────────────────────────────────────────
-            logger.info("\n📤 STEP 3/5 — LOAD")
+            logger.info("\n📤 STEP 3/6 — LOAD")
             t0 = time.time()
-            create_raw_schema(conn)
-            
-            # Accumulate rows processed for audit
             if not prices_df.empty:
                 audit.rows_processed += load_stock_prices(conn, prices_df, mode="upsert")
-            audit.rows_processed += load_company_info(conn, company_df)
-            audit.rows_processed += load_historical_financials(conn, financials_df)
-            audit.rows_processed += load_quarterly_financials(conn, quarterly_df)
-            audit.rows_processed += load_cashflows(conn, cashflow_df)
-            audit.rows_processed += load_historical_fcf(conn, fcf_df)
-            audit.rows_processed += load_quarterly_fcf(conn, fcf_q_df)
-            audit.rows_processed += load_earnings_calendar(conn, earnings_df)
-            audit.rows_processed += load_earnings_surprise(conn, earnings_surprise_df)
-            audit.rows_processed += load_forward_estimates(conn, forward_estimates_df)
-            
+            audit.rows_processed += load_company_info(conn, data["company"])
+            audit.rows_processed += load_historical_financials(conn, data["financials"])
+            audit.rows_processed += load_quarterly_financials(conn, data["quarterly"])
+            audit.rows_processed += load_cashflows(conn, data["cashflow"])
+            audit.rows_processed += load_historical_fcf(conn, data["fcf"])
+            audit.rows_processed += load_quarterly_fcf(conn, data["fcf_q"])
+            audit.rows_processed += load_earnings_calendar(conn, data["earnings"])
+            audit.rows_processed += load_earnings_surprise(conn, data["surprise"])
+            audit.rows_processed += load_forward_estimates(conn, data["estimates"])
+            audit.rows_processed += load_insider_summary(conn, data["insider_summary"])
+            audit.rows_processed += load_insider_transactions(conn, data["insider_tx"])
+            if rebased_full is not None:
+                replaced, skipped = replace_ticker_prices(conn, rebased_full, cfg["price_integrity"]["min_rebase_ratio"])
+                logger.info(f"   🔁 Rebased {len(replaced)} ticker histories ({len(skipped)} ignored)")
+                if weekly and len(replaced) >= 0.9 * len(universe):
+                    mark_rebased(conn)
+            elif not is_incremental:
+                mark_rebased(conn)                           # a full extract is a rebase
             logger.info(f"   ⏱  Load: {time.time()-t0:.1f}s")
 
-            # ── STEP 4: TRANSFORM ────────────────────────────────────────────────
-            logger.info("\n🔧 STEP 4/5 — TRANSFORM")
+            # ── STEP 4: TRANSFORM + GARBAGE COLLECTION ───────────────────────────
+            logger.info("\n🔧 STEP 4/6 — TRANSFORM")
             t0 = time.time()
-            from etl.extract import TICKERS
-            run_transforms(conn, active_tickers=list(TICKERS.keys()))
-            transform_time = time.time() - t0
-            logger.info(f"   ⏱  Transform: {transform_time:.1f}s")
-
+            cleanup_stale_tv_tickers(conn, cfg["universe"]["discovery_retention_days"])
+            run_transforms(conn, active_tickers=list(universe))
+            logger.info(f"   ⏱  Transform: {time.time() - t0:.1f}s")
             total_time = time.time() - start_time
 
-            # ── STEP 5: ATOMIC SWAP ───────────────────────────────────────────────
-            logger.info("\n🧹 STEP 4.8/5 — GARBAGE COLLECTION")
-            t0 = time.time()
-            cleanup_stale_tv_tickers(conn)
-            logger.info(f"   ⏱  GC: {time.time()-t0:.1f}s")
-
-            logger.info("\n📡 STEP 5/5 — ATOMIC SWAP")
-            t0 = time.time()
-            
-            # 🔗 SHADOW INTEGRITY GUARD
-            # We verify that the shadow database isn't "suspiciously empty" before swapping
-            if not validate_shadow_integrity(conn):
-                logger.error("❌ SHADOW INTEGRITY CHECK FAILED: Aborting swap to protect production data.")
-                audit.mark_failed("Shadow integrity check failed — swap aborted")
+            # ── STEP 5: RELEASE GATES (new vs universe and vs previous production) ─
+            logger.info("\n🚦 STEP 5/6 — RELEASE GATES")
+            issues = evaluate_gates(conn, prev_stats, len(universe), cfg["gates"])
+            for i in issues:
+                (logger.error if i.severity == "critical" else logger.warning)(f"   [{i.severity.upper()}] {i.code}: {i.message}")
+            if has_critical(issues):
+                audit.mark_failed("Release gates failed: " + "; ".join(i.code for i in issues if i.severity == "critical"))
                 conn.close()
                 return False
-
+            if not issues:
+                logger.info("   ✅ All gates passed")
             conn.close()
-            
-            # 🛡️ GREAT EXPECTATIONS (GX) GUARD
-            try:
-                from etl.dq_engine import run_dq_validations
-                logger.info("\n🛡️ STEP 4.5/5 — GREAT EXPECTATIONS VALIDATION")
-                gx_success = run_dq_validations(SHADOW_DB_PATH)
-                if not gx_success:
-                    logger.error("❌ GX VALIDATION FAILED: Aborting swap!")
-                    audit.mark_failed("Great Expectations validation failed — swap aborted")
-                    return False
-            except ImportError:
-                 logger.warning("   ⚠️ GX not installed, skipping advanced data quality checks.")
-            except Exception as e:
-                 logger.warning(f"   ⚠️ GX Validation encountered an error, proceeding anyway: {e}")
 
-            perform_atomic_swap()
+            if not _run_data_quality(audit):
+                return False
+            if issues:                                       # warnings: visible next to the other DQ checks
+                with duckdb.connect(SHADOW_DB_PATH) as wconn:
+                    persist_warnings(wconn, issues)
+
+            # ── STEP 6: ATOMIC SWAP ──────────────────────────────────────────────
+            logger.info("\n📡 STEP 6/6 — ATOMIC SWAP")
+            t0 = time.time()
+            swap_cfg = cfg["swap"]
+            if not perform_atomic_swap(swap_cfg["attempts"], swap_cfg["wait_seconds"]):
+                audit.mark_failed("Swap postponed: production file stayed in use — validated warehouse kept as pending")
+                return False
             logger.info(f"   ⏱  Swap: {time.time()-t0:.1f}s")
 
-            # ── STEP 6: POST-SWAP AUDIT SYNC ──
-            # Sync the success status to the production warehouse so dashboard/cloud see it
+            audit.mark_success()
             audit.sync_to_main_warehouse(DB_PATH)
 
-            # ── STEP 7: POINT-IN-TIME SCORE SNAPSHOT (track record) ──
-            # Non-fatal: a failed snapshot must never fail an otherwise good ETL run.
+            # Point-in-time score snapshot (track record). Non-fatal.
             try:
                 from etl.snapshot import run_snapshot
                 run_snapshot(DB_PATH)
             except Exception as e:
                 logger.warning(f"   ⚠️ Score snapshot skipped: {e}")
 
-
             logger.info("\n" + "=" * 55)
             logger.info(f"✅ PIPELINE COMPLETED SUCCESSFULLY [{mode_label}]")
             logger.info(f"   Total time : {total_time:.1f}s")
-            if is_incremental:
-                logger.info(f"   💡 Tip: Run with force_full=True to rebuild full history")
-
-            # Final verification: row counts
-            conn = get_connection(use_shadow=False)
-            for schema, table in [
-                ("raw",          "stock_prices"),
-                ("staging",      "stg_stock_prices"),
-                ("intermediate", "int_stock_metrics"),
-                ("marts",        "fct_daily_returns"),
-                ("marts",        "dim_companies"),
-                ("marts",        "agg_monthly_performance"),
-                ("marts",        "dim_annual_financials"),
-                ("marts",        "dim_quarterly_financials"),
-            ]:
-                try:
-                    n = conn.execute(f"SELECT COUNT(*) FROM {schema}.{table}").fetchone()[0]
-                    logger.info(f"   {schema:15s}.{table:30s} → {n:,} rows")
-                except:
-                    pass
-
+            _log_row_counts()
             return True
 
         finally:
-            if conn:
+            try:
                 conn.close()
+            except Exception:
+                pass
+
+
+def _log_row_counts():
+    conn = get_connection(use_shadow=False)
+    try:
+        for schema, table in [("raw", "stock_prices"), ("staging", "stg_stock_prices"),
+                              ("intermediate", "int_stock_metrics"), ("marts", "fct_daily_returns"),
+                              ("marts", "dim_companies"), ("marts", "agg_monthly_performance"),
+                              ("marts", "dim_annual_financials"), ("marts", "dim_quarterly_financials")]:
+            try:
+                n = conn.execute(f"SELECT COUNT(*) FROM {schema}.{table}").fetchone()[0]
+                logger.info(f"   {schema:15s}.{table:30s} → {n:,} rows")
+            except duckdb.Error:
+                pass
+    finally:
+        conn.close()
 
 
 if __name__ == "__main__":
@@ -435,6 +481,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Stock ETL Pipeline")
     parser.add_argument("--full", action="store_true", help="Force a full historical refresh")
     parser.add_argument("--fast", action="store_true", help="Skip fundamentals (Price only)")
-    parser.add_argument("--lookback", type=int, default=1825, help="Days of history for full refresh")
+    parser.add_argument("--lookback", type=int, default=None, help="Days of history for full refresh")
     args = parser.parse_args()
-    run_pipeline(lookback_days=args.lookback, force_full=args.full, fast_mode=args.fast)
+    raise SystemExit(0 if run_pipeline(lookback_days=args.lookback, force_full=args.full, fast_mode=args.fast) else 1)
