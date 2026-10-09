@@ -64,350 +64,41 @@ The system is constrained to issue one of exactly six definitive actions:
 
 ## 6. AI Market Scanner Strategy Presets
 
-The AI Market Scanner provides **23 curated strategy filters** (optimized from 26 to eliminate redundancy) that combine quantitative metrics with technical indicators to identify specific market opportunities and risks. Each preset is designed for a specific investment thesis or risk scenario.
+The scanner has **14 presets**, defined in `core/scan_presets.py` and tested in `tests/test_scan_presets.py`.
+Thresholds use the Quality tiers (ELITE 75, SOLID 60, FAIR 45). Unknown values never match.
 
-**Recent Optimization (May 2026):**
-- Removed 3 redundant presets: "Trend Following" (too simple), "Deep Value" (superseded by Mean Reversion Elite), "RSI Mean Reversion" (superseded by Oversold Reversal Setup)
-- Renamed 2 presets for clarity: "Multi-Indicator Breakout" → "Bullish Momentum", "Momentum Breakout" → "Strong Breakout"
-- Final count: **15 Opportunity + 8 Risk/Warning strategies**
+### 6.1 Opportunity (9)
 
-### 6.1 Opportunity Strategies (15 presets)
-
-#### 🏆 Institutional Pulse
-**Thesis:** Elite quality stocks in confirmed uptrends - institutional conviction plays.
-
-**Criteria:**
-- Quality Score ≥ 70 (ELITE tier)
-- Trend = BULLISH (MA20 > MA50)
-
-**Use Case:** Highest conviction opportunities combining fundamental excellence with technical confirmation.
-
----
-
-#### 🚀 Buy on Dip
-**Thesis:** Bullish stocks experiencing temporary RSI cooling - tactical entry points.
-
-**Criteria:**
-- Trend = BULLISH (confirmed uptrend)
-- RSI < 40 (short-term pullback)
-
-**Use Case:** Enter quality uptrends during healthy pullbacks before momentum resumes.
-
----
-
-#### 🚀 Bullish Momentum
-**Thesis:** Strong uptrends with RSI confirmation - ride the momentum.
-
-**Criteria:**
-- Trend = BULLISH (MA20 > MA50)
-- RSI > 50 (momentum strength confirmed)
-
-**Use Case:** Classic trend-following setup for established bullish moves.
-
----
-
-#### 📈 Both Accelerating
-**Thesis:** Strongest fundamental momentum - both top-line and bottom-line growth accelerating.
-
-**Criteria:**
-- EPS Momentum = "Accelerating" (QoQ growth >+10% for 2 consecutive quarters)
-- Revenue Momentum = "Accelerating" (QoQ growth >+10% for 2 consecutive quarters)
-
-**Use Case:** Fundamental momentum leaders - companies firing on all cylinders.
-
----
-
-#### 🌱 GARP (Growth at Reasonable Price)
-**Thesis:** Peter Lynch-style growth investing - quality growth at fair valuations.
-
-**Criteria:**
-- PEG ratio 0-1.5 (growth at reasonable price)
-- Quality Score > 55 (SOLID tier or better)
-
-**Use Case:** Balanced growth investing with valuation discipline.
-
----
-
-#### 💰 High Quality Dividend
-**Thesis:** Income + quality + momentum - defensive income with upside potential.
-
-**Criteria:**
-- Dividend Yield > 2.5%
-- Quality Score > 65 (STRONG tier)
-- Trend = BULLISH (confirmed uptrend)
-
-**Use Case:** Core income holdings with quality fundamentals and technical strength.
-
----
-
-#### 🔥 Short Squeeze Watch
-**Thesis:** High short interest + oversold + bullish reversal = potential squeeze setup.
-
-**Criteria:**
-- Short % of Float > 15%
-- RSI < 45 (oversold)
-- Trend = BULLISH (reversal confirmed)
-
-**Use Case:** Event-driven, high-volatility setups. Requires tight risk management.
-
----
-
-#### 🎯 Smart Money Accumulation
-**Thesis:** Follow institutional buying activity in quality stocks before the broader market catches on.
-
-**Criteria:**
-- Smart Money indicator shows "ACCUMULATION"
-- Quality Score ≥ 55 (SOLID tier or better)
-- RSI < 50 (not overbought, room to run)
-
-**Use Case:** Early-stage institutional accumulation before price breakout. Institutions typically accumulate quietly before major moves.
-
----
-
-#### 🔄 Mean Reversion Elite
-**Thesis:** High-quality assets temporarily oversold present low-risk entry points.
-
-**Criteria:**
-- Quality Score ≥ 65 (STRONG tier)
-- RSI < 35 (extreme oversold)
-- Z-Score < -1.0 (below historical mean)
-
-**Use Case:** "Elite assets on sale" - temporary weakness in fundamentally strong companies. Classic mean reversion setup with quality buffer. **Supersedes old "Deep Value" preset with quality filter.**
-
----
-
-#### ⚡ Strong Breakout
-**Thesis:** Ride established uptrends with healthy momentum (not overextended).
-
-**Criteria:**
-- Price > MA200 by 5%+ (strong uptrend)
-- RSI between 50-70 (healthy momentum, not overbought)
-- Trend = BULLISH (MA20 > MA50 confirmation)
-
-**Use Case:** Trend-following strategy for established moves. Avoids early entries and overextended rallies. **Renamed from "Momentum Breakout" for clarity.**
-
----
-
-#### 💎 Contrarian Value
-**Thesis:** Quality companies in temporary downtrends at attractive valuations - wait for reversal signal.
-
-**Criteria:**
-- Quality Score ≥ 60 (STRONG tier)
-- Trend = BEARISH (currently in downtrend)
-- Z-Score < -1.5 (significantly undervalued)
-- PEG ratio 0-1.2 (growth at discount)
-
-**Use Case:** Contrarian opportunity - DO NOT enter immediately. Wait for technical reversal signal (RSI upturn, MA crossover) before entry. For patient investors building watchlists.
-
----
-
-#### 🏰 Defensive Moat
-**Thesis:** Fortress balance sheets for all-weather portfolios - recession-resistant companies.
-
-**Criteria:**
-- Debt/EBITDA < 2.0 (low leverage)
-- ROE > 15% (high profitability)
-- Dividend Yield > 2.0% (income component)
-- Quality Score ≥ 60 (STRONG tier)
-
-**Use Case:** Core portfolio holdings for risk-averse investors. Companies with strong competitive moats and financial flexibility.
-
----
-
-#### 🌊 Oversold Reversal Setup
-**Thesis:** Extreme oversold conditions + institutional buying = high-probability bounce.
-
-**Criteria:**
-- RSI < 30 (extreme oversold)
-- Smart Money shows "ACCUMULATION"
-- Quality Score ≥ 50 (minimum quality threshold)
-
-**Use Case:** Short-term tactical bounce plays. Institutions buying into panic creates asymmetric risk/reward. **Supersedes old "RSI Mean Reversion" preset with Smart Money confirmation.**
-
----
-
-#### 📊 Balanced Growth
-**Thesis:** Sustainable growth at fair prices - the "Goldilocks" setup.
-
-**Criteria:**
-- Quality Score 55-75 (SOLID to STRONG tier)
-- Forward P/E 15-30x (reasonable valuation)
-- ROE > 12% (profitable growth)
-- Trend = BULLISH (confirmed uptrend)
-
-**Use Case:** Core growth holdings with balanced risk/reward. Not the fastest growers, but sustainable with margin of safety.
-
----
-
-### 6.2 Risk & Warning Strategies (8 presets)
-
-#### 🚨 Distribution Warning
-**Thesis:** Institutions exiting weak stocks during overbought conditions - strong exit signal.
-
-**Criteria:**
-- Smart Money shows "DISTRIBUTION" (institutional selling)
-- RSI > 60 (overbought, rally losing steam)
-- Quality Score < 55 (WEAK to FAIR tier)
-
-**Use Case:** Exit signal for existing positions. Combination of weak fundamentals + institutional selling + technical exhaustion.
-
----
-
-#### ⚠️ Earnings Deterioration
-**Thesis:** Fundamental breakdown - both top-line and bottom-line declining.
-
-**Criteria:**
-- EPS Momentum = "Decelerating" (QoQ decline >-10% for 2 consecutive quarters)
-- Revenue Momentum = "Decelerating" (QoQ decline >-10% for 2 consecutive quarters)
-
-**Use Case:** Early warning system for fundamental deterioration. Avoid or exit before broader market recognition.
-
----
-
-#### ⚠️ Structural Caution
-**Thesis:** High risk - weak fundamentals + confirmed downtrend.
-
-**Criteria:**
-- Quality Score < 38 (WEAK tier)
-- Trend = BEARISH (MA20 < MA50)
-
-**Use Case:** Avoid list. Combination of poor fundamentals and negative technical momentum creates high-risk environment.
-
----
-
-#### 📉 Negative Momentum
-**Thesis:** Confirmed bearish trend - avoid catching falling knives.
-
-**Criteria:**
-- Trend = BEARISH (MA20 < MA50 confirmed)
-
-**Use Case:** Simple bearish trend filter. Wait for trend reversal before considering entry.
-
----
-
-#### 🔥 Overbought Alert
-**Thesis:** Elevated RSI signals potential short-term pullback risk.
-
-**Criteria:**
-- RSI > 65 (overbought territory)
-
-**Use Case:** Take-profit or reduce exposure signal. Elevated risk of mean reversion.
-
----
-
-#### 🎈 Valuation Exhaustion
-**Thesis:** Prices significantly above historical mean - likely overvalued.
-
-**Criteria:**
-- Z-Score > +2.0 (2 standard deviations above 5-year mean)
-
-**Use Case:** Valuation warning. Price has extended far beyond historical norms.
-
----
-
-#### ⚔️ Exit on Strength
-**Thesis:** Short-term rally within bearish trend - opportunity to exit or short.
-
-**Criteria:**
-- Trend = BEARISH (overall downtrend)
-- RSI > 60 (short-term overbought bounce)
-
-**Use Case:** Exit existing positions on strength. For short sellers, prime entry point (rally into resistance).
-
----
-
-#### 💔 Multi-Indicator Breakdown
-**Thesis:** Extreme downside momentum - "falling knife" scenario.
-
-**Criteria:**
-- Trend = BEARISH (confirmed downtrend)
-- RSI < 50 (momentum accelerating downward)
-
-**Use Case:** Avoid catching falling knives. Wait for stabilization before considering entry.
-
----**Use Case:** Exit signal for existing positions. Combination of weak fundamentals + institutional selling + technical exhaustion.
-
----
-
-#### ⚠️ Earnings Deterioration
-**Thesis:** Fundamental breakdown - both top-line and bottom-line declining.
-
-**Criteria:**
-- EPS Momentum = "Decelerating"
-- Revenue Momentum = "Decelerating"
-- Both declining QoQ > -10% for 2 consecutive quarters
-
-**Use Case:** Early warning system for fundamental deterioration. Avoid or exit before broader market recognition.
-
----
-
-#### ⚠️ Structural Caution
-**Thesis:** High risk - weak fundamentals + confirmed downtrend.
-
-**Criteria:**
-- Quality Score < 38 (WEAK tier)
-- Trend = BEARISH (MA20 < MA50)
-
-**Use Case:** Avoid list. Combination of poor fundamentals and negative technical momentum creates high-risk environment.
-
----
-
-#### 💔 Multi-Indicator Breakdown
-**Thesis:** Extreme downside momentum - "falling knife" scenario.
-
-**Criteria:**
-- Trend = BEARISH (confirmed downtrend)
-- RSI < 50 (momentum accelerating downward)
-
-**Use Case:** Avoid catching falling knives. Wait for stabilization before considering entry.
-
----
-
-#### ⚔️ Exit on Strength
-**Thesis:** Short-term rally within bearish trend - opportunity to exit or short.
-
-**Criteria:**
-- Trend = BEARISH (overall downtrend)
-- RSI > 60 (short-term overbought bounce)
-
-**Use Case:** Exit existing positions on strength. For short sellers, prime entry point (rally into resistance).
-
----
-
-### 6.3 Strategy Selection Guide
-
-| Investment Style | Recommended Strategies |
+| Preset | Rule |
 |---|---|
-| **Growth Investor** | Strong Breakout, Balanced Growth, Smart Money Accumulation, Both Accelerating |
-| **Value Investor** | Mean Reversion Elite, Contrarian Value, GARP |
-| **Income Investor** | Defensive Moat, High Quality Dividend |
-| **Momentum Trader** | Strong Breakout, Bullish Momentum, Buy on Dip |
-| **Contrarian** | Contrarian Value, Oversold Reversal Setup, Mean Reversion Elite |
-| **Risk Manager** | Distribution Warning, Structural Caution, Earnings Deterioration |
+| 🏆 Institutional Pulse | Quality ≥ 75 and uptrend (MA50 > MA200) |
+| 💎 Quality at a Fair Price | Quality ≥ 75 and Value ≥ 50 |
+| 🏷️ Deep Value | Value ≥ 70 and Quality ≥ 60 |
+| 📈 Rising Estimates | Revisions ≥ 65 and Quality ≥ 60 |
+| 🌱 GARP | 0 < PEG < 1.0 and Quality ≥ 60 |
+| ⚙️ Both Accelerating | EPS and revenue both up > 10% QoQ for 2 quarters |
+| 🚀 Buy on Dip | Uptrend and RSI < 40 |
+| ⚡ Strong Breakout | Uptrend, > 5% above MA200, Momentum ≥ 70, RSI 50–70 |
+| 💰 Quality Dividend | Yield > 2.5%, Quality ≥ 60, dividend covered by FCF, net debt/EBITDA < 3x (unknown, e.g. banks, kept) |
 
-**Note:** Removed presets (superseded by better alternatives):
-- "Trend Following" → Use "Bullish Momentum" instead (adds RSI confirmation)
-- "Deep Value" → Use "Mean Reversion Elite" instead (adds quality filter)
-- "RSI Mean Reversion" → Use "Oversold Reversal Setup" instead (adds Smart Money confirmation)
+### 6.2 Risk & Warning (5)
 
-### 6.4 Combining Strategies
+| Preset | Rule |
+|---|---|
+| 🪤 Value Trap Risk | Value ≥ 65 and Quality < 45 |
+| 🚩 Red Flags | Any Quality penalty |
+| 📉 Downtrend | MA50 < MA200 and (RSI < 50 or Quality < 45) |
+| ⚠️ Earnings Deterioration | EPS down > 10% QoQ for 2 quarters, revenue not accelerating |
+| 🎈 Overextended | RSI > 70 and Z-Score > +2 (a price statistic, not a valuation) |
 
-**Best Practices:**
-1. **Start with opportunity strategy** to build watchlist
-2. **Cross-reference with risk strategies** to eliminate dangerous setups
-3. **Apply custom refinement sliders** for additional filtering
-4. **Monitor Smart Money indicator** for institutional flow confirmation
-5. **Check multiple timeframes** - scanner shows current snapshot, verify trend persistence
+### 6.3 Why the list was cut from 27 (October 2026)
 
-**Example Workflow:**
-```
-Step 1: Run "Smart Money Accumulation" → 45 results
-Step 2: Apply custom filter: Min Quality 60, RSI 30-45 → 12 results
-Step 3: Check "Distribution Warning" to eliminate → 10 results
-Step 4: Manual review of top 10 for final selection
-```
-
----
+Measured on the 812-stock universe: Strong Breakout sat 99% inside Bullish Momentum (320 hits, 39% of the
+universe); Negative Momentum and Multi-Indicator Breakdown overlapped 95%; Oversold Reversal Setup returned 0
+stocks, Mean Reversion Elite 2, Short Squeeze Watch 4 (all already red-flagged), Distribution Warning 6 and
+Contrarian Value 8 (a subset of GARP). Accumulation / Distribution rest only on a volume heuristic, and Exit on
+Strength is a trading signal, not a risk. Those single-indicator screens remain possible with the Custom
+Refinement sliders (RSI, Z-Score, PEG, Smart Money).
 
 ## 7. Smart Money Indicator v5.0
 
@@ -467,9 +158,7 @@ Returns a dictionary with three components:
 - **TREND** signals are fallback (classic OBV vs MA confirmation)
 
 ### Integration with Strategies
-- **Smart Money Accumulation** strategy specifically targets ACCUMULATION signals with strength ≥40
-- **Distribution Warning** strategy flags DISTRIBUTION signals with strength ≥40
-- **Oversold Reversal Setup** requires ACCUMULATION confirmation with strength ≥50
+- No scanner preset relies on this indicator alone; use the Smart Money filter under Custom Refinement
 
 ### Advantages Over Traditional Methods
 - **Adaptive to volatility**: Window size adjusts automatically
@@ -500,26 +189,10 @@ Returns a dictionary with three components:
 
 ## Quick Reference: Strategy Cheat Sheet
 
-### Top 5 Opportunity Strategies
-1. **🎯 Smart Money Accumulation** - Follow institutional buying (Quality ≥55 + RSI <50)
-2. **🔄 Mean Reversion Elite** - Quality assets on sale (Quality ≥65 + RSI <35 + Z<-1.0)
-3. **⚡ Strong Breakout** - Ride established trends (Price >MA200 by 5%+ + RSI 50-70)
-4. **🏰 Defensive Moat** - Fortress balance sheets (Low debt + High ROE + Dividend)
-5. **📊 Balanced Growth** - Sustainable growth at fair price (Quality 55-75 + PE 15-30x)
-
-### Top 5 Risk Warnings
-1. **🚨 Distribution Warning** - Institutions exiting (Smart Money DISTRIBUTION + RSI >60)
-2. **⚠️ Earnings Deterioration** - Fundamental breakdown (EPS + Revenue both declining)
-3. **💔 Multi-Indicator Breakdown** - Falling knife (Bearish + RSI <50)
-4. **⚠️ Structural Caution** - Weak + Bearish (Quality <38 + Downtrend)
-5. **⚔️ Exit on Strength** - Rally in downtrend (Bearish + RSI >60)
-
 ### Strategy Count Summary
-- **Total Presets:** 23 (optimized from 26)
-- **Opportunity Strategies:** 15
-- **Risk/Warning Strategies:** 8
-- **Removed (redundant):** 3 (Trend Following, Deep Value, RSI Mean Reversion)
-- **Renamed (clarity):** 2 (Multi-Indicator Breakout → Bullish Momentum, Momentum Breakout → Strong Breakout)
+- **Total Presets:** 14 (cut from 27 in October 2026, see section 6.3)
+- **Opportunity:** 9 · **Risk / Warning:** 5
+- Full list and rules: section 6 and `core/scan_presets.py`
 
 ### Key Metrics to Monitor
 - **Quality Score** - Fundamental strength (0-100)

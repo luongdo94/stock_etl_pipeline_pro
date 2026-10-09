@@ -105,37 +105,25 @@ A high-density **Streamlit** control room, heavily styled with custom CSS to pro
 
 ### Tab 3: AI Market Scanner
 - A dynamic, multi-condition screener. Filter thousands of stocks in milliseconds using DuckDB's backend.
-- **Curated Strategy Presets** covering momentum, value, quality, and risk scenarios (optimized to eliminate redundancy):
+- **14 Strategy Presets** (`core/scan_presets.py`, tested in `tests/test_scan_presets.py`). Each answers a distinct question; RSI, Z-Score, PEG and the volume-flow heuristic remain available as Custom Refinement sliders.
 
-#### Opportunity Strategies
+#### Opportunity
 - `🏆 Institutional Pulse` - Quality ≥75 (ELITE) + uptrend (MA50 > MA200)
 - `💎 Quality at a Fair Price` - Quality ≥75 + Value ≥50
 - `🏷️ Deep Value` - Value ≥70 + Quality ≥60
-- `🚀 Buy on Dip` - Bullish trend + RSI cooling (<40)
-- `🚀 Bullish Momentum` - Strong uptrend + RSI >50 confirmation
-- `📈 Both Accelerating` - EPS + Revenue both growing QoQ >+10% for 2 quarters
-- `🌱 GARP` - Growth at Reasonable Price (PEG <1.5 + Quality ≥60)
-- `💰 High Quality Dividend` - Yield >2.5% + Quality ≥60 + uptrend, dividend covered
-- `🔥 Short Squeeze Watch` - High short interest + oversold + bullish reversal
-- `🎯 Accumulation Flow` - volume-flow heuristic reads accumulation + Quality ≥60 + RSI <50
-- `🔄 Mean Reversion Elite` - Quality ≥75 + Oversold (RSI<35) + Below Mean (Z<-1.0)
-- `⚡ Strong Breakout` - Price >MA200 by 5%+ with healthy RSI (50-70)
-- `💎 Contrarian Value` - Quality ≥60 in downtrend + cheap valuation (Z<-1.5, PEG<1.2)
-- `🏰 Defensive Moat` - Low debt (<2x) + High ROE (>15%) + Dividend (>2%) + Quality ≥60
-- `🌊 Oversold Reversal Setup` - RSI<30 + accumulation flow + Quality ≥45
-- `📊 Balanced Growth` - Quality 60-75 + forward P/E 15-30x (screen only; not used in Value) + ROE >12% + uptrend
+- `📈 Rising Estimates` - Revisions ≥65 + Quality ≥60
+- `🌱 GARP` - 0 < PEG < 1.0 + Quality ≥60
+- `⚙️ Both Accelerating` - EPS and revenue both up >10% QoQ for 2 quarters
+- `🚀 Buy on Dip` - uptrend + RSI < 40
+- `⚡ Strong Breakout` - uptrend, >5% above MA200, Momentum ≥70, RSI 50-70
+- `💰 Quality Dividend` - yield >2.5%, Quality ≥60, dividend covered by FCF, net debt/EBITDA <3x (banks kept)
 
-#### Risk & Warning Strategies
-- `⚠️ Earnings Deterioration` - EPS + Revenue declining QoQ >-10% for 2 quarters
-- `⚠️ Structural Caution` - Quality <45 + downtrend
+#### Risk & Warning
 - `🪤 Value Trap Risk` - Value ≥65 but Quality <45
 - `🚩 Red Flags` - any Quality penalty (loss-making, leverage, uncovered dividend…)
-- `📉 Negative Momentum` - MA20 < MA50 < MA200
-- `🔥 Overbought Alert` - RSI >65, elevated pullback risk
-- `🎈 Price Stretch` - Z-Score >+2.0 vs the 5Y mean (a price statistic, not a valuation)
-- `⚔️ Exit on Strength` - Bearish trend + short-term rally (RSI >60)
-- `💔 Multi-Indicator Breakdown` - Bearish + RSI <50, falling knife
-- `🚨 Distribution Warning` - volume flow reads distribution + RSI>60 + Quality <60
+- `📉 Downtrend` - MA50 < MA200 and (RSI <50 or Quality <45)
+- `⚠️ Earnings Deterioration` - EPS down >10% QoQ for 2 quarters, revenue not accelerating
+- `🎈 Overextended` - RSI >70 and Z-Score >+2 (a price statistic, not a valuation)
 
 ### Tab 4: Strategy Backtester V2
 An institutional-grade simulation engine that allows you to directly trade your fundamental setups via Technical triggers.

@@ -123,7 +123,7 @@ Gibt ein Dictionary mit drei Komponenten zurück:
 ### Integration mit Strategien
 - **Smart Money Accumulation** Strategie zielt auf ACCUMULATION-Signale mit strength ≥40
 - **Distribution Warning** Strategie warnt vor DISTRIBUTION-Signalen mit strength ≥40
-- **Oversold Reversal Setup** erfordert ACCUMULATION-Bestätigung mit strength ≥50
+- Kein Scanner-Preset stützt sich allein auf diesen Indikator; dafür gibt es den Smart-Money-Filter unter Custom Refinement
 
 ### Vorteile gegenüber traditionellen Methoden
 - **Anpassung an Volatilität**: Fenstergröße passt sich automatisch an
