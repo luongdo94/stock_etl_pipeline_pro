@@ -107,6 +107,13 @@ A high-density **Streamlit** control room, heavily styled with custom CSS to pro
 - **Progress Panels**: Neon-colored metric bars displaying the real-time FMI Acceleration breakdown.
 - Evaluates Short Interest vulnerability and Institutional accumulation flow.
 
+### Earnings tab (ER analysis)
+- **Data**: `raw.earnings_events` — announcement timestamps with the EPS consensus, the reported EPS and the surprise for about six years per stock (Yahoo; refreshed weekly by the ETL, `etl/earnings_events.py`). Logic: `core/earnings.py`, tests: `tests/test_earnings.py`.
+- **Upcoming reports**: next 3-30 days with the consensus EPS, 30-day revisions of the full-year EPS, beat rate and the typical (historical) 2-day move, next to the Decision.
+- **Single stock**: beat / miss history and streak, the price reaction to each report (2-day window around the first session that could react, converted to the exchange time zone) and the drift over the next 20 sessions, both also net of the stock's regional market; revenue / EPS growth by quarter.
+- **AI note**: a Cohere summary of the latest report built from the SEC 8-K earnings press release (US listings, needs `SEC_USER_AGENT` with a contact e-mail) or, otherwise, recent earnings headlines; needs `COHERE_API_KEY`. The note is told to use only that text and to give no buy / sell call.
+- **Do surprises predict drift?**: a universe study of post-earnings-announcement drift by surprise bucket. It is a screen, not a trading rule; nothing on the tab feeds the Decision.
+
 ### Tab 3: AI Market Scanner
 - A dynamic, multi-condition screener. Filter thousands of stocks in milliseconds using DuckDB's backend.
 - **14 Strategy Presets** (`core/scan_presets.py`, tested in `tests/test_scan_presets.py`). Each answers a distinct question; RSI, Z-Score, PEG and the volume-flow heuristic remain available as Custom Refinement sliders.

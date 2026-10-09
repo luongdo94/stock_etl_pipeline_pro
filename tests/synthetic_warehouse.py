@@ -116,9 +116,28 @@ def build(db_path: str, seed: int = 7) -> str:
             CREATE TABLE IF NOT EXISTS raw.insider_summary (
                 ticker VARCHAR, insider_purchases_6m BIGINT, insider_sales_6m BIGINT, net_shares BIGINT,
                 pct_buy DOUBLE, pct_sell DOUBLE, _extracted_at TIMESTAMP)""")
+        _earnings_events(conn, prices, rng)
         run_transforms(conn)
         _snapshot_history(conn, prices, rng)
     return db_path
+
+
+def _earnings_events(conn, prices: pd.DataFrame, rng: np.random.Generator) -> None:
+    """Quarterly announcements after the close, every ~63 sessions, plus one upcoming report per stock."""
+    from etl.earnings_events import load_earnings_events
+    eq = [t for t in UNIVERSE if t not in ("SPY", "^VIX")]
+    dates = sorted(pd.to_datetime(prices["date"].unique()))
+    rows = []
+    for t in eq:
+        for d in dates[60::63]:
+            est = float(rng.uniform(0.5, 3.0))
+            act = est * (1 + float(rng.normal(0.03, 0.06)))
+            rows.append({"ticker": t, "earnings_ts": pd.Timestamp(d.date()).tz_localize("America/New_York") + pd.Timedelta(hours=16, minutes=5),
+                         "eps_estimate": est, "eps_actual": act, "surprise_pct": act / est - 1, "_extracted_at": pd.Timestamp.now()})
+        nxt = pd.Timestamp.now(tz="America/New_York").normalize() + pd.Timedelta(days=5, hours=16, minutes=5)
+        rows.append({"ticker": t, "earnings_ts": nxt, "eps_estimate": 1.5, "eps_actual": np.nan, "surprise_pct": np.nan,
+                     "_extracted_at": pd.Timestamp.now()})
+    load_earnings_events(conn, pd.DataFrame(rows))
 
 
 def _snapshot_history(conn, prices: pd.DataFrame, rng: np.random.Generator, days: int = 120) -> None:

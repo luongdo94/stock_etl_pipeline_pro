@@ -14,6 +14,7 @@ from etl.transform import run_transforms
 from etl.universe  import resolve_universe
 from etl.utils     import get_last_price_dates, needs_full_refresh, needs_earnings_refresh, needs_fundamentals_refresh, needs_metadata_refresh, get_smart_recovery_targets, needs_insider_refresh
 from etl.insider_trading import extract_insider_summary, extract_insider_transactions
+from etl import earnings_events
 
 LOCK_PATH = str(_WAREHOUSE_DIR / "etl.lock")
 
@@ -262,8 +263,16 @@ def _extract_all(conn, universe, watermarks, is_incremental, lookback_days, fast
         except Exception as e:
             logger.warning(f"   ⚠️ Insider extraction failed ({e}) — previous insider data kept")
 
+    # Earnings announcements (dates + EPS estimate / actual) for the Earnings tab: weekly. Never fails the run.
+    events_df = pd.DataFrame()
+    if not fast_mode and earnings_events.needs_refresh(conn, threshold_hours=refresh["earnings_hours"]):
+        try:
+            events_df = earnings_events.extract_earnings_events(equities)
+        except Exception as e:
+            logger.warning(f"   ⚠️ Earnings-events extraction failed ({e}) — previous events kept")
+
     logger.info(f"   ⏱  Extract: {time.time() - t0:.1f}s | Prices: {len(prices_df):,} rows")
-    return dict(insider_summary=insider_sum, insider_tx=insider_tx, prices=prices_df, company=company_df, financials=financials_df, quarterly=quarterly_df,
+    return dict(earnings_events=events_df, insider_summary=insider_sum, insider_tx=insider_tx, prices=prices_df, company=company_df, financials=financials_df, quarterly=quarterly_df,
                 fcf=fcf_df, fcf_q=fcf_q_df, cashflow=cashflow_df, earnings=earnings_df,
                 surprise=earnings_surprise_df, estimates=forward_estimates_df)
 
@@ -392,6 +401,7 @@ def _run_pipeline_locked(lookback_days, force_full, fast_mode):
             audit.rows_processed += load_forward_estimates(conn, data["estimates"])
             audit.rows_processed += load_insider_summary(conn, data["insider_summary"])
             audit.rows_processed += load_insider_transactions(conn, data["insider_tx"])
+            audit.rows_processed += earnings_events.load_earnings_events(conn, data.get("earnings_events"))
             if rebased_full is not None:
                 replaced, skipped = replace_ticker_prices(conn, rebased_full, cfg["price_integrity"]["min_rebase_ratio"])
                 logger.info(f"   🔁 Rebased {len(replaced)} ticker histories ({len(skipped)} ignored)")

@@ -183,6 +183,7 @@ TABS = {
     "🌐 Market Pulse": "market_pulse",
     "🔭 Stock Scanner": "scanner",
     "🔬 Stock Analysis": "stock_analysis",
+    "🗓️ Earnings": "earnings",
     "🎲 Risk Lab": "risk_lab",
     "🧪 Strategy Lab": "strategy_lab",
     "📈 Track Record": "track_record",
