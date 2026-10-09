@@ -25,6 +25,28 @@ valuation:
   # DCF verdicts are very sensitive to these two numbers — change them deliberately.
   equity_risk_premium: 0.05   # cost of equity = 10Y yield + Blume beta x ERP
   required_margin_of_safety: 0.25   # BUY needs base value >= price x 1.25; AVOID needs price > bull case
+  # Risk-free rate (10Y government yield) and long-run nominal growth of the CURRENCY the cash flows are earned in.
+  # Discounting euro or yen cash flows at the US 10Y overstated their cost of equity by 1.5-3.5pp and flipped
+  # verdicts. USD uses the live ^TNX when available; the rest are approximate levels (as_of below) — edit them.
+  currencies_as_of: 2026-10
+  currencies:
+    USD: {risk_free: 0.042, terminal_growth: 0.025}
+    EUR: {risk_free: 0.026, terminal_growth: 0.020}
+    GBP: {risk_free: 0.045, terminal_growth: 0.0225}
+    CHF: {risk_free: 0.005, terminal_growth: 0.015}
+    JPY: {risk_free: 0.015, terminal_growth: 0.010}
+    SEK: {risk_free: 0.026, terminal_growth: 0.020}
+    DKK: {risk_free: 0.027, terminal_growth: 0.020}
+    NOK: {risk_free: 0.037, terminal_growth: 0.020}
+    CAD: {risk_free: 0.033, terminal_growth: 0.0225}
+    AUD: {risk_free: 0.043, terminal_growth: 0.025}
+    KRW: {risk_free: 0.030, terminal_growth: 0.020}
+    TWD: {risk_free: 0.016, terminal_growth: 0.020}
+    CNY: {risk_free: 0.018, terminal_growth: 0.030}
+    HKD: {risk_free: 0.038, terminal_growth: 0.025}
+    INR: {risk_free: 0.065, terminal_growth: 0.040}
+    BRL: {risk_free: 0.130, terminal_growth: 0.045}
+    default: {risk_free: 0.040, terminal_growth: 0.025}
   stale_price_days: 5         # price older than this lowers confidence
   stale_fundamentals_days: 35
 

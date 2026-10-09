@@ -38,15 +38,20 @@ def test_breakout_is_labelled_not_penalised():
 
 def test_reduce_text_only_claims_distribution_when_flow_says_so():
     r = _rate()
-    neutral = action_description("REDUCE / UNDERPERFORM", r, s1=90, price=100, rsi=50, sm_signal="NEUTRAL")
-    dist = action_description("REDUCE / UNDERPERFORM", r, s1=90, price=100, rsi=50, sm_signal="DISTRIBUTION")
+    neutral = action_description("WEAKENING", r, s1=90, price=100, rsi=50, sm_signal="NEUTRAL")
+    dist = action_description("WEAKENING", r, s1=90, price=100, rsi=50, sm_signal="DISTRIBUTION")
     assert "distribution" not in neutral.lower()
     assert "distribution" in dist.lower()
 
 
 @pytest.mark.parametrize("rr, level", [(0.8, "LOW"), (1.2, "LOW"), (2.0, "MEDIUM"), (3.0, "HIGH")])
 def test_rr_explainer_bands_match_rating(rr, level):
-    lvl, _, bullets = rr_explainer(rr=rr, price=100, stop=92, tp1=110, tp2=120, s1=95, rsi=50,
+    lvl, _, bullets = rr_explainer(rr=rr, price=100, stop=92, target=110, s1=95, rsi=50,
                                    w52_pos=50, pe=20, quality=60)
     assert lvl == level and len(bullets) == 3
     assert _rate(rr=rr)["p_conv"] == level
+
+
+def test_rr_explainer_without_a_usable_value_says_so():
+    lvl, _, bullets = rr_explainer(rr=None, price=100, stop=92, target=100, s1=95, rsi=50, w52_pos=50, pe=20, quality=60)
+    assert lvl == "N/A" and "intrinsic value" in bullets[0]

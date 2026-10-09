@@ -25,7 +25,7 @@ def render(dd, ctx):
             _wl_col1, _wl_col2 = st.columns(2)
             with _wl_col1:
                 # Auto-suggest status based on Logic
-                _s_index = 1 if "BUY" in act_str else 0
+                _s_index = 1 if act_str in ("STRONG SETUP", "FAVOURABLE") else 0
                 opt_status = st.selectbox("Status", ["🔵 PENDING", "🟢 ACTIVE", "🟡 REVIEW", "🔴 INVALIDATED", "⚫ CLOSED"], index=_s_index)
                 opt_thesis = st.text_area("Investment Thesis (Why buy/hold?)", value=act_desc, height=110)
             with _wl_col2:

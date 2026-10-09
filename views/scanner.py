@@ -155,6 +155,7 @@ def render(ctx):
         f"🏆 Institutional Pulse (Quality ≥ {ELITE} & Uptrend)",
         f"💎 Quality at a Fair Price (Quality ≥ {ELITE} & Value ≥ 50)",
         f"🏷️ Deep Value (Value ≥ 70 & Quality ≥ {SOLID})",
+        f"📈 Rising Estimates (Revisions ≥ 65 & Quality ≥ {SOLID})",
         "🚀 Buy on Dip (Bullish + Oversold)",
         "🚀 Bullish Momentum (Trend + RSI > 50)",
         "📈 Both Accelerating (EPS + Revenue QoQ, 2 qtrs > +10%)",
@@ -239,6 +240,10 @@ def render(ctx):
         f_df = f_df[(f_df["Value"] >= 70) & (f_df["Quality"] >= SOLID)]
         st.success(f"🏷️ Deep Value: Value ≥ 70 (cheap on FCF yield / EV-EBITDA / earnings yield vs peers) with Quality ≥ {SOLID} — "
                    "cheap but not broken.")
+    elif "Rising Estimates" in scan_mode:
+        f_df = f_df[(f_df["Revisions"] >= 65) & (f_df["Quality"] >= SOLID)]
+        st.success(f"📈 Rising Estimates: analysts raised EPS estimates over the last 30 days (Revisions ≥ 65) for a business "
+                   f"with Quality ≥ {SOLID}. Estimate revisions are a flow with documented drift; the level of the consensus is not used.")
     elif "Value Trap Risk" in scan_mode:
         f_df = f_df[(f_df["Value"] >= 65) & (f_df["Quality"] < FAIR)]
         st.error(f"🪤 Value Trap Risk: looks cheap (Value ≥ 65) but Quality < {FAIR}. Cheap and weak is the classic value trap — "
@@ -357,7 +362,7 @@ def render(ctx):
 
 
     # ── Display Results ───────────────────────────────────────────────────────
-    display_cols = ["Ticker", "Company", "Sector", "Decision", "MoS (%)", "Action", "Quality", "Value", "Momentum", "Flags", "Smart Money",
+    display_cols = ["Ticker", "Company", "Sector", "Decision", "MoS (%)", "Action", "Quality", "Value", "Momentum", "Revisions", "Flags", "ADV (EUR M)", "Smart Money",
                     "Upside (%)", "RSI (14)", "Z-Score",
                     "vs MA200 (%)", "P/E (Fwd)", "EV/EBITDA", "PEG", "FCF Margin (%)",
                     "ROE (%)", "Yield (%)", "Net Payout (%)", "Debt/EBITDA"]
@@ -379,11 +384,12 @@ def render(ctx):
     def style_opportunity_df(df):
         def highlight_action(val):
             val_str = str(val).upper()
-            if "STRONG BUY" in val_str: return 'color: #2ecc71; font-weight: 800'
+            if "STRONG SETUP" in val_str: return 'color: #2ecc71; font-weight: 800'
+            elif "FAVOURABLE" in val_str and "UN" not in val_str: return 'color: #27ae60; font-weight: bold'
             elif "BUY" in val_str: return 'color: #27ae60; font-weight: bold'
-            elif "SELL" in val_str or "AVOID" in val_str: return 'color: #e74c3c; font-weight: bold'
+            elif "UNFAVOURABLE" in val_str or "SELL" in val_str or "AVOID" in val_str: return 'color: #e74c3c; font-weight: bold'
             elif "NOT ENOUGH" in val_str: return 'color: #8899aa'
-            elif "REDUCE" in val_str: return 'color: #e67e22; font-weight: bold'
+            elif "REDUCE" in val_str or "WEAKENING" in val_str: return 'color: #e67e22; font-weight: bold'
             return 'color: #f1c40f'  # HOLD
             
         def highlight_smart_money(val):
@@ -472,6 +478,10 @@ def render(ctx):
                                                          help="How cheap is the price? FCF yield, EV/EBITDA, earnings yield, PEG, shareholder yield — vs sector peers and absolute bands. Analyst ratings are not used."),
             "Momentum":        st.column_config.ProgressColumn("Momentum", min_value=0, max_value=100, format="%d",
                                                          help="12-1 month return rank + trend. Timing only: never part of Quality or Value."),
+            "Revisions":       st.column_config.ProgressColumn("Revisions", min_value=0, max_value=100, format="%d",
+                                                         help="30-day change in analysts' EPS estimates and upgrade/downgrade balance. Context only — not part of Quality or Value."),
+            "ADV (EUR M)":     st.column_config.NumberColumn("ADV €M", format="%.1f",
+                                                       help="Median daily traded value, last 60 sessions. Under 1 is illiquid."),
             "Flags":           st.column_config.TextColumn("Red flags", width="medium",
                                                      help="Loss-making, debt without EBITDA, high net debt/EBITDA, uncovered dividend, negative equity"),
             "Smart Money":     st.column_config.TextColumn("Smart Money", width="small"),
@@ -509,14 +519,14 @@ def render(ctx):
     st.markdown(
         "<div style='margin-top:16px; padding:14px 18px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:10px;'>"
         "<div style='font-size:0.78rem; font-weight:700; color:#8899aa; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:10px;'>"
-        "Scores v5 — three independent 0-100 numbers per stock, ranked against sector peers</div>"
+        "Scores v6 — independent 0-100 numbers per stock, ranked against sector peers</div>"
         "<div style='display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:10px;'>"
         + _card("#2ecc71", "QUALITY — the business", "Return on capital 20 · margins 25 · growth &amp; stability 20 · balance sheet (net debt/EBITDA) 20 · FCF conversion 15. Banks/insurers: ROE, net margin, stability.",
                 f"Red flags subtract points: loss-making, debt without EBITDA, net debt/EBITDA &gt; 5x, dividend not covered by FCF, negative equity. Tiers: ELITE ≥ {ELITE} · SOLID ≥ {SOLID} · FAIR ≥ {FAIR}.")
         + _card("#3498db", "VALUE — the price", "FCF yield 25 · EV/EBITDA 20 · earnings yield 20 · PEG 15 · shareholder yield 10 · P/S 10, each half peer percentile, half absolute band.",
-                "No analyst ratings or price targets: consensus skews to “buy” and targets lag price. Shareholder yield is halved when the dividend is not covered.")
+                "No analyst forecasts at all (not even forward P/E): trailing and 3-year-median earnings, PEG on realised growth, FCF after stock compensation. Shareholder yield is halved when the dividend is not covered.")
         + _card("#f1c40f", "MOMENTUM — timing only", "12-1 month return rank across the universe (70%) + price above MA200 / golden cross (30%). RSI and Z-score are shown but not scored.",
-                "Never enters Quality or Value. Strong momentum can justify patience, never a BUY on its own.")
+                "Measured in the stock's own currency. Never enters Quality or Value. A separate Revisions score tracks changes in analysts' estimates.")
         + "</div>"
         "<div style='margin-top:8px; font-size:0.68rem; color:#667;'>Unknown inputs are excluded and the rest re-weighted — never scored as zero. "
         "With less than 80% of a score's inputs observable it is pulled toward 50 (see Coverage in the Decision confidence). "

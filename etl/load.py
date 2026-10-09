@@ -124,6 +124,25 @@ def ensure_company_info(conn: duckdb.DuckDBPyConnection):
         conn.execute(f"ALTER TABLE raw.company_info ADD COLUMN IF NOT EXISTS {col_ddl}")
 
 
+def ensure_hist_fcf(conn: duckdb.DuckDBPyConnection):
+    """raw.hist_fcf (annual cash-flow statement, EUR). stock_based_comp: SBC add-back in operating cash flow, so
+    valuation can use FCF after stock compensation. Older warehouses get the column added."""
+    conn.execute("CREATE SCHEMA IF NOT EXISTS raw")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS raw.hist_fcf (
+            ticker              VARCHAR NOT NULL,
+            year                INTEGER NOT NULL,
+            free_cash_flow      DOUBLE,
+            operating_cash_flow DOUBLE,
+            capex               DOUBLE,
+            _extracted_at       TIMESTAMP,
+            _loaded_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            stock_based_comp    DOUBLE,
+            PRIMARY KEY (ticker, year)
+        )""")
+    conn.execute("ALTER TABLE raw.hist_fcf ADD COLUMN IF NOT EXISTS stock_based_comp DOUBLE")
+
+
 def create_raw_schema(conn: duckdb.DuckDBPyConnection):
     """Create raw schema — stores unmodified data from the Extract step."""
     conn.execute("CREATE SCHEMA IF NOT EXISTS raw")
@@ -225,18 +244,7 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
             PRIMARY KEY (ticker, quarter_date)
         )
     """)
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS raw.hist_fcf (
-            ticker              VARCHAR NOT NULL,
-            year                INTEGER NOT NULL,
-            free_cash_flow      DOUBLE,
-            operating_cash_flow DOUBLE,
-            capex               DOUBLE,
-            _extracted_at       TIMESTAMP,
-            _loaded_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (ticker, year)
-        )
-    """)
+    ensure_hist_fcf(conn)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS raw.hist_fcf_quarterly (
             ticker              VARCHAR NOT NULL,
@@ -568,24 +576,15 @@ def load_historical_fcf(
         return 0
 
     # Ensure table exists
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS raw.hist_fcf (
-            ticker              VARCHAR NOT NULL,
-            year                INTEGER NOT NULL,
-            free_cash_flow      DOUBLE,
-            operating_cash_flow DOUBLE,
-            capex               DOUBLE,
-            _extracted_at       TIMESTAMP,
-            _loaded_at          TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            PRIMARY KEY (ticker, year)
-        )
-    """)
+    ensure_hist_fcf(conn)
 
     # ✅ SAFE UPSERT via Primary Key (ticker, year) — no Cartesian DELETE
+    if "stock_based_comp" not in df.columns:
+        df = df.assign(stock_based_comp=None)
     conn.register("df_tmp", df)
     conn.execute("""
-        INSERT OR REPLACE INTO raw.hist_fcf (ticker, year, free_cash_flow, operating_cash_flow, capex, _extracted_at)
-        SELECT ticker, year, free_cash_flow, operating_cash_flow, capex, _extracted_at
+        INSERT OR REPLACE INTO raw.hist_fcf (ticker, year, free_cash_flow, operating_cash_flow, capex, _extracted_at, stock_based_comp)
+        SELECT ticker, year, free_cash_flow, operating_cash_flow, capex, _extracted_at, CAST(stock_based_comp AS DOUBLE)
         FROM df_tmp
     """)
     conn.unregister("df_tmp")

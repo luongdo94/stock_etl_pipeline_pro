@@ -279,7 +279,7 @@ You have received a complete snapshot of a client's equity portfolio. Your role 
 - **RSI**: Relative Strength 14-day. >70 = overbought; <30 = oversold
 - **MA200%**: % above/below 200-day moving average. Negative = below MA200 (bearish trend)
 - **SM (Smart Money)**: Institutional flow. ACCUMULATION = buying; DISTRIBUTION = selling
-- **Action**: Quant model signal (STRONG BUY / BUY / HOLD / REDUCE / SELL)
+- **Action**: the Decision (BUY CANDIDATE / HOLD / WATCH / AVOID / TRIM / NOT ENOUGH DATA)
 - **UP%**: Analyst consensus price target upside from current price
 - **ROE%**: Return on Equity — profitability. >15% = strong
 - **FCF%**: Free Cash Flow Margin — cash generation quality. >15% = healthy

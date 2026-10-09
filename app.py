@@ -48,7 +48,7 @@ inject_global_css()
 # ── Data ────────────────────────────────────────────────────────────────────────────────────
 (prices_full, companies_full, monthly_full, annual_fin, quarterly_fin, earnings_cal, dq_warnings,
  hist_fcf_full, hist_fcf_q_full, etl_audit, total_universe_size, earnings_surprise_full,
- tv_sector_rotation) = load_data()
+ tv_sector_rotation, forward_estimates_full) = load_data()
 if prices_full.empty:
     st.error("The warehouse has no prices yet — run `python run.py` to load data.")
     st.stop()
@@ -57,7 +57,8 @@ macro = fetch_macro_data() or {}
 # Same live 10Y yield as the Decision Summary → the screener's Decision column and the panel agree
 m_df = get_master_screener_data(companies_full, prices_full, quarterly_fin, annual_fin, hist_fcf_full,
                                 risk_free_pct=macro.get("US10Y", {}).get("val"),
-                                hist_fcf_rows=len(hist_fcf_full))
+                                hist_fcf_rows=len(hist_fcf_full), _estimates=forward_estimates_full,
+                                estimates_rows=len(forward_estimates_full))
 
 all_tickers = sorted(prices_full["ticker"].unique().tolist())
 ticker_to_name = dict(zip(companies_full["ticker"], companies_full["company"]))
@@ -135,7 +136,7 @@ st.markdown("---")
 
 # Action label from the screener (single source of truth)
 _action_map = m_df.set_index("Ticker")["Action"].to_dict() if "Ticker" in m_df.columns else {}
-reco_df["action"] = reco_df["ticker"].map(_action_map).fillna("HOLD / NEUTRAL")
+reco_df["action"] = reco_df["ticker"].map(_action_map).fillna("NEUTRAL")
 reco_df = reco_df.sort_values("score", ascending=False)
 reco_df["upside_str"] = reco_df["upside_pct"].apply(lambda x: f"{x:+.1f}%")
 
@@ -188,6 +189,7 @@ ctx = dict(
     prices_full=prices_full, companies_full=companies_full, annual_fin=annual_fin, quarterly_fin=quarterly_fin,
     earnings_cal=earnings_cal, earnings_surprise_full=earnings_surprise_full, hist_fcf_full=hist_fcf_full,
     hist_fcf_q_full=hist_fcf_q_full, tv_sector_rotation=tv_sector_rotation, all_tickers=all_tickers,
+    forward_estimates_full=forward_estimates_full,
     # horizon window
     prices=prices, spy_prices=spy_prices, companies=companies, selected_horizon=selected_horizon,
     t_start=t_start, t_end=t_end, current_universe=current_universe, indices_list=indices_list,

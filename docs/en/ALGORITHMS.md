@@ -37,21 +37,24 @@ This indicator represents the "intrinsic quality" of the market or a specific st
 A Market Cap-weighted average of all stocks in the Universe:
 `Market Quality Index = Σ(Quality Score * Market Cap) / Σ(Market Cap)`
 
-### 2.2. Stock scores v5: Quality, Value, Momentum
+### 2.2. Stock scores v6: Quality, Value, Momentum
 A stock gets **three independent 0-100 scores** (`core/scoring.py`; every threshold and weight in `config/scoring_rules.yaml`).
 They answer different questions and are never mixed:
 
 | Score | Question | Inputs (weight) |
 | :--- | :--- | :--- |
 | **Quality** | Is it a good business? | Return on capital 20 · operating / gross / FCF margin 25 · growth & stability (revenue CAGR, profitable years, margin volatility) 20 · balance sheet (net debt/EBITDA, current ratio) 20 · cash conversion (FCF / net income) 15. Banks and insurers: ROE 40, net margin 25, growth & stability 35. |
-| **Value** | Is the price attractive? | FCF yield 25 · EV/EBITDA 20 · earnings yield 20 · PEG 15 · shareholder yield 10 · P/S 10 (financials: earnings yield, P/B, shareholder yield, PEG). |
+| **Value** | Is the price attractive? | FCF yield (after stock-based compensation) 25 · EV/EBITDA 20 · earnings yield (trailing + 3-year median) 20 · PEG on realised earnings growth 15 · shareholder yield 10 · P/S 10 (financials: earnings yield, P/B, shareholder yield, PEG; utilities/REITs: EV/EBITDA first). |
 | **Momentum** | What has price been doing? | 12-1 month return rank across the universe (70%) + price above MA200 / golden cross (30%). **Timing only.** |
 
 **How a score is built**
 - **Peers, not a universal yardstick.** Margins and multiples are percentile-ranked within the industry (sector, then the whole universe, when fewer than 5 peers). Value blends that percentile 50/50 with an absolute band (a whole sector can be expensive). Return on capital, leverage and cash conversion use absolute bands.
 - **Unknown is not zero.** A missing input is excluded and the remaining weights re-normalised. If under 80% of a score's weight is observable the score is shrunk toward 50; the shortfall is shown as *Coverage* and lowers Decision confidence.
 - **Red flags subtract points from Quality** (capped at 25): loss-making (-8), debt with no positive EBITDA (-10), net debt/EBITDA above 5x (-8) or 8x (-15) (relaxed for utilities, REITs, telecom), dividend not covered by free cash flow (-5), negative book equity (-5).
-- **Not scored:** analyst ratings and price targets (consensus skews to "buy", targets lag price), beta, RSI and Z-score (shown for timing, never scored).
+- **No analyst forecasts in any score:** neither ratings and targets (consensus skews to "buy", targets lag price) nor forward P/E or Yahoo's PEG (analyst growth). A separate **Revisions** score (30-day change of EPS estimates, upgrade/downgrade balance) is shown beside the scores. Beta, RSI and Z-score are never scored.
+- **Momentum** is measured in the stock's own currency (EUR conversion is recorded per price row). Illiquid (median turnover < EUR 1M) and micro-cap (< EUR 300M) stocks are flagged and lower the Decision's confidence.
+- **Signal** (STRONG SETUP … UNFAVOURABLE) is context only: trend, quality, value, the *Decision's* reward/risk and volume flow; the 52-week position is displayed but not scored (stocks near highs tend to keep outperforming).
+- **Decision valuation:** discount rate and long-run growth come from the currency of the cash flows (USD live 10Y; EUR, JPY, GBP, CHF… configured); banks/insurers use justified P/B = (ROE − g)/(r − g) with ROE normalised over 4 years and faded toward the cost of equity; FCF is after stock-based compensation.
 - **Tiers:** Quality ELITE ≥ 75 · SOLID ≥ 60 · FAIR ≥ 45 · WEAK < 45. Value: UNDERVALUED ≥ 65 · FAIR ≥ 50 · FULL ≥ 35 · EXPENSIVE ≥ 20.
 - **Use in the Decision:** a BUY candidate needs Quality ≥ 50 (cheap and weak is the classic value trap); a DCF "cheap" verdict contradicted by a Value score below 30 lowers confidence.
 - **Known limits:** return on capital is net income / (equity + debt) from annual statements (no NOPAT, no cash); net debt is derived from Yahoo's EV; share dilution is not measured; the weights are judgement until the Track Record tab shows each score's information coefficient (snapshots are stamped `score_version`, so pre-v5 history is never mixed in).

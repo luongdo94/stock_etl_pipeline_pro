@@ -171,7 +171,7 @@ def test_cheap_beats_expensive_on_value():
 
 def test_loss_makers_are_expensive_not_unknown():
     c, ann = universe(subject=dict(pe_ratio=-5.0, trailing_eps=-1.0, forward_pe=np.nan, ebitda=-1e9,
-                                   ev_to_ebitda=np.nan))
+                                   ev_to_ebitda=np.nan, free_cashflow=-1e9))
     comps = sc.value_components(sc.build_features(c, ann), sc.load_rules()).loc["SUBJ"]
     assert comps["earn_yield"] < 5 and comps["ev_ebitda"] == 0      # bottom of the range, not NaN
 
@@ -301,3 +301,79 @@ def test_peer_group_uses_all_members_not_only_unassigned_rows():
     industry = pd.Series(["x"] * 3 + ["y"] * 7, index=v.index)
     sector = pd.Series("s", index=v.index)
     assert sc.peer_percentile(v, industry, sector, 5).notna().all()
+
+
+# ── no analyst forecasts in Value; stock comp; liquidity; revisions ───────────────────────────
+def test_value_ignores_forward_pe_and_yahoo_peg():
+    base, ann = universe()
+    a = sc.value_components(sc.build_features(base, ann), sc.load_rules()).loc["SUBJ"]
+    changed = base.assign(forward_pe=base["forward_pe"] * 4, peg_ratio=9.9)
+    b = sc.value_components(sc.build_features(changed, ann), sc.load_rules()).loc["SUBJ"]
+    pd.testing.assert_series_equal(a, b)
+
+
+def test_peg_uses_realised_earnings_growth():
+    c, ann = universe()
+    ann.loc[ann["ticker"] == "SUBJ", "net_income"] = [2e9, 3e9, 4.5e9, 6.75e9]          # +50% a year
+    f = sc.build_features(c, ann)
+    assert f.at["SUBJ", "ni_cagr"] == pytest.approx(50.0, abs=0.1)
+    assert f.at["SUBJ", "peg"] == pytest.approx(20.0 / 50.0, rel=0.01)                  # P/E 20 over 50% growth
+
+
+def test_stock_based_compensation_is_deducted_from_free_cash_flow():
+    c, ann = universe(subject=dict(free_cashflow=6e9, fcf_margin=12.0, revenue_ttm=50e9))
+    hist = pd.DataFrame({"ticker": ["SUBJ", "SUBJ"], "year": [2024, 2025], "free_cash_flow": [5e9, 6e9],
+                         "stock_based_comp": [2e9, 3e9]})
+    plain = sc.build_features(c, ann).loc["SUBJ"]
+    adj = sc.build_features(c, ann, hist_fcf=hist).loc["SUBJ"]
+    assert adj["fcf_yield"] == pytest.approx(plain["fcf_yield"] / 2)                    # (6bn - 3bn) / 6bn
+    assert adj["fcf_margin"] == pytest.approx(6.0) and bool(adj["sbc_adjusted"]) and not bool(plain["sbc_adjusted"])
+    assert adj["fcf_conversion"] < plain["fcf_conversion"]
+
+
+def test_gaap_loss_with_cash_gets_half_credit_for_normalised_earnings():
+    ok, ann = universe()
+    gaap, _ = universe(subject=dict(pe_ratio=-5.0, trailing_eps=-1.0, forward_pe=np.nan))
+    econ, _ = universe(subject=dict(pe_ratio=-5.0, trailing_eps=-1.0, forward_pe=np.nan, free_cashflow=-1e9))
+    ey = lambda df: sc.build_features(df, ann).at["SUBJ", "earn_yield"]               # noqa: E731
+    assert ey(econ) == 0 and 0 < ey(gaap) < ey(ok)
+
+
+def test_illiquid_and_micro_cap_stocks_are_flagged_without_a_score_penalty():
+    c, ann = universe()
+    c.loc[c["ticker"] == "SUBJ", "market_cap"] = 2e8
+    days = pd.bdate_range("2026-01-01", periods=300)
+    rows = [pd.DataFrame({"ticker": t, "date": days, "price_close": 10.0, "volume": 10 if t == "SUBJ" else 1_000_000,
+                          "ma_signal": "BULLISH", "pct_from_ma200": 5.0}) for t in c["ticker"]]
+    prices = pd.concat(rows, ignore_index=True)
+    out = sc.score_universe(c, ann, prices)
+    assert "Illiquid" in out.at["SUBJ", "flags"] and "Micro-cap" in out.at["SUBJ", "flags"]
+    assert "Illiquid" not in out.at["P3", "flags"]
+    clean = sc.score_universe(c, ann).at["SUBJ", "quality"]
+    assert out.at["SUBJ", "quality"] == clean                                          # informational, not a penalty
+
+
+def test_momentum_is_measured_in_the_stocks_own_currency():
+    """A stock flat in yen is not 'up 20%' because the yen rose against the euro."""
+    c, ann = universe()
+    days = pd.bdate_range("2025-01-01", periods=300)
+    def frame(t, fx_drift):
+        fx = 0.006 * np.cumprod(np.full(300, 1 + fx_drift))
+        return pd.DataFrame({"ticker": t, "date": days, "price_close": 1000.0 * fx, "price_scale": 1.0, "fx_rate": fx,
+                             "volume": 1_000_000, "ma_signal": "BULLISH", "pct_from_ma200": 1.0})
+    prices = pd.concat([frame(t, 0.0) for t in c["ticker"] if t != "SUBJ"] + [frame("SUBJ", 0.002)], ignore_index=True)
+    f = sc.build_features(c, ann, prices)
+    assert f.at["SUBJ", "ret_12_1"] == pytest.approx(0.0, abs=1e-6)                   # local return is flat
+    eur_only = prices.drop(columns=["fx_rate", "price_scale"])
+    assert sc.build_features(c, ann, eur_only).at["SUBJ", "ret_12_1"] > 20            # the old EUR figure was +40%ish
+
+
+def test_revisions_score_reads_changes_not_levels():
+    c, ann = universe()
+    est = pd.DataFrame({"ticker": list(c["ticker"]), "eps_trend_cur_y": 10.0, "eps_trend_cur_y_30d": 10.0,
+                        "eps_trend_next_y": 11.0, "eps_trend_next_y_30d": 11.0, "upgrades_30d": 2, "downgrades_30d": 2})
+    est.loc[est["ticker"] == "SUBJ", ["eps_trend_cur_y", "eps_trend_next_y", "upgrades_30d", "downgrades_30d"]] = [10.6, 11.7, 9, 0]
+    est.loc[est["ticker"] == "P0", ["eps_trend_cur_y", "eps_trend_next_y", "upgrades_30d", "downgrades_30d"]] = [9.4, 10.3, 0, 8]
+    r = sc.revisions_score(est, c["ticker"].tolist() and pd.Index(c["ticker"]), sc.load_rules())
+    assert r["SUBJ"] > 80 and r["P0"] < 20 and r["P1"] == pytest.approx(50, abs=3)
+    assert sc.revisions_score(None, pd.Index(c["ticker"]), sc.load_rules()).isna().all()

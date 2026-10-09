@@ -63,12 +63,14 @@ independent 0-100 scores**. They answer different questions and are never mixed:
 | Score | Question | What goes in |
 | :--- | :--- | :--- |
 | **Quality** | Is it a good business? | Return on capital · operating/gross/FCF margin · growth & stability · net debt/EBITDA · FCF conversion. Banks/insurers: ROE, net margin, stability. Red flags subtract points (loss-making, debt without EBITDA, high leverage, uncovered dividend, negative equity). |
-| **Value** | Is the price attractive? | FCF yield · EV/EBITDA · earnings yield · PEG · shareholder yield · P/S, each half *percentile within the industry/sector*, half an absolute band. |
+| **Value** | Is the price attractive? | FCF yield (after stock-based compensation) · EV/EBITDA · earnings yield (trailing + 3-year median) · PEG on *realised* growth · shareholder yield · P/S, each half *percentile within the industry/sector*, half an absolute band. |
 | **Momentum** | What has price been doing? | 12-1 month return rank + trend. **Timing only** — never part of Quality or Value. |
 
 - **Peers, not one yardstick**: margins and multiples are ranked against the industry (sector, then universe, when under 5 peers).
 - **Unknown ≠ 0**: missing inputs are excluded and the rest re-weighted; with under 80% of the weight observable the score is pulled toward 50 and *Coverage* lowers Decision confidence.
-- **Not scored**: analyst ratings/targets (consensus skews to "buy", targets lag price), beta, RSI, Z-score.
+- **No analyst forecasts anywhere in Quality or Value** (not even forward P/E); ratings/targets are not used at all. A separate **Revisions** score reads the *change* in analysts' EPS estimates (context only). Beta, RSI, Z-score are not scored.
+- **Signal** (STRONG SETUP … UNFAVOURABLE) is context for the Decision: trend, quality, value, the Decision's own reward/risk and volume flow. The 52-week position is shown, not scored.
+- **Valuation (Decision)**: cash flows are discounted at the risk-free rate and long-run growth of *their* currency (live US 10Y for USD; configured for EUR/JPY/GBP/CHF…, `config/decision_rules.yaml`); banks and insurers use a justified price-to-book model ((ROE − g)/(r − g), ROE normalised over 4 years and faded toward the cost of equity); free cash flow is taken after stock-based compensation.
 - **In the Decision**: a BUY candidate needs Quality ≥ 50 (cheap and weak is a value trap); a DCF "cheap" contradicted by Value < 30 lowers confidence.
 - **Validation**: each daily snapshot stores all three scores stamped with `score_version`; the Track Record tab reports the information coefficient of each. Until it shows t > 2 the weights are judgement, not evidence.
 
@@ -121,7 +123,7 @@ A high-density **Streamlit** control room, heavily styled with custom CSS to pro
 - `💎 Contrarian Value` - Quality ≥60 in downtrend + cheap valuation (Z<-1.5, PEG<1.2)
 - `🏰 Defensive Moat` - Low debt (<2x) + High ROE (>15%) + Dividend (>2%) + Quality ≥60
 - `🌊 Oversold Reversal Setup` - RSI<30 + accumulation flow + Quality ≥45
-- `📊 Balanced Growth` - Quality 60-75 + forward P/E 15-30x + ROE >12% + uptrend
+- `📊 Balanced Growth` - Quality 60-75 + forward P/E 15-30x (screen only; not used in Value) + ROE >12% + uptrend
 
 #### Risk & Warning Strategies
 - `⚠️ Earnings Deterioration` - EPS + Revenue declining QoQ >-10% for 2 quarters

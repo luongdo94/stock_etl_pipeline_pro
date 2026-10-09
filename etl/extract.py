@@ -1333,12 +1333,17 @@ def extract_historical_fcf(tickers: dict = None) -> pd.DataFrame:
                 fcf   = fcf * rate if not pd.isna(fcf) else fcf
                 ocf   = ocf * rate if not pd.isna(ocf) else ocf
                 capex = capex * rate if not pd.isna(capex) else capex
-                
+                # Stock-based compensation is added back in operating cash flow although it costs owners
+                # (dilution); kept separately so valuation can use FCF after SBC.
+                sbc = row.get('StockBasedCompensation')
+                sbc = float(sbc) * rate if sbc is not None and not pd.isna(sbc) else None
+
                 records_list.append({
                     "ticker": ticker, "year": int(year),
                     "free_cash_flow": float(fcf) if not pd.isna(fcf) else None,
                     "operating_cash_flow": float(ocf) if not pd.isna(ocf) else None,
                     "capex": float(capex) if not pd.isna(capex) else None,
+                    "stock_based_comp": sbc,
                     "_extracted_at": datetime.now(),
                 })
                 successful_set.add(ticker)
