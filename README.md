@@ -40,18 +40,21 @@ The backbone of Honest Quant is a robust, production-ready Data Engineering pipe
 
 ## 🧠 2. AI Predictive Suite
 
-Honest Quant doesn't just analyze the past; it attempts to project the future utilizing cutting-edge Machine Learning.
+The ML Lab is an **experiment**: nothing on it feeds the Decision Summary or the scores, and the forecasts have to prove themselves before they are shown as a headline.
 
-### Long Short-Term Memory (LSTM) Networks
-- **Architecture**: A custom PyTorch-based neural network trained on multivariate historical sequences. It captures non-linear, long-term dependencies in stock volatility.
-- **30-Day Forecasts**: Outputs a deterministic price trajectory for the next 30 trading days based on momentum curves and historical volatility clusters.
+### Volatility risk range (the part with a solid theory)
+- **GARCH(1,1) + Monte Carlo**: daily volatility forecast from a GARCH fit on the last 500 returns, then geometric-Brownian-motion paths with **zero drift**. It answers *"how far can the price wander?"* (P10 / P90 and a 90% interval), not *"where will it go?"*. Logic and tests: `core/ml_forecast.py`, `tests/test_ml_forecast.py`.
 
-### Stochastic Risk Modeling (Monte Carlo)
-- **Path Simulation**: Generates 500+ random-walk price paths using Geometric Brownian Motion (GBM).
-- **Risk Assessment**: Outputs the 5th and 95th percentile confidence intervals (Value-at-Risk parameters) to answer: *"What is the absolute worst-case scenario for this stock over the next 3 months?"*
+### Neural forecasts (LSTM, Transformer, PatchTST, Smart Blend)
+- PyTorch models on price, return, market (SPY, VIX, regime score), RSI, Z-score, volume surge and OBV rate of change. Fundamentals are *not* inputs (constant for a single ticker, and today's values would leak into the past).
+- **Smart Blend** trains on data *before* a real holdout (the last forecast-horizon days), scores each model there against a no-change forecast and gives weight 0 to models that do not beat it. Seeds are fixed; hyper-parameters are chosen on a validation split.
+- The ML forecast is shown as a headline only if the optional **walk-forward test** passes: re-train on ~5 earlier windows; mean skill vs no-change must be positive and at least 60% of windows (and at least 3) must beat it.
 
-### Sentiment-Driven Drift
-- Integrates Natural Language Processing (NLP) over recent financial news to adjust the drift parameter of the LSTM model. If news sentiment is heavily negative, the AI's standard output is structurally downgraded.
+### Direction classifier
+- Gradient-boosted trees (scikit-learn; no extra dependency) on return / volatility / momentum ratios, tested walk-forward with purged labels. A BUY / SELL is reported only if it beats the majority-class baseline; otherwise the tab says *no edge*. On 59 stocks the original feature set did not (accuracy 44.4% vs 46.3% for always guessing the common class).
+
+### Sentiment
+- FinBERT over recent headlines is shown as context and as one of four equal, unvalidated pillars of the *ML Experiment Summary* (no BUY / SELL wording).
 
 ---
 

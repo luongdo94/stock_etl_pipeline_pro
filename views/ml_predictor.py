@@ -5,7 +5,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from core.rating import QUALITY_TIERS
+from core import ml_forecast as mlf
 
 from core.smart_money import get_sm_spirit_unified_v2
 from services.ai import analyze_sentiment_finbert
@@ -27,123 +27,19 @@ def render(ctx):
     import torch
     import optuna
     pass  # hoisted to module level: import numpy as np
-    from arch import arch_model
-    render_header("zap", "Context-Aware Direct Multi-Step Forecasting (v11.0)", "Institutional-Grade Adaptive ML Ensemble")
-    st.warning("🧪 Experimental: these forecasts have not been shown to beat a no-change forecast out of "
-               "sample. Use them for exploration only — the Decision Summary in Stock Analysis ignores them.")
+    render_header("zap", "ML Lab — experimental forecasts and a volatility risk range", "Nothing on this tab feeds the Decision Summary")
+    st.warning("🧪 Experimental. The neural forecasts and the direction classifier are shown as a headline only after a "
+               "walk-forward test shows they beat a no-change forecast (tick the option in the form below). The risk range "
+               "(GARCH volatility + Monte Carlo) forecasts no direction and is the only part with a solid theory behind it.")
     
-    # ── XGBoost BUY/SELL Classifier (Scale-Invariant Signal) ─────────────────────
-    @st.cache_data(show_spinner="🌲 XGBoost: Training Directional Signal Classifier...")
-    def run_xgboost_signal(df_ticker, horizon_days: int = 5):
-        """
-        XGBoost binary classifier predicting price direction (BUY/SELL/NEUTRAL).
-        Operates entirely on returns and technical ratios — immune to price scale.
-        
-        Features: lag returns (1,2,5d), rolling volatility (10,21d), RSI approx,
-                  MACD approx, Bollinger width, volume change.
-        Target  : 1 (BUY) if forward_return > +0.5%, -1 (SELL) if < -0.5%, else 0.
-        Returns : (signal_label, probability, feature_importance_dict)
-        """
-        try:
-            import xgboost as xgb
-            from sklearn.preprocessing import LabelEncoder
-            from sklearn.model_selection import TimeSeriesSplit
+    # ── Direction classifier (core.ml_forecast): purged walk-forward test, reports a direction only with an edge ──
+    @st.cache_data(show_spinner="🌲 Direction classifier: walk-forward test...")
+    def run_direction_signal(df_ticker, horizon_days: int = 5):
+        return mlf.direction_signal(df_ticker, horizon=horizon_days)
 
-            df = df_ticker.copy().sort_values("date").reset_index(drop=True)
-            if len(df) < 120:
-                return "NEUTRAL", 0.5, {}
-
-            c = df["price_close"].values
-            v = df["volume"].values if "volume" in df.columns else np.ones(len(c))
-
-            # ── Feature Engineering ──────────────────────────────────────────────
-            ret1  = np.diff(c, prepend=c[0]) / (np.abs(c) + 1e-8)
-            ret2  = np.concatenate([[0, 0], (c[2:] - c[:-2]) / (np.abs(c[:-2]) + 1e-8)])
-            ret5  = np.concatenate([[0]*5, (c[5:] - c[:-5]) / (np.abs(c[:-5]) + 1e-8)])
-
-            def _rolling(arr, w, fn):
-                out = np.full(len(arr), np.nan)
-                for i in range(w - 1, len(arr)):
-                    out[i] = fn(arr[i-w+1:i+1])
-                return out
-
-            vol10 = _rolling(ret1, 10, np.std)
-            vol21 = _rolling(ret1, 21, np.std)
-            ma10  = _rolling(c, 10, np.mean)
-            ma21  = _rolling(c, 21, np.mean)
-            ma50  = _rolling(c, 50, np.mean)
-            # RSI approx
-            up   = np.where(ret1 > 0, ret1, 0)
-            dn   = np.where(ret1 < 0, -ret1, 0)
-            avg_up14 = _rolling(up, 14, np.mean)
-            avg_dn14 = _rolling(dn, 14, np.mean)
-            rsi  = 100 - 100 / (1 + avg_up14 / (avg_dn14 + 1e-8))
-            # MACD signal approx
-            macd = (ma10 - ma21) / (np.abs(ma21) + 1e-8) * 100
-            # Bollinger width
-            std21 = _rolling(c, 21, np.std)
-            bb_width = (2 * std21) / (np.abs(ma21) + 1e-8) * 100
-            # Volume change
-            vol_ch = np.diff(v, prepend=v[0]) / (np.abs(v) + 1e-8)
-            # Trend: price vs MA50
-            vs_ma50 = (c - ma50) / (np.abs(ma50) + 1e-8) * 100
-
-            X_raw = np.column_stack([
-                ret1, ret2, ret5, vol10, vol21,
-                rsi, macd, bb_width, vol_ch, vs_ma50
-            ])
-            feat_names = [
-                "ret1", "ret2", "ret5", "vol10", "vol21",
-                "rsi", "macd", "bb_width", "vol_ch", "vs_ma50"
-            ]
-
-            # ── Target: forward return over horizon_days ─────────────────────────
-            fwd_ret = np.concatenate([
-                (c[horizon_days:] - c[:-horizon_days]) / (np.abs(c[:-horizon_days]) + 1e-8),
-                np.full(horizon_days, np.nan)
-            ])
-            y_raw = np.where(fwd_ret > 0.005, 1, np.where(fwd_ret < -0.005, -1, 0))
-
-            # Drop NaN rows
-            valid = ~(np.isnan(X_raw).any(axis=1) | np.isnan(fwd_ret))
-            X, y = X_raw[valid], y_raw[valid]
-            if len(X) < 60:
-                return "NEUTRAL", 0.5, {}
-
-            # ── Time-Series Train/Test Split (no leakage) ──────────────────────
-            split = int(len(X) * 0.8)
-            X_train, X_test = X[:split], X[split:-horizon_days]  # exclude last horizon_days
-            y_train, y_test = y[:split], y[split:-horizon_days]
-
-            # ── XGBoost Classifier ──────────────────────────────────────────────
-            clf = xgb.XGBClassifier(
-                n_estimators=150, max_depth=4, learning_rate=0.05,
-                subsample=0.8, colsample_bytree=0.8,
-                eval_metric="mlogloss",
-                verbosity=0, tree_method="hist"
-            )
-            # Remap labels: -1→0, 0→1, 1→2 for XGBoost multi-class
-            le = LabelEncoder()
-            clf.fit(X_train, le.fit_transform(y_train))
-
-            # ── Predict on latest window ────────────────────────────────────────
-            last_x = X_raw[-1:].copy()
-            if np.isnan(last_x).any():
-                return "NEUTRAL", 0.5, {}
-            proba = clf.predict_proba(last_x)[0]
-            pred_class_idx = int(np.argmax(proba))
-            pred_class = le.inverse_transform([pred_class_idx])[0]
-            confidence = float(proba[pred_class_idx])
-
-            # ── Feature Importance ──────────────────────────────────────────────
-            imp = dict(zip(feat_names, clf.feature_importances_.tolist()))
-            imp = {k: round(v * 100, 1) for k, v in sorted(imp.items(), key=lambda x: -x[1])}
-
-            label_map = {1: "BUY", -1: "SELL", 0: "NEUTRAL"}
-            return label_map.get(int(pred_class), "NEUTRAL"), confidence, imp
-
-        except Exception as e:
-            return "NEUTRAL", 0.5, {}
+    def _seed(value=42):
+        torch.manual_seed(value)
+        np.random.seed(value)
 
     # ── ML Model Architectures (Support for 13th Feature: Market Regime) ──────────────
     
@@ -249,16 +145,15 @@ def render(ctx):
 
     def _precompute_features(df_ticker):
         """
-        Shared 13-factor feature engineering (Context-Aware v11.0).
-        Injected 'Market Regime Score' as the 13th strategic input.
+        Shared feature engineering: price, return, market (SPY, VIX, regime score), RSI, Z-score, volume surge, OBV rate of change.
 
         Returns a dict with:
-            data_scaled  : np.ndarray [N, 12]
+            data_scaled  : np.ndarray [N, n_feat]
             price_scaler : MinMaxScaler fitted on raw price_close column
-            features     : list[str] of 12 feature names
-            data         : np.ndarray [N, 12] (raw, unscaled)
+            features     : list[str] of feature names
+            data         : np.ndarray [N, n_feat] (raw, unscaled)
             df           : pd.DataFrame with all features
-            n_feat       : int (12)
+            n_feat       : int
         Returns None on failure.
         """
         import warnings; warnings.filterwarnings('ignore')
@@ -315,13 +210,13 @@ def render(ctx):
             # Clip extreme values to prevent exploding gradients in ML
             df['obv_roc'] = df['obv_roc'].clip(-5.0, 5.0)
 
+            # Fundamentals (P/E, ROE, FCF margin, debt/EBITDA, growth) are NOT inputs: for one ticker they are the same
+            # number on every day of the window (no information) and they are today's values, not what was known then.
             features = [
                 'price_close', 'daily_return_pct',
                 'spy_ret', 'vix_ret',
                 'vol_surge', 'rsi', 'price_z_score',
-                'pe_ratio', 'roe', 'fcf_margin',
-                'debt_ebitda', 'rev_growth', 'regime_score',
-                'obv_roc'
+                'regime_score', 'obv_roc'
             ]
             data = df[features].ffill().fillna(0).values.astype(np.float32)
 
@@ -360,6 +255,7 @@ def render(ctx):
         df           = feat['df']
 
         # Adaptive Lookback tuning (v7.0)
+        _seed()
         ticker_vol = df['daily_return_pct'].tail(60).std()
         spy_vol_s  = prices_full[prices_full['ticker']=='SPY']['daily_return_pct'].tail(60)
         spy_vol    = spy_vol_s.std() if not spy_vol_s.empty else 1.0
@@ -403,7 +299,9 @@ def render(ctx):
             best = st.session_state.optuna_cache[cache_key]
         else:
             hpo_split = int(len(X_t)*0.8)
-            X_hpo, y_hpo = X_t[:hpo_split], y_t[:hpo_split]
+            _tr_end = max(hpo_split - forecast_days, 8)          # purge: neighbouring windows share most of their target
+            X_hpo, y_hpo = X_t[:_tr_end], y_t[:_tr_end]
+            X_val, y_val = X_t[hpo_split:], y_t[hpo_split:]
             def objective(trial):
                 h  = trial.suggest_categorical("hidden_size",[32,64,128])
                 nl = trial.suggest_int("num_layers",1,2)
@@ -426,7 +324,11 @@ def render(ctx):
                         l.backward()
                         op.step()
                     time.sleep(0.005) # Micro-yield
-                return l.item()
+                if X_val.size(0) == 0:
+                    return l.item()
+                m.eval()
+                with torch.no_grad():
+                    return float(cr(m(X_val) + X_val[:, -1, 0].unsqueeze(1), y_val).item())   # validation loss
             with st.spinner(f"Tuning Direct Intelligence for {ticker_id}..."):
                 study = optuna.create_study(direction="minimize")
                 study.optimize(objective, n_trials=5, timeout=10) # Optimized: 5 trials, 10s
@@ -564,6 +466,7 @@ def render(ctx):
             X = torch.FloatTensor(np.array(X)).to(device)
             y = torch.FloatTensor(np.array(y)).to(device)
 
+            _seed()
             model = StockTransformer(input_size=len(features), d_model=64, nhead=4,
                                      num_layers=2, output_size=forecast_days).to(device)
             optimizer = torch.optim.Adam(model.parameters(), lr=1e-3, weight_decay=1e-5)
@@ -657,6 +560,7 @@ def render(ctx):
             X = torch.FloatTensor(np.array(X)).to(device)  # [N, T, C]
             y = torch.FloatTensor(np.array(y)).to(device)  # [N, forecast_days]
 
+            _seed()
             model = StockPatchTST(
                 c_in=len(features), context_window=lookback,
                 target_window=forecast_days, patch_len=patch_len,
@@ -709,6 +613,7 @@ def render(ctx):
                 torch.sum(out_grad).backward()
                 imp_p = torch.abs(last_seq_grad.grad[0]).mean(dim=0).cpu().numpy()
                 imp_p = imp_p / (imp_p.sum() + 1e-9) * 100
+                feat_imp_p = {f: round(float(v), 1) for f, v in zip(features, imp_p)}
             except Exception:
                 feat_imp_p = {f: round(100/len(features), 1) for f in features}
 
@@ -731,12 +636,15 @@ def render(ctx):
             data_scaled, price_scaler, features, data, n_feat = feat['data_scaled'], feat['price_scaler'], feat['features'], feat['data'], feat['n_feat']
             if len(data) < lookback + 2 * forecast_days: return None, 0.0, {}, {}
 
+            _seed()
+            # Training targets stop before the holdout (the last `forecast_days` days), so the evaluation below is out of sample.
+            # (It used to run to the end of the data: the "holdout" was inside the training windows.)
             X_arr, y_arr = [], []
-            for i in range(lookback, len(data_scaled) - forecast_days):
+            for i in mlf.train_window_starts(len(data_scaled), lookback, forecast_days):
                 X_arr.append(data_scaled[i-lookback:i]); y_arr.append(data_scaled[i:i+forecast_days, 0])
+            if len(X_arr) < 30: return None, 0.0, {}, {}
             X_t = torch.FloatTensor(np.array(X_arr)).to(device)
             y_t = torch.FloatTensor(np.array(y_arr)).to(device)
-            if len(X_t) < 5: return None, 0.0, {}, {}
 
             def _eval_holdout(mdl):
                 n_d = len(data_scaled)
@@ -823,36 +731,11 @@ def render(ctx):
 
             if not results: return None, 0.0, {}, {}
             
-            # ── Regime-Aware Weighting with Minimum Threshold (v11.1) ──────────
-            # Base: inverse-RMSE weighting
-            best_rmse = min(v['rmse'] for v in results.values())
-            inv_rmse = {k: 1.0 / max(v['rmse'], 0.01) for k, v in results.items()}
-            
-            # FIX: Filter out models with RMSE > 2x best model (too poor quality)
-            inv_rmse = {k: v for k, v in inv_rmse.items() 
-                       if results[k]['rmse'] <= 2.0 * best_rmse}
-            
-            if not inv_rmse:  # Fallback if all models filtered out
-                inv_rmse = {k: 1.0 / max(v['rmse'], 0.01) for k, v in results.items()}
-            
-            total_inv = sum(inv_rmse.values())
-            weights = {k: v / total_inv for k, v in inv_rmse.items()}
-            
-            # Regime boost: data-driven from model_performance_log analysis
-            #   BULLISH/STRONG BULLISH → PatchTST wins 42.3% of time → +15% boost
-            #   BEARISH/CAUTION       → Transformer & LSTM tied → +10% Transformer boost
-            # Pre-refactor this read `'regime' in dir()` at module level, which was always False
-            # (dir() inside a function never sees module globals) → the boost below never ran.
-            # Kept disabled to preserve behaviour; the "data-driven" weights were never validated.
-            _cur_regime = ""
-            if "BULLISH" in _cur_regime and "PatchTST" in weights:
-                weights["PatchTST"] *= 1.15
-            elif "BEARISH" in _cur_regime or "CAUTION" in _cur_regime:
-                if "Transformer" in weights: weights["Transformer"] *= 1.10
-            
-            # Renormalize
-            _total_w = sum(weights.values())
-            weights = {k: round(v / _total_w, 4) for k, v in weights.items()}
+            # Weights ∝ 1/RMSE on the true holdout; a model that does not beat the no-change forecast there gets weight 0
+            # (unless none does — the caller then shows that no model has demonstrated skill).
+            _hold_actual = data[-forecast_days:, 0]
+            _naive_rmse = float(np.sqrt(np.mean((_hold_actual - data[-forecast_days - 1, 0]) ** 2)))
+            weights = {k: round(w, 4) for k, w in mlf.inverse_rmse_weights({k: v['rmse'] for k, v in results.items()}, _naive_rmse).items()}
             blended = np.zeros(forecast_days)
             for k, v in results.items(): blended += weights[k] * v['path'][:forecast_days]
             last_price_e = data[-1, 0]; total_return_e = (blended[-1] / last_price_e - 1) if last_price_e > 0 else 0.0
@@ -865,7 +748,8 @@ def render(ctx):
                     for i, f in enumerate(features): feat_imp_e[f] += weights[k] * float(imp_g[i]) * 100
                 feat_imp_e = {f: round(v, 1) for f, v in feat_imp_e.items()}
             except Exception: feat_imp_e = {f: round(100/n_feat, 1) for f in features}
-            metrics_dict = {k: {'RMSE': round(v['rmse'], 2), 'MAPE (%)': round(v['mape'], 2), 'Dir. Acc': f"{v['dir']*100:.0f}%", 'Weight': f"{weights[k]*100:.1f}%", 'Target': round(v['path'][-1], 2)} for k, v in results.items()}
+            metrics_dict = {k: {'RMSE': round(v['rmse'], 2), 'MAPE (%)': round(v['mape'], 2), 'Dir. Acc': f"{v['dir']*100:.0f}%", 'Weight': f"{weights[k]*100:.1f}%", 'Target': round(v['path'][-1], 2),
+                                'vs naive': round(1 - v['rmse'] / _naive_rmse, 3) if _naive_rmse > 0 else 0.0} for k, v in results.items()}
             return blended, total_return_e, feat_imp_e, metrics_dict
         except Exception: return None, 0.0, {}, {}
 
@@ -883,7 +767,7 @@ def render(ctx):
     def _log_ensemble_run(ticker, horizon, vix_level, em):
         if not em: return
         anchor = max(em.keys(), key=lambda k: float(em[k]['Weight'].replace('%','')))
-        entry = {"ts": _dt.now().isoformat()[:19], "ticker": ticker, "horizon": horizon, "vix": round(vix_level, 2), "regime": regime, "anchor": anchor,
+        entry = {"ts": _dt.now().isoformat()[:19], "ticker": ticker, "horizon": horizon, "vix": round(vix_level, 2), "regime": "high_vix" if vix_level > 25 else "low_vix", "market_regime": regime, "anchor": anchor,
                  "models": {k: {"rmse": v["RMSE"], "mape": v["MAPE (%)"], "weight": float(v["Weight"].replace("%",""))/100} for k, v in em.items()}}
         d = _load_perf_log(); d["logs"].append(entry); d["logs"] = d["logs"][-500:]; _save_perf_log(d)
 
@@ -933,7 +817,9 @@ def render(ctx):
                 help="LSTM Core: stable mean-reversion • Transformer: high-vol pattern recognition • PatchTST: channel-independent fundamentals • Smart Blend: trains all 3 engines and auto-weights them by accuracy (RMSE)."
             )
             
-        run_forecast = st.form_submit_button("🎯 EXECUTE ML ENSEMBLE FORECAST", width="stretch", type="primary")
+        st.checkbox("Also run a walk-forward skill test (slow: re-trains the engine on ~5 earlier windows and compares each "
+                    "forecast with a no-change forecast; the ML forecast is shown as a headline only if it passes)", key="wf_form")
+        run_forecast = st.form_submit_button("🎯 RUN ML EXPERIMENT", width="stretch", type="primary")
 
     # Initialize before the forecast block so the metrics panel never hits NameError
     ensemble_metrics = {}
@@ -943,6 +829,7 @@ def render(ctx):
         forecast_days = st.session_state.fc_days_form
         n_sims = st.session_state.n_sims_form
         engine_mode = st.session_state.engine_mode_form
+        run_wf = bool(st.session_state.get('wf_form', False))
         
         df_fc = prices_full[prices_full["ticker"] == fc_ticker].sort_values("date")
         ts = df_fc["price_close"].values
@@ -1013,6 +900,30 @@ def render(ctx):
                     sector_name=sector_val, quality_score=drift_score)
             st.session_state['ensemble_metrics'] = {}
         
+        # 1.4 Walk-forward skill test (optional): does this engine beat "the price stays where it is", window after window?
+        _wf_key = f"ml_wf_{fc_ticker}_{forecast_days}_{engine_mode}"
+        if run_wf:
+            def _path_for(sub_df):
+                if use_ensemble:
+                    return train_predict_ensemble(sub_df, lookback=std_lookback, forecast_days=forecast_days,
+                                                  sector_name=sector_val, quality_score=drift_score)[0]
+                fn = train_predict_patchtst if use_patchtst else train_predict_transformer if use_transformer else train_predict_lstm
+                return fn(sub_df, lookback=std_lookback, forecast_days=forecast_days,
+                          sector_name=sector_val, quality_score=drift_score)[0]
+            _cuts = mlf.rolling_cutoffs(len(df_fc), forecast_days, 5, min_train=std_lookback + 2 * forecast_days + 30)
+            _rows = []
+            with st.spinner(f"Walk-forward test: {len(_cuts)} window(s)..."):
+                for _c in _cuts:
+                    _sub = df_fc.iloc[:_c - forecast_days]
+                    _pth = _path_for(_sub)
+                    if _pth is None:
+                        continue
+                    _rows.append(mlf.skill_vs_naive(df_fc["price_close"].values[_c - forecast_days:_c],
+                                                    np.asarray(_pth)[:forecast_days], float(_sub["price_close"].iloc[-1])))
+            st.session_state[_wf_key] = {**mlf.summarise_skill(_rows), "windows": _rows}
+        _wf = st.session_state.get(_wf_key)
+        ml_trusted = bool(_wf and _wf["has_skill"])
+
         # 2. News Sentiment (High-Accuracy FinBERT) using Google News
         import feedparser
         import urllib.parse
@@ -1028,96 +939,13 @@ def render(ctx):
         else:
             avg_sent = analyze_sentiment_finbert(titles)
         
-        # 4. Monte Carlo Simulation (AI-Enhanced & Dynamic Volatility)
+        # 4. Risk range: GARCH(1,1) volatility + zero-drift Monte Carlo. It forecasts no direction; it only says how far the
+        #    price can wander. (The drift used to be the AI path and the volatility was pinned at 4x the real level.)
         returns = df_fc["daily_return_pct"].dropna() / 100
-        mu = returns.mean()
-        sigma_long_term = returns.std()
-        
-        # Calculate current 'heat' (14-day rolling volatility)
-        sigma_current = returns.tail(14).std() if len(returns) >= 14 else sigma_long_term
-        
         last_price = ts[-1]
-        
-        drift_bias = 0
-        if drift_score >= QUALITY_TIERS[0][0]: drift_bias += 0.0005      # ELITE quality tier
-        elif drift_score < QUALITY_TIERS[-1][0]: drift_bias -= 0.0005     # WEAK tier
-        drift_bias += (avg_sent * 0.001) 
-        if lstm_return is not None and lstm_return > 0.05: drift_bias += 0.0005
-        
-        # ── Phase 7: Monte Carlo GARCH(1,1) (Volatility Clustering) ───────────
-        try:
-            # FIX: Use rescale=True to let arch_model handle scaling automatically
-            # This eliminates manual scaling bugs and improves numerical stability
-            am = arch_model(returns.tail(500), vol='Garch', p=1, q=1, dist='Normal', rescale=True)
-            res = am.fit(disp='off')
-            
-            # Forecast volatility term structure for the horizon
-            forecasts = res.forecast(horizon=forecast_days)
-            # Variance -> Std Dev (rescale=True handles units automatically)
-            sigma_forecast = np.sqrt(forecasts.variance.values[-1, :])
-            
-            # Ensure no zero/nan vol (fallback to long-term avg)
-            sigma_forecast = np.nan_to_num(sigma_forecast, nan=sigma_long_term)
-            sigma_forecast[sigma_forecast == 0] = sigma_long_term
-            
-        except Exception:
-            # Robust Fallback to Mean Reversion (OU Process) if GARCH fails to converge
-            kappa = 0.1 
-            sigma_forecast = []
-            s_t = sigma_current
-            for _ in range(forecast_days):
-                s_t = s_t + kappa * (sigma_long_term - s_t)
-                sigma_forecast.append(s_t)
-            
-        # ── Phase 7.5: Monte Carlo — AI-Anchored GBM ────────────────────────────
-        # Best Practice: use AI ensemble's implied drift + residual-calibrated vol
-        # instead of raw historical mean return (which ignores the AI's forward view).
+        sigma_path = mlf.garch_sigma_path(returns, forecast_days)
+        simulated_paths = mlf.simulate_gbm(last_price, sigma_path, n_sims, mu_log_daily=0.0, seed=42)
 
-        # (A) AI-IMPLIED DRIFT: annualized daily drift from the AI forecast path
-        if lstm_path is not None and len(lstm_path) >= 2 and last_price > 0:
-            # Log-return implied by AI path from today to horizon end
-            ai_total_log_return = np.log(lstm_path[-1] / last_price)
-            mu_ai = ai_total_log_return / forecast_days   # per-day log drift
-        else:
-            mu_ai = mu + drift_bias  # fallback to historical if AI path unavailable
-
-        # (B) RESIDUAL-CALIBRATED VOLATILITY:
-        # Measure how much actual recent prices deviated from the AI's in-sample fit.
-        # We approximate this by: residual_vol = std of (actual_return - AI implied step)
-        # If unavailable, blend GARCH vol with rolling 21-day realized vol.
-        try:
-            actual_recent = df_fc['price_close'].values[-forecast_days-1:]
-            if lstm_path is not None and len(actual_recent) >= 2:
-                ai_step_returns = np.diff(np.log(lstm_path + 1e-9))[:len(actual_recent)-1]
-                actual_step_returns = np.diff(np.log(actual_recent + 1e-9))
-                min_len = min(len(ai_step_returns), len(actual_step_returns))
-                residuals = actual_step_returns[:min_len] - ai_step_returns[:min_len]
-                residual_vol = float(np.std(residuals)) if min_len > 2 else sigma_current
-            else:
-                residual_vol = sigma_current
-            # Blend: 60% GARCH structure + 40% AI residual (retains clustering + calibration)
-            sigma_blended = np.array([
-                0.6 * float(s) + 0.4 * residual_vol for s in sigma_forecast
-            ])
-            sigma_blended = np.clip(sigma_blended, sigma_long_term * 0.3, sigma_long_term * 4.0)
-        except Exception:
-            sigma_blended = np.array(sigma_forecast)
-
-        # (C) SIMULATE PATHS anchored on AI-implied drift, noise from residual vol
-        # (C) SIMULATE PATHS (Vectorized NumPy implementation for M3 Speed)
-        Z = np.random.normal(size=(forecast_days, n_sims))
-        s_v = sigma_blended.reshape(-1, 1) # (days, 1) for broadcasting
-        
-        # Calculate all log-returns in one shot (GBM formula: r = (mu - 0.5*sigma^2) + sigma*Z)
-        daily_log_rets = (mu_ai - 0.5 * s_v**2) + (s_v * Z)
-        
-        # Prepend zeros row for starting point (Price at T=0)
-        cum_log_rets = np.vstack([np.zeros(n_sims), np.cumsum(daily_log_rets, axis=0)])
-        
-        # Final price paths: P_t = P_0 * exp(sum of daily log rets)
-        simulated_paths = last_price * np.exp(cum_log_rets)
-
-        
         # 1.5 Backtest Accuracy (Diagnostic) — Dynamic Horizon Sync (Phase 8)
         with st.spinner(f"Validating {forecast_days}-Day Accuracy..."):
             precision_score, mape_raw, naive_mape = calculate_backtest_accuracy(df_fc, sector_name=sector_val, quality_score=drift_score, test_size=forecast_days)
@@ -1125,16 +953,21 @@ def render(ctx):
         # ── ROW 2: AI Metrics (Horizontal Cards) ─────────────────────────────
         mcol1, mcol2, mcol3, mcol4 = st.columns(4)
         with mcol1:
-            st.metric("ML Ensemble Target", f"€{lstm_path[-1]:.2f}" if lstm_path is not None else "N/A", delta=f"{lstm_return*100:.2f}%" if lstm_return else "N/A")
-            if lstm_path is not None:
-                st.session_state[f"ai_target_for_de_{fc_ticker}"] = float(lstm_path[-1])
-                st.caption("→ Shown as TP1 in the Stock Analysis signal matrix (experimental; not used by the Decision)")
-        
+            if lstm_path is not None and ml_trusted:
+                st.metric("ML forecast (skill shown)", f"€{lstm_path[-1]:.2f}", delta=f"{lstm_return*100:.2f}%")
+            elif lstm_path is not None:
+                st.metric("ML forecast", "not shown",
+                          help="No demonstrated skill against a no-change forecast. Tick the walk-forward test in the form to check; "
+                               "the path is still drawn in the chart as an experiment.")
+            else:
+                st.metric("ML forecast", "N/A")
+            st.caption("Experimental — not used by the Decision Summary or Stock Analysis.")
+
         with mcol2:
             sent_label = "Bullish" if avg_sent > 0.1 else "Bearish" if avg_sent < -0.1 else "Neutral"
             st.metric("News Sentiment Mood", sent_label, delta=f"{avg_sent:.2f}")
         with mcol3:
-            # Smart Money Spirit (Unified v6.0 with sector awareness)
+            # Volume flow (sector-aware)
             sm_result = get_sm_spirit_unified_v2(df_fc, sector=str(sector_val) if sector_val else "Unknown")
             sm_signal = sm_result["signal"]
             sm_strength = sm_result["strength"]
@@ -1148,23 +981,28 @@ def render(ctx):
                 sm_display += " ✓MFI"
             
             st.metric(
-                "Smart Money Spirit", 
+                "Volume flow", 
                 sm_display, 
                 delta=f"{sm_layer} · Vol Q: {vol_quality}/100" if sm_layer != "NONE" else "No Signal"
             )
         with mcol4:
-            p_label = f"Holdout Error vs Naive ({forecast_days}d)"
-            if mape_raw is not None and naive_mape:
-                _skill = 1 - mape_raw / naive_mape   # >0 = better than "no change"
-                st.metric(p_label, f"{mape_raw*100:.1f}% vs {naive_mape*100:.1f}%",
-                          delta=f"{_skill:+.0%} skill vs no-change forecast",
-                          delta_color="normal" if _skill > 0 else "inverse",
-                          help="Mean absolute % error of the model on the last unseen window, next to a "
-                               "forecast that simply assumes today's price. One window is a weak test; "
-                               "do not act on the forecast unless skill is positive consistently.")
+            if _wf and _wf["n"]:
+                st.metric(f"Walk-forward skill ({_wf['n']} windows)", f"{(_wf['mean_skill'] or 0):+.0%}",
+                          delta=f"{_wf['share_better']:.0%} of windows beat no-change",
+                          delta_color="normal" if _wf["has_skill"] else "inverse",
+                          help="Skill = 1 − model RMSE / no-change RMSE on each unseen window. Positive on average AND in at least 60% "
+                               "of at least 3 windows is required before the forecast is shown as a headline.")
             else:
-                st.metric(p_label, "N/A")
-            
+                p_label = f"Single-window check vs naive ({forecast_days}d)"
+                if mape_raw is not None and naive_mape:
+                    _skill = 1 - mape_raw / naive_mape
+                    st.metric(p_label, f"{mape_raw*100:.1f}% vs {naive_mape*100:.1f}%",
+                              delta=f"{_skill:+.0%} skill vs no-change forecast",
+                              delta_color="normal" if _skill > 0 else "inverse",
+                              help="One window is a weak test (LSTM+ARIMA core). Tick the walk-forward test for a real answer.")
+                else:
+                    st.metric(p_label, "N/A")
+
         # Highlight divergence
         if (sent_label == "Bearish" and sm_signal == "ACCUMULATION") or (sent_label == "Bullish" and sm_signal == "DISTRIBUTION"):
             div_type = "BULLISH DIVERGENCE (Smart Money Accumulating despite Retail Fear)" if sent_label == "Bearish" else "BEARISH DIVERGENCE (Smart Money Distributing despite Retail Greed)"
@@ -1172,152 +1010,91 @@ def render(ctx):
             div_icon = "📈" if sent_label == "Bearish" else "📉"
             st.markdown(f"<div style='margin-top:10px; padding:12px 18px; background:linear-gradient(90deg, {div_color}22, rgba(0,0,0,0)); border-left:4px solid {div_color}; border-radius:6px;'><b style='color:{div_color}; font-size:1.0rem;'>{div_icon} Divergence (unvalidated): {div_type}</b><br><span style='font-size:0.85rem; color:#ccc;'>Institutions and Smart Money are actively positioning in direct opposition to retail sentiment (Strength: {sm_strength}/100, {sm_layer} Layer). This severe dislocation heavily tilts risk/reward for a contrarian entry. <b>Not a validated edge — treat as a prompt for further research.</b></span></div>", unsafe_allow_html=True)
 
-        # ── AI TRADING SIGNATURE ─────────────────────────────────────────────
-        # Pre-compute all levels for the card
-        p5_final   = np.percentile(simulated_paths[-1, :], 5)
-        p10_final  = np.percentile(simulated_paths[-1, :], 10)
-        p90_final  = np.percentile(simulated_paths[-1, :], 90)
-        p95_final  = np.percentile(simulated_paths[-1, :], 95)
-        _ai_target = float(lstm_path[-1]) if lstm_path is not None else last_price
-        _ai_stop   = float(p10_final)
-        _ai_tp2    = float(p90_final)
+        # ── ML EXPERIMENT SUMMARY ────────────────────────────────────────────
+        p5_final, p10_final, p50_final, p90_final, p95_final = (
+            float(np.percentile(simulated_paths[-1, :], q)) for q in (5, 10, 50, 90, 95))
         _ai_upside = (lstm_return * 100) if lstm_return is not None else 0
+        direction = run_direction_signal(df_fc, horizon_days=min(5, forecast_days))
 
-        # ── XGBoost Directional Signal (4th Pillar) ─────────────────────────
-        with st.spinner("🌲 XGBoost Classifier running..."):
-            xgb_signal, xgb_conf, xgb_imp = run_xgboost_signal(df_fc, horizon_days=min(5, forecast_days))
-
-        # ── Conviction Score (4-Pillar: 0-4) ────────────────────────────────
-        _conv_pts  = 0
-        _conv_pts += 1 if _ai_upside >= 3 else 0
-        _conv_pts += 1 if sm_signal == "ACCUMULATION" else 0
-        _conv_pts += 1 if avg_sent > 0.05 else 0
-        _conv_pts += 1 if xgb_signal == "BUY" else 0
-
-        # R/R based on Monte Carlo bands
-        _sig_risk   = last_price - _ai_stop
-        _sig_reward = _ai_target - last_price
-        _sig_rr     = (_sig_reward / _sig_risk) if _sig_risk > 0 else 0
-
-        # ── Executive Verdict ────────────────────────────────────────────────
-        if _conv_pts >= 4 and _sig_rr >= 1.5:
-            _sig_verdict, _sig_color, _sig_badge = "STRONG LONG", "#00ffcc", "HIGH CONVICTION"
-            _sig_desc = (f"All 4 pillars aligned: +{_ai_upside:.1f}% upside, Smart Money Accumulation, "
-                         f"{sent_label} sentiment, and XGBoost signals BUY ({xgb_conf*100:.0f}% confidence). "
-                         f"A {_sig_rr:.1f}x R/R setup — ideal for a full position.")
-        elif _conv_pts == 3 and _sig_rr >= 1.5:
-            _sig_verdict, _sig_color, _sig_badge = "STRONG LONG", "#00ffcc", "HIGH CONVICTION"
-            _sig_desc = (f"3 of 4 pillars aligned: Projects +{_ai_upside:.1f}% upside, "
-                         f"institutions in Accumulation, sentiment {sent_label}. "
-                         f"XGBoost: {xgb_signal} ({xgb_conf*100:.0f}%). R/R {_sig_rr:.1f}x.")
-        elif _conv_pts >= 2 and _sig_rr >= 1.0:
-            _sig_verdict, _sig_color, _sig_badge = "BUY / ACCUMULATE", "#2ecc71", "MODERATE CONVICTION"
-            _sig_desc = (f"2+ pillars constructive. Target €{_ai_target:.2f} ({_ai_upside:+.1f}%), "
-                         f"Smart Money: {sm_signal}, XGBoost: {xgb_signal} ({xgb_conf*100:.0f}%). "
-                         f"R/R {_sig_rr:.1f}x — partial position entry supported.")
-        elif _ai_upside <= -3:
-            _sig_verdict, _sig_color, _sig_badge = "REDUCE / HEDGE", "#e74c3c", "BEARISH SIGNAL"
-            _sig_desc = (f"Model projects {_ai_upside:.1f}% downside to €{_ai_target:.2f}. "
-                         f"Smart Money: {sm_signal}, XGBoost: {xgb_signal}. "
-                         f"Reduce exposure or hedge until price stabilizes above €{_ai_stop:.2f}.")
+        _pillars = [
+            ("ML forecast ≥ +3%", f"{_ai_upside:+.1f}%" if ml_trusted else "not shown (no skill shown)", ml_trusted and _ai_upside >= 3),
+            ("Volume flow", f"{sm_signal} ({sm_strength})", sm_signal == "ACCUMULATION"),
+            ("News sentiment", sent_label, avg_sent > 0.05),
+            ("Direction classifier", direction["label"], direction["label"] == "BUY"),
+        ]
+        _conv_pts = sum(1 for _, _, ok in _pillars if ok)
+        if _conv_pts >= 3:
+            _sig_verdict, _sig_color = "PILLARS ALIGNED", "#2ecc71"
         elif _conv_pts == 0:
-            _sig_verdict, _sig_color, _sig_badge = "AVOID / WAIT", "#e74c3c", "NO CONVICTION"
-            _sig_desc = (f"All 4 pillars negative: Upside {_ai_upside:+.1f}%, Smart Money {sm_signal}, "
-                         f"sentiment {sent_label}, XGBoost {xgb_signal}. Stay flat.")
+            _sig_verdict, _sig_color = "NOTHING ALIGNED", "#8899aa"
         else:
-            _sig_verdict, _sig_color, _sig_badge = "NEUTRAL / MONITOR", "#f1c40f", "MIXED SIGNALS"
-            _sig_desc = (f"Conflicting signals: Projects {_ai_upside:+.1f}% to €{_ai_target:.2f}. "
-                         f"XGBoost: {xgb_signal} ({xgb_conf*100:.0f}%), Smart Money: {sm_signal}. "
-                         f"Monitor for confluence before entry.")
+            _sig_verdict, _sig_color = "MIXED", "#f1c40f"
+        _sig_badge = "EXPLORATORY — NOT VALIDATED"
+        _sig_desc = (f"{_conv_pts} of 4 exploratory readings are constructive. None of them is validated, they carry equal weight here "
+                     f"by construction, and none feeds the Decision Summary. Direction classifier: {direction['note']}.")
 
-        # ── Reasoning pills ─────────────────────────────────────────────────
         def _pill(label, value, ok):
-            c = "#2ecc71" if ok else "#e74c3c"
+            c = "#2ecc71" if ok else "#8899aa"
             return (f"<span style='display:inline-flex; align-items:center; gap:5px; background:rgba(255,255,255,0.05); "
                     f"border:1px solid {c}55; border-radius:20px; padding:4px 10px; font-size:0.78rem; margin:3px;'>"
-                    f"<span style='color:{c}; font-weight:700;'>{'✓' if ok else '✗'}</span> "
+                    f"<span style='color:{c}; font-weight:700;'>{'✓' if ok else '–'}</span> "
                     f"<span style='color:#ccc;'>{label}:</span> "
                     f"<span style='color:#fff; font-weight:700;'>{value}</span></span>")
 
-        _pill_ai   = _pill("Upside",    f"{_ai_upside:+.1f}%",  _ai_upside >= 3)
-        _pill_sm   = _pill("Smart Money",  f"{sm_signal} ({sm_strength})",  sm_signal == "ACCUMULATION")
-        _pill_sent = _pill("Sentiment",    sent_label,             avg_sent > 0.05)
-        _pill_rr   = _pill("R/R",          f"{_sig_rr:.1f}x",      _sig_rr >= 1.5)
-        _ml_skill = (1 - mape_raw / naive_mape) if (mape_raw is not None and naive_mape) else None
-        _pill_prec = _pill("ML vs naive", f"{_ml_skill:+.0%}" if _ml_skill is not None else "N/A", (_ml_skill or 0) > 0)
-        _xgb_label = f"XGB {xgb_signal} ({xgb_conf*100:.0f}%)"
-        _pill_xgb  = _pill("XGBoost Signal", _xgb_label, xgb_signal == "BUY")
-
-        _unc_str = f"±{mape_raw*100:.1f}% CI" if mape_raw else ""
+        _pills_html = "".join(_pill(n, v, ok) for n, v, ok in _pillars)
         _vix_now_sig = float(prices_full[prices_full['ticker']=='^VIX']['price_close'].iloc[-1]) \
             if not prices_full[prices_full['ticker']=='^VIX'].empty else 20.0
-        _playbook = ("Mean Reversion / Range Trading" if _vix_now_sig > 25
-                     else "Trend Following / Breakout" if _vix_now_sig < 15
-                     else "Selective / Stock Picker's Market")
 
         def _hex_rgb(h): h=h.lstrip('#'); return f"{int(h[0:2],16)},{int(h[2:4],16)},{int(h[4:6],16)}"
         _bg_rgb = _hex_rgb(_sig_color)
+        _ml_tile = (f"€{float(lstm_path[-1]):.2f}" if (lstm_path is not None and ml_trusted) else "n/a")
+        _ml_sub = (f"{_ai_upside:+.1f}% · skill shown" if (lstm_path is not None and ml_trusted) else "no demonstrated skill")
 
         html_content = f"""
 <div style='background:rgba(10,15,25,0.7); border:1px solid rgba(255,255,255,0.1); border-radius:14px; padding:22px 26px; margin:18px 0;'>
-<!-- Header Row -->
 <div style='display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px; margin-bottom:18px;'>
 <div>
-<div style='font-size:0.65rem; color:#8899aa; font-weight:700; text-transform:uppercase; letter-spacing:2px; margin-bottom:6px;'>AI Trading Signature</div>
-<div style='font-size:1.8rem; font-weight:900; color:{_sig_color}; text-shadow:0 0 20px rgba({_bg_rgb},0.5); line-height:1;'>{_sig_verdict}</div>
+<div style='font-size:0.65rem; color:#8899aa; font-weight:700; text-transform:uppercase; letter-spacing:2px; margin-bottom:6px;'>ML Experiment Summary</div>
+<div style='font-size:1.6rem; font-weight:900; color:{_sig_color}; line-height:1;'>{_sig_verdict}</div>
 <div style='font-size:0.75rem; color:{_sig_color}; background:rgba({_bg_rgb},0.12); border:1px solid rgba({_bg_rgb},0.35); border-radius:20px; display:inline-block; padding:2px 10px; margin-top:6px;'>{_sig_badge}</div>
 </div>
 <div style='text-align:right;'>
-<div style='font-size:0.65rem; color:#8899aa; text-transform:uppercase; margin-bottom:4px;'>VIX Context</div>
-<div style='font-size:1.1rem; font-weight:700; color:#f1c40f;'>VIX {_vix_now_sig:.1f}</div>
-<div style='font-size:0.78rem; color:#aaa;'>{_playbook}</div>
+<div style='font-size:0.65rem; color:#8899aa; text-transform:uppercase; margin-bottom:4px;'>VIX</div>
+<div style='font-size:1.1rem; font-weight:700; color:#f1c40f;'>{_vix_now_sig:.1f}</div>
 </div>
 </div>
-<!-- Signal Pills -->
-<div style='margin-bottom:16px;'>{_pill_ai}{_pill_sm}{_pill_sent}{_pill_rr}{_pill_prec}{_pill_xgb}</div>
-<!-- Rationale -->
+<div style='margin-bottom:16px;'>{_pills_html}</div>
 <div style='font-size:0.88rem; color:#dde; line-height:1.6; margin-bottom:18px; border-left:3px solid rgba({_bg_rgb},0.6); padding-left:14px;'>{_sig_desc}</div>
-<!-- Trade Setup Snapshot -->
 <div style='border-top:1px solid rgba(255,255,255,0.08); padding-top:16px;'>
-<div style='font-size:0.65rem; color:#8899aa; text-transform:uppercase; letter-spacing:1.5px; margin-bottom:10px;'>Trade Setup Snapshot</div>
+<div style='font-size:0.65rem; color:#8899aa; text-transform:uppercase; letter-spacing:1.5px; margin-bottom:10px;'>Risk range — GARCH volatility, no drift ({forecast_days}-day horizon, {n_sims:,} simulations)</div>
 <div style='display:grid; grid-template-columns:repeat(5,1fr); gap:8px; font-size:0.82rem;'>
 <div style='background:rgba(255,255,255,0.04); border-radius:8px; padding:10px 12px; border-top:2px solid #3498db;'>
 <div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px;'>CURRENT PRICE</div>
 <div style='color:#fff; font-weight:800; font-size:1.05rem;'>€{last_price:.2f}</div>
 </div>
-<div style='background:rgba(46,204,113,0.08); border-radius:8px; padding:10px 12px; border-top:2px solid #2ecc71;'>
-<div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px;'>ENTRY (NOW)</div>
-<div style='color:#2ecc71; font-weight:800; font-size:1.05rem;'>€{last_price:.2f}</div>
-<div style='color:#8899aa; font-size:0.65rem;'>{forecast_days}d forecast</div>
-</div>
 <div style='background:rgba(231,76,60,0.08); border-radius:8px; padding:10px 12px; border-top:2px solid #e74c3c;'>
-<div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px;'>STOP (MC P10)</div>
-<div style='color:#e74c3c; font-weight:800; font-size:1.05rem;'>€{_ai_stop:.2f}</div>
-<div style='color:#8899aa; font-size:0.65rem;'>Risk: {((last_price-_ai_stop)/last_price*100):.1f}%</div>
+<div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px;'>LOW (P10)</div>
+<div style='color:#e74c3c; font-weight:800; font-size:1.05rem;'>€{p10_final:.2f}</div>
+<div style='color:#8899aa; font-size:0.65rem;'>{(p10_final/last_price-1)*100:+.1f}%</div>
+</div>
+<div style='background:rgba(255,255,255,0.04); border-radius:8px; padding:10px 12px; border-top:2px solid #8899aa;'>
+<div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px;'>MEDIAN</div>
+<div style='color:#fff; font-weight:800; font-size:1.05rem;'>€{p50_final:.2f}</div>
+<div style='color:#8899aa; font-size:0.65rem;'>{(p50_final/last_price-1)*100:+.1f}%</div>
+</div>
+<div style='background:rgba(46,204,113,0.08); border-radius:8px; padding:10px 12px; border-top:2px solid #2ecc71;'>
+<div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px;'>HIGH (P90)</div>
+<div style='color:#2ecc71; font-weight:800; font-size:1.05rem;'>€{p90_final:.2f}</div>
+<div style='color:#8899aa; font-size:0.65rem;'>{(p90_final/last_price-1)*100:+.1f}%</div>
 </div>
 <div style='background:rgba(0,255,204,0.06); border-radius:8px; padding:10px 12px; border-top:2px solid #00ffcc;'>
-<div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px;'>TARGET 1 (ML)</div>
-<div style='color:#00ffcc; font-weight:800; font-size:1.05rem;'>€{_ai_target:.2f}</div>
-<div style='color:#8899aa; font-size:0.65rem;'>{_unc_str} · {_ai_upside:+.1f}%</div>
-</div>
-<div style='background:rgba(52,152,219,0.06); border-radius:8px; padding:10px 12px; border-top:2px solid #3498db;'>
-<div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px;'>TARGET 2 (MC P90)</div>
-<div style='color:#3498db; font-weight:800; font-size:1.05rem;'>€{_ai_tp2:.2f}</div>
-<div style='color:#8899aa; font-size:0.65rem;'>Extended scenario</div>
+<div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px;'>ML FORECAST</div>
+<div style='color:#00ffcc; font-weight:800; font-size:1.05rem;'>{_ml_tile}</div>
+<div style='color:#8899aa; font-size:0.65rem;'>{_ml_sub}</div>
 </div>
 </div>
-<!-- R/R Progress Bar -->
-<div style='margin-top:14px; display:flex; align-items:center; gap:12px;'>
-<div style='color:#8899aa; font-size:0.75rem; white-space:nowrap;'>R/R Ratio</div>
-<div style='flex:1; background:rgba(255,255,255,0.08); border-radius:4px; height:8px; position:relative; overflow:hidden;'>
-<div style='width:{min(100, _sig_rr/3.0*100):.0f}%; height:100%; background:linear-gradient(90deg,#e74c3c,#f1c40f,#2ecc71,#00ffcc); border-radius:4px;'></div>
-</div>
-<div style='color:{_sig_color}; font-weight:800; font-size:0.9rem; white-space:nowrap;'>{_sig_rr:.2f}x</div>
-<div style='color:#8899aa; font-size:0.75rem; white-space:nowrap;'>{'FAVORABLE' if _sig_rr>=1.5 else 'MARGINAL' if _sig_rr>=1.0 else 'POOR'}</div>
-</div>
-<!-- 90% Confidence Interval note -->
 <div style='margin-top:10px; font-size:0.78rem; color:#8899aa; text-align:center;'>
-Monte Carlo 90% CI: <b style='color:#fff;'>€{p5_final:.2f}</b> ↔ <b style='color:#fff;'>€{p95_final:.2f}</b> &nbsp;·&nbsp; {forecast_days}-Day Horizon &nbsp;·&nbsp; {n_sims:,} simulations
+Monte Carlo 90% interval: <b style='color:#fff;'>€{p5_final:.2f}</b> ↔ <b style='color:#fff;'>€{p95_final:.2f}</b>
 </div>
 </div>
 </div>
@@ -1325,7 +1102,7 @@ Monte Carlo 90% CI: <b style='color:#fff;'>€{p5_final:.2f}</b> ↔ <b style='c
         st.markdown(html_content, unsafe_allow_html=True)
 
         # ── ROW 3: Main Chart (Full Width) ── (Moved to Top) ───────────────────
-        render_header("ai", f"AI Ensemble vs Stochastic Monte Carlo: {fc_ticker}")
+        render_header("ai", f"ML path vs volatility risk range: {fc_ticker}")
         fig_fc = go.Figure()
         # Include today's date so all lines start from the last known price point
         future_dates = pd.date_range(start=df_fc["date"].max(), periods=forecast_days+1, freq='B')
@@ -1334,40 +1111,32 @@ Monte Carlo 90% CI: <b style='color:#fff;'>€{p5_final:.2f}</b> ↔ <b style='c
             fig_fc.add_trace(go.Scatter(x=future_dates, y=simulated_paths[:, i], mode='lines', line=dict(color='rgba(255,255,255,0.05)', width=1), showlegend=False))
         
         mean_path = simulated_paths.mean(axis=1)
-        fig_fc.add_trace(go.Scatter(x=future_dates, y=mean_path, name="Monte Carlo Mean Path", line=dict(color="rgba(241, 196, 15, 0.5)", width=2, dash="dash")))
+        fig_fc.add_trace(go.Scatter(x=future_dates, y=mean_path, name="Monte Carlo mean path", line=dict(color="rgba(241, 196, 15, 0.5)", width=2, dash="dash")))
         
         if lstm_path is not None:
             # Prepend today's price to visually close the gap on the chart
             lstm_plot_y = np.insert(lstm_path, 0, last_price)
             
-            # ── Ensemble Uncertainty Bands (Calibrated from Backtest MAPE) ─────────
-            if mape_raw is not None:
-                # Temporal Confidence Decay: band widens with sqrt(t)
-                time_decay = np.zeros(len(lstm_plot_y))
-                time_decay[1:] = np.sqrt(np.arange(1, len(lstm_path) + 1) / len(lstm_path))
-                lstm_upper = lstm_plot_y * (1 + mape_raw * time_decay)
-                lstm_lower = lstm_plot_y * (1 - mape_raw * time_decay)
-                # Shaded confidence region
-                fig_fc.add_trace(go.Scatter(
-                    x=list(future_dates) + list(future_dates[::-1]),
-                    y=list(lstm_upper) + list(lstm_lower[::-1]),
-                    fill='toself',
-                    fillcolor='rgba(0,229,255,0.08)',
-                    line=dict(color='rgba(0,0,0,0)'),
-                    name=f'Ensemble ±{mape_raw*100:.1f}% Confidence',
-                    showlegend=True
-                ))
+            # 80% volatility band around the forecast path (GARCH, widens with sqrt(t)); NOT a forecast-error band
+            _n_b = min(len(lstm_path), len(sigma_path))
+            _lo, _hi = mlf.band_from_sigma(np.asarray(lstm_path)[:_n_b], np.asarray(sigma_path)[:_n_b])
+            _lo, _hi = np.insert(_lo, 0, last_price), np.insert(_hi, 0, last_price)
+            fig_fc.add_trace(go.Scatter(
+                x=list(future_dates[:_n_b + 1]) + list(future_dates[:_n_b + 1][::-1]),
+                y=list(_hi) + list(_lo[::-1]),
+                fill='toself', fillcolor='rgba(0,229,255,0.08)', line=dict(color='rgba(0,0,0,0)'),
+                name='80% volatility band', showlegend=True))
             # Central Ensemble path (on top)
             fig_fc.add_trace(go.Scatter(
                 x=future_dates, y=lstm_plot_y,
-                name="AI Ensemble Most Likely Path",
+                name="ML path (experimental)",
                 line=dict(color="#00E5FF", width=4)
             ))
         
         p10 = np.percentile(simulated_paths, 10, axis=1)
         p90 = np.percentile(simulated_paths, 90, axis=1)
-        fig_fc.add_trace(go.Scatter(x=future_dates, y=p10, name="Lower Risk Bound (90%)", line=dict(color="rgba(255,0,0,0.5)", width=2, dash="dot")))
-        fig_fc.add_trace(go.Scatter(x=future_dates, y=p90, name="Upper Reward Bound (90%)", line=dict(color="rgba(0,255,0,0.5)", width=2, dash="dot")))
+        fig_fc.add_trace(go.Scatter(x=future_dates, y=p10, name="Risk range low (P10)", line=dict(color="rgba(255,0,0,0.5)", width=2, dash="dot")))
+        fig_fc.add_trace(go.Scatter(x=future_dates, y=p90, name="Risk range high (P90)", line=dict(color="rgba(0,255,0,0.5)", width=2, dash="dot")))
  
         fig_fc.update_layout(template="plotly_dark", height=600, yaxis_title="Price (€)", margin=dict(t=20, l=10, r=10, b=10))
         st.plotly_chart(fig_fc, use_container_width=True)
@@ -1381,15 +1150,12 @@ Monte Carlo 90% CI: <b style='color:#fff;'>€{p5_final:.2f}</b> ↔ <b style='c
         
         with dcol1:
             # Model Input Reasoning (SHAP)
-            render_header("activity", "Model Input Reasoning (SHAP)")
+            render_header("activity", "Model input sensitivity (gradient saliency)")
             if feat_imp:
                 pretty_feat_map = {
-                    'price_close': 'Price Level',
-                    'daily_return_pct': 'Volatility/Return',
-                    'spy_ret': 'Market (SPY)', 
-                    'vix_ret': 'Fear Index (VIX)',
-                    'vol_surge': 'Volume Spike', 
-                    'quality_score_norm': 'Quality Score'
+                    'price_close': 'Price level', 'daily_return_pct': 'Daily return', 'spy_ret': 'Market (SPY)',
+                    'vix_ret': 'VIX change', 'vol_surge': 'Volume spike', 'rsi': 'RSI', 'price_z_score': 'Price Z-score',
+                    'regime_score': 'Market regime score', 'obv_roc': 'OBV rate of change',
                 }
                 imp_df = pd.DataFrame([
                     {'Feature': pretty_feat_map.get(k, k), 'Weight (%)': v}
@@ -1403,8 +1169,21 @@ Monte Carlo 90% CI: <b style='color:#fff;'>€{p5_final:.2f}</b> ↔ <b style='c
                 )
                 fig_imp.update_layout(xaxis_title="Influence (%)", showlegend=False, margin=dict(t=0, b=0, l=0, r=0))
                 st.plotly_chart(fig_imp, use_container_width=True)
+                st.caption("Gradient of the forecast with respect to each input: what the network reacts to, not what drives prices. "
+                           "Fundamentals are not inputs (constant for one stock).")
             else:
-                st.info("Insufficient data for SHAP analysis.")
+                st.info("No sensitivity available for this engine / data.")
+            with st.expander("🌲 Direction classifier — out-of-sample test", expanded=False):
+                _d = direction
+                if _d["oos_accuracy"] is None:
+                    st.info(f"Not tested: {_d['note']}")
+                else:
+                    st.write(f"Walk-forward on the last {_d['n_test']} days (training labels purged so they cannot reach the test period): "
+                             f"accuracy **{_d['oos_accuracy']:.1%}** vs **{_d['baseline_accuracy']:.1%}** for always predicting the most common class; "
+                             + (f"BUY calls rose {_d['buy_hit_rate']:.1%} of the time vs a {_d['base_rate']:.1%} base rate. " if _d["buy_hit_rate"] is not None else "")
+                             + f"Result: **{_d['note']}**.")
+                    if _d["importance"]:
+                        st.caption("Permutation importance (share %): " + ", ".join(f"{k} {v}" for k, v in list(_d["importance"].items())[:5]))
             
         with dcol2:
             # ── Weighted Ensemble Metrics Panel (persisted via session_state) ──
@@ -1418,15 +1197,14 @@ Monte Carlo 90% CI: <b style='color:#fff;'>€{p5_final:.2f}</b> ↔ <b style='c
                     icon_svg = SVG_ICONS[icon_key].replace('width="18"','width="14"').replace('height="18"','height="14"')
                     w_pct = float(m["Weight"].replace("%", ""))
                     bar_color = "#00ffcc" if w_pct == max(float(v["Weight"].replace("%", "")) for v in _em_display.values()) else "#3498db"
-                    conf_score = max(0.0, 100.0 - m["MAPE (%)"])
-                    conf_color = "#2ecc71" if conf_score >= 90 else "#f1c40f" if conf_score >= 80 else "#e74c3c"
+                    sk = m.get("vs naive", 0.0)
+                    sk_color = "#2ecc71" if sk > 0 else "#e74c3c"
                     rows_html += f"""
                     <tr>
                         <td style='padding:8px 12px; font-weight:600;'>{icon_svg} {model_name}</td>
                         <td style='padding:8px 12px; text-align:center; color:#e74c3c;'>€{m["RMSE"]}</td>
-                        <td style='padding:8px 12px; text-align:center; color:#e67e22;'>{m["MAPE (%)"]:.1f}%</td>
-                        <td style='padding:8px 12px; text-align:center; font-weight:700; color:{conf_color};'>{conf_score:.1f}%</td>
-                        <td style='padding:8px 12px; text-align:center;' title='0% happens when mean-reverting models predict flatlines during a trending test set.'>{m["Dir. Acc"]}</td>
+                        <td style='padding:8px 12px; text-align:center; font-weight:700; color:{sk_color};'>{sk:+.0%}</td>
+                        <td style='padding:8px 12px; text-align:center;'>{m["Dir. Acc"]}</td>
                         <td style='padding:8px 12px; text-align:center; font-weight:700; color:#f1c40f;'>€{m.get('Target', 0):.2f}</td>
                         <td style='padding:8px 12px; min-width:120px;'>
                             <div style='display:flex; align-items:center; gap:6px;'>
@@ -1440,19 +1218,19 @@ Monte Carlo 90% CI: <b style='color:#fff;'>€{p5_final:.2f}</b> ↔ <b style='c
                     <thead>
                         <tr style='border-bottom:1px solid rgba(255,255,255,0.15); color:#8899aa; font-size:0.78rem; text-transform:uppercase;'>
                             <th style='padding:6px 12px; text-align:left;'>Model</th>
-                            <th style='padding:6px 12px; text-align:center;'>RMSE (€)</th>
-                            <th style='padding:6px 12px; text-align:center;'>MAPE</th>
-                            <th style='padding:6px 12px; text-align:center;' title='Confidence Score (100 - MAPE)'>Confidence <span style='cursor:help;'>ⓘ</span></th>
-                            <th style='padding:6px 12px; text-align:center;' title='Directional Accuracy evaluated on the holdout window'>Dir. Acc <span style='cursor:help;'>ⓘ</span></th>
-                            <th style='padding:6px 12px; text-align:center;'>Target Vote</th>
+                            <th style='padding:6px 12px; text-align:center;'>Holdout RMSE (€)</th>
+                            <th style='padding:6px 12px; text-align:center;' title='1 − model RMSE / RMSE of a no-change forecast on the unseen holdout. Positive = better than no change.'>Skill vs no-change ⓘ</th>
+                            <th style='padding:6px 12px; text-align:center;' title='Right/wrong direction of the final price on the holdout (one window)'>Direction ⓘ</th>
+                            <th style='padding:6px 12px; text-align:center;'>Target vote</th>
                             <th style='padding:6px 12px; text-align:left;'>Weight</th>
                         </tr>
                     </thead>
                     <tbody>{rows_html}</tbody>
                 </table>
                 """, unsafe_allow_html=True)
-                st.caption("💡 Weight ∝ 1/RMSE — the model with the lowest error has the highest influence on the final forecast.")
-                st.markdown("<div style='font-size:0.85rem; color:#8899aa; margin-top:4px;'><b>Note on Dir. ACC 0%:</b> LSTM & Transformer are mathematically prone to 0% Directional Accuracy because they tend to output mean-reverting flatlines. If the real price trends slightly, the strict binary direction check fails. <b>PatchTST</b>, functioning as a structural forecaster, is more likely to yield 100% on trajectory direction.</div>", unsafe_allow_html=True)
+                st.caption("Models are trained on data BEFORE the holdout (the last forecast-horizon days) and scored on it. Weight ∝ 1/RMSE, and "
+                           "a model that does not beat the no-change forecast on the holdout gets weight 0 unless none does. One window is "
+                           "a weak test — use the walk-forward option for a real answer.")
 
             # ── Meta Intelligence Panel ──────────────────────────────────────
             with st.expander("🧪 Meta Intelligence — Anchor History & VIX Regime Analysis", expanded=False):
