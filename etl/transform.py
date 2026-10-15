@@ -279,10 +279,15 @@ def build_financial_dims(conn) -> None:
     # divided back by the stored fx_to_eur; a currency switch between the two periods → NULL. Stored amounts stay EUR.
     # `quarter` is the CALENDAR quarter of the period end (Yahoo gives no fiscal-period identity).
     _growth = lambda cur, base: f"ROUND(({cur} - {base}) / NULLIF(ABS({base}), 0) * 100, 2)"   # noqa: E731
+    # point-in-time availability (etl/pit.py) travels with every period
+    for table in ("raw.quarterly_financials", "raw.historical_financials"):
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS available_date DATE")
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS available_source VARCHAR")
     conn.execute(f"""
         CREATE OR REPLACE TABLE marts.dim_quarterly_financials AS
         WITH q AS (
             SELECT ticker, date, revenue, net_income, total_equity, eps, eps_diluted, src_currency,
+                   available_date, available_source,
                    revenue / COALESCE(NULLIF(fx_to_eur, 0), 1) AS rev_l, eps / COALESCE(NULLIF(fx_to_eur, 0), 1) AS eps_l
             FROM raw.quarterly_financials
             -- DEDUPLICATION: Take the most recent extraction for each ticker/date
@@ -305,7 +310,8 @@ def build_financial_dims(conn) -> None:
             CASE WHEN y.src_currency IS NOT DISTINCT FROM p.src_currency THEN {_growth('p.rev_l', 'y.rev_l')} END
                 AS revenue_growth_yoy_pct,
             CASE WHEN y.src_currency IS NOT DISTINCT FROM p.src_currency THEN {_growth('p.eps_l', 'y.eps_l')} END
-                AS eps_growth_yoy_pct
+                AS eps_growth_yoy_pct,
+            p.available_date, p.available_source
         FROM p
         LEFT JOIN q y ON y.ticker = p.ticker AND date_diff('day', y.date, p.date) BETWEEN 350 AND 380
         QUALIFY ROW_NUMBER() OVER (PARTITION BY p.ticker, p.date
@@ -329,7 +335,8 @@ def build_financial_dims(conn) -> None:
             CASE WHEN y.src_currency IS NOT DISTINCT FROM a.src_currency THEN {_growth('a.rev_l', 'y.rev_l')} END
                 AS revenue_growth_pct,
             CASE WHEN y.src_currency IS NOT DISTINCT FROM a.src_currency THEN {_growth('a.eps_l', 'y.eps_l')} END
-                AS eps_growth_pct
+                AS eps_growth_pct,
+            a.available_date, a.available_source
         FROM a
         LEFT JOIN a y ON y.ticker = a.ticker AND date_diff('day', y.date, a.date) BETWEEN 350 AND 380
         QUALIFY ROW_NUMBER() OVER (PARTITION BY a.ticker, a.date

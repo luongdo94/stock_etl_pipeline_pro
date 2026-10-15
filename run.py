@@ -6,6 +6,8 @@ Entry point of the ETL (what the scheduled task runs).
     python run.py --no-sync       skip the cloud publication
     python run.py --only-sync     publish the current warehouse, no ETL
     python run.py --promote       promote a validated warehouse left by a postponed swap
+    python run.py --test-alert    send a test message through the configured alert channels
+    python run.py --check-tickers ask Yahoo whether every configured symbol still quotes (suggests replacements)
 
 Exit code: 0 success · 1 ETL failed or was refused (previous data untouched) · 2 ETL ok but cloud sync failed.
 A failed run also writes logs/last_run.json and sends an alert (etl/notify.py).
@@ -35,9 +37,21 @@ def main(argv=None) -> int:
     parser.add_argument("--no-sync", action="store_false", dest="sync", help="Skip the Supabase publication")
     parser.add_argument("--only-sync", action="store_true", help="Skip ETL and only publish")
     parser.add_argument("--promote", action="store_true", help="Promote a pending validated warehouse and exit")
+    parser.add_argument("--test-alert", action="store_true", help="Send a test alert and exit")
+    parser.add_argument("--check-tickers", action="store_true", help="Check every configured symbol on Yahoo and exit")
     args = parser.parse_args(argv)
 
-    from etl.notify import latest_audit_error, report_outcome
+    from etl.notify import latest_audit_error, notify, report_outcome
+
+    if args.test_alert:
+        sent = notify("🔔 Stock ETL test alert", "Alert channels work: a failed ETL run will be reported here.")
+        print(f"Delivered via: {', '.join(sent)}" if sent else
+              "No channel delivered. Set ETL_WEBHOOK_URL and/or SMTP_HOST + ALERT_EMAIL_TO in .env (see etl/notify.py).")
+        return 0 if sent else 1
+
+    if args.check_tickers:
+        from etl.ticker_check import main as check_tickers
+        return check_tickers()
 
     if args.promote:
         from etl.load import promote_pending_swap

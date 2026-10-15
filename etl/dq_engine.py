@@ -346,8 +346,27 @@ def run_dq_validations(db_path: str = None):
                 """,
                 "critical": False
             },
+            {
+                # independent source (etl/reconcile.py): last close vs TradingView, same quote currency
+                "id": "source_price_mismatch",
+                "name": "SOURCE: last close disagrees with TradingView",
+                "query": """SELECT COUNT(*) FROM raw.source_reconciliation WHERE check_name = 'price_last_close'
+                            AND status = 'MISMATCH' HAVING COUNT(*) > 0""",
+                "ticker_query": """SELECT ticker FROM raw.source_reconciliation WHERE check_name = 'price_last_close'
+                                   AND status = 'MISMATCH' ORDER BY ABS(diff_pct) DESC LIMIT 50""",
+                "critical": False
+            },
+            {
+                "id": "source_statement_mismatch",
+                "name": "SOURCE: annual revenue / net income disagree with SEC EDGAR",
+                "query": """SELECT COUNT(*) FROM raw.source_reconciliation WHERE source = 'SEC EDGAR'
+                            AND status = 'MISMATCH' HAVING COUNT(*) > 0""",
+                "ticker_query": """SELECT DISTINCT ticker FROM raw.source_reconciliation WHERE source = 'SEC EDGAR'
+                                   AND status = 'MISMATCH' LIMIT 50""",
+                "critical": False
+            },
         ]
-        
+
         results = []
         overall_success = True
         

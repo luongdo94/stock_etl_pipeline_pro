@@ -47,6 +47,10 @@ TABLES = (
     ("raw.hist_fcf", "hist_fcf", "SELECT * FROM raw.hist_fcf", None, False),
     ("marts.etl_exceptions", "etl_exceptions", "SELECT * FROM marts.etl_exceptions", None, True),
     ("marts.security_lifecycle", "security_lifecycle", "SELECT * FROM marts.security_lifecycle", None, True),
+    # data health tab: stable identity and the independent-source checks
+    ("marts.security_master", "security_master", "SELECT * FROM marts.security_master", None, True),
+    ("marts.symbol_history", "symbol_history", "SELECT * FROM marts.symbol_history", None, True),
+    ("raw.source_reconciliation", "source_reconciliation", "SELECT * FROM raw.source_reconciliation", None, True),
     ("raw.hist_fcf_quarterly", "hist_fcf_quarterly", "SELECT * FROM raw.hist_fcf_quarterly", None, False),
     ("raw.historical_financials", "historical_financials", "SELECT * FROM raw.historical_financials", None, False),
     ("raw.quarterly_financials", "quarterly_financials", "SELECT * FROM raw.quarterly_financials", None, False),

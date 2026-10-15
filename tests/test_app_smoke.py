@@ -20,7 +20,7 @@ from tests.synthetic_warehouse import build  # noqa: E402
 from views import scanner as scanner_view  # noqa: E402
 
 TABS = ["🌐 Market Pulse", "🔭 Stock Scanner", "🔬 Stock Analysis", "🗓️ Earnings", "🎲 Risk Lab",
-        "🧪 Strategy Lab", "📈 Track Record", "📋 Watchlist", "💼 Portfolio", "📖 Docs"]
+        "🧪 Strategy Lab", "📈 Track Record", "📋 Watchlist", "💼 Portfolio", "🩺 Data Health", "📖 Docs"]
 
 pytestmark = pytest.mark.smoke
 

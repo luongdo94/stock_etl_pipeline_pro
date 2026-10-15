@@ -70,6 +70,9 @@ def env(tmp_path, monkeypatch):
     monkeypatch.setattr(pl, "LOCK_PATH", str(tmp_path / "etl.lock"))
     monkeypatch.setattr(dq, "_DOCS_DIR", str(tmp_path / "gx"))
     monkeypatch.setattr(snapshot, "run_snapshot", lambda *a, **k: 0)        # never touch the real track-record file
+    monkeypatch.setattr(pl, "TRACK_DB_PATH", str(tmp_path / "track.duckdb"))
+    monkeypatch.setattr(pl, "load_identity_config", lambda: ({}, {}))
+    monkeypatch.setattr(pl, "run_reconciliation", lambda conn, tickers, cfg: pd.DataFrame())   # no network in tests
 
     def prices(tickers=None, lookback_days=365, watermarks=None):
         since = None

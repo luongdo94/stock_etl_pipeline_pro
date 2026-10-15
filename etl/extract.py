@@ -167,6 +167,17 @@ def load_tickers_config():
 _YAHOO_SYMBOL = __import__("re").compile(r"^[A-Z0-9][A-Z0-9\-&]*(\.[A-Z]{1,3})?$")
 
 
+_EU_COUNTRIES = {"Germany", "France", "United Kingdom", "Netherlands", "Spain", "Italy", "Switzerland", "Sweden",
+                 "Denmark", "Norway", "Finland", "Belgium", "Austria", "Portugal", "Ireland", "Poland", "Luxembourg"}
+_REGION_OF_COUNTRY = {"United States": "US", "Japan": "JP", "China": "CN", "Hong Kong": "CN", "Taiwan": "TW",
+                      "South Korea": "KR", "Korea": "KR", "Vietnam": "VN", **{c: "EU" for c in _EU_COUNTRIES}}
+
+
+def region_code(country) -> str:
+    """TradingView country → the region codes of config/tickers.yaml (scanner filter, regional earnings benchmark)."""
+    return _REGION_OF_COUNTRY.get(str(country or "").strip(), "OTHER")
+
+
 def tv_to_yahoo_symbol(raw_ticker: str, suffix: str):
     """TradingView 'EXCHANGE:SYMBOL' symbol part → Yahoo ticker, or None when it cannot be mapped safely.
     LSE symbols carry a trailing dot ('BP.') and use a dot for the share class ('BT.A'); Yahoo writes BP.L / BT-A.L
@@ -334,7 +345,7 @@ def fetch_dynamic_tv_tickers(base_tickers=None):
                 dynamic_tickers[yf_ticker] = {
                     "name": name,
                     "sector": f[2] if f[2] else "N/A",
-                    "region": f[3] if len(f)>3 and f[3] else "Global",
+                    "region": region_code(f[3] if len(f) > 3 else None),
                     "discovery_source": f"TV_{preset_name.upper()}"
                 }
         except Exception as e:

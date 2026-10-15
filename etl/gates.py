@@ -37,6 +37,23 @@ def collect_stats(conn: duckdb.DuckDBPyConnection) -> dict:
             "fundamentals": fundamentals_stats(conn)}
 
 
+def reconciliation_issues(summary: dict, cfg: dict) -> list:
+    """Independent-source check (etl/reconcile.summary → {source: (compared, mismatched)}). Only PRICES can block a
+    release: a quarter of the universe disagreeing with TradingView means Yahoo's prices are broken, not one ticker.
+    Statement disagreements are definitional as often as they are errors, so they stay warnings."""
+    issues = []
+    for source, (n, bad) in (summary or {}).items():
+        if n < cfg["min_compared"]:
+            continue
+        share = bad / n
+        msg = f"{bad} of {n} compared tickers disagree with {source} ({share:.0%})"
+        if source == "TradingView" and share >= cfg["critical_mismatch_share"]:
+            issues.append(Issue("critical", "source_disagreement", msg + f" ≥ {cfg['critical_mismatch_share']:.0%}"))
+        elif share >= cfg["warn_mismatch_share"]:
+            issues.append(Issue("warning", "source_disagreement", msg))
+    return issues
+
+
 # E9: fundamentals a run must not silently lose (table → what is counted)
 RETENTION_TABLES = {"raw.historical_financials": "annual statements", "raw.hist_fcf": "annual cash flows",
                     "raw.cashflows": "payout"}
@@ -94,9 +111,12 @@ def evaluate_gates(conn: duckdb.DuckDBPyConnection, prev: Optional[dict], univer
         crit("stale_prices", f"newest price is {max_date} ({age} days old, limit {cfg['max_stale_days']})")
     if prev and prev.get("max_date") and max_date < prev["max_date"]:
         crit("date_regression", f"newest price {max_date} is older than the previous warehouse ({prev['max_date']})")
-    fresh = conn.execute("""
-        WITH l AS (SELECT ticker, MAX(date) d FROM raw.stock_prices GROUP BY 1)
-        SELECT AVG(CASE WHEN d >= (SELECT MAX(d) FROM l) - INTERVAL 4 DAY THEN 1.0 ELSE 0.0 END) FROM l""").fetchone()[0]
+    # freshness of the EXPECTED tickers: kept history of delisted / removed securities is not a stale download
+    scope = "WHERE ticker = ANY(?)" if expected else ""
+    fresh = conn.execute(f"""
+        WITH l AS (SELECT ticker, MAX(date) d FROM raw.stock_prices {scope} GROUP BY 1)
+        SELECT AVG(CASE WHEN d >= (SELECT MAX(date) FROM raw.stock_prices) - INTERVAL 4 DAY THEN 1.0 ELSE 0.0 END)
+        FROM l""", [sorted(expected)] if expected else []).fetchone()[0]
     if fresh is not None and fresh < cfg["critical_fresh_share"]:
         crit("stale_tickers", f"only {fresh:.0%} of tickers have a price in the last 4 days of the newest date "
                               f"(partial download? limit {cfg['critical_fresh_share']:.0%})")

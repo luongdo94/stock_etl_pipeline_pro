@@ -56,6 +56,17 @@ provider:
   retry_pause_s: 1.5        # pause between single-ticker retries
   no_data_ttl_days: 14      # a ticker the provider has no data for is not asked again (per extractor) for this long
 
+# Independent-source reconciliation (etl/reconcile.py): Yahoo vs TradingView (last close, all markets) and SEC EDGAR
+# (annual revenue / net income of US filers; needs SEC_USER_AGENT="Your Name you@example.com" in .env).
+reconcile:
+  enabled: true
+  price_tolerance_pct: 1.5        # last close vs TradingView's last price or previous close
+  fundamental_tolerance_pct: 3.0  # annual revenue / net income vs the SEC filing (definitions differ slightly)
+  sec_max_tickers_per_run: 60     # rotating sample (least recently checked first); SEC allows ≤ 10 requests / second
+  min_compared: 30                # the systemic gates below need at least this many compared tickers
+  warn_mismatch_share: 0.05       # share of compared prices that disagree -> warning
+  critical_mismatch_share: 0.25   # ... -> critical: Yahoo's prices are broken for a large part of the universe
+
 swap:
   attempts: 60            # os.replace retries while a dashboard connection still holds the production file
   wait_seconds: 2.0

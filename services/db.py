@@ -450,6 +450,38 @@ def load_etl_exceptions() -> pd.DataFrame:
         return pd.DataFrame(columns=["ticker", "stage", "reason", "detail", "detected_at"])
 
 
+_HEALTH_QUERIES = {
+    "runs": """SELECT start_time, end_time, status, mode, rows_processed, error_message FROM marts.etl_audit
+               WHERE status <> 'STARTED' ORDER BY start_time DESC LIMIT 60""",
+    "dq": "SELECT check_name, violations, status, is_critical, _checked_at FROM marts.dq_warnings",
+    "exceptions": "SELECT ticker, stage, reason, detail, detected_at FROM marts.etl_exceptions",
+    "reconciliation": """SELECT ticker, check_name, period, ours, theirs, diff_pct, status, source, detail, checked_at
+                         FROM raw.source_reconciliation""",
+    "securities": "SELECT * FROM marts.security_master",
+    "symbols": "SELECT * FROM marts.symbol_history",
+    "lifecycle": "SELECT * FROM marts.security_lifecycle",
+    "pit": """SELECT 'annual' AS kind, available_source, COUNT(*) AS n FROM marts.dim_annual_financials GROUP BY 1, 2
+              UNION ALL
+              SELECT 'quarterly', available_source, COUNT(*) FROM marts.dim_quarterly_financials GROUP BY 1, 2""",
+}
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def load_data_health() -> dict:
+    """Frames for the 🩺 Data Health tab; a table an older warehouse does not have yet comes back empty."""
+    out = {}
+    try:
+        with get_db_connection(read_only=True) as conn:
+            for key, sql in _HEALTH_QUERIES.items():
+                try:
+                    out[key] = conn.execute(sql).df()
+                except Exception:
+                    out[key] = pd.DataFrame()
+    except Exception as e:
+        logger.warning(f"data health not loaded: {e}")
+    return {k: out.get(k, pd.DataFrame()) for k in _HEALTH_QUERIES}
+
+
 def load_price_history() -> pd.DataFrame:
     """Append-only close history kept by the snapshot job in track_record.duckdb and mirrored as marts.track_prices.
     It survives full warehouse rebuilds, so long-horizon outcomes can accumulate (audit A07)."""

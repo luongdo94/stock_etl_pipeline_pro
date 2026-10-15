@@ -56,8 +56,11 @@ def _seed_legacy(conn, base: dict, today: date) -> None:
 
 def resolve_universe(conn: duckdb.DuckDBPyConnection, base: Optional[dict] = None,
                      fetch: Optional[Callable] = None, retention_days: int = 30,
-                     today: Optional[date] = None) -> dict:
-    """Return {ticker: meta} for this run and record it in raw.universe."""
+                     today: Optional[date] = None, delisted=None) -> dict:
+    """Return {ticker: meta} for this run and record it in raw.universe.
+
+    source = CONFIG (tickers.yaml) / TV_* (discovered) / REMOVED (no longer in tickers.yaml: expires like a discovered
+    ticker) / DELISTED (tickers.yaml `delisted:` — never fetched, never garbage-collected, history kept)."""
     from etl.extract import fetch_dynamic_tv_tickers, load_tickers_config
 
     today = today or date.today()
@@ -90,9 +93,16 @@ def resolve_universe(conn: duckdb.DuckDBPyConnection, base: Optional[dict] = Non
                      [ticker, meta.get("name"), meta.get("sector"), meta.get("region"),
                       meta.get("discovery_source", "TV"), today, today])
 
+    # a ticker deleted from tickers.yaml used to stay CONFIG (fetched forever); delisted ones are kept, not fetched
+    conn.execute("UPDATE raw.universe SET source = 'REMOVED' WHERE source = 'CONFIG' AND NOT (ticker = ANY(?))",
+                 [list(base)])
+    delisted = [t for t in (delisted or []) if t not in base]
+    if delisted:
+        conn.execute("UPDATE raw.universe SET source = 'DELISTED' WHERE ticker = ANY(?)", [delisted])
     cutoff = today - timedelta(days=retention_days)
     rows = conn.execute("""SELECT ticker, name, sector, region, source FROM raw.universe
-                           WHERE source = 'CONFIG' OR last_seen >= ?""", [cutoff]).fetchall()
+                           WHERE source = 'CONFIG' OR (source NOT IN ('REMOVED', 'DELISTED') AND last_seen >= ?)""",
+                        [cutoff]).fetchall()
     universe = {t: {"name": n, "sector": s, "region": r, "discovery_source": src} for t, n, s, r, src in rows}
     # discovered symbols stored before the TradingView mapping fix (e.g. 'BP..L') are dropped, not fetched again
     from etl.extract import _YAHOO_SYMBOL
@@ -113,11 +123,12 @@ def resolve_universe(conn: duckdb.DuckDBPyConnection, base: Optional[dict] = Non
 
 def garbage_collect(conn: duckdb.DuckDBPyConnection, retention_days: int = 30,
                     today: Optional[date] = None) -> int:
-    """Delete every raw row of discovered tickers not seen for `retention_days`. Configured tickers are never touched."""
+    """Delete every raw row of discovered / removed tickers not seen for `retention_days`. Configured and DELISTED
+    tickers are never touched (a delisted security's history is evidence, not garbage)."""
     today = today or date.today()
     try:
         stale = [r[0] for r in conn.execute(
-            "SELECT ticker FROM raw.universe WHERE source <> 'CONFIG' AND last_seen < ?",
+            "SELECT ticker FROM raw.universe WHERE source NOT IN ('CONFIG', 'DELISTED') AND last_seen < ?",
             [today - timedelta(days=retention_days)]).fetchall()]
     except duckdb.Error:
         return 0                                   # no universe table yet: nothing is known to be stale

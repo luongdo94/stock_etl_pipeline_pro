@@ -190,6 +190,7 @@ TABS = {
     "📈 Track Record": "track_record",
     "📋 Watchlist": "watchlist",
     "💼 Portfolio": "portfolio",
+    "🩺 Data Health": "data_health",
     "📖 Docs": "docs",
 }
 if st.session_state.get("active_tab") not in TABS:

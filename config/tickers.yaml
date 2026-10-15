@@ -855,7 +855,7 @@ tickers:
     name: Novo Nordisk A/S
     sector: Pharma
     region: EU
-  ROG.SW:
+  ROP.SW:
     name: Roche Holding AG
     sector: Pharma
     region: EU
@@ -1219,7 +1219,7 @@ tickers:
     name: Bunge Global
     sector: Food & Beverage
     region: US
-  BK:
+  BNY:
     name: BNY Mellon
     sector: Capital Markets
     region: US
@@ -1394,10 +1394,6 @@ tickers:
   CTAS:
     name: Cintas
     sector: Business Services
-    region: US
-  CTRA:
-    name: Coterra
-    sector: Oil & Gas
     region: US
   CTSH:
     name: Cognizant
@@ -2247,7 +2243,7 @@ tickers:
     name: Revvity
     sector: Life Science Tools
     region: US
-  SATS:
+  ECHO:
     name: EchoStar
     sector: Telecom
     region: US
@@ -2839,7 +2835,7 @@ tickers:
     name: Grenke AG
     sector: Financials
     region: EU
-  HAB.DE:
+  HABA.DE:
     name: Hamborner REIT AG
     sector: Real Estate
     region: EU
@@ -3042,7 +3038,7 @@ tickers:
   6762.T:
     name: TDK Corporation
     sector: Technology
-    region: Asia
+    region: JP
   BESI.AS:
     name: BE Semiconductor
     sector: Technology
@@ -3054,7 +3050,7 @@ tickers:
   2344.TW:
     name: Winbond Electronics
     sector: Semiconductors
-    region: Asia
+    region: TW
   RIVN:
     name: Rivian Automotive
     sector: Automotive & EV
@@ -3102,19 +3098,19 @@ tickers:
   3711.TW:
     name: ASE Technology Holding
     sector: Semiconductors
-    region: Asia
+    region: TW
   2303.TW:
     name: UMC
     sector: Semiconductors
-    region: Asia
+    region: TW
   2379.TW:
     name: Realtek
     sector: Semiconductors
-    region: Asia
+    region: TW
   3034.TW:
     name: Novatek Microelectronics
     sector: Semiconductors
-    region: Asia
+    region: TW
   603501.SS:
     name: OmniVision (Will Semi)
     sector: Semiconductors
@@ -3126,7 +3122,7 @@ tickers:
   2360.TW:
     name: Chroma ATE
     sector: Semiconductors
-    region: Asia
+    region: TW
   6963.T:
     name: ROHM
     sector: Semiconductors
@@ -3175,10 +3171,6 @@ tickers:
     name: Mycronic
     sector: Semiconductor Tools
     region: EU
-  AWE.L:
-    name: AlphaWave IP Group
-    sector: Semiconductors
-    region: EU
   SLR.MC:
     name: Solaria
     sector: Renewables
@@ -3191,3 +3183,18 @@ tickers:
     name: Prysmian S.p.A.
     sector: Industrials
     region: EU
+
+# ── Security identity (etl/security_master.py) ─────────────────────────────────────────────────────────────────
+# A symbol change moves the stored history (prices, statements, track record) from the old symbol to the new one, so
+# the security keeps one stable ID and one continuous history. Found with `python run.py --check-tickers`.
+symbol_changes:
+  ROG.SW: ROP.SW       # Roche participation certificate re-listed by Yahoo as ROP.SW (2026-10)
+  BK: BNY              # The Bank of New York Mellon trades as BNY (2026-10)
+  SATS: ECHO           # EchoStar trades as ECHO (2026-10)
+  HAB.DE: HABA.DE      # Hamborner REIT trades as HABA.DE (2026-10)
+
+# Delisted securities: no longer fetched, but their history is KEPT (no survivorship bias in history / backtests)
+# and the security is marked DELISTED. Add the outcome (cash / shares received) once it is known.
+delisted:
+  CTRA: {name: Coterra, date: 2026-10-15, reason: "no longer quoted by Yahoo — merger / delisting, outcome to verify"}
+  AWE.L: {name: AlphaWave IP Group, date: 2026-10-15, reason: "no longer quoted by Yahoo — takeover / delisting, outcome to verify"}

@@ -195,8 +195,24 @@ the guard has not been executed yet.
 Full suite **538 passed** (14 live deselected). New columns (`debt_issued`, `debt_repaid`, payout evidence,
 `stale_fields`) fill on the next ETL run; score version v8 restarts the Track Record evidence.
 
+## Round 6 — project hygiene and data reliability (2026-10-15)
+
+| Item | Change | Tests (`tests/test_data_reliability.py`) |
+|---|---|---|
+| CI | `.github/workflows` no longer git-ignored; workflow installs `requirements.lock` on Python 3.13 and runs the offline suite | `test_lock_file_pins_every_requirement_and_ci_uses_it` |
+| Lock file | `requirements.lock` (uv, universal, tested versions: duckdb 1.4.4, pandas 2.3.3 …); `pandas<3` in requirements.txt | same |
+| Alerts | `python run.py --test-alert` sends a test message through the configured channels (exit 1 when none delivered) | `test_test_alert_reports_whether_a_channel_delivered` |
+| Ticker config | `etl/ticker_check.py`: offline validation (duplicate keys, symbol format, regions, symbol-change / delisting consistency) in the suite; `python run.py --check-tickers` asks Yahoo and suggests replacements. Fixed: ROG.SW→ROP.SW, BK→BNY, SATS→ECHO, HAB.DE→HABA.DE; CTRA, AWE.L delisted; region `Asia` split into JP / TW; discovered tickers get region codes instead of country names | `test_ticker_config_is_valid`, `test_duplicated_ticker_keys_are_an_error`, `test_inconsistent_identity_config_is_reported`, `test_discovered_tickers_use_the_config_region_codes` |
+| Stable identity | `etl/security_master.py`: `symbol_changes` move all raw and track-record rows to the new symbol (new symbol wins on overlap); security IDs + symbol history in track_record.duckdb, mirrored to `marts.security_master` / `marts.symbol_history`; `delisted` → never fetched, never garbage-collected, DELISTED in master and lifecycle; tickers removed from the config are no longer fetched forever (REMOVED, expire); freshness gate scoped to the expected universe | `test_symbol_change_moves_the_whole_history`, `test_when_both_symbols_have_rows_…`, `test_delisted_securities_are_not_fetched_…`, `test_security_master_keeps_one_id_…`, `test_track_record_rows_follow_the_symbol_change`, `test_freshness_gate_ignores_kept_history_…` |
+| Independent sources | `etl/reconcile.py`: last close vs TradingView scanner (all markets, local currency, last or previous close within 1.5%); annual revenue / net income vs SEC EDGAR XBRL (US, rotating 60 per run, needs `SEC_USER_AGENT` with an e-mail). Results in `raw.source_reconciliation`, mismatches in the ledger and dq_warnings; ≥ 25% of prices disagreeing (≥ 30 compared) is a critical gate | `test_price_reconciliation_statuses`, `test_sec_reconciliation_…`, `test_systemic_price_disagreement_blocks_the_release` and 5 more |
+| Point in time | `etl/pit.py`: `available_date` / `available_source` on annual and quarterly statements (SEC filing → earnings release → period end + 90 / 60 days), carried into the financial dims; `core/pit.as_of` filters a statement table as of a date | `test_availability_dates_prefer_…`, `test_as_of_never_returns_…` |
+| Data Health tab | `views/data_health.py`: run history and failures, DQ findings, source agreement and mismatches, PIT coverage, symbol changes / delistings, per-ticker exceptions; new tables published to the cloud snapshot | `test_data_health_tab_shows_sources_identity_and_pit` + smoke test |
+
+Full suite **562 passed**. Still manual: `ETL_WEBHOOK_URL` / SMTP for alerts, `SEC_USER_AGENT` for the SEC check,
+`register_daily_etl.ps1` for the schedule, and the outcome (cash / shares) of delisted securities in tickers.yaml.
+
 ## Still open (design / infrastructure, unchanged)
-Stable security IDs, delisting / merger payoffs and as-of fundamentals; independent licensed data source; portfolio
+Delisting / merger payoffs (outcome still entered by hand); a licensed data source (TradingView / SEC are cross-checks, not a feed); portfolio
 stress-loss / factor budgets and a trade ledger; holdings-aware actions (tax lots, target weights); persisted original
 stop per position (a recomputed stop can still move); issuer-specific cash-flow and bank capital models; factor-adjusted
 alpha attribution, multiple-testing controls, spread / impact / borrow costs; dependency lock file.

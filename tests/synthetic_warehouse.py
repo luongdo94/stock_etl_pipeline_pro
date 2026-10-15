@@ -117,6 +117,7 @@ def build(db_path: str, seed: int = 7) -> str:
                 ticker VARCHAR, insider_purchases_6m BIGINT, insider_sales_6m BIGINT, net_shares BIGINT,
                 pct_buy DOUBLE, pct_sell DOUBLE, _extracted_at TIMESTAMP)""")
         _earnings_events(conn, prices, rng)
+        _data_health(conn, db_path)
         run_transforms(conn)
         _snapshot_history(conn, prices, rng)
     return db_path
@@ -138,6 +139,28 @@ def _earnings_events(conn, prices: pd.DataFrame, rng: np.random.Generator) -> No
         rows.append({"ticker": t, "earnings_ts": nxt, "eps_estimate": 1.5, "eps_actual": np.nan, "surprise_pct": np.nan,
                      "_extracted_at": pd.Timestamp.now()})
     load_earnings_events(conn, pd.DataFrame(rows))
+
+
+def _data_health(conn, db_path: str) -> None:
+    """Independent-source results (stubbed quotes, no network), point-in-time dates and the security master."""
+    import os
+    from etl import reconcile, security_master
+    from etl.pit import assign_available_dates
+    reconcile.ensure_tables(conn)
+    last = conn.execute("SELECT ticker, arg_max(close, date) FROM raw.stock_prices GROUP BY 1").fetchall()
+    quotes = pd.DataFrame([{"ticker": t, "tv_symbol": f"X:{t}", "tv_close": c * (1.05 if t == "NVDA" else 1.0),
+                            "tv_prev_close": c * (1.05 if t == "NVDA" else 0.99), "tv_currency": None}
+                           for t, c in last if t not in ("^VIX", "JNJ")])
+    reconcile.store(conn, reconcile.reconcile_prices(conn, [t for t, _ in last], 1.5, quotes))
+    ends = conn.execute("SELECT DISTINCT date FROM raw.historical_financials WHERE ticker = 'AAPL'").fetchall()
+    conn.executemany("INSERT INTO raw.sec_filings VALUES ('AAPL', 320193, ?, '10-K', 'FY', ? , now())",
+                     [[d, d + timedelta(days=30)] for (d,) in ends])
+    assign_available_dates(conn)
+    track = os.path.join(os.path.dirname(os.path.abspath(db_path)), "track_record.duckdb")
+    with duckdb.connect(track) as tconn:
+        security_master.sync_master(tconn, list(UNIVERSE), {"KO-OLD": "KO"},
+                                    {"GONE": {"name": "Gone Corp", "date": "2026-01-15", "reason": "acquired"}})
+    security_master.mirror(conn, track)
 
 
 def _snapshot_history(conn, prices: pd.DataFrame, rng: np.random.Generator, days: int = 120) -> None:

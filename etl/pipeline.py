@@ -4,7 +4,10 @@ import pandas as pd
 from pathlib import Path
 from etl.config_manager import get_etl_config
 from etl.extract   import extract_stock_prices, extract_company_info, extract_historical_financials, extract_quarterly_financials, extract_cashflows, extract_historical_fcf, extract_quarterly_fcf, extract_earnings_calendar, extract_earnings_history, extract_forward_estimates, get_equity_tickers
-from etl.gates     import collect_stats, evaluate_gates, has_critical, persist_warnings
+from etl.gates     import collect_stats, evaluate_gates, has_critical, persist_warnings, reconciliation_issues
+from etl.pit       import assign_available_dates
+from etl.reconcile import ensure_tables as ensure_reconciliation_tables, run_reconciliation, summary as reconcile_summary
+from etl.security_master import apply_symbol_changes, load_identity_config, sync_identity
 from etl import exceptions as _exc
 from etl.lifecycle import inactive_tickers, ledger_rows, unexplained_jumps
 from etl.integrity import detect_price_drift, mark_rebased, replace_ticker_prices, tickers_to_rebase
@@ -19,6 +22,7 @@ from etl.insider_trading import extract_insider_summary, extract_insider_transac
 from etl import earnings_events
 
 LOCK_PATH = str(_WAREHOUSE_DIR / "etl.lock")
+TRACK_DB_PATH = str(_WAREHOUSE_DIR / "track_record.duckdb")     # survives full rebuilds (security master, track record)
 
 
 # --- LOGGING SETUP ---
@@ -342,6 +346,36 @@ def run_pipeline(lookback_days: int = None, force_full: bool = False, fast_mode:
 
 
 CARRY_FORWARD_TABLES = ("raw.company_info", "raw.historical_financials", "raw.hist_fcf", "raw.cashflows")
+# accumulated from other sources over many runs (not re-extracted by a full refresh): copied whole, no ledger entry
+REFERENCE_TABLES = ("raw.sec_filings", "raw.source_reconciliation")
+
+
+def carry_forward_reference(conn, prod_path: str, tables=REFERENCE_TABLES) -> dict:
+    """FULL refresh: keep the SEC filing dates and reconciliation history of the production warehouse."""
+    out = {}
+    if not prod_path or not Path(prod_path).exists():
+        return out
+    try:
+        conn.execute(f"ATTACH '{prod_path}' AS prodref (READ_ONLY)")
+    except duckdb.Error as e:
+        logger.warning(f"   ⚠️ reference carry-forward skipped: {e}")
+        return out
+    try:
+        for table in tables:
+            schema, name = table.split(".")
+            try:
+                if conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]:
+                    continue                                 # this run already wrote its own rows
+                cols = [r[0] for r in conn.execute(f"DESCRIBE {table}").fetchall()]
+                prod_cols = {r[0] for r in conn.execute(f"DESCRIBE prodref.{schema}.{name}").fetchall()}
+                col_list = ", ".join(f'"{c}"' for c in cols if c in prod_cols)
+                conn.execute(f"INSERT INTO {table} ({col_list}) SELECT {col_list} FROM prodref.{schema}.{name}")
+                out[table] = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            except duckdb.Error:
+                continue
+    finally:
+        conn.execute("DETACH prodref")
+    return out
 
 
 def carry_forward_missing(conn, prod_path: str, tickers, tables=CARRY_FORWARD_TABLES) -> dict:
@@ -427,7 +461,17 @@ def _run_pipeline_locked(lookback_days, force_full, fast_mode):
         conn = get_connection(use_shadow=True)
         try:
             create_raw_schema(conn)
-            universe = resolve_universe(conn, retention_days=cfg["universe"]["discovery_retention_days"])
+            ensure_reconciliation_tables(conn)
+            # stable identity: renamed listings carry their history to the new symbol; delisted ones are kept, not fetched
+            changes, delisted = load_identity_config()
+            universe = resolve_universe(conn, retention_days=cfg["universe"]["discovery_retention_days"],
+                                        delisted=list(delisted))
+            for key, n in apply_symbol_changes(conn, changes).items():
+                old, new = key.split("→")
+                _exc.record(new, "symbol_change", f"history of {old} moved to {new}", f"{n:,} rows")
+            for old, new in changes.items():
+                if old in watermarks:                        # the new symbol continues after the old one's last date
+                    watermarks.setdefault(new, watermarks.pop(old))
 
             # ── STEP 1: EXTRACT ──────────────────────────────────────────────────
             logger.info(f"\n📥 STEP 1/6 — EXTRACT ({mode_label})")
@@ -475,7 +519,22 @@ def _run_pipeline_locked(lookback_days, force_full, fast_mode):
                 mark_rebased(conn)                           # a full extract is a rebase
             if not is_incremental:
                 carry_forward_missing(conn, DB_PATH, list(universe))
+                carry_forward_reference(conn, DB_PATH)
             logger.info(f"   ⏱  Load: {time.time()-t0:.1f}s")
+
+            # ── STEP 3b: INDEPENDENT SOURCES + POINT-IN-TIME DATES ───────────────
+            recon_summary = {}
+            if cfg["reconcile"]["enabled"]:
+                logger.info("\n🔎 STEP 3b — RECONCILIATION (TradingView prices, SEC statements)")
+                rcfg = {**cfg["reconcile"], "sec_max_tickers_per_run": 0 if fast_mode else cfg["reconcile"]["sec_max_tickers_per_run"]}
+                try:
+                    recon_summary = reconcile_summary(run_reconciliation(conn, list(universe), rcfg))
+                except Exception as e:                       # an unreachable second source never fails the run
+                    logger.warning(f"   ⚠️ reconciliation skipped: {e}")
+            try:
+                assign_available_dates(conn)
+            except Exception as e:
+                logger.warning(f"   ⚠️ point-in-time dates not assigned: {e}")
 
             # ── STEP 4: TRANSFORM + GARBAGE COLLECTION ───────────────────────────
             logger.info("\n🔧 STEP 4/6 — TRANSFORM")
@@ -488,6 +547,7 @@ def _run_pipeline_locked(lookback_days, force_full, fast_mode):
             # ── STEP 5: RELEASE GATES (new vs universe and vs previous production) ─
             logger.info("\n🚦 STEP 5/6 — RELEASE GATES")
             issues = evaluate_gates(conn, prev_stats, set(universe), cfg["gates"])
+            issues += reconciliation_issues(recon_summary, cfg["reconcile"])
             for i in issues:
                 (logger.error if i.severity == "critical" else logger.warning)(f"   [{i.severity.upper()}] {i.code}: {i.message}")
             if has_critical(issues):
@@ -516,6 +576,10 @@ def _run_pipeline_locked(lookback_days, force_full, fast_mode):
                     _exc.persist(wconn, extra)
                 except Exception as e:                       # the ledger must never fail a valid run
                     logger.warning(f"   ⚠️ exception ledger not written: {e}")
+                try:                                         # security master (track DB) → marts.security_master
+                    sync_identity(wconn, TRACK_DB_PATH, universe, changes, delisted)
+                except Exception as e:
+                    logger.warning(f"   ⚠️ security master not updated: {e}")
 
             # ── STEP 6: ATOMIC SWAP ──────────────────────────────────────────────
             logger.info("\n📡 STEP 6/6 — ATOMIC SWAP")
