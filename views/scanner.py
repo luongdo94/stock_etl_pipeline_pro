@@ -8,7 +8,7 @@ from core.scan_presets import ELITE, FAIR, SOLID
 
 # Fixed column set: the three scores already summarise the detail columns, which stay one click away.
 DEFAULT_COLS = ["Ticker", "Company", "Verdict", "MoS (%)", "Quality", "Value", "Momentum", "Revisions", "Flags",
-                "ADV (EUR M)", "RSI (14)"]
+                "Conflicts", "ADV (EUR M)", "RSI (14)"]
 EXTRA_COLS = ["Sector", "Action", "Smart Money", "Z-Score", "vs MA200 (%)", "P/E (Fwd)", "EV/EBITDA", "PEG", "FCF Margin (%)",
               "ROE (%)", "Yield (%)", "Net Payout (%)", "Debt/EBITDA"]
 from ui.icons import render_header
@@ -225,8 +225,9 @@ def render(ctx):
                             help="Detail behind the scores. Hidden by default: Quality, Value and Momentum already summarise them.")
     display_cols = DEFAULT_COLS + [c for c in EXTRA_COLS if c in extras]
     # Sort by the recommendation first (BUY → HOLD → AVOID → n/a), then margin of safety, then Quality
-    _decision_rank = {"BUY CANDIDATE": 0, "HOLD / WATCH": 1, "AVOID / TRIM": 2, "NOT ENOUGH DATA": 3}
-    display_df = (f_df.assign(_r=f_df["Decision"].map(_decision_rank).fillna(4))
+    from core import decision as _dec
+    _decision_rank = {_dec.BUY: 0, _dec.RESEARCH: 1, _dec.HOLD: 2, _dec.AVOID: 3, _dec.NO_DATA: 4}
+    display_df = (f_df.assign(_r=f_df["Decision"].map(_decision_rank).fillna(5))
                   .sort_values(["_r", "MoS (%)", "Quality"], ascending=[True, False, False], na_position="last")
                   [display_cols])
 
@@ -244,6 +245,7 @@ def render(ctx):
     def style_opportunity_df(df):
         def highlight_action(val):
             val_str = str(val).upper()
+            if "RESEARCH" in val_str: return 'color: #3498db; font-weight: bold'
             if "STRONG SETUP" in val_str: return 'color: #2ecc71; font-weight: 800'
             elif "FAVOURABLE" in val_str and "UN" not in val_str: return 'color: #27ae60; font-weight: bold'
             elif "BUY" in val_str: return 'color: #27ae60; font-weight: bold'

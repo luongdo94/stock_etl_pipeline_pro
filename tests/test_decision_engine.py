@@ -90,7 +90,7 @@ class TestDecision:
 
     def _d(self, **kw):
         base = dict(price=100, base_value=150, bear_value=90, stop_loss=92, currency="EUR",
-                    track_record_ok=True, today=date(2026, 1, 10), rules=self.rules)
+                    track_record_ok=True, today=date(2026, 1, 10), rules=self.rules, quality_score=70, price_date=date(2026, 1, 10), fundamentals_date=date(2026, 1, 10), market_cap_eur=30e9, statement_date=date(2025, 12, 31), coverage_pct=90, adv_eur=50e6)
         base.update(kw)
         return decision.build_decision(**base)
 
@@ -276,7 +276,7 @@ class TestThesisStop:
     def test_stop_is_wider_of_support_and_bear_and_at_least_8pct(self):
         # technical support at -5%, bear case at -6% → floor of -8% wins
         d = decision.build_decision(price=100, base_value=150, bear_value=94, stop_loss=95, currency="EUR",
-                                    track_record_ok=True, today=date(2026, 1, 10))
+                                    track_record_ok=True, today=date(2026, 1, 10), quality_score=70, price_date=date(2026, 1, 10), fundamentals_date=date(2026, 1, 10), market_cap_eur=30e9, statement_date=date(2025, 12, 31), coverage_pct=90, adv_eur=50e6)
         assert d.stop == pytest.approx(92.0) and d.downside_pct == pytest.approx(8.0)
         assert d.position["stop_distance_pct"] == pytest.approx(8.0)
 

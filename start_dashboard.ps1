@@ -19,6 +19,7 @@ if ($nets) {
 
 # Force Local Mode for local development
 $env:SUPABASE_REMOTE_MODE = "false"
+$env:LOCAL_DEV_MODE = "1"
 $env:PYTHONIOENCODING = "utf-8"
 
 # Check virtual environment
@@ -31,4 +32,4 @@ if (Test-Path ".venv") {
 }
 
 # Run app.py using Streamlit
-& $PYTHON_EXEC -m streamlit run app.py --server.port $PORT
+& $PYTHON_EXEC -m streamlit run app.py --server.address 127.0.0.1 --server.port $PORT

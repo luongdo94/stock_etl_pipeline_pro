@@ -94,6 +94,15 @@ def resolve_universe(conn: duckdb.DuckDBPyConnection, base: Optional[dict] = Non
     rows = conn.execute("""SELECT ticker, name, sector, region, source FROM raw.universe
                            WHERE source = 'CONFIG' OR last_seen >= ?""", [cutoff]).fetchall()
     universe = {t: {"name": n, "sector": s, "region": r, "discovery_source": src} for t, n, s, r, src in rows}
+    # discovered symbols stored before the TradingView mapping fix (e.g. 'BP..L') are dropped, not fetched again
+    from etl.extract import _YAHOO_SYMBOL
+    bad = [t for t, m in universe.items() if m.get("discovery_source") != "CONFIG" and t not in base
+           and not (_YAHOO_SYMBOL.match(t) or t.startswith("^") or t.endswith("=X"))]
+    for t in bad:
+        universe.pop(t, None)
+        conn.execute("DELETE FROM raw.universe WHERE ticker = ?", [t])
+    if bad:
+        logger.warning(f"   ⚠️ Dropped {len(bad)} malformed discovered symbol(s): {', '.join(bad)}")
     # base entries keep every key of tickers.yaml
     for ticker, meta in base.items():
         universe[ticker] = {**meta, **universe.get(ticker, {}), "name": meta.get("name"),

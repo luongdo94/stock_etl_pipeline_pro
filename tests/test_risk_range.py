@@ -88,8 +88,8 @@ def test_coverage_backtest_skips_when_history_is_short():
 
 
 def test_calibration_verdict_wording():
-    base = {"n": 10, "below_p10": 0.1, "above_p90": 0.1, "outside90": 0.1}
-    assert rr.calibration_verdict({**base, "inside80": 0.8}).startswith("Calibrated")
+    base = {"n": 60, "below_p10": 0.1, "above_p90": 0.1, "outside90": 0.1}   # audit A16: ≥ 30 windows, CI reported
+    assert rr.calibration_verdict({**base, "inside80": 0.8}).startswith("Consistent with")
     assert "narrow" in rr.calibration_verdict({**base, "inside80": 0.5})
     assert "wide" in rr.calibration_verdict({**base, "inside80": 1.0})
     assert "too few" in rr.calibration_verdict({**base, "n": 3, "inside80": 0.8})

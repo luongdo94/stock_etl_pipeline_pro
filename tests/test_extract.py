@@ -395,16 +395,16 @@ class TestErrorHandling:
 
 
 class _FakeYQ:
-    """yahooquery 2.4.x statement signatures: balance_sheet has NO `trailing` parameter."""
+    """yahooquery 2.4.x statement signatures: balance_sheet has NO `trailing` parameter.
+    The batch request (asynchronous=True) is REFUSED (rate limit); the single-ticker retry gets real data."""
     calls = []
 
     def __init__(self, symbols, asynchronous=False, session=None, **_kw):
-        self._with_session = session is not None
+        self._retry = not asynchronous
 
     def _respond(self, name, frame):
-        # Only the Pass-3 client (built with a session) gets real data; earlier passes get an error payload
         type(self).calls.append(name)
-        return frame if self._with_session else {"AAPL": "No fundamentals data found for symbol: AAPL"}
+        return frame if self._retry else {"AAPL": "Too Many Requests"}
 
     def income_statement(self, frequency='a', trailing=True):
         return self._respond("income_statement", pd.DataFrame({
@@ -424,11 +424,9 @@ class _FakeYQ:
 
 @pytest.fixture
 def offline_extract():
-    """No sleeps, no network FX, no real evasion session."""
+    """No sleeps (batch pauses and guard cool-downs), no network FX."""
     _FakeYQ.calls = []
     with patch('time.sleep'), \
-         patch('etl.extract._backoff_sleep', return_value=0.0), \
-         patch('etl.extract._make_evasion_session', return_value=(object(), {})), \
          patch('etl.extract.fx_to_eur', return_value=1.0):
         yield
 
@@ -469,43 +467,43 @@ class TestStatementSignatureAndErrorPayloads:
         assert isinstance(out, pd.DataFrame) and out.empty
 
     @patch('etl.extract.YQTicker', _FakeYQ)
-    def test_pass3_historical_financials_new_signature(self, caplog):
-        """Pass 3 must recover via the new signature instead of 'unexpected keyword argument trailing'."""
+    def test_refused_batch_is_retried_once_with_the_new_signature(self, caplog):
+        """A refused batch cools down and the single retry recovers via the new signature (no 'unexpected keyword
+        argument trailing'); no disguised session exists any more."""
         with caplog.at_level("WARNING", logger="etl.extract"):
             result = extract_historical_financials(TICKER)
         assert "unexpected keyword argument" not in caplog.text
-        assert "Pass 3 Error" not in caplog.text
         assert list(result["ticker"]) == ["AAPL"]
         assert result["revenue"].iloc[0] == 400.0
 
     @patch('etl.extract.YQTicker', _FakeYQ)
-    def test_pass3_quarterly_financials_new_signature(self, caplog):
-        with caplog.at_level("WARNING", logger="etl.extract"):
-            result = extract_quarterly_financials(TICKER)
-        assert "Pass 3 Error" not in caplog.text
+    def test_refused_quarterly_batch_is_retried_once(self, caplog):
+        result = extract_quarterly_financials(TICKER)
         assert "AAPL" in set(result["ticker"])
 
     @patch('etl.extract.YQTicker')
-    def test_dict_error_payload_financials_is_no_data(self, mock_yq, caplog):
+    def test_unauthorized_everywhere_ends_empty_without_crashing(self, mock_yq):
         mock_yq.return_value = Mock(
             income_statement=Mock(return_value={"AAPL": "Unauthorized"}),
             balance_sheet=Mock(return_value={"AAPL": "Unauthorized"}))
-        with caplog.at_level("WARNING", logger="etl.extract"):
-            assert extract_historical_financials(TICKER).empty
-            assert extract_quarterly_financials(TICKER).empty
-        assert "Pass 3 Error" not in caplog.text
+        assert extract_historical_financials(TICKER).empty
+        assert extract_quarterly_financials(TICKER).empty
 
     @patch('etl.extract.YQTicker')
-    def test_dict_error_payload_cashflow_does_not_crash(self, mock_yq, caplog):
-        mock_yq.return_value = Mock(cash_flow=Mock(return_value={"AAPL": "No fundamentals data found"}))
+    def test_no_data_answers_are_not_retried_and_do_not_crash(self, mock_yq, caplog):
+        cf = Mock(return_value={"AAPL": "No fundamentals data found"})
+        mock_yq.return_value = Mock(cash_flow=cf)
         with caplog.at_level("WARNING", logger="etl.extract"):
-            cf = extract_cashflows(TICKER)
             fcf = extract_historical_fcf(TICKER)
             qfcf = extract_quarterly_fcf(TICKER)
-        assert cf.empty and fcf.empty and qfcf.empty
-        assert "Cashflow fetch failed" not in caplog.text
+            cfl = extract_cashflows(TICKER)
+        assert cfl.empty and fcf.empty and qfcf.empty
         assert "has no attribute" not in caplog.text
-        assert "Pass 3 Error" not in caplog.text
+        assert cf.call_count == 2 + 2                      # hist + quarterly FCF: one call each, NO retry; cashflows 2
+        # the "no data" answer is remembered: the next run does not ask again
+        cf.reset_mock()
+        extract_historical_fcf(TICKER)
+        assert cf.call_count == 0
 
 
 if __name__ == "__main__":

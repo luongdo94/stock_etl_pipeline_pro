@@ -12,14 +12,15 @@ from core.portfolio_risk import candidate_impact
 from core.rating import quality_tier, value_tier
 from core.track_record import evidence_status
 
-_STANCE_COLORS = {"BUY CANDIDATE": "#2ecc71", "HOLD / WATCH": "#f1c40f",
-                  "AVOID / TRIM": "#e74c3c", "NOT ENOUGH DATA": "#8899aa"}
+_STANCE_COLORS = {dec.BUY: "#2ecc71", dec.RESEARCH: "#3498db", dec.HOLD: "#f1c40f",
+                  dec.AVOID: "#e74c3c", dec.NO_DATA: "#8899aa"}
 _CONF_COLORS = {"HIGH": "#2ecc71", "MEDIUM": "#f1c40f", "LOW": "#e74c3c"}
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
 def _cached_evidence(snapshots: pd.DataFrame, prices: pd.DataFrame) -> dict:
-    return evidence_status(snapshots, prices)
+    """Same evidence service as the Scanner and the snapshot job (R2-05); `snapshots` kept for the signature."""
+    from services.db import evidence
+    return evidence(prices)
 
 
 def _score_tile(title, sub, score, colour):
@@ -61,13 +62,16 @@ def render_score_strip(scores):
 
 def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, relval, missing,
                           next_earnings, quality, snapshots, prices, holdings_loader, companies,
-                          scores=None):
+                          scores=None, signal_conflict=None):
     ev = _cached_evidence(snapshots, prices[["date", "ticker", "price_close"]])
     d = dec.decide(price=price, vin=vin, stop_loss=stop_loss, meta=meta,
-                   scores={**(scores or {}), "quality": quality, "missing": missing},
+                   scores={**(scores or {}), "quality": (scores or {}).get("quality", quality), "missing": missing},
                    price_date=price_date, next_earnings=next_earnings, track_record_ok=ev["ok"])
+    if signal_conflict:
+        d = dec.with_conflict(d, signal_conflict)
 
     sc, cc = _STANCE_COLORS.get(d.stance, "#8899aa"), _CONF_COLORS[d.confidence]
+    _H = (vin.get("irr") or {}).get("horizon_years") or dec.load_rules()["valuation"].get("horizon_years", 4)
     fmt = lambda v, s="%": f"{v:+.1f}{s}" if v is not None else "N/A"
     st.markdown(f"""
     <div style='border:1px solid {sc}55; border-left:5px solid {sc}; border-radius:10px;
@@ -77,20 +81,32 @@ def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, re
              <div style='color:{sc}; font-size:1.6rem; font-weight:900;'>{d.stance}</div>
              <div style='color:{cc}; font-size:0.8rem; font-weight:700;'>Confidence: {d.confidence}</div></div>
         <div style='display:grid; grid-template-columns:repeat(4, auto); gap:6px 22px; text-align:right;'>
-          <div style='color:#8899aa; font-size:0.7rem;'>Expected (net)</div>
-          <div style='color:#8899aa; font-size:0.7rem;'>Downside</div>
+          <div style='color:#8899aa; font-size:0.7rem;'>Model IRR, base ({_H}y, gross)</div>
+          <div style='color:#8899aa; font-size:0.7rem;'>Bear-case loss</div>
           <div style='color:#8899aa; font-size:0.7rem;'>Reward / Risk</div>
           <div style='color:#8899aa; font-size:0.7rem;'>Suggested size</div>
-          <div style='color:#fff; font-weight:800;'>{fmt(d.net_expected_return_pct)}</div>
-          <div style='color:#e74c3c; font-weight:800;'>{("-" + format(d.downside_pct, ".1f") + "%") if d.downside_pct else "N/A"}</div>
+          <div style='color:#fff; font-weight:800;'>{fmt(d.horizon_irr_pct)}</div>
+          <div style='color:#e74c3c; font-weight:800;'>{("-" + format(d.bear_case_loss_pct, ".1f") + "%") if d.bear_case_loss_pct else ("none" if d.horizon_irr_pct is not None else "N/A")}</div>
           <div style='color:#fff; font-weight:800;'>{f"{d.reward_risk:.1f}x" if d.reward_risk is not None else ("no upside" if (d.net_expected_return_pct is not None and d.net_expected_return_pct <= 0) else "N/A")}</div>
           <div style='color:#fff; font-weight:800;'>{f"{d.position['size_pct']:.1f}% of portfolio" if d.position['size_pct'] else "—"}</div>
         </div>
       </div>
     </div>""", unsafe_allow_html=True)
 
+    _irr = d.scenario_irr_pct or {}
+    _f = lambda x: "n/a" if x is None else f"{x:+.1f}%"   # noqa: E731
+    st.caption(
+        f"Model gross IRR over {_H} years if each DCF scenario materialises — the model's cash flow to equity per share "
+        f"(assumed paid out or reinvested at the cost of equity), constant share count, exit at the model's own year-{_H} "
+        f"value; before tax, withholding, FX and costs: bear {_f(_irr.get('bear'))} · base {_f(_irr.get('base'))} · "
+        f"bull {_f(_irr.get('bull'))} · probability-weighted average of the scenario IRRs {_f(d.expected_value_irr_pct)}. "
+        f"Not an expected investor return. Upside to base value (no horizon, after costs): "
+        f"{fmt(d.net_expected_return_pct)}. Reward/risk and size use the thesis STOP "
+        f"({fmt(-d.downside_pct) if d.downside_pct else 'N/A'}); a stop can gap and is not proof the thesis failed.")
     if scores:
         render_score_strip(scores)
+    for c in d.conflicts:
+        st.error(f"Conflict — re-underwrite before acting: {c}", icon="⚖️")
     for w in d.warnings:
         st.warning(w, icon="⏳")
     c1, c2 = st.columns(2)
@@ -114,12 +130,31 @@ def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, re
             st.markdown("**Confidence limited by**")
             for n in d.confidence_notes:
                 st.markdown(f"- {n}")
+    _hv = holdings_loader() if holdings_loader else None     # lazy: Supabase call → ({ticker: EUR}, cash EUR)
+    holdings_value, cash_eur = (_hv if isinstance(_hv, tuple) else (_hv, 0.0)) if _hv is not None else (None, 0.0)
+    _held = bool(holdings_value) and float((holdings_value or {}).get(ticker, 0) or 0) > 0
+    if holdings_value is not None:
+        st.markdown(f"**For your portfolio:** {dec.holding_action(d.stance, _held)}")    # holdings-aware (P1/5)
     if d.position["size_pct"]:
-        cap = " (capped)" if d.position["capped"] else ""
+        cap = f" (capped by {d.position['binding']})" if d.position["capped"] else ""
         st.caption(f"Size = {dec.load_rules()['risk']['account_risk_pct']}% portfolio risk ÷ "
                    f"{d.position['stop_distance_pct']:.1f}% stop distance{cap}. Costs assumed in "
-                   f"config/decision_rules.yaml (commission, FX spread, dividend withholding).")
-        holdings_value = holdings_loader() if holdings_loader else None   # lazy: Supabase call
+                   f"config/decision_rules.yaml (commission, FX spread, dividend withholding). Exit capacity is only "
+                   f"enforced when liquidity.portfolio_nav_eur is set there.")
+        if holdings_value:
+            # Portfolio budgets (sector / currency / correlated crash) bind the candidate too (roadmap P0/2)
+            from core.portfolio_policy import load_policy, max_candidate_weight
+            nav = sum(holdings_value.values()) + float(cash_eur or 0.0)
+            if nav > 0:
+                cur_w = {t: v / nav for t, v in holdings_value.items() if v}
+                cm = companies.drop_duplicates("ticker").set_index("ticker") if "ticker" in companies.columns else None
+                meta = {t: {k: cm.at[t, k] for k in ("sector", "currency", "beta") if k in cm.columns}
+                        for t in list(cur_w) + [ticker] if cm is not None and t in cm.index}
+                allowed, why = max_candidate_weight(cur_w, ticker, d.position["size_pct"] / 100, meta,
+                                                    load_policy(dec.load_rules()))
+                if why:
+                    st.warning(f"Portfolio policy limits this addition to **{allowed:.1%} of NAV** "
+                               f"(Decision size {d.position['size_pct']:.1f}%) — {why}.", icon="🧱")
         imp = candidate_impact(prices, holdings_value, ticker, d.position["size_pct"], companies) \
             if holdings_value else None
         if imp:
@@ -145,6 +180,9 @@ def _render_financial_valuation(meta, price, vin):
         return
     st.caption(f"{vin['model_note']} Rates: {vin['currency']} risk-free {vin['risk_free']:.1%} ({vin['rate_source']}), "
                f"cost of equity {vin['cost_of_equity']:.1%}, long-run growth {vin['terminal_growth']:.1%}.")
+    st.info("🧪 **Sensitivity sandbox** — changing these inputs recomputes the scenarios below ONLY. The Decision "
+            "Summary, scanner, alerts, watchlist and AI brief keep using the system defaults shown in the inputs' "
+            "starting values.", icon="🧪")
     c1, c2, c3 = st.columns(3)
     roe = c1.number_input("Sustainable ROE (%)", value=round((vin["roe"] or 0) * 100, 1), step=0.5,
                           key=f"pb_roe_{meta.get('ticker')}") / 100
@@ -196,8 +234,12 @@ def render_valuation_section(*, meta, price, vin, relval):
     st.caption(f"Free cash flow is after interest, so it is discounted at the cost of equity "
                f"(CAPM: {vin['currency']} risk-free {vin['risk_free']:.1%} [{vin['rate_source']}] + Blume-adjusted β×"
                f"{val.EQUITY_RISK_PREMIUM:.0%} ERP) and debt is not subtracted again. "
-               f"Base cash flow: {vin['fcf_source']}. Starting growth anchored on: "
+               f"Base cash flow: {vin['fcf_source']} (the Value score's FCF yield uses a different basis — provider TTM "
+               f"FCF minus the latest SBC; see docs/FINANCIAL_DATA_DICTIONARY.md). Starting growth anchored on: "
                f"{', '.join(vin['growth_sources'])}; it fades to the terminal rate over {val.EXPLICIT_YEARS} years.")
+    st.info("🧪 **Sensitivity sandbox** — changing these inputs recomputes the scenarios below ONLY. The Decision "
+            "Summary, scanner, alerts, watchlist and AI brief keep using the system defaults shown in the inputs' "
+            "starting values.", icon="🧪")
     c1, c2, c3 = st.columns(3)
     g = c1.number_input("Starting FCF growth (%)", value=round(vin["growth"] * 100, 1), step=1.0,
                         key=f"dcf_g_{meta.get('ticker')}") / 100

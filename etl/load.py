@@ -124,6 +124,13 @@ def ensure_company_info(conn: duckdb.DuckDBPyConnection):
         conn.execute(f"ALTER TABLE raw.company_info ADD COLUMN IF NOT EXISTS {col_ddl}")
 
 
+# Optional per-year evidence for the FCFE deductions: interest paid in financing / in operating (classification) /
+# supplemental (amount only), lease principal from the cash flow (Yahoo has none) and the balance-sheet lease liabilities
+# used to estimate it (core.valuation.fcfe_deduction_status).
+HIST_FCF_EXTRA_COLUMNS = ("interest_paid_cff", "interest_paid_cfo", "interest_paid_supplemental", "lease_principal_paid",
+                          "lease_liability_current", "lease_liability_total", "debt_issued", "debt_repaid")
+
+
 def ensure_hist_fcf(conn: duckdb.DuckDBPyConnection):
     """raw.hist_fcf (annual cash-flow statement, EUR). stock_based_comp: SBC add-back in operating cash flow, so
     valuation can use FCF after stock compensation. Older warehouses get the column added."""
@@ -141,6 +148,60 @@ def ensure_hist_fcf(conn: duckdb.DuckDBPyConnection):
             PRIMARY KEY (ticker, year)
         )""")
     conn.execute("ALTER TABLE raw.hist_fcf ADD COLUMN IF NOT EXISTS stock_based_comp DOUBLE")
+    for col in HIST_FCF_EXTRA_COLUMNS:                                  # financing deductions (F-03) + evidence (R5)
+        conn.execute(f"ALTER TABLE raw.hist_fcf ADD COLUMN IF NOT EXISTS {col} DOUBLE")
+
+
+def ensure_annual_roic_columns(conn: duckdb.DuckDBPyConnection):
+    """ROIC inputs on raw.historical_financials (audit F-04); older warehouses get the columns added."""
+    for col in ("ebit", "tax_rate", "cash", "total_debt"):
+        conn.execute(f"ALTER TABLE raw.historical_financials ADD COLUMN IF NOT EXISTS {col} DOUBLE")
+
+
+# ── Statement vintages (audit F-07) ──────────────────────────────────────────
+# Every distinct version of a reported period is kept, append-only, in its own file (the warehouse is rebuilt
+# from scratch on a full refresh). available_from = period end + a conservative publication lag, so a later
+# point-in-time study can ask "what was known on date X" and restatements no longer erase the original figures.
+VINTAGE_DB_PATH = os.environ.get("VINTAGE_DB_PATH") or str(Path(DB_PATH).parent / "statement_vintages.duckdb")
+PUBLICATION_LAG_DAYS = {"historical_financials": 90, "hist_fcf": 90}
+
+
+def archive_vintages(table: str, df: pd.DataFrame, period_col: str, db_path: str = None) -> int:
+    if df is None or df.empty or "ticker" not in df.columns:
+        return 0
+    if db_path is None and os.environ.get("PYTEST_CURRENT_TEST"):
+        return 0                                   # tests never write next to the real warehouse
+    try:
+        rows = df.copy()
+        if period_col == "year":
+            period = pd.to_datetime(rows["year"].astype(int).astype(str) + "-12-31")    # fiscal year label → proxy
+        else:
+            period = pd.to_datetime(rows[period_col])
+        keep = [c for c in rows.columns if not str(c).startswith("_")]
+        payload = rows[keep].to_json(orient="records", date_format="iso", lines=True).splitlines()
+        lag = pd.Timedelta(days=PUBLICATION_LAG_DAYS.get(table, 90))
+        # A version first received today was not knowable earlier, whatever its period end (audit A14): availability
+        # is the LATER of "period end + publication lag" and the day it was first seen.
+        received = pd.Timestamp.now().normalize()
+        v = pd.DataFrame({"table_name": table, "ticker": rows["ticker"].astype(str).to_numpy(),
+                          "period_end": period.dt.date.to_numpy(), "available_from": (period + lag).where(period + lag > received, received).dt.date.to_numpy(),
+                          "payload": payload})
+        with duckdb.connect(db_path or VINTAGE_DB_PATH) as vc:
+            vc.execute("""CREATE TABLE IF NOT EXISTS statement_vintages (
+                              table_name VARCHAR, ticker VARCHAR, period_end DATE, available_from DATE,
+                              payload VARCHAR, vintage_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+            vc.register("vint_tmp", v)
+            n_before = vc.execute("SELECT COUNT(*) FROM statement_vintages").fetchone()[0]
+            vc.execute("""INSERT INTO statement_vintages (table_name, ticker, period_end, available_from, payload)
+                          SELECT v.* FROM vint_tmp v WHERE NOT EXISTS (
+                              SELECT 1 FROM statement_vintages s WHERE s.table_name = v.table_name
+                              AND s.ticker = v.ticker AND s.period_end = v.period_end AND s.payload = v.payload)""")
+            n_new = vc.execute("SELECT COUNT(*) FROM statement_vintages").fetchone()[0] - n_before
+            vc.unregister("vint_tmp")
+        return int(n_new)
+    except Exception as e:                              # archiving must never break the ETL
+        logger.warning(f"   ⚠️ vintage archive for {table} skipped: {e}")
+        return 0
 
 
 def create_raw_schema(conn: duckdb.DuckDBPyConnection):
@@ -247,6 +308,7 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
         )
     """)
     ensure_hist_fcf(conn)
+    ensure_annual_roic_columns(conn)
     conn.execute("""
         CREATE TABLE IF NOT EXISTS raw.hist_fcf_quarterly (
             ticker              VARCHAR NOT NULL,
@@ -424,20 +486,38 @@ def load_insider_summary(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
     return _replace_by_ticker(conn, "raw.insider_summary", _INSIDER_SUM_COLUMNS, df)
 
 
+CASHFLOW_COLUMNS = ("ticker", "buyback_ttm", "dividends_paid_ttm", "repurchase_avg", "issuance_avg",
+                    "payout_years", "payout_status", "payout_note")
+
+
+def ensure_cashflows(conn: duckdb.DuckDBPyConnection) -> None:
+    """raw.cashflows with the payout evidence columns (E5); older warehouses get them added."""
+    conn.execute("CREATE SCHEMA IF NOT EXISTS raw")
+    conn.execute("""CREATE TABLE IF NOT EXISTS raw.cashflows (ticker VARCHAR PRIMARY KEY, buyback_ttm DOUBLE,
+                    dividends_paid_ttm DOUBLE, _loaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)""")
+    for col, typ in (("repurchase_avg", "DOUBLE"), ("issuance_avg", "DOUBLE"), ("payout_years", "INTEGER"),
+                     ("payout_status", "VARCHAR"), ("payout_note", "VARCHAR")):
+        conn.execute(f"ALTER TABLE raw.cashflows ADD COLUMN IF NOT EXISTS {col} {typ}")
+
+
 def load_cashflows(
     conn: duckdb.DuckDBPyConnection,
     df: pd.DataFrame
 ):
-    """Load cashflow (buyback + dividend) data. Full replace each run."""
+    """Load cashflow (buyback + dividend) data — upsert by ticker. E2: the whole table used to be deleted, so a
+    recovery run for a few tickers (or a partial provider answer) dropped every other ticker's payout."""
     if df.empty:
         logger.info("  ⚠️ No cashflow data to load — skipping")
         return 0
-    conn.execute("DELETE FROM raw.cashflows")
+    ensure_cashflows(conn)
+    df = df.copy()
+    for col in CASHFLOW_COLUMNS:
+        if col not in df.columns:
+            df[col] = None
     conn.register("df_tmp", df)
-    conn.execute("""
-        INSERT INTO raw.cashflows (ticker, buyback_ttm, dividends_paid_ttm, _loaded_at)
-        SELECT ticker, buyback_ttm, dividends_paid_ttm, CURRENT_TIMESTAMP FROM df_tmp
-    """)
+    conn.execute("DELETE FROM raw.cashflows WHERE ticker IN (SELECT DISTINCT ticker FROM df_tmp)")
+    cols = ", ".join(CASHFLOW_COLUMNS)
+    conn.execute(f"INSERT INTO raw.cashflows ({cols}, _loaded_at) SELECT {cols}, CURRENT_TIMESTAMP FROM df_tmp")
     conn.unregister("df_tmp")
     logger.info(f"✅ Loaded {len(df)} cashflow records → raw.cashflows")
     return len(df)
@@ -590,6 +670,13 @@ def load_historical_fcf(
         FROM df_tmp
     """)
     conn.unregister("df_tmp")
+    for col in HIST_FCF_EXTRA_COLUMNS:
+        if col in df.columns:
+            conn.register("df_adj", df[["ticker", "year", col]])
+            conn.execute(f"UPDATE raw.hist_fcf SET {col} = CAST(d.{col} AS DOUBLE) FROM df_adj d "
+                         f"WHERE raw.hist_fcf.ticker = d.ticker AND raw.hist_fcf.year = d.year")
+            conn.unregister("df_adj")
+    archive_vintages("hist_fcf", df, "year")
     logger.info(f"✅ Loaded {len(df)} FCF records → raw.hist_fcf ({df['ticker'].nunique()} tickers)")
     return len(df)
 
@@ -708,6 +795,7 @@ def load_company_info(
         return 0
 
     ensure_company_info(conn)
+    df = retain_last_known_good(conn, df)
 
     conn.execute("BEGIN TRANSACTION")
     try:
@@ -731,6 +819,45 @@ def load_company_info(
         raise e
 
 
+# Financial fields of raw.company_info whose last good value is kept when a refresh comes back without them (E7).
+RETAINED_FIELDS = ("market_cap", "revenue_ttm", "total_debt", "ebitda", "free_cashflow", "roe", "gross_margin",
+                   "operating_margin", "beta", "price_to_book", "trailing_eps", "forward_eps")
+
+
+def retain_last_known_good(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame) -> pd.DataFrame:
+    """E7: a refresh with market cap but without, say, financialData used to REPLACE a good row with NULLs. Now a
+    field missing from the new record keeps its previous value, and the record says so in `stale_fields`
+    ("revenue_ttm@2026-10-07; ...", the date of the value kept) — old numbers are never presented as fresh."""
+    conn.execute("ALTER TABLE raw.company_info ADD COLUMN IF NOT EXISTS stale_fields VARCHAR")
+    fields = [f for f in RETAINED_FIELDS if f in df.columns]
+    if df.empty or not fields:
+        return df.assign(stale_fields=None) if "stale_fields" not in df.columns else df
+    try:
+        old = conn.execute(f"""SELECT ticker, {', '.join(fields)}, _extracted_at FROM raw.company_info
+                               WHERE ticker = ANY(?)""", [df["ticker"].tolist()]).df().set_index("ticker")
+    except duckdb.Error:
+        return df.assign(stale_fields=None)
+    df = df.copy()
+    df["stale_fields"] = None
+    from etl import exceptions as _exc
+    for i, row in df.iterrows():
+        t = row["ticker"]
+        if t not in old.index:
+            continue
+        kept = []
+        for f in fields:
+            new_v, old_v = row.get(f), old.at[t, f]
+            if (new_v is None or pd.isna(new_v)) and old_v is not None and not pd.isna(old_v):
+                df.at[i, f] = old_v
+                when = pd.Timestamp(old.at[t, "_extracted_at"]).date() if pd.notna(old.at[t, "_extracted_at"]) else "?"
+                kept.append(f"{f}@{when}")
+        if kept:
+            df.at[i, "stale_fields"] = "; ".join(kept)
+            _exc.record(t, "company_info", "fields missing in this refresh — last known values kept (stale)",
+                        ", ".join(kept))
+    return df
+
+
 def _with_provenance(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     for col in ("src_currency", "fx_to_eur"):
@@ -748,12 +875,12 @@ def load_historical_financials(
         logger.info("  ⚠️ No historical financials to load")
         return 0
         
-    # Upsert: Delete existing dates for these tickers
-    tickers = df["ticker"].unique().tolist()
-    conn.execute("DELETE FROM raw.historical_financials WHERE ticker = ANY(?)", [tickers])
-    
+    # Upsert by (ticker, period end) — E2: deleting EVERY stored period of a ticker present in the response let a short
+    # response (one year instead of five) wipe good history. Periods not in this response are kept.
     df = _with_provenance(df)
     conn.register("df_tmp", df)
+    conn.execute("""DELETE FROM raw.historical_financials h USING df_tmp d
+                    WHERE h.ticker = d.ticker AND h.date = CAST(d.date AS DATE)""")
     
     # Bug Fix: Ensure columns are explicitly selected for stability
     conn.execute("""
@@ -772,6 +899,16 @@ def load_historical_financials(
         FROM df_tmp
     """)
     conn.unregister("df_tmp")
+    ensure_annual_roic_columns(conn)
+    extra = [c for c in ("ebit", "tax_rate", "cash", "total_debt") if c in df.columns]
+    if extra:
+        conn.register("df_roic", df[["ticker", "date"] + extra])
+        sets = ", ".join(f"{c} = CAST(d.{c} AS DOUBLE)" for c in extra)
+        conn.execute(f"UPDATE raw.historical_financials SET {sets} FROM df_roic d "
+                     f"WHERE raw.historical_financials.ticker = d.ticker "
+                     f"AND raw.historical_financials.date = CAST(d.date AS DATE)")
+        conn.unregister("df_roic")
+    archive_vintages("historical_financials", df, "date")
     logger.info(f"✅ Loaded {len(df)} financial records → raw.historical_financials")
     return len(df)
 

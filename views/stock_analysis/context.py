@@ -112,11 +112,14 @@ def build(ctx, deep_ticker):
     scores = {
         "quality": _num("Quality"), "value": _num("Value"), "momentum": _num("Momentum"), "revisions": _num("Revisions"),
         "coverage": _num("Coverage (%)"),
+        # liquidity for the Decision's BUY gate (unknown = blocked); the screener stores EUR millions
+        "adv_eur": (_num("ADV (EUR M)") * 1e6) if ("ADV (EUR M)" in m_df.columns and _num("ADV (EUR M)") is not None)
+        else None,
         "flags": str(_row.iloc[0]["Flags"]) if not _row.empty else "",
         "missing": list(_row.iloc[0]["Missing"]) if not _row.empty else [],
         "components": dict(_row.iloc[0]["Components"]) if not _row.empty else {},
     }
-    ai_score = scores["quality"] if scores["quality"] is not None else 50.0
+    ai_score = scores["quality"] if scores["quality"] is not None else 50.0   # Signal input only; tiles show "N/A"
     # Upgrade / downgrade counts (30d) shown under the Revisions tile
     _fe = ctx.get("forward_estimates_full")
     scores["rev_up"] = scores["rev_down"] = None
@@ -150,22 +153,30 @@ def build(ctx, deep_ticker):
     # The Decision's reward/risk feeds the Signal (same inputs as the Decision Summary; the track-record and
     # data-gap notes of that panel do not change it)
     # Same Decision as the panel and the scanner (core.decision.decide); the Signal below reads its stance.
-    from core.decision import decide, load_rules
+    from core.decision import BUY, decide, load_rules, with_conflict
     _d = decide(price=float(cur_p), vin=vin, stop_loss=tm["stop_loss"], meta=meta,
-                scores={**scores, "quality": ai_score},
+                scores=scores,                      # true quality (None = unknown → no BUY)
                 price_date=pd.to_datetime(df_deep["date"].iloc[-1]).date(), next_earnings=next_er,
                 track_record_ok=bool(ctx.get("track_record_ok", False)), rules=load_rules())
     usable = bool(vin["base"] and vin["reliable"])
 
     # Smart money on the full history (OBV is path-dependent)
     sm = get_sm_spirit_unified_v2(_df_levels, sector=str(meta.get("sector", "Unknown")))
-    rating = compute_institutional_rating(
-        ai_score=ai_score, ma_sig=ma_sig, latest_rsi=tm["rsi"], upside=float(upside),
-        pe_v=float(meta_enriched.get("forward_pe") or meta_enriched.get("pe_ratio") or 0),
-        peg_v=float(meta_enriched.get("peg_ratio") or 0), sector=str(meta.get("sector", "")),
-        w52_pos=tm["w52_pos"], rr=_d.reward_risk, sm_status=sm["signal"],
-        sm_strength=sm["strength"], sm_layer=sm["layer"], value_score=scores["value"],
-        decision_stance=_d.stance)
+    def _signal(stance):
+        return compute_institutional_rating(
+            ai_score=ai_score, ma_sig=ma_sig, latest_rsi=tm["rsi"], upside=float(upside),
+            pe_v=float(meta_enriched.get("forward_pe") or meta_enriched.get("pe_ratio") or 0),
+            peg_v=float(meta_enriched.get("peg_ratio") or 0), sector=str(meta.get("sector", "")),
+            w52_pos=tm["w52_pos"], rr=_d.reward_risk, sm_status=sm["signal"],
+            sm_strength=sm["strength"], sm_layer=sm["layer"], value_score=scores["value"],
+            decision_stance=stance)
+    rating = _signal(_d.stance)
+    signal_conflict = None
+    if rating["clamped"] and _d.stance == BUY:          # same conflict rule as the scanner (R3-E)
+        signal_conflict = (f"timing context is {rating['raw_label']} (trend / value / volume flow against "
+                           f"the valuation case)")
+        _d = with_conflict(_d, signal_conflict)
+        rating = _signal(_d.stance)
     act_str = rating["action_label"]
     from core.signal_matrix import ACTION_COLOURS, action_description
     act_color = ACTION_COLOURS.get(act_str, rating["action_color"])
@@ -177,4 +188,5 @@ def build(ctx, deep_ticker):
                     ai_score=ai_score, scores=scores, tm=tm, ma_sig=ma_sig, tp1=tp1, tp2=tp2, vin=vin, relval=relval,
                     next_earnings=next_er, sm=sm, rating=rating, act_str=act_str, act_color=act_color,
                     act_desc=act_desc, decision_rr=_d.reward_risk, thesis_stop=_d.stop,
-                    target_value=vin["base"] if usable else None)
+                    target_value=vin["base"] if usable else None,
+                    extra={"decision": _d, "signal_conflict": signal_conflict})

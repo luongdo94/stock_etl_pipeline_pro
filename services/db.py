@@ -348,7 +348,10 @@ def read_warehouse(conn):
         dq_warnings_f = pd.DataFrame()
 
     try:
-        hist_fcf_f = conn.execute("SELECT ticker, year, free_cash_flow, operating_cash_flow, stock_based_comp FROM raw.hist_fcf ORDER BY ticker, year").df()
+        hist_fcf_f = conn.execute("SELECT * FROM raw.hist_fcf ORDER BY ticker, year").df()
+        # every column valuation needs (FCF, SBC, interest paid in financing, lease principal — audit A01/F-03);
+        # SELECT * keeps older warehouses working: missing columns are simply absent and valuation skips them
+        hist_fcf_f = hist_fcf_f.drop(columns=[c for c in hist_fcf_f.columns if c.startswith("_")], errors="ignore")
     except duckdb.Error:
         try:
             hist_fcf_f = conn.execute("SELECT ticker, year, free_cash_flow, operating_cash_flow FROM raw.hist_fcf ORDER BY ticker, year").df()
@@ -436,15 +439,55 @@ def load_track_record():
         return pd.DataFrame(columns=["as_of_date", "ticker", "price_close", "quality", "action"])
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def load_etl_exceptions() -> pd.DataFrame:
+    """Per-ticker exception ledger of the last ETL run (etl/exceptions.py) and the security lifecycle status."""
+    try:
+        with get_db_connection(read_only=True) as conn:
+            return conn.execute("SELECT ticker, stage, reason, detail, detected_at FROM marts.etl_exceptions "
+                                "ORDER BY stage, ticker").df()
+    except Exception:
+        return pd.DataFrame(columns=["ticker", "stage", "reason", "detail", "detected_at"])
+
+
+def load_price_history() -> pd.DataFrame:
+    """Append-only close history kept by the snapshot job in track_record.duckdb and mirrored as marts.track_prices.
+    It survives full warehouse rebuilds, so long-horizon outcomes can accumulate (audit A07)."""
+    try:
+        with get_db_connection(read_only=True) as conn:
+            return conn.execute("SELECT date, ticker, price_close FROM marts.track_prices ORDER BY date").df()
+    except Exception:
+        return pd.DataFrame(columns=["date", "ticker", "price_close"])
+
+
+def evidence_prices(fallback=None) -> pd.DataFrame:
+    """THE outcome dataset for evidence (R2-05): the long return index if it exists, else the dashboard prices."""
+    hist = load_price_history()
+    if not hist.empty or fallback is None:
+        return hist
+    return fallback[["date", "ticker", "price_close"]]
+
+
 @st.cache_data(ttl=3600, show_spinner=False)
-def track_record_ok(_prices, rows_key=None) -> bool:
-    """Is the Quality score statistically validated yet? One answer for every tab (it changes Decision confidence).
-    `rows_key` only feeds the cache key (a DataFrame prefixed with _ is not hashed)."""
+def _evidence_cached(_snapshots, _prices, data_key: str) -> dict:
     from core.track_record import evidence_status
     try:
-        return bool(evidence_status(load_track_record(), _prices[["date", "ticker", "price_close"]])["ok"])
-    except Exception:
-        return False
+        return evidence_status(_snapshots, _prices)
+    except Exception as e:
+        return {"ok": False, "label": f"Evidence not computable: {e}", "ic": None, "t_stat": None, "n_days": 0}
+
+
+def evidence(fallback_prices=None) -> dict:
+    """One evidence answer for Scanner, Stock Analysis and the snapshot job: same snapshots, same outcome series,
+    cache keyed on their content (A04)."""
+    from services.screener import frame_fingerprint
+    snaps, px = load_track_record(), evidence_prices(fallback_prices)
+    return _evidence_cached(snaps, px, frame_fingerprint(snaps, px))
+
+
+def track_record_ok(_prices, rows_key=None) -> bool:
+    """Is the Quality score statistically validated yet? Same answer as every other tab (see evidence())."""
+    return bool(evidence(_prices).get("ok"))
 
 
 def insider_tickers():

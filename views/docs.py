@@ -42,8 +42,10 @@ def render(ctx):
           scores, never inside them. Ratings and price targets are **not used** (consensus skews to "buy", targets lag price).
         - Unknown inputs are excluded and the rest re-weighted, never scored as 0; with little data a score is
           pulled toward 50. Margins/ROE are compared with peers, not with a universal yardstick.
-        - Known limits: return on capital is net income / (equity + debt) from annual statements (no NOPAT or cash);
-          net debt comes from Yahoo's EV; stock comp is deducted only where the cash-flow statement reports it;
+        - Known limits: return on capital is EBIT × (1 − tax) / average (equity + debt − cash) from annual statements
+          (a 21% tax rate when none is reported; net income / capital only as a fallback) — no R&D capitalisation, goodwill
+          or lease adjustment; net debt comes from Yahoo's EV (can include minorities / preferred); the Value score's FCF
+          yield deducts stock comp only where reported (the DCF refuses to act when it is not reported every year);
           non-USD risk-free rates are configured approximations (`config/decision_rules.yaml`), the equity risk premium
           is one global 5%; weights are judgement until the **Track Record** tab shows each score's information coefficient.
         """)
@@ -55,13 +57,16 @@ def render(ctx):
           has look-ahead bias — it is flagged and never ranked.
         - **Survivorship bias**: the universe is today's ticker list plus currently discovered names;
           companies that dropped out are not in the history.
-        - The only bias-free evidence is the **Track Record** tab, which stores each day's scores and
-          decisions *as they were shown* and scores them later against SPY.
+        - The least biased evidence is the **Track Record** tab, which stores each day's scores and
+          decisions *as they were shown* (no look-ahead in the signal) and scores them later against SPY. It is **not**
+          survivorship-free: delisted, merged or suspended stocks have no recorded exit value, so their missing forward
+          returns drop out of the IC instead of counting as losses; and SPY-relative ranks are not factor-adjusted alpha.
         """)
 
         st.markdown("### 🧪 3. Backtests")
         st.info("""
-        - Signals execute at the close of the signal day; stops are checked on closes (gaps are not modelled).
+        - A signal computed on a day's close is filled at the NEXT close; stops are checked on closes and also filled
+          at the next close (overnight gaps are paid; intraday triggers, spreads and market impact are not modelled).
         - Fixed % transaction cost per trade; no dividends; no slippage model.
         - Uses the full price history loaded in the dashboard (~3 years). The best rule is picked
           in-sample — a hypothesis to re-test on newer data, not an expected return.
@@ -75,17 +80,29 @@ def render(ctx):
           (live US 10Y for USD; configured levels for EUR, JPY, GBP, CHF…) + Blume-adjusted β × {val.EQUITY_RISK_PREMIUM:.0%} ERP,
           growth anchored on the 3-year revenue CAGR and fading to that currency's long-run growth (USD 2.5%, EUR 2.0%, JPY 1.0%…).
           **Banks and insurers** use a justified price-to-book model, (ROE − g) / (r − g) × book value, with ROE normalised over 4 years.
-        - **BUY CANDIDATE**: base-case value ≥ {val.REQUIRED_MARGIN_OF_SAFETY:.0%} above price, reward/risk ≥
-          {rules['risk']['min_reward_risk']:.0f} after costs, confidence not low.
-        - **AVOID / TRIM**: price above even the bull-case value. Otherwise **HOLD / WATCH**.
+        - **BUY CANDIDATE**: base-case value ≥ {val.REQUIRED_MARGIN_OF_SAFETY:.0%} above price (value/price − 1, so the
+          price is ≥ {1 - 1 / (1 + val.REQUIRED_MARGIN_OF_SAFETY):.0%} below value), reward/risk ≥
+          {rules['risk']['min_reward_risk']:.0f} after costs, confidence not low, fresh dated data, liquidity known and
+          ≥ EUR {(rules.get('liquidity') or {}).get('min_adv_eur_for_buy', 0) / 1e6:,.0f}M a day, no veto red flag
+          (critical leverage, negative equity, debt without EBITDA, illiquid), no open conflict (collapsing momentum,
+          earnings within {rules['risk']['earnings_blackout_days']} days, an unfavourable timing context) — **and** validated
+          Track Record evidence. Without that evidence the same stock is a **RESEARCH CANDIDATE** with no size.
+        - **AVOID / TRIM**: price above even the bull-case value, on fresh data. Otherwise **HOLD / WATCH**.
         - The model is reported as *not informative* — and cannot produce BUY/AVOID — when the price implies growth
-          (or ROE) beyond its range, the value looks implausible, or ROE is not above long-run growth.
+          (or ROE) beyond its range, the value looks implausible, ROE is not above long-run growth, fewer than 3
+          consecutive annual cash-flow statements exist, or stock comp, interest paid in financing or lease principal is
+          unknown in any of those years (reported 0 counts; "not applicable" only with an issuer source recorded in
+          `decision_rules.yaml`), or — for banks and insurers — no
+          capital-adequacy / asset-quality inputs exist (always the case today).
         - **Quality floor / Value cross-check**: a BUY CANDIDATE needs Quality ≥ {rules.get('scores', {}).get('min_quality_for_buy', 45):.0f}
           (cheap and weak is the classic value trap). If the DCF says cheap but the Value score (multiples vs peers)
           is below {rules.get('scores', {}).get('value_crosscheck_below', 30):.0f}, confidence is reduced. Red flags and thin data also lower confidence.
         - **Sizing**: risk {rules['risk']['account_risk_pct']:.0f}% of the portfolio to the thesis stop
           (wider of technical support and bear-case value, at least {rules['risk'].get('min_stop_pct', 8):.0f}%),
-          max {rules['risk']['max_position_pct']:.0f}% per position. All assumptions: `config/decision_rules.yaml`.
+          max {rules['risk']['max_position_pct']:.0f}% per position (the same absolute cap binds every portfolio
+          optimiser — too few holdings leave cash — and a rebalance may only add to a BUY CANDIDATE), and
+          the exit-capacity cap when a NAV is configured. A stop is a trigger, not a guaranteed price; no portfolio-wide
+          stress-loss budget is enforced. All assumptions: `config/decision_rules.yaml`.
         - **Signal** (STRONG SETUP … UNFAVOURABLE: trend, quality, value, the Decision's reward/risk and volume flow),
           **Momentum**, **Revisions**, **Smart Money**, LLM narratives and ML forecasts are *context*; only the
           Decision is a recommendation. The 52-week position is shown but not scored.

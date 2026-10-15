@@ -250,7 +250,9 @@ def compute_institutional_rating(
         action_label = L["neutral"]
     # Consistency guard (the Decision is the recommendation; the Signal is context and must not contradict it):
     # a stock the Decision says to AVOID cannot read as a favourable set-up, and a BUY CANDIDATE cannot read as unfavourable.
-    clamped = False
+    # `clamped` must be acted on by the caller: a clamped BUY goes through core.decision.with_conflict and the rating is
+    # recomputed on the resulting HOLD, so the conflict is shown instead of hidden (R3-E).
+    clamped, raw_label = False, action_label
     if decision_stance == DECISION_AVOID and action_label in (L["strong"], L["favourable"]):
         action_label, clamped = L["neutral"], True
     elif decision_stance == DECISION_BUY and action_label == L["unfavourable"]:
@@ -276,4 +278,5 @@ def compute_institutional_rating(
         "pts":           pts,
         "overvalued":    overvalued,
         "clamped":       clamped,
+        "raw_label":     raw_label,
     }

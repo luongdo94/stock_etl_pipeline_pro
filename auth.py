@@ -5,6 +5,7 @@ Uses `extra_streamlit_components.CookieManager` for reliable browser cookie acce
 TTL: 7 days.
 """
 import streamlit as st
+from streamlit.errors import StreamlitSecretNotFoundError
 from supabase import create_client
 import base64
 import hashlib
@@ -18,12 +19,20 @@ _COOKIE_NAME = "hqi_session"
 _COOKIE_TTL_DAYS = 7
 
 
+def _secret(name):
+    """An unconfigured secrets store must not crash authentication or enable local access."""
+    try:
+        return st.secrets.get(name)
+    except StreamlitSecretNotFoundError:
+        return None
+
+
 @st.cache_resource
 def get_supabase_client():
     """Shared data client (service role). Never call .auth.* on it: a sign-in would
     swap its Authorization header to that user's JWT for every session in the process."""
-    url = st.secrets.get("SUPABASE_URL")
-    key = st.secrets.get("SUPABASE_SERVICE_ROLE_KEY") or st.secrets.get("SUPABASE_SERVICE_KEY") or st.secrets.get("SUPABASE_KEY")
+    url = _secret("SUPABASE_URL")
+    key = _secret("SUPABASE_SERVICE_ROLE_KEY") or _secret("SUPABASE_SERVICE_KEY") or _secret("SUPABASE_KEY")
     if not url or not key:
         return None
     return create_client(url, key)
@@ -31,9 +40,9 @@ def get_supabase_client():
 
 def _new_auth_client():
     """Fresh, uncached client for sign-in / sign-up / reset so auth state stays per-request."""
-    url = st.secrets.get("SUPABASE_URL")
-    key = st.secrets.get("SUPABASE_ANON_KEY") or st.secrets.get("SUPABASE_KEY") \
-        or st.secrets.get("SUPABASE_SERVICE_ROLE_KEY") or st.secrets.get("SUPABASE_SERVICE_KEY")
+    url = _secret("SUPABASE_URL")
+    # Fail closed (audit F-21): sign-in / sign-up must never run with the service-role key, which bypasses RLS
+    key = _secret("SUPABASE_ANON_KEY") or _secret("SUPABASE_KEY")
     if not url or not key:
         return None
     return create_client(url, key)
@@ -44,7 +53,7 @@ def _new_auth_client():
 # overwrite another user's watchlist/portfolio (queries run with the service-role key).
 # It is now HMAC-SHA256 signed with COOKIE_SECRET and carries its own expiry.
 def _cookie_secret() -> Optional[bytes]:
-    secret = st.secrets.get("COOKIE_SECRET")
+    secret = _secret("COOKIE_SECRET")
     return secret.encode() if secret else None
 
 
@@ -90,7 +99,9 @@ def _login_form(cm):
     """Render the Login / Signup UI. Writes cookie on success."""
     supabase = _new_auth_client()
     if not supabase:
-        st.error("⚠️ System Error: SUPABASE_URL and SUPABASE_KEY missing in .streamlit/secrets.toml")
+        st.error("Authentication is not configured. Add SUPABASE_URL and SUPABASE_ANON_KEY "
+                 "(or SUPABASE_KEY) to .streamlit/secrets.toml. For local development without "
+                 "Supabase login, run .\\start_dashboard.ps1 from the project directory.")
         st.stop()
 
     st.markdown("""

@@ -148,6 +148,7 @@ def _create_staging(conn, active_tickers=None):
             EXTRACT(YEAR FROM date) AS year,
             revenue,
             eps,
+            fx_to_eur,
             _loaded_at
         FROM raw.historical_financials
         WHERE ticker IS NOT NULL
@@ -160,8 +161,10 @@ def _create_staging(conn, active_tickers=None):
         CREATE OR REPLACE VIEW staging.stg_cashflows AS
         SELECT
             ticker,
-            COALESCE(buyback_ttm, 0)          AS buyback_ttm,
-            COALESCE(dividends_paid_ttm, 0)   AS dividends_paid_ttm
+            -- E5: unknown stays NULL (it used to become 0, so a missing issuance or dividend line read as a
+            -- confirmed zero and the net payout yield looked complete). Normalised annual means, not TTM.
+            buyback_ttm,
+            dividends_paid_ttm
         FROM raw.cashflows
         WHERE ticker IS NOT NULL
           {active_filter}
@@ -209,11 +212,11 @@ def _create_intermediate(conn):
                 ROUND(high - low, 4) AS intraday_range,
                 ROUND((high - low) / NULLIF(close, 0) * 100, 4) AS intraday_range_pct,
                 -- Moving averages
-                ROUND(AVG(close) OVER (w ROWS BETWEEN 6  PRECEDING AND CURRENT ROW), 4) AS ma_7,
-                ROUND(AVG(close) OVER (w ROWS BETWEEN 19 PRECEDING AND CURRENT ROW), 4) AS ma_20,
-                ROUND(AVG(close) OVER (w ROWS BETWEEN 49 PRECEDING AND CURRENT ROW), 4) AS ma_50,
+                CASE WHEN COUNT(close) OVER (w ROWS BETWEEN 6 PRECEDING AND CURRENT ROW) = 7 THEN ROUND(AVG(close) OVER (w ROWS BETWEEN 6 PRECEDING AND CURRENT ROW), 4) END AS ma_7,  -- full window only (A10)
+                CASE WHEN COUNT(close) OVER (w ROWS BETWEEN 19 PRECEDING AND CURRENT ROW) = 20 THEN ROUND(AVG(close) OVER (w ROWS BETWEEN 19 PRECEDING AND CURRENT ROW), 4) END AS ma_20,  -- full window only (A10)
+                CASE WHEN COUNT(close) OVER (w ROWS BETWEEN 49 PRECEDING AND CURRENT ROW) = 50 THEN ROUND(AVG(close) OVER (w ROWS BETWEEN 49 PRECEDING AND CURRENT ROW), 4) END AS ma_50,  -- full window only (A10)
                 -- 🏆 EXPERT: 200-day Moving Average (Traditional gold standard)
-                ROUND(AVG(close) OVER (w ROWS BETWEEN 199 PRECEDING AND CURRENT ROW), 4) AS ma_200,
+                CASE WHEN COUNT(close) OVER (w ROWS BETWEEN 199 PRECEDING AND CURRENT ROW) = 200 THEN ROUND(AVG(close) OVER (w ROWS BETWEEN 199 PRECEDING AND CURRENT ROW), 4) END AS ma_200,  -- full window only (A10)
             FROM staging.stg_stock_prices
             WINDOW
                 w AS (PARTITION BY ticker ORDER BY date)
@@ -266,6 +269,75 @@ def _create_intermediate(conn):
     logger.info("✅ Intermediate tables created")
 
 
+
+def build_financial_dims(conn) -> None:
+    """marts.dim_quarterly_financials / marts.dim_annual_financials with period-aware, source-currency growth."""
+    # E3 / E8: growth compares the RIGHT period, in the SOURCE currency. Row position (LAG(1) / LAG(4)) silently
+    # compared Q2/2024 with Q1/2023 whenever a quarter was missing; EUR amounts converted at different extraction-time
+    # rates turned a flat business into +11% "growth". Now: QoQ only when the previous period ended 75-105 days
+    # earlier; YoY / annual growth against the period that ended 350-380 days earlier (closest match); amounts are
+    # divided back by the stored fx_to_eur; a currency switch between the two periods → NULL. Stored amounts stay EUR.
+    # `quarter` is the CALENDAR quarter of the period end (Yahoo gives no fiscal-period identity).
+    _growth = lambda cur, base: f"ROUND(({cur} - {base}) / NULLIF(ABS({base}), 0) * 100, 2)"   # noqa: E731
+    conn.execute(f"""
+        CREATE OR REPLACE TABLE marts.dim_quarterly_financials AS
+        WITH q AS (
+            SELECT ticker, date, revenue, net_income, total_equity, eps, eps_diluted, src_currency,
+                   revenue / COALESCE(NULLIF(fx_to_eur, 0), 1) AS rev_l, eps / COALESCE(NULLIF(fx_to_eur, 0), 1) AS eps_l
+            FROM raw.quarterly_financials
+            -- DEDUPLICATION: Take the most recent extraction for each ticker/date
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker, date ORDER BY _loaded_at DESC) = 1
+        ), p AS (
+            SELECT *, LAG(date) OVER w AS p_date, LAG(rev_l) OVER w AS p_rev, LAG(eps_l) OVER w AS p_eps,
+                   LAG(src_currency) OVER w AS p_ccy
+            FROM q WINDOW w AS (PARTITION BY ticker ORDER BY date)
+        )
+        SELECT
+            p.ticker,
+            EXTRACT(YEAR FROM p.date) AS year,
+            EXTRACT(QUARTER FROM p.date) AS quarter,
+            p.date AS report_date,
+            p.revenue, p.net_income, p.total_equity, p.eps, p.eps_diluted,
+            CASE WHEN date_diff('day', p.p_date, p.date) BETWEEN 75 AND 105 AND p.p_ccy IS NOT DISTINCT FROM p.src_currency
+                 THEN {_growth('p.rev_l', 'p.p_rev')} END AS revenue_growth_qoq_pct,
+            CASE WHEN date_diff('day', p.p_date, p.date) BETWEEN 75 AND 105 AND p.p_ccy IS NOT DISTINCT FROM p.src_currency
+                 THEN {_growth('p.eps_l', 'p.p_eps')} END AS eps_growth_qoq_pct,
+            CASE WHEN y.src_currency IS NOT DISTINCT FROM p.src_currency THEN {_growth('p.rev_l', 'y.rev_l')} END
+                AS revenue_growth_yoy_pct,
+            CASE WHEN y.src_currency IS NOT DISTINCT FROM p.src_currency THEN {_growth('p.eps_l', 'y.eps_l')} END
+                AS eps_growth_yoy_pct
+        FROM p
+        LEFT JOIN q y ON y.ticker = p.ticker AND date_diff('day', y.date, p.date) BETWEEN 350 AND 380
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY p.ticker, p.date
+                                   ORDER BY ABS(COALESCE(date_diff('day', y.date, p.date), 365) - 365)) = 1
+        ORDER BY p.ticker, p.date
+    """)
+    conn.execute(f"""
+        CREATE OR REPLACE TABLE marts.dim_annual_financials AS
+        WITH a AS (
+            SELECT *, revenue / COALESCE(NULLIF(fx_to_eur, 0), 1) AS rev_l, eps / COALESCE(NULLIF(fx_to_eur, 0), 1) AS eps_l
+            FROM raw.historical_financials
+            -- DEDUPLICATION: Take the most recent extraction for each ticker/date
+            QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker, date ORDER BY _loaded_at DESC) = 1
+        )
+        SELECT
+            a.ticker,
+            EXTRACT(YEAR FROM a.date) AS year,
+            a.date AS report_date,
+            a.revenue, a.net_income, a.total_equity, a.eps, a.eps_diluted,
+            a.ebit, a.tax_rate, a.cash, a.total_debt,          -- ROIC inputs (audit F-04)
+            CASE WHEN y.src_currency IS NOT DISTINCT FROM a.src_currency THEN {_growth('a.rev_l', 'y.rev_l')} END
+                AS revenue_growth_pct,
+            CASE WHEN y.src_currency IS NOT DISTINCT FROM a.src_currency THEN {_growth('a.eps_l', 'y.eps_l')} END
+                AS eps_growth_pct
+        FROM a
+        LEFT JOIN a y ON y.ticker = a.ticker AND date_diff('day', y.date, a.date) BETWEEN 350 AND 380
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY a.ticker, a.date
+                                   ORDER BY ABS(COALESCE(date_diff('day', y.date, a.date), 365) - 365)) = 1
+        ORDER BY a.ticker, year
+    """)
+
+
 def _create_marts(conn):
     """
     MARTS: Final business-facing tables for BI/ML.
@@ -299,43 +371,7 @@ def _create_marts(conn):
     """)
 
     # ── STEP 0: Financials dimensions FIRST (dependency for FMI in dim_companies) ──
-    conn.execute("""
-        CREATE OR REPLACE TABLE marts.dim_quarterly_financials AS
-        SELECT
-            ticker,
-            EXTRACT(YEAR FROM date) AS year,
-            EXTRACT(QUARTER FROM date) AS quarter,
-            date AS report_date,
-            revenue,
-            net_income,
-            total_equity,
-            eps,
-            eps_diluted,
-            -- Calculate Growth
-            ROUND((revenue - LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS revenue_growth_qoq_pct,
-            ROUND((eps - LAG(eps) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(eps) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS eps_growth_qoq_pct,
-            
-            ROUND((revenue - LAG(revenue, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(revenue, 4) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS revenue_growth_yoy_pct,
-            ROUND((eps - LAG(eps, 4) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(eps, 4) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS eps_growth_yoy_pct
-        FROM raw.quarterly_financials
-        -- DEDUPLICATION: Take the most recent extraction for each ticker/date
-        QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker, date ORDER BY _loaded_at DESC) = 1
-        ORDER BY ticker, date
-    """)
-    conn.execute("""
-        CREATE OR REPLACE TABLE marts.dim_annual_financials AS
-        SELECT
-            ticker,
-            EXTRACT(YEAR FROM date) AS year,
-            date AS report_date,
-            revenue, net_income, total_equity, eps, eps_diluted,
-            ROUND((revenue - LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(revenue) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS revenue_growth_pct,
-            ROUND((eps - LAG(eps) OVER (PARTITION BY ticker ORDER BY date)) / NULLIF(ABS(LAG(eps) OVER (PARTITION BY ticker ORDER BY date)), 0) * 100, 2) AS eps_growth_pct
-        FROM raw.historical_financials
-        -- DEDUPLICATION: Take the most recent extraction for each ticker/date
-        QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker, date ORDER BY _loaded_at DESC) = 1
-        ORDER BY ticker, year
-    """)
+    build_financial_dims(conn)
     logger.info("Step 0: Financial dimension tables created (quarterly + annual).")
 
     # FACT TABLE: Daily returns
@@ -383,7 +419,7 @@ def _create_marts(conn):
                 -- Use latest known equity for ROE denominator
                 ARG_MAX(q.total_equity, q.date) AS latest_equity,
                 -- Get FCF from quarterly history table
-                SUM(fcf.free_cash_flow) AS ttm_fcf
+                CASE WHEN COUNT(fcf.free_cash_flow) = 4 THEN SUM(fcf.free_cash_flow) END AS ttm_fcf
             FROM (
                 SELECT *, ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) as rn 
                 FROM raw.quarterly_financials
@@ -394,6 +430,8 @@ def _create_marts(conn):
                 AND EXTRACT(QUARTER FROM q.date) = fcf.quarter
             WHERE q.rn <= 4 -- TTM = Last 4 quarters
             GROUP BY q.ticker
+            -- a TTM needs four CONSECUTIVE quarters (audit F-19): fewer, or a gap, is not twelve months
+            HAVING COUNT(*) = 4 AND DATEDIFF('day', MIN(q.date), MAX(q.date)) BETWEEN 240 AND 300
         ),
         peg_fallback AS (
             -- ✅ PEG Fallback: PE / avg EPS YoY growth (last 4 quarters of data)
@@ -475,9 +513,8 @@ def _create_marts(conn):
             END AS insider_signal,
             c.free_cashflow,
             -- ✅ FCF Margin Fallback: 1. Yahoo direct, 2. TTM from quarterly statements
-            -- NOTE: fallback #3 (hist_fcf / ann.revenue) was REMOVED — hist_fcf stores
-            -- raw local currency (e.g. JPY) but ann.revenue is FX-converted by ETL,
-            -- producing absurd margins (~1054%) for non-USD tickers like Daikin.
+            -- NOTE: fallback #3 (annual hist_fcf / annual revenue) is not used: it would mix a fiscal-year FCF with
+            -- a TTM revenue. (Both are stored in EUR — an older comment here said hist_fcf was local currency.)
             ROUND(
                 COALESCE(
                     (c.free_cashflow / NULLIF(c.revenue_ttm, 0)) * 100,
@@ -499,7 +536,8 @@ def _create_marts(conn):
                 ROUND(c.dividend_yield * 100, 4)
             ) AS net_payout_yield_pct,
             c.ex_dividend_date,
-            c.pay_date
+            c.pay_date,
+            ann.report_date AS latest_statement_date      -- freshness gate of the Decision (audit A05)
         FROM staging.stg_company_info c
         LEFT JOIN fallback_metrics fb USING (ticker)
         LEFT JOIN peg_fallback pgf USING (ticker)
@@ -525,7 +563,11 @@ def _create_marts(conn):
                 STDDEV(close) AS std_dev_5y_price,
                 MAX(close) AS high_5y_price,
                 MIN(close) AS low_5y_price
-            FROM intermediate.int_stock_metrics
+            FROM (
+                -- E8: the LAST 1260 sessions (5y), not the whole stored history (which grows past 5 years)
+                SELECT ticker, close FROM intermediate.int_stock_metrics
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) <= 1260
+            )
             GROUP BY 1
         ) b USING (ticker)
         LEFT JOIN (
@@ -540,27 +582,34 @@ def _create_marts(conn):
             FROM (
                 SELECT
                     p.ticker,
-                    LEAST(GREATEST(p.close / a.eps, 1), 200) AS annual_pe
+                    -- local currency on BOTH sides (audit F-12): prices were converted at each day's FX rate,
+                    -- statement EPS at today's rate. (Prices are still dividend-adjusted: older P/Es read low.)
+                    LEAST(GREATEST(p.close / (a.eps / COALESCE(NULLIF(a.fx_to_eur, 0), 1)), 1), 200) AS annual_pe
                 FROM (
-                    SELECT ticker, EXTRACT(YEAR FROM date) AS year, AVG(close) AS close
+                    SELECT ticker, EXTRACT(YEAR FROM date) AS year,
+                           -- close / fx_rate = MAJOR unit (GBP, not pence): EPS is reported in the major unit (A15)
+                           AVG(close / COALESCE(NULLIF(fx_rate, 0), 1)) AS close
                     FROM staging.stg_stock_prices
                     WHERE EXTRACT(YEAR FROM date) >= EXTRACT(YEAR FROM CURRENT_DATE) - 5
                     GROUP BY 1, 2
                 ) p
                 INNER JOIN staging.stg_historical_financials a
                     ON p.ticker = a.ticker AND p.year = a.year
-                WHERE a.eps > 0.5  -- exclude loss years and near-zero EPS
+                WHERE a.eps > 0 AND p.close / (a.eps / COALESCE(NULLIF(a.fx_to_eur, 0), 1)) < 1000  -- no loss / near-zero EPS
             )
             GROUP BY 1
         ) hpe USING (ticker)
         LEFT JOIN (
             SELECT
                 ticker,
-                ROUND(STDDEV(daily_return_pct) OVER (
-                    PARTITION BY ticker
-                    ORDER BY date
-                    ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
-                ) * SQRT(252), 4) AS volatility_30d
+                -- E8: a "30d" volatility needs 30 observed returns; fewer → NULL instead of a mislabelled figure
+                CASE WHEN COUNT(daily_return_pct) OVER (PARTITION BY ticker ORDER BY date
+                                                       ROWS BETWEEN 29 PRECEDING AND CURRENT ROW) = 30
+                     THEN ROUND(STDDEV(daily_return_pct) OVER (
+                              PARTITION BY ticker
+                              ORDER BY date
+                              ROWS BETWEEN 29 PRECEDING AND CURRENT ROW
+                          ) * SQRT(252), 4) END AS volatility_30d
             FROM intermediate.int_stock_metrics
             QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) = 1
         ) vol USING (ticker)

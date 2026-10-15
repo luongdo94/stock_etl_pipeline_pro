@@ -2,7 +2,7 @@
 
 **A professional-grade, institutional-level stock analytics, diagnostic, and backtesting engine.**
 
-Honest Quant is not just a stock screener. It is a comprehensive **Hybrid Intelligence Platform** that merges traditional quantitative finance algorithms with modern Deep Learning (AI) forecasting. Designed for advanced traders and portfolio managers, the platform transforms raw market data into institutional-grade, actionable execution plans.
+Honest Quant is a research and screening tool: Quality / Value / Momentum scores, an FCFE DCF (justified P/B for financials) and one rule-based Decision per stock. It does not forecast prices with deep learning (those models were tested, failed a walk-forward test and were removed). An independent audit of the methodology and the fixes applied is in `audit/`. Designed for advanced traders and portfolio managers, the platform transforms raw market data into institutional-grade, actionable execution plans.
 
 ---
 
@@ -75,20 +75,13 @@ independent 0-100 scores**. They answer different questions and are never mixed:
 - **Decision and Signal never contradict each other.** Every tab builds the Decision with the same function (`core.decision.decide`) and the same inputs (including the track-record state, which changes confidence). The Signal reads the Decision's stance: when the Decision says AVOID / TRIM the reward/risk pillar shows *OVERVALUED vs DCF* and costs a point, and the label cannot be favourable; a BUY CANDIDATE is never shown as UNFAVOURABLE. When the Value score (peer multiples) and the DCF disagree sharply, the Decision says so and lowers its confidence.
 - **Valuation model by business type:** FCFE DCF for operating companies and for asset-light fee businesses (exchanges, index and data providers) with positive free cash flow; justified P/B for banks, insurers, brokers and asset managers, where book value drives value.
 - **Valuation (Decision)**: cash flows are discounted at the risk-free rate and long-run growth of *their* currency (live US 10Y for USD; configured for EUR/JPY/GBP/CHF…, `config/decision_rules.yaml`); banks and insurers use a justified price-to-book model ((ROE − g)/(r − g), ROE normalised over 4 years and faded toward the cost of equity); free cash flow is taken after stock-based compensation.
-- **In the Decision**: a BUY candidate needs Quality ≥ 50 (cheap and weak is a value trap); a DCF "cheap" contradicted by Value < 30 lowers confidence.
-- **Validation**: each daily snapshot stores all three scores stamped with `score_version`; the Track Record tab reports the information coefficient of each. Until it shows t > 2 the weights are judgement, not evidence.
+- **In the Decision**: a BUY candidate needs a KNOWN Quality ≥ 50 (cheap and weak is a value trap; unknown quality never passes), ≥ 60% scoring coverage and a market cap ≥ €10bn (`min_market_cap_eur_for_buy`); a DCF "cheap" contradicted by Value < 30 lowers confidence.
+- **Validation**: each daily snapshot stores all three scores stamped with `score_version`; the Track Record tab reports the information coefficient of each. Validation uses 12-month forward returns, Newey-West t-statistics and at least 6 non-overlapping periods; until then the weights are judgement, not evidence.
 
-### 🚀 Fundamental Momentum Index (FMI) (0-100)
-A CANSLIM-style growth accelerator index. Because free APIs often suffer from delayed/sparse data, FMI utilizes a hyper-dynamic *Live-Computed Engine*:
-- **Earnings & Revenue Acceleration**: Compares the latest available quarter against the baseline of the most recent FULL year's growth. 
-- **QoQ Fallback Engine**: If Year-over-Year (YoY) data is missing due to API limits, it automatically falls back to extrapolating Quarter-over-Quarter (QoQ) metrics.
-- **Margin Expansion**: Mathematically checks if $EPS\_Growth > Revenue\_Growth$, indicating rising operating leverage.
-- Outputs actionable labels: `Accelerating`, `Slowing`, `Turning Around`, `Bottoming`.
-
-### 📉 Z-Score Mean Reversion & Deep Value
+### 📉 Price Z-Score (positioning, not valuation)
 - Warehouse / screener Z-Score (`price_z_score`): $Z = (Price - MEAN_{5Y}) / STD_{5Y}$ over a rolling 1260-trading-day window.
 - The Strategy Lab's Z-Score strategy uses a faster $Z = (Price - MA_{60}) / STD_{60}$.
-- Easily identifies massive dislocations from intrinsic value, spotting deep panics ($Z < -2$) and severe overbought euphoria ($Z > +2$).
+- It measures where the price sits in its own 5-year range. A compounding stock sits above its 5-year mean almost permanently, so this is a trend / positioning measure, **not** a valuation signal and it is not scored.
 
 ---
 
@@ -190,7 +183,7 @@ profit, entry zone or intrinsic value has been reached, and holdings/ideas repor
 Honest Quant is built for production reliability, incorporating an enterprise-grade observability layer to ensure data fidelity.
 
 ### Persistent Audit Layer (`marts.etl_audit`)
-Every ETL execution is cryptographically logged in the warehouse. The system tracks:
+Every ETL execution is logged in the warehouse. The system tracks:
 - **Run Status**: `SUCCESS` or `FAILED` indicators.
 - **Performance**: Start/End timestamps and total processing duration.
 - **Intake volume**: Exact count of rows processed in each run.
@@ -207,7 +200,7 @@ The Streamlit dashboard features a high-fidelity **Infrastructure Engine** indic
 ### Automated Testing Suite (`tests/`)
 A comprehensive test suite powered by `pytest` ensures the pipeline's logic remains sound during refactors:
 - **`test_config.py`**: Validates ticker lists and environment variables.
-- **`test_transform.py`**: Verifies complex math for RSI, Z-Score, and FMI logic using mocked data.
+- **`test_transform.py`**: Verifies RSI, Z-Score and mart construction on synthetic data.
 - **`test_load.py`**: Ensures DuckDB persistence and schema alignment.
 
 ---

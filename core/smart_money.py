@@ -1,4 +1,8 @@
-"""Smart Money institutional-flow engine (pure pandas/numpy)."""
+"""
+NOTE (audit A12): daily OHLCV cannot show who is buying. "Smart money" / "institutional" here means a heuristic
+PRICE-VOLUME PATTERN score (OBV / MFI / volume); its strength is a heuristic 0-100, not a probability and not
+observed institutional flow.
+Smart Money institutional-flow engine (pure pandas/numpy)."""
 import numpy as np
 import pandas as pd
 
@@ -193,11 +197,20 @@ def get_sm_spirit_unified_v2(df_raw: "pd.DataFrame", sector: str = "Unknown") ->
             volume_confirm_score = min(recent_vol_ratio / 1.5, 1.0) * 15
 
             # Factor 4: Consistency (0-15 points) - how many days in window support the divergence
-            obv_changes = obv.diff().tail(window)
-            price_changes = df['price_close'].diff().tail(window)
-            divergent_days = ((obv_changes > 0) & (price_changes < 0)).sum() if div_signal == "ACCUMULATION" else \
-                           ((obv_changes < 0) & (price_changes > 0)).sum()
-            consistency_score = min(divergent_days / (window * consistency_threshold), 1.0) * 15
+            # Same-day OBV and price moves can never disagree (ΔOBV = sign(Δprice) × volume), so the old day-count
+            # was always 0 (audit A12). Divergence is measured on 5-day sub-windows instead.
+            _o = obv.tail(window).to_numpy(dtype=float)
+            _p = df['price_close'].tail(window).to_numpy(dtype=float)
+            _seg = 5
+            _n = max(len(_o) // _seg, 1)
+            _hits = 0
+            for _k in range(_n):
+                _a, _b = _k * _seg, min((_k + 1) * _seg, len(_o)) - 1
+                if _b <= _a:
+                    continue
+                _do, _dp = _o[_b] - _o[_a], _p[_b] - _p[_a]
+                _hits += (_do > 0 and _dp < 0) if div_signal == "ACCUMULATION" else (_do < 0 and _dp > 0)
+            consistency_score = min(_hits / (_n * consistency_threshold), 1.0) * 15
 
             # Factor 5: MFI confirmation bonus (0-15 points) — NEW in v6.0
             mfi_bonus = 15 if mfi_confirm else 0

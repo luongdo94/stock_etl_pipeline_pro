@@ -5,7 +5,9 @@ from pathlib import Path
 from etl.config_manager import get_etl_config
 from etl.extract   import extract_stock_prices, extract_company_info, extract_historical_financials, extract_quarterly_financials, extract_cashflows, extract_historical_fcf, extract_quarterly_fcf, extract_earnings_calendar, extract_earnings_history, extract_forward_estimates, get_equity_tickers
 from etl.gates     import collect_stats, evaluate_gates, has_critical, persist_warnings
-from etl.integrity import mark_rebased, replace_ticker_prices, tickers_to_rebase
+from etl import exceptions as _exc
+from etl.lifecycle import inactive_tickers, ledger_rows, unexplained_jumps
+from etl.integrity import detect_price_drift, mark_rebased, replace_ticker_prices, tickers_to_rebase
 from etl.load      import get_connection, create_raw_schema, \
                           load_stock_prices, load_company_info, load_historical_financials, load_quarterly_financials, load_cashflows, load_historical_fcf, load_quarterly_fcf, load_earnings_calendar, load_earnings_surprise, load_forward_estimates, load_insider_summary, load_insider_transactions, cleanup_stale_tv_tickers, \
                           perform_atomic_swap, promote_pending_swap, DB_PATH, SHADOW_DB_PATH, AUDIT_DB_PATH, _WAREHOUSE_DIR
@@ -299,7 +301,19 @@ def _rebase_prices(conn, universe, data, is_incremental, lookback_days, cfg):
     try:
         full_df = extract_stock_prices(tickers={t: universe[t] for t in tickers}, lookback_days=lookback_days)
     except Exception as e:                                  # never fail a run because a repair download failed
-        logger.warning(f"   ⚠️ Price rebase download failed ({e}) — keeping stored history, retrying next run")
+        # E1: the new rows of a DRIFTED ticker are on the provider's new adjustment basis while its stored history
+        # is not; appending them would create a fake return (a 2:1 split read as −50%). Those tickers get NO new
+        # rows until a repair succeeds — stale but consistent, and named in the exception ledger. A weekly rebase
+        # checks drift itself first: tickers without drift can still append safely.
+        drifted = set(info["drifted"]) if not weekly else set(detect_price_drift(conn, prices_df,
+                                                                                 pcfg["drift_tolerance"]))
+        if drifted and not prices_df.empty:
+            prices_df = prices_df[~prices_df["ticker"].isin(drifted)]
+        for t in sorted(drifted):
+            _exc.record(t, "price_integrity", "INTEGRITY-BLOCKED: history restated by the provider, repair download "
+                        "failed — no new prices appended this run", str(e)[:200])
+        logger.warning(f"   ⚠️ Price rebase download failed ({e}) — keeping stored history; "
+                       f"{len(drifted)} drifted ticker(s) get no new rows this run, retrying next run")
         return prices_df, None, weekly
     if not prices_df.empty:
         prices_df = prices_df[~prices_df["ticker"].isin(tickers)]
@@ -327,10 +341,60 @@ def run_pipeline(lookback_days: int = None, force_full: bool = False, fast_mode:
         return False
 
 
+CARRY_FORWARD_TABLES = ("raw.company_info", "raw.historical_financials", "raw.hist_fcf", "raw.cashflows")
+
+
+def carry_forward_missing(conn, prod_path: str, tickers, tables=CARRY_FORWARD_TABLES) -> dict:
+    """FULL refresh builds the shadow from scratch, so a ticker Yahoo refused this run (rate limit) lost its company
+    row and statements — 8 large caps disappeared on 2026-10-14. Copy those tickers' rows from the current production
+    warehouse instead. They keep their old _extracted_at, so the Decision's freshness gates still see them as old,
+    and each carry-forward is recorded in the exception ledger. Returns {table: tickers copied}."""
+    from etl import exceptions as _exc
+    out = {}
+    if not prod_path or not Path(prod_path).exists():
+        return out
+    try:
+        conn.execute(f"ATTACH '{prod_path}' AS prod (READ_ONLY)")
+    except duckdb.Error as e:
+        logger.warning(f"   ⚠️ carry-forward skipped: production warehouse not readable ({e})")
+        return out
+    try:
+        for table in tables:
+            schema, name = table.split(".")
+            try:
+                shadow_cols = [r[0] for r in conn.execute(f"DESCRIBE {table}").fetchall()]
+                prod_cols = {r[0] for r in conn.execute(f"DESCRIBE prod.{schema}.{name}").fetchall()}
+            except duckdb.Error:
+                continue
+            cols = [c for c in shadow_cols if c in prod_cols]
+            have = {r[0] for r in conn.execute(f"SELECT DISTINCT ticker FROM {table}").fetchall()}
+            missing = [t for t in tickers if t not in have]
+            if not missing or "ticker" not in cols:
+                continue
+            col_list = ", ".join(f'"{c}"' for c in cols)
+            n_before = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            conn.execute(f"INSERT OR IGNORE INTO {table} ({col_list}) SELECT {col_list} FROM prod.{schema}.{name} "
+                         f"WHERE ticker = ANY(?)", [missing])
+            copied = [r[0] for r in conn.execute(f"SELECT DISTINCT ticker FROM {table} WHERE ticker = ANY(?)",
+                                                 [missing]).fetchall()]
+            out[table] = copied
+            for t in copied:
+                _exc.record(t, "carry_forward", f"{table}: refused by the provider this run — previous rows kept",
+                            "stale by construction; freshness gates apply")
+            if copied:
+                n_after = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                logger.info(f"   🩹 Carried forward {len(copied)} ticker(s) into {table} from production "
+                            f"({n_after - n_before} rows): {', '.join(copied[:10])}")
+    finally:
+        conn.execute("DETACH prod")
+    return out
+
+
 def _run_pipeline_locked(lookback_days, force_full, fast_mode):
     cfg = get_etl_config()
     lookback_days = lookback_days or cfg["incremental_load"]["lookback_days_full"]
     start_time = time.time()
+    _exc.reset()                                             # one ledger per run
     logger.info("🚀 STARTING ETL PIPELINE")
     logger.info("=" * 55)
 
@@ -409,6 +473,8 @@ def _run_pipeline_locked(lookback_days, force_full, fast_mode):
                     mark_rebased(conn)
             elif not is_incremental:
                 mark_rebased(conn)                           # a full extract is a rebase
+            if not is_incremental:
+                carry_forward_missing(conn, DB_PATH, list(universe))
             logger.info(f"   ⏱  Load: {time.time()-t0:.1f}s")
 
             # ── STEP 4: TRANSFORM + GARBAGE COLLECTION ───────────────────────────
@@ -421,7 +487,7 @@ def _run_pipeline_locked(lookback_days, force_full, fast_mode):
 
             # ── STEP 5: RELEASE GATES (new vs universe and vs previous production) ─
             logger.info("\n🚦 STEP 5/6 — RELEASE GATES")
-            issues = evaluate_gates(conn, prev_stats, len(universe), cfg["gates"])
+            issues = evaluate_gates(conn, prev_stats, set(universe), cfg["gates"])
             for i in issues:
                 (logger.error if i.severity == "critical" else logger.warning)(f"   [{i.severity.upper()}] {i.code}: {i.message}")
             if has_critical(issues):
@@ -434,9 +500,22 @@ def _run_pipeline_locked(lookback_days, force_full, fast_mode):
 
             if not _run_data_quality(audit):
                 return False
-            if issues:                                       # warnings: visible next to the other DQ checks
-                with duckdb.connect(SHADOW_DB_PATH) as wconn:
+            with duckdb.connect(SHADOW_DB_PATH) as wconn:
+                if issues:                                   # warnings: visible next to the other DQ checks
                     persist_warnings(wconn, issues)
+                # Per-ticker exception ledger: extraction failures, carry-forwards, inactive securities and unexplained
+                # historical jumps — the share-based gates above never fail on a handful of broken tickers.
+                try:
+                    lc = cfg["lifecycle"]
+                    extra = ledger_rows(inactive_tickers(wconn, lc["inactive_after_days"]),
+                                        unexplained_jumps(wconn, lc["unexplained_jump_pct"], lc["market_quiet_pct"]))
+                    priced = {r[0] for r in wconn.execute("SELECT DISTINCT ticker FROM raw.stock_prices").fetchall()}
+                    for t in sorted(set(universe) - priced):
+                        _exc.record(t, "lifecycle", "NO QUOTE — never priced (symbol not found at the provider)",
+                                    "fix or remove the symbol in config/tickers.yaml")
+                    _exc.persist(wconn, extra)
+                except Exception as e:                       # the ledger must never fail a valid run
+                    logger.warning(f"   ⚠️ exception ledger not written: {e}")
 
             # ── STEP 6: ATOMIC SWAP ──────────────────────────────────────────────
             logger.info("\n📡 STEP 6/6 — ATOMIC SWAP")

@@ -67,7 +67,8 @@ def hot_alerts(prices_full, reco_df, movers_df):
             found.append({**base, "type": "52W PEAK", "color": "#f1c40f", "icon": "🏔️",
                           "desc": f"Price: €{r['price_close']:.2f} (Near High)"})
         if r["rsi"] < 35 and r["score"] >= ELITE:
-            found.append({**base, "type": "GOLDEN BUY", "color": "#2ecc71", "icon": "💎",
+            # A screen hit, not a recommendation: only core.decision issues BUY (R3-E)
+            found.append({**base, "type": "QUALITY OVERSOLD", "color": "#2ecc71", "icon": "💎",
                           "desc": f"RSI: {r['rsi']:.1f} | Score: {r['score']}"})
         if r["rsi"] > 75:
             found.append({**base, "type": "EXIT / RISK", "color": "#ff4b4b", "icon": "",

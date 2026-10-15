@@ -1,7 +1,89 @@
-"""LLM (Cohere) narratives and FinBERT sentiment."""
+"""LLM (Cohere) narratives and FinBERT sentiment.
+
+Grounding contract (audit F-06): the LLM EXPLAINS the deterministic Decision (core/decision.py); it never issues its own
+rating or price targets, and every number in its output is checked against the brief it was given.
+"""
+import re
+
 import numpy as np
 import pandas as pd
 import streamlit as st
+
+_NUM = re.compile(r"(?<![\w.])[-+]?\d[\d,]*(?:\.\d+)?")
+
+
+def _numbers(text: str) -> list:
+    out = []
+    for m in _NUM.finditer(text or ""):
+        try:
+            out.append(float(m.group(0).replace(",", "")))
+        except ValueError:
+            pass
+    return out
+
+
+def ungrounded_numbers(output: str, brief: str) -> list:
+    """Numbers in the model output that do not appear (within rounding) in the brief. Small integers (section
+    numbers, "3-4 sentences") are ignored. Pure function — tested in tests/test_audit_fixes.py."""
+    known = _numbers(brief)
+    bad = []
+    for x in _numbers(output):
+        if float(x).is_integer() and abs(x) <= 10:
+            continue
+        if not any(abs(x - k) <= max(0.051, 0.006 * abs(k)) for k in known):
+            bad.append(x)
+    return sorted(set(bad))
+
+
+_RATINGS = ("STRONG BUY", "BUY", "ACCUMULATE", "HOLD", "WATCH", "REDUCE", "AVOID", "TRIM", "SELL")
+
+
+def stance_conflicts(text: str, stance) -> list:
+    """Rating words in the narrative that are not part of the computed stance (e.g. 'BUY' when the Decision is HOLD)."""
+    if not stance or stance == "N/A":
+        return []
+    allowed = set(re.findall(r"[A-Z]+", str(stance).upper()))
+    found = set()
+    for w in _RATINGS:
+        if re.search(rf"(?<![A-Za-z]){w}(?![A-Za-z])", text or ""):     # upper-case rating words only
+            if not set(w.split()) <= allowed:
+                found.add(w)
+    return sorted(found)
+
+
+def _with_grounding_check(text: str, brief: str, stance=None) -> str:
+    """Append warnings from two HEURISTIC checks (audit A16): numbers absent from the brief, and rating words that
+    differ from the computed Decision. They catch obvious problems; they are not a guarantee against wrong facts
+    (a number present in the brief can still be attached to the wrong metric or period)."""
+    notes = []
+    bad = ungrounded_numbers(text, brief)
+    if bad:
+        notes.append("numbers not found in the data given to the model (possibly fabricated): "
+                     + ", ".join(f"{b:g}" for b in bad[:12]))
+    conflicts = stance_conflicts(text, stance)
+    if conflicts:
+        notes.append(f"rating words {', '.join(conflicts)} differ from the computed Decision ({stance}) — "
+                     f"the Decision is authoritative")
+    if not notes:
+        return text + "\n\n<sub>Heuristic checks passed (numbers present in the brief, no conflicting rating words) — " \
+                      "not a guarantee of factual accuracy.</sub>"
+    return (text + "\n\n---\n⚠️ **Heuristic checks:** " + "; ".join(notes)
+            + ". Rely on the computed Decision and the figures shown elsewhere on this page.")
+
+
+def decision_brief(decision: dict) -> str:
+    """Text block describing the computed Decision for the LLM (all numbers come from core.decision / valuation)."""
+    if not decision:
+        return "No computed decision was supplied — do NOT issue any rating, price target or scenario value."
+    f = lambda v, d=2: "N/A" if v is None else f"{float(v):,.{d}f}"   # noqa: E731
+    lines = [f"- Stance: {decision.get('stance')} | Confidence: {decision.get('confidence')}",
+             f"- Valuation model reliable: {decision.get('reliable')}",
+             f"- Bear / Base / Bull value per share (EUR): {f(decision.get('bear'))} / {f(decision.get('base'))} / "
+             f"{f(decision.get('bull'))} | Probability-weighted value: {f(decision.get('expected_value'))}",
+             f"- Annualised return if price converges to base value over the horizon: {f(decision.get('horizon_irr'), 1)}%"]
+    for r in (decision.get("reasons") or [])[:4]:
+        lines.append(f"- Engine reason: {r}")
+    return "\n".join(lines)
 
 
 # ── COHERE AI INTELLIGENCE ENGINE ───────────────────────────────────────────
@@ -53,14 +135,14 @@ Analyze the following stock data and produce a concise, professional investment 
 - **Sector**: {sector}
 - **Current Price**: €{_fmt(price)}
 - **AI Quality Score**: {ai_score}/100
-- **Analyst Recommendation**: {action} | **Consensus**: {consensus}
+- **System Decision (computed, authoritative)**: {metrics.get('decision_stance', 'N/A')} | Signal (timing context only, not a recommendation): {action} | Analyst consensus (context only): {consensus}
 - **Analyst Price Target**: €{_fmt(target_p)} (Implied Upside: {_fmt(upside, 1)}%)
 - **52-Week Position**: {_fmt(w52_pos, 0)}% of range
 
 ### Technical Indicators
 - **RSI (14)**: {_fmt(rsi, 1)} {rsi_note}
 - **MA Trend Signal**: {ma_signal}
-- **Price Z-Score**: {_fmt(z_score, 2)}σ (deviation from 5-year historical mean; >+2=Historically expensive, <-2=Historically cheap)
+- **Price Z-Score**: {_fmt(z_score, 2)}σ (price vs its own 5-year average in standard deviations — a TREND / positioning measure, NOT a valuation)
 
 ### Valuation & Profitability
 - **Forward P/E**: {_fmt(metrics.get('forward_pe', pe), 1)}x | **Trailing P/E**: {_fmt(pe, 1)}x | **PEG**: {_fmt(peg, 2)} | **P/B**: {_fmt(pb, 2)}x
@@ -71,25 +153,25 @@ Analyze the following stock data and produce a concise, professional investment 
 Write a structured analysis with exactly these THREE sections:
 
 ### 1. 🎯 Investment Verdict
-One clear paragraph (3-5 sentences). State the overall investment thesis, Buy/Hold/Sell, and primary driver.
+One clear paragraph (3-5 sentences). Restate the System Decision above — do NOT issue your own Buy/Hold/Sell — and explain its primary driver.
 
 ### 2. 📊 Technical & Fundamental Analysis
 One paragraph (3-5 sentences). Analyze the interplay between technical signals and the fundamental picture. Highlight any divergence or confirmation.
 
 ### 3. ⚠️ Key Risks & Catalysts
-- Risk 1: (specific, quantitative)
-- Risk 2: (specific, quantitative)
-- Catalyst 1: (specific, quantitative)
-- Catalyst 2: (specific, quantitative)
+- Risk 1: (only from the data above)
+- Risk 2: (only from the data above)
+- Catalyst 1: (only from the data above)
+- Catalyst 2: (only from the data above)
 
-Rules: English only. Be direct and decisive. Reference specific data points. Under 350 words."""
+Rules: English only. Reference specific data points. Do NOT introduce any number that is not in the data above. Under 350 words."""
 
         response = co.chat(
             model="command-r-plus-08-2024",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=700,
         )
-        return response.message.content[0].text
+        return _with_grounding_check(response.message.content[0].text, prompt, metrics.get("decision_stance"))
 
     except Exception as e:
         err = str(e)
@@ -198,7 +280,7 @@ def get_unified_verdict(api_key: str, metrics: dict, nlp_result: dict, language:
         # All prices in DB are already normalized to EUR
         prompt = f"""You are a Chief Investment Officer (CIO) at a top-tier hedge fund.
 You have received both QUANTITATIVE data and QUALITATIVE news intelligence for a stock.
-Your task: synthesize both and issue ONE definitive, actionable investment verdict.
+Your task: explain the system's COMPUTED decision in the light of both. You do not make the decision.
 
 ## Stock: {ticker} ({company}) | Sector: {sector}
 
@@ -212,7 +294,7 @@ Your task: synthesize both and issue ONE definitive, actionable investment verdi
 
 ### QUANTITATIVE (Fundamental & Technical)
 - AI Quality Score: {ai_score}/100
-- Price Z-Score: {z_score:+.2f}σ (deviation from 5-year historical mean; >+2=Historically expensive, <-2=Historically cheap)
+- Price Z-Score: {z_score:+.2f}σ (price vs its own 5-year average in standard deviations — a TREND / positioning measure, NOT a valuation)
 - Price: €{_f(price)} | Analyst Target: €{_f(target_p)} | Implied Upside: {_f(upside, 1)}%
 - 52W Range: €{_f(low_52w)} – €{_f(high_52w)} | % from MA200: {pct_from_ma200} | 52W Position: {_f(metrics.get('w52_pos','N/A'), 0)}%
 - Technical Levels: S1=€{_f(support_s1)} | S2=€{_f(support_s2)} | R1=€{_f(resistance_r1)} | R2=€{_f(resistance_r2)} | Stop=€{_f(stop_loss_tech)}
@@ -239,42 +321,32 @@ Your task: synthesize both and issue ONE definitive, actionable investment verdi
 {alignment}
 
 ---
-Write a unified analysis with FIVE sections. Total length: under 550 words.
+Write a unified analysis with FOUR sections. Total length: under 450 words.
 
 ### 💼 CIO Verdict
-One decisive paragraph (3-4 sentences). Final call referencing BOTH quantitative and qualitative data.
+One paragraph (3-4 sentences) summarising the evidence for and against the computed System Decision, referencing BOTH quantitative and qualitative data.
 
 ### 💡 Signal Convergence Analysis
 One paragraph on the interplay between news sentiment and fundamentals. If diverging, state which side you trust more and why.
 
-### 🎯 Actionable Recommendation & Execution
-State: **STRONG BUY / BUY / ACCUMULATE / HOLD / WATCH / REDUCE / AVOID**
-CRITICAL LOGIC RULES:
-1. If the Base Case target is lower than the Current Price (€{_f(price)}), the verdict MUST be HOLD, WATCH, or REDUCE. Never BUY or ACCUMULATE.
-2. Only recommend ACCUMULATE/BUY if the Base Case Target is greater than or equal to the Current Price (€{_f(price)}).
-3. If AI Quality Score is < 50, DO NOT recommend a straight BUY or STRONG BUY. The maximum bullish verdict allowed is WATCH or ACCUMULATE. Institutional discipline requires high structural quality, not just cheap valuation or buybacks.
-4. Institutional Skepticism: Do not ignore cyclical or sector macro headwinds (e.g., China demand, EV transition, margin pressure) even if the News Red Flag Score is 0. A "clean" news feed does not negate underlying industry risks.
-5. Execution framework: Do not suggest buying at Technical Support (S1/S2) if they are unrealistically far (e.g. >15% below spot). If Support is too far, advise waiting for a meaningful pullback.
-
-### 📊 3-Scenario Valuation
-**ANCHOR: Current Price = €{_f(price)} | Analyst Consensus Target = €{_f(target_p)}**
-Scenarios are expressed as absolute price targets AND % change from CURRENT PRICE. The 3 scenarios MUST be logically consistent:
-- **🐻 Bear Case (20% probability):** [Downside catalyst (e.g. multiple compression)] → Target: €[price] ([negative %] vs current). MUST be BELOW current price.
-- **📈 Base Case (60% probability):** [Expected trajectory (e.g. earnings confirm uplift but market cools)] → Target: €[price] ([+/- %] vs current). If this is negative, the tone MUST be cautious.
-- **🚀 Bull Case (20% probability):** [Upside catalyst (e.g. demand validation)] → Target: €[price] ([positive %] vs current). MUST be higher than Base Case.
+### 🎯 System Decision (computed by the deterministic engine — restate it, do NOT change it)
+{decision_brief(metrics.get('decision'))}
+Explain in 2-3 sentences why the engine reached this stance, using only numbers given in this brief. If the news
+intelligence contradicts it, say so explicitly as a RISK TO MONITOR — you may not upgrade or downgrade the stance,
+and you may not state any price target or scenario value other than the ones listed above.
 
 ### ⚠️ Key Risks to Monitor
 3 concise bullet points on the most material risks.
 
 
-Rules: Your final output MUST be written in {language} (translate section headers too, but keep emojis). Be decisive. Reference specific numbers. Start each section header on its own line."""
+Rules: Your final output MUST be written in {language} (translate section headers too, but keep emojis). Reference only numbers present in this brief — never invent figures, probabilities or targets. Start each section header on its own line."""
 
         response = co.chat(
             model="command-r-plus-08-2024",
             messages=[{"role": "user", "content": prompt}],
             max_tokens=1000,
         )
-        return response.message.content[0].text, prompt
+        return _with_grounding_check(response.message.content[0].text, prompt, metrics.get("decision_stance")), prompt
 
     except Exception as e:
         err = str(e)

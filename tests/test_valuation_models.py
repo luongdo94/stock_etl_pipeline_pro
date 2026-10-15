@@ -85,9 +85,13 @@ def test_normalised_roe_is_a_median_and_clipped():
     assert v.normalized_roe(None, "X") is None
 
 
-def test_banks_get_a_justified_pb_value_instead_of_no_model():
+def test_banks_get_a_justified_pb_value_instead_of_no_model(monkeypatch):
     bank = company(sector="Banks", currency="EUR", price_to_book=1.0, roe=0.12)
     price = 20.0
+    # R3-K3: by default the value is context only — no capital-adequacy / asset-quality inputs exist
+    default = v.valuation_inputs(bank, price, pd.DataFrame(), "X", MACRO, annual(0.12))
+    assert default["base"] is not None and default["reliable"] is False and "capital" in default["note"]
+    monkeypatch.setattr(v, "_required", lambda key, default=True: False)       # switch off in decision_rules.yaml
     vin = v.valuation_inputs(bank, price, pd.DataFrame(), "X", MACRO, annual(0.12))
     assert vin["model"] == "justified_pb" and vin["fcfe"] is None and vin["reliable"] is True
     assert vin["book_per_share"] == pytest.approx(20.0)
@@ -111,14 +115,20 @@ def test_implausible_bank_values_are_flagged():
     assert absurd["reliable"] is False and "ROE" in absurd["note"]
 
 
-def test_a_cheap_bank_can_now_be_a_buy_candidate():
+def test_a_cheap_bank_is_only_actionable_once_capital_inputs_are_not_required(monkeypatch):
     bank = company(sector="Banks", currency="EUR", price_to_book=1.1, roe=0.13)          # clearly below justified value
     price = 14.0
+
+    def _decide(vin):
+        return decision.build_decision(price=price, base_value=vin["base"], bear_value=vin["bear"], bull_value=vin["bull"],
+                                       stop_loss=price * 0.9, currency="EUR", track_record_ok=True, quality_score=70,
+                                       valuation_reliable=vin["reliable"], valuation_note=vin["note"],
+                                       rules=decision.load_rules())
     vin = v.valuation_inputs(bank, price, pd.DataFrame(), "X", MACRO, annual(0.13))
-    d = decision.build_decision(price=price, base_value=vin["base"], bear_value=vin["bear"], bull_value=vin["bull"],
-                                stop_loss=price * 0.9, currency="EUR", track_record_ok=True, quality_score=70,
-                                valuation_reliable=vin["reliable"], valuation_note=vin["note"], rules=decision.load_rules())
-    assert vin["reliable"] and vin["base"] / price - 1 > 0.25 and d.stance != "NOT ENOUGH DATA"
+    assert not vin["reliable"] and _decide(vin).stance == "HOLD / WATCH"             # R3-K3 default: fail closed
+    monkeypatch.setattr(v, "_required", lambda key, default=True: False)
+    vin = v.valuation_inputs(bank, price, pd.DataFrame(), "X", MACRO, annual(0.13))
+    assert vin["reliable"] and vin["base"] / price - 1 > 0.25 and _decide(vin).stance != "NOT ENOUGH DATA"
 
 
 # ── stock-based compensation ─────────────────────────────────────────────────────────────────

@@ -1,0 +1,7 @@
+# Optional: FinBERT sentiment, archived ML walk-forward experiment
+-r requirements.txt
+torch
+transformers
+sentencepiece
+protobuf
+scikit-learn>=1.2.0

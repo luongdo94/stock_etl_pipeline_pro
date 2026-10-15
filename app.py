@@ -70,7 +70,8 @@ _track_ok = track_record_ok(prices_full, rows_key=len(prices_full))
 m_df = get_master_screener_data(companies_full, prices_full, quarterly_fin, annual_fin, hist_fcf_full,
                                 risk_free_pct=macro.get("US10Y", {}).get("val"),
                                 hist_fcf_rows=len(hist_fcf_full), _estimates=forward_estimates_full,
-                                estimates_rows=len(forward_estimates_full), track_record_ok=_track_ok)
+                                estimates_rows=len(forward_estimates_full), track_record_ok=_track_ok,
+                                _earnings_cal=earnings_cal)
 
 all_tickers = sorted(prices_full["ticker"].unique().tolist())
 ticker_to_name = dict(zip(companies_full["ticker"], companies_full["company"]))

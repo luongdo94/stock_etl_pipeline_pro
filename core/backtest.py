@@ -1,4 +1,6 @@
-"""Single-ticker strategy backtest simulator (pure)."""
+"""Single-ticker TECHNICAL-TIMING backtest (pure). Not evidence for 3-5-year fundamental decisions (audit F-27):
+single stock, today's universe, closes only (a stop is detected on a close and filled at the next close, so gaps are
+paid but intraday triggers are not modelled), no point-in-time fundamentals, no spread / impact model."""
 import numpy as np
 import pandas as pd
 
@@ -21,9 +23,11 @@ def run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct,
     dates_arr   = bt_prices["date"].values
     
     # Fetch indicators
-    ma20_arr = bt_prices.get("ma_20", np.zeros_like(prices_arr)).values
-    ma50_arr = bt_prices.get("ma_50", np.zeros_like(prices_arr)).values
-    rsi_arr  = bt_prices.get("rsi", np.full_like(prices_arr, 50)).values
+    def _col(name, default):     # a missing column must not crash a strategy that does not use it (audit A11)
+        return bt_prices[name].to_numpy(dtype=float) if name in bt_prices.columns else np.full(len(prices_arr), default)
+    ma20_arr = _col("ma_20", 0.0)
+    ma50_arr = _col("ma_50", 0.0)
+    rsi_arr  = _col("rsi", 50.0)
 
     # Z-Score Calculation
     price_series = pd.Series(prices_arr)
@@ -39,9 +43,14 @@ def run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct,
     entry_price_val = 0.0
     trade_log = []
     
-    for i in range(1, len(prices_arr)):
+    # Signals are computed from bar i's CLOSE, so they can only be filled at the NEXT bar's close (R3-A: the order used
+    # to fill at the very close that produced the signal). A signal on the last bar is not filled.
+    n_bars = len(prices_arr)
+    for i in range(1, n_bars):
         current_price = prices_arr[i]
-        p_date = str(dates_arr[i])[:10]
+        can_fill = i + 1 < n_bars
+        fill_price = prices_arr[i + 1] if can_fill else None
+        p_date = str(dates_arr[i + 1])[:10] if can_fill else str(dates_arr[i])[:10]
         position[i] = position[i-1]
         exited_today = False
 
@@ -68,9 +77,12 @@ def run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct,
                 elif "Buy on Dip" in strategy_type or "Multi-Indicator Breakout" in strategy_type:
                     if current_price < ma50_arr[i]: exit_signal = True; exit_reason = "Price < MA50"
                     
-            if exit_signal:
+            if exit_signal and can_fill:
                 position[i] = 0; in_position = False; exited_today = True
-                trade_log.append({"Date": p_date, "Action": "🔴 SELL", "Reason": exit_reason, "Price": f"€{current_price:.2f}", "PnL": f"{pnl_pct*100:+.1f}%"})
+                # realised at the next close: a gap after a stop signal is paid, not assumed away
+                net_pnl = (fill_price - entry_price_val) / entry_price_val - 2 * tx_cost_pct
+                trade_log.append({"Date": p_date, "Action": "🔴 SELL", "Reason": exit_reason, "Price": f"€{fill_price:.2f}",
+                                  "PnL": f"{net_pnl*100:+.1f}%", "_pnl": net_pnl})
         
         # 2. Entry Conditions — never re-enter on the bar we just exited, otherwise level-based
         #    rules (e.g. Institutional Quality) re-buy immediately after a Stop Loss: the stop
@@ -90,13 +102,17 @@ def run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct,
             elif "Multi-Indicator Breakout" in strategy_type:
                 if current_price > ma50_arr[i] and rsi_arr[i] > 50 and rsi_arr[i-1] <= 50: entry_signal = True; entry_reason = "Price>MA50 + RSI>50"
                 
-            if entry_signal:
-                position[i] = 1; in_position = True; entry_price_val = current_price
-                trade_log.append({"Date": p_date, "Action": "🟢 BUY", "Reason": entry_reason, "Price": f"€{current_price:.2f}", "PnL": "-"})
+            if entry_signal and can_fill:
+                position[i] = 1; in_position = True; entry_price_val = fill_price
+                trade_log.append({"Date": p_date, "Action": "🟢 BUY", "Reason": entry_reason, "Price": f"€{fill_price:.2f}", "PnL": "-"})
 
-    pos_shifted = np.roll(position, 1); pos_shifted[0] = 0
-    signal_changes = np.abs(np.diff(pos_shifted, prepend=pos_shifted[0]))
-    strategy_returns = returns_arr * pos_shifted - signal_changes * tx_cost_pct
+    # position[i] = decision taken at bar i's close; held[t] = position after the fill at bar t's close = position[t-1].
+    # The fee is charged on the fill bar (including the LAST bar), the return is earned from the bar after the fill on
+    # (audit A11: the old shifted fee dropped a final-bar trade's cost).
+    held = np.roll(position, 1); held[0] = 0
+    held_prev = np.roll(held, 1); held_prev[0] = 0
+    fills = np.abs(np.diff(held, prepend=0.0))
+    strategy_returns = returns_arr * held_prev - fills * tx_cost_pct
     cum_strategy = (1 + strategy_returns).cumprod()
     equity_curve = cum_strategy * initial_capital
     
@@ -107,15 +123,14 @@ def run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct,
     bnh_return = (bnh_curve[-1] / initial_capital - 1) * 100
     # No trades / no variance → Sharpe is undefined (dividing by ~0 used to print -2,519,763)
     _vol = strategy_returns.std()
-    sharpe = float("nan") if (not np.any(position) or not np.isfinite(_vol) or _vol < 1e-12) else \
+    sharpe = float("nan") if (not np.any(held) or not np.isfinite(_vol) or _vol < 1e-12) else \
         ((strategy_returns - 0.04 / 252).mean() / _vol) * np.sqrt(252)
     max_dd = ((equity_curve - np.maximum.accumulate(equity_curve)) / np.maximum.accumulate(equity_curve)).min() * 100
     
     # Win rate: computed per completed trade (BUY→SELL pair) from trade_log
-    completed_trades = [(t["PnL"]) for t in trade_log if t["Action"] == "🔴 SELL"]
+    completed_trades = [t["_pnl"] for t in trade_log if t["Action"] == "🔴 SELL"]
     if completed_trades:
-        # Parse "+3.5%" → 3.5, "-2.1%" → -2.1
-        pnl_values = [float(p.replace("%", "")) for p in completed_trades]
+        pnl_values = completed_trades                 # unrounded (the display string rounds to 0.1%)
         win_rate = sum(1 for p in pnl_values if p > 0) / len(pnl_values) * 100
     else:
         win_rate = 0.0

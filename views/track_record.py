@@ -4,10 +4,10 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from core import track_record as tr
-from services.db import load_track_record
+from services.db import load_price_history, load_track_record
 from ui.icons import render_header
 
-_H_LABEL = {21: "1 month", 63: "3 months", 126: "6 months"}
+_H_LABEL = tr.HORIZON_LABELS          # single source in core.track_record (audit A02)
 
 
 @st.cache_data(ttl=3600, show_spinner="Scoring past calls...")
@@ -37,7 +37,10 @@ def render(ctx):
                 "(`python run.py`); the first 1-month results appear about 21 trading days later.")
         return
 
-    fr = _forward(snaps, prices_full[["date", "ticker", "price_close"]])
+    # outcomes need the FULL locked price history (the dashboard frame is only 3 years — audit A07)
+    _hist = load_price_history()
+    _px = _hist if not _hist.empty else prices_full[["date", "ticker", "price_close"]]
+    fr = _forward(snaps, _px)
     st.markdown(f"**History:** {days} snapshot day(s), {snaps['ticker'].nunique()} tickers, "
                 f"{pd.to_datetime(snaps['as_of_date']).min():%d %b %Y} → {pd.to_datetime(snaps['as_of_date']).max():%d %b %Y}.")
 
@@ -48,23 +51,23 @@ def render(ctx):
     for col, h in zip(cols, tr.HORIZONS):
         ic = tr.information_coefficient(fr, h, score_col)
         if ic["ic"] is None:
-            col.metric(f"IC · {_H_LABEL[h]}", "—", help="Needs snapshots with a known outcome")
+            col.metric(f"IC · {tr.horizon_label(h)}", "—", help="Needs snapshots with a known outcome")
         else:
             sig = (ic["t_stat"] or 0) > 2
-            col.metric(f"IC · {_H_LABEL[h]}", f"{ic['ic']:+.3f}",
+            col.metric(f"IC · {tr.horizon_label(h)}", f"{ic['ic']:+.3f}",
                        delta=f"t = {ic['t_stat']:.1f} · {ic['n_days']} days" if ic["t_stat"] is not None else f"{ic['n_days']} days",
                        delta_color="normal" if sig and ic["ic"] > 0 else "off")
     st.caption(f"IC = average daily rank correlation between the {tr.SCORES[score_col]} score and the following excess "
                f"return. Rule of thumb: IC > 0.03 with t > 2 is a useful signal; around 0 means no information. "
                f"Quality is expected to pay off slowly, Value over quarters, Momentum over months.")
 
-    h = st.radio("Horizon", tr.HORIZONS, format_func=lambda x: _H_LABEL[x], horizontal=True, index=1)
+    h = st.radio("Horizon", tr.HORIZONS, format_func=lambda x: tr.horizon_label(x), horizontal=True, index=1)
 
     # ── 2. Quintiles ──────────────────────────────────────────────────────────
     q = tr.quintile_returns(fr, h, score_col)
     c1, c2 = st.columns(2)
     with c1:
-        st.markdown(f"**Excess return vs SPY by score quintile ({_H_LABEL[h]})**")
+        st.markdown(f"**Excess return vs SPY by score quintile ({tr.horizon_label(h)})**")
         if q.empty:
             st.info("Not enough resolved snapshots for this horizon yet.")
         else:
@@ -77,15 +80,21 @@ def render(ctx):
             st.caption("A working score rises steadily from Q1 to Q5.")
     with c2:
         _by = "decision" if "decision" in fr.columns and fr["decision"].notna().any() else "action"
-        st.markdown(f"**Hit rate by {'Decision' if _by == 'decision' else 'Signal'} ({_H_LABEL[h]})**")
-        sc = tr.action_scorecard(fr, h, action_col=_by)
+        st.markdown(f"**Hit rate by {'Decision' if _by == 'decision' else 'Signal'} ({tr.horizon_label(h)})**")
+        # Decisions are judged against the equal-weight snapshot universe (region-neutral), the Signal against SPY
+        sc = tr.decision_scorecard(fr, h) if _by == "decision" else tr.action_scorecard(fr, h, action_col=_by)
         if sc.empty:
             st.info("Not enough resolved snapshots for this horizon yet.")
         else:
+            _bm = "universe avg" if _by == "decision" else "SPY"
             st.dataframe(sc, hide_index=True, width="stretch", column_config={
-                "hit_rate_pct": st.column_config.NumberColumn("Beat SPY", format="%.0f%%"),
-                "mean_excess_pct": st.column_config.NumberColumn("Mean excess", format="%+.1f%%"),
+                "hit_rate_pct": st.column_config.NumberColumn(f"Beat {_bm}", format="%.0f%%"),
+                "mean_excess_pct": st.column_config.NumberColumn(f"Excess vs {_bm}", format="%+.1f%%"),
             })
+            st.caption("Decisions: excess over the equal-weight average of all stocks snapshotted that day (not region- "
+                       "or sector-neutral). Signal: excess over SPY. Returns run from the first session after the "
+                       "signal was knowable." if _by == "decision" else
+                       "Excess over SPY; returns run from the first session after the signal was knowable.")
 
     # ── 3. Recommendation log ─────────────────────────────────────────────────
     st.markdown("**Recommendation log — every change of call, and how it has done since**")

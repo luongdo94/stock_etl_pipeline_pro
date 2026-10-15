@@ -80,6 +80,19 @@ def render_pulse(etl_audit, dq_warnings):
 </div>
 </div>
 </div>""".strip(), unsafe_allow_html=True)
+    # Per-ticker exceptions of the last run: the share-based release gates pass with a few broken tickers, so they
+    # are listed here instead of only in the log (ETL review 2026-10-14)
+    try:
+        from services.db import load_etl_exceptions
+        exc = load_etl_exceptions()
+    except Exception:
+        exc = None
+    if exc is not None and not exc.empty:
+        with st.sidebar.expander(f"⚠️ {exc['ticker'].nunique()} ticker exceptions (last ETL)", expanded=False):
+            for stage, g in exc.groupby("stage"):
+                st.markdown(f"**{stage}** ({g['ticker'].nunique()})")
+                st.caption("; ".join(f"{r.ticker}: {r.reason}" + (f" — {r.detail}" if r.detail else "")
+                                     for r in g.head(25).itertuples()))
 
 
 def _delta(pct, invert=False):

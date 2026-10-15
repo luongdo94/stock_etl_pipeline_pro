@@ -1,4 +1,4 @@
-﻿"""Decision ↔ Signal consistency: the Signal is context for the Decision and must not contradict it."""
+"""Decision ↔ Signal consistency: the Signal is context for the Decision and must not contradict it."""
 import pandas as pd
 import pytest
 
@@ -69,25 +69,34 @@ def _vin(base=100.0, bear=70.0, bull=130.0, reliable=True):
 
 
 META = pd.Series({"currency": "EUR", "country": "Germany", "dividend_yield_pct": float("nan"), "info_updated_at": None})
-SCORES = {"quality": 70, "value": 50, "flags": "", "coverage": 90, "missing": []}
+# fully dated inputs (audit A05: stale / undated data blocks BUY and lowers confidence)
+from datetime import date as _date  # noqa: E402
+META_FRESH = pd.Series({**META.to_dict(), "info_updated_at": pd.Timestamp.today(),
+                        "latest_statement_date": pd.Timestamp.today() - pd.Timedelta(days=100), "market_cap": 30e9},
+                       dtype=object)
+SCORES = {"quality": 70, "value": 50, "flags": "", "coverage": 90, "missing": [], "adv_eur": 50e6}
 
 
 def test_decide_matches_build_decision_with_the_same_inputs():
     a = dec.decide(price=70, vin=_vin(), stop_loss=65, meta=META, scores=SCORES, track_record_ok=True)
     b = dec.build_decision(price=70, base_value=100, bear_value=70, bull_value=130, stop_loss=65, currency="EUR", country="Germany",
                            dividend_yield_pct=None, quality_score=70, value_score=50, risk_flags="", coverage_pct=90,
-                           track_record_ok=True, valuation_reliable=True, valuation_note=None, missing_metrics=())
+                           track_record_ok=True, valuation_reliable=True, valuation_note=None, missing_metrics=(),
+                           adv_eur=50e6)
     assert (a.stance, a.confidence, a.reward_risk) == (b.stance, b.confidence, b.reward_risk)
 
 
 def test_track_record_state_can_change_confidence_so_every_tab_must_pass_it():
-    kw = dict(price=70, vin=_vin(), stop_loss=65, meta=META, scores={**SCORES, "coverage": 40, "flags": "Loss-making"})
-    assert dec.decide(**kw, track_record_ok=False).confidence == "LOW"
-    assert dec.decide(**kw, track_record_ok=True).confidence == "MEDIUM"
+    kw = dict(price=70, vin=_vin(), stop_loss=65, meta=META_FRESH, price_date=_date.today(), scores=SCORES)
+    # without evidence confidence can never be HIGH (the note is shown; it is not counted twice — the evidence gate
+    # already makes the stance RESEARCH CANDIDATE, gate review 2026-10-14)
+    assert dec.decide(**kw, track_record_ok=True).confidence == "HIGH"
+    assert dec.decide(**kw, track_record_ok=False).confidence == "MEDIUM"
 
 
 def test_dcf_and_multiples_disagreement_is_flagged_and_lowers_confidence():
-    kw = dict(price=200, vin=_vin(base=100, bear=60, bull=150), stop_loss=180, meta=META, track_record_ok=True)
+    kw = dict(price=200, vin=_vin(base=100, bear=60, bull=150), stop_loss=180, meta=META_FRESH,
+              price_date=_date.today(), track_record_ok=True)
     agree = dec.decide(**kw, scores={**SCORES, "value": 30})
     clash = dec.decide(**kw, scores={**SCORES, "value": 80})
     assert clash.stance == agree.stance == "AVOID / TRIM"

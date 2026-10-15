@@ -82,6 +82,39 @@ def watchlist_triggers(watchlist: pd.DataFrame, latest: pd.DataFrame,
     return out
 
 
+def opening_stops(existing: dict, holdings: dict, thesis_stops: dict) -> dict:
+    """Original stop per HELD position (roadmap P1/5): an existing stop is never moved; a newly held position records
+    today's thesis stop once (if the Decision has one); a closed position drops its stop."""
+    out = {}
+    for t, sh in (holdings or {}).items():
+        try:
+            if float(sh) <= 0:
+                continue
+        except (TypeError, ValueError):
+            continue
+        if _num((existing or {}).get(t)):
+            out[t] = float(existing[t])
+        elif _num((thesis_stops or {}).get(t)):
+            out[t] = float(thesis_stops[t])
+    return out
+
+
+def position_stop_triggers(stops: dict, latest: pd.DataFrame) -> list:
+    """Holdings that closed at or below the stop recorded WHEN THE POSITION WAS OPENED — the plan's sell discipline,
+    independent of today's recomputed (and possibly lower) thesis stop."""
+    out = []
+    for t, stop in (stops or {}).items():
+        stop = _num(stop)
+        if not stop or t not in latest.index or "price_close" not in latest.columns:
+            continue
+        price = float(latest.at[t, "price_close"])
+        if price <= stop:
+            out.append({"ticker": t, "kind": "THESIS INVALIDATED",
+                        "message": f"{t} at {price:,.2f} ≤ original stop {stop:,.2f} set when the position was opened "
+                                   f"— the plan says exit / review (a stop is a trigger, not a guaranteed price)."})
+    return out
+
+
 def earnings_soon(earnings_calendar: pd.DataFrame, tickers: Iterable[str], today: Optional[date] = None,
                   days: int = 7) -> list:
     today = today or date.today()

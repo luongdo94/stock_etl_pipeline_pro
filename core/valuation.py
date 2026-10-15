@@ -37,6 +37,12 @@ def _valuation_config() -> dict:
         return {}
 
 
+def _required(key: str, default: bool = True) -> bool:
+    """Fail-closed switches in decision_rules.yaml → valuation (true unless explicitly set false)."""
+    v = _valuation_config().get(key, default)
+    return default if v is None else bool(v)
+
+
 def _configured(key: str, default: float) -> float:
     try:
         return float(_valuation_config().get(key, default))
@@ -44,14 +50,7 @@ def _configured(key: str, default: float) -> float:
         return default
 
 
-_MINOR_UNITS = {"GBp": "GBP", "GBX": "GBP", "GBx": "GBP", "ZAc": "ZAR", "ILA": "ILS"}
-
-
-def major_currency(ccy) -> Optional[str]:
-    if not ccy or str(ccy).strip() in ("", "nan", "None"):
-        return None
-    c = str(ccy).strip()
-    return _MINOR_UNITS.get(c, c.upper())
+from core.currency import MINOR_UNITS as _MINOR_UNITS, major_currency  # noqa: E402,F401  (single definition, F-28)
 
 
 def currency_assumptions(ccy, macro: Optional[dict] = None) -> dict:
@@ -112,6 +111,17 @@ def fcf_cagr(values: Iterable) -> Optional[float]:
     return (v[-1] / v[0]) ** (1 / (len(v) - 1)) - 1
 
 
+def cagr_by_year(years, values) -> Optional[float]:
+    """CAGR between the first and last positive values, raised to 1 / (years between them) — a missing middle year
+    no longer shortens the period (audit A15)."""
+    pairs = [(float(y), float(v)) for y, v in zip(years, values)
+             if _finite(y) is not None and _finite(v) is not None]
+    if len(pairs) < 2 or pairs[0][1] <= 0 or pairs[-1][1] <= 0:
+        return None
+    span = pairs[-1][0] - pairs[0][0]
+    return (pairs[-1][1] / pairs[0][1]) ** (1 / span) - 1 if span > 0 else None
+
+
 def anchor_growth(revenue_growth=None, earnings_growth=None, hist_fcf_cagr=None,
                   default: float = 0.05, revenue_cagr=None) -> tuple:
     """
@@ -144,33 +154,212 @@ def revenue_cagr(annual_fin: Optional[pd.DataFrame], ticker: str, years: int = 3
     """Revenue CAGR over the last `years` annual statements (needs years+1 points)."""
     if annual_fin is None or annual_fin.empty or "revenue" not in annual_fin.columns:
         return None
-    r = annual_fin[annual_fin["ticker"] == ticker].sort_values("year")["revenue"].dropna().tail(years + 1)
-    return fcf_cagr(r) if len(r) >= 3 else None
+    rows = annual_fin[annual_fin["ticker"] == ticker].sort_values("year")[["year", "revenue"]].dropna().tail(years + 1)
+    return cagr_by_year(rows["year"], rows["revenue"]) if len(rows) >= 3 else None
+
+
+# Cash paid to lenders / lessors that IFRS (and some US GAAP filers) report in FINANCING cash flow. OCF − capex of
+# such a filer is cash BEFORE those payments; equity holders only get what is left (audit F-03).
+FINANCING_DEDUCTIONS = ("interest_paid_cff", "lease_principal_paid")
 
 
 def _after_sbc(rows: pd.DataFrame) -> pd.Series:
-    """Free cash flow minus stock-based compensation (SBC is added back in operating cash flow although it is a
-    real cost to owners — dilution). Years without an SBC figure are left unadjusted."""
+    """Cash flow to equity: OCF − capex − stock-based compensation − interest paid in financing − lease principal.
+    SBC is added back in operating cash flow although it is a real cost to owners (dilution). Interest classified in
+    financing (IFRS option) and lease principal (IFRS 16) are real claims ahead of equity. A missing figure is left out
+    of this REFERENCE number (fillna(0)); fcfe_deduction_status marks it UNKNOWN and the valuation is then not reliable
+    for BUY/AVOID (R4-02) — the fill never reaches a decision as if it were a confirmed zero."""
     fcf = pd.to_numeric(rows["free_cash_flow"], errors="coerce")
     if "stock_based_comp" in rows.columns:
         fcf = fcf - pd.to_numeric(rows["stock_based_comp"], errors="coerce").fillna(0.0)
+    interest = _effective_interest(rows)
+    if interest is not None:
+        fcf = fcf - interest.abs().fillna(0.0)
+    lease = _effective_lease(rows)
+    if lease is not None:
+        fcf = fcf - lease.abs().fillna(0.0)
     return fcf
 
 
-def normalized_statement_fcf(hist_fcf: pd.DataFrame, ticker: str, years: int = 3) -> Optional[float]:
-    """Median of the last `years` annual statement FCFs after stock-based compensation (EUR) — damps one-off spikes and cycles."""
+def _effective_interest(rows: pd.DataFrame) -> Optional[pd.Series]:
+    """Interest paid deducted per row: the financing-CF figure; none when the provider says it sits in operating CF
+    (InterestPaidCFO); the supplemental amount when the classification is unknown (conservative, switchable)."""
+    cff = pd.to_numeric(rows["interest_paid_cff"], errors="coerce") if "interest_paid_cff" in rows.columns else None
+    if "interest_paid_supplemental" not in rows.columns or not _required("deduct_unclassified_interest"):
+        return cff
+    sup = pd.to_numeric(rows["interest_paid_supplemental"], errors="coerce")
+    if "interest_paid_cfo" in rows.columns:
+        sup = sup.where(pd.to_numeric(rows["interest_paid_cfo"], errors="coerce").isna())
+    return sup if cff is None else cff.fillna(sup)
+
+
+def _effective_lease(rows: pd.DataFrame) -> Optional[pd.Series]:
+    """Lease principal per row: the cash-flow figure when reported, else the balance-sheet estimate (_with_estimates)."""
+    rep = pd.to_numeric(rows["lease_principal_paid"], errors="coerce") if "lease_principal_paid" in rows.columns else None
+    est = pd.to_numeric(rows["lease_principal_estimate"], errors="coerce") \
+        if "lease_principal_estimate" in rows.columns else None
+    if rep is None:
+        return est
+    return rep if est is None else rep.fillna(est)
+
+
+BASIS_YEARS = 3
+DEDUCTION_ITEMS = ("stock_based_comp",) + FINANCING_DEDUCTIONS
+# Per-item status of an equity-cash-flow deduction (R4-02, sourced in R5). Known statuses:
+#   OBSERVED / CONFIRMED_ZERO  a reported cash-flow figure (0 counts)
+#   NOT_APPLICABLE             evidence the item is not a separate claim: the provider reports interest paid INSIDE
+#                              operating cash flow (InterestPaidCFO), or an issuer entry with a source in
+#                              decision_rules.yaml → valuation.fcfe_not_applicable
+#   ESTIMATED                  lease principal estimated from the balance sheet (Yahoo has no cash-flow field for it):
+#                              lease liabilities due within 12 months at the prior year-end — deducted, and disclosed
+# A missing provider field without such evidence is UNKNOWN — never inferred to be zero, and never from the country.
+OBSERVED, CONFIRMED_ZERO, NOT_APPLICABLE, UNKNOWN = "OBSERVED", "CONFIRMED_ZERO", "NOT_APPLICABLE", "UNKNOWN"
+ESTIMATED = "ESTIMATED"
+KNOWN_STATUSES = (OBSERVED, CONFIRMED_ZERO, NOT_APPLICABLE, ESTIMATED)
+
+
+def _with_estimates(rows: pd.DataFrame) -> pd.DataFrame:
+    """Adds lease_principal_estimate (+ its source) from the stored lease liabilities: the current portion at the
+    PRIOR fiscal year-end (= principal falling due in this year), else this year-end's current portion; 0 when the
+    total lease liability is reported as 0. Needs the ticker's full, year-sorted history (the prior year)."""
+    if "lease_liability_current" not in rows.columns and "lease_liability_total" not in rows.columns:
+        return rows
+    rows = rows.copy()
+    cur = pd.to_numeric(rows.get("lease_liability_current"), errors="coerce") \
+        if "lease_liability_current" in rows.columns else pd.Series(np.nan, index=rows.index)
+    tot = pd.to_numeric(rows.get("lease_liability_total"), errors="coerce") \
+        if "lease_liability_total" in rows.columns else pd.Series(np.nan, index=rows.index)
+    yrs = pd.to_numeric(rows["year"], errors="coerce")
+    prior_ok = yrs.diff() == 1
+    prior = cur.shift(1).where(prior_ok)
+    est = prior.fillna(cur)
+    src = pd.Series(np.where(prior.notna(), "current lease liabilities at the prior year-end",
+                             np.where(cur.notna(), "current lease liabilities at this year-end", None)), index=rows.index)
+    zero = (tot == 0) & est.isna()
+    est = est.mask(zero, 0.0)
+    src = src.mask(zero, "total lease liabilities reported as 0")
+    rows["lease_principal_estimate"], rows["lease_principal_estimate_source"] = est, src
+    return rows
+
+
+def basis_rows(hist_fcf: pd.DataFrame, ticker: str, years: int = BASIS_YEARS) -> pd.DataFrame:
+    """The annual rows the valuation uses: one row per fiscal year (the latest load when a year repeats), with a
+    statement FCF, the most recent `years` of them. Selection is explicit so three rows can never mean two years.
+    Lease-principal estimates are derived on the full history first (they need the prior year-end)."""
     if hist_fcf is None or hist_fcf.empty or "free_cash_flow" not in hist_fcf.columns:
-        return None
-    rows = hist_fcf[(hist_fcf["ticker"] == ticker) & hist_fcf["free_cash_flow"].notna()].sort_values("year")
-    return _finite(_after_sbc(rows).tail(years).median()) if not rows.empty else None
+        return pd.DataFrame(columns=["ticker", "year", "free_cash_flow"])
+    rows = hist_fcf[(hist_fcf["ticker"] == ticker) & hist_fcf["free_cash_flow"].notna()].copy()
+    order = ["year", "_extracted_at"] if "_extracted_at" in rows.columns else ["year"]
+    rows = rows.sort_values(order).drop_duplicates(subset=["year"], keep="last")
+    return _with_estimates(rows).tail(years)
 
 
-def sbc_available(hist_fcf: pd.DataFrame, ticker: str, years: int = 3) -> bool:
-    """True when the recent annual rows carry a stock-based-compensation figure (so the FCF above is adjusted)."""
-    if hist_fcf is None or hist_fcf.empty or "stock_based_comp" not in hist_fcf.columns:
+def basis_complete(rows: pd.DataFrame, years: int = BASIS_YEARS) -> bool:
+    """`years` distinct, CONSECUTIVE fiscal years (a skipped year is a missing period, not a shorter median)."""
+    ys = sorted(int(y) for y in pd.to_numeric(rows.get("year", pd.Series(dtype=float)), errors="coerce").dropna())
+    return len(ys) == years and len(set(ys)) == years and ys[-1] - ys[0] == years - 1
+
+
+def _not_applicable_registry() -> dict:
+    """{TICKER: {item: source}} from decision_rules.yaml; an entry without a source note is ignored."""
+    reg = _valuation_config().get("fcfe_not_applicable") or {}
+    out = {}
+    for t, items in (reg.items() if isinstance(reg, dict) else ()):
+        if isinstance(items, dict):
+            out[str(t)] = {str(k): str(v) for k, v in items.items() if v and str(v).strip()}
+    return out
+
+
+def fcfe_deduction_status(hist_fcf: pd.DataFrame, ticker: str, years: int = BASIS_YEARS) -> dict:
+    """{item: {"status": ..., "by_year": {year: status}, "source": str|None}} for SBC, interest paid in financing and
+    lease principal, over the valuation basis years. An item is only as known as its worst year."""
+    rows = basis_rows(hist_fcf, ticker, years)
+    na = _not_applicable_registry().get(str(ticker), {})
+    out = {}
+    for item in DEDUCTION_ITEMS:
+        by_year, sources = {}, set()
+        for _, r in rows.iterrows():
+            y = int(r["year"])
+            v = _finite(r.get(item)) if item in rows.columns else None
+            if v is not None:
+                by_year[y] = CONFIRMED_ZERO if v == 0 else OBSERVED
+            elif item == "interest_paid_cff" and _finite(r.get("interest_paid_cfo")) is not None:
+                by_year[y] = NOT_APPLICABLE              # provider: interest paid is classified in operating CF
+                sources.add("provider reports interest paid in operating cash flow (InterestPaidCFO)")
+            elif item == "interest_paid_cff" and _finite(r.get("interest_paid_supplemental")) is not None \
+                    and _required("deduct_unclassified_interest"):
+                by_year[y] = ESTIMATED                   # amount known, classification not: deduct it (conservative)
+                sources.add("interest paid known only as a supplemental amount — deducted as if in financing "
+                            "(conservative: double-counts it if it is already in operating cash flow)")
+            elif item == "lease_principal_paid" and _finite(r.get("lease_principal_estimate")) is not None:
+                by_year[y] = ESTIMATED
+                sources.add(str(r.get("lease_principal_estimate_source") or "balance-sheet lease liabilities"))
+            elif item in na:
+                by_year[y] = NOT_APPLICABLE
+                sources.add(na[item])
+            else:
+                by_year[y] = UNKNOWN
+        vals = set(by_year.values())
+        status = UNKNOWN if (not by_year or UNKNOWN in vals) else (
+            NOT_APPLICABLE if vals == {NOT_APPLICABLE} else (ESTIMATED if ESTIMATED in vals else OBSERVED))
+        out[item] = {"status": status, "by_year": by_year,
+                     "source": "; ".join(sorted(sources)) if sources else na.get(item)}
+    return out
+
+
+def _deduction_evidence_text(status: dict) -> str:
+    """'; lease principal ESTIMATED (…); interest paid in financing NOT_APPLICABLE (…)' for the fcf_source caption."""
+    names = {"stock_based_comp": "stock comp", "interest_paid_cff": "interest paid in financing",
+             "lease_principal_paid": "lease principal"}
+    parts = [f"{names[k]} {s['status'].replace('_', ' ').lower()}" + (f" ({s['source']})" if s.get("source") else "")
+             for k, s in status.items() if s["status"] in (ESTIMATED, NOT_APPLICABLE)]
+    return ("; " + "; ".join(parts)) if parts else ""
+
+
+REFINANCING_STRESS_SHARE = 0.5
+
+
+def refinancing_stress(hist_fcf: pd.DataFrame, ticker: str, fcfe) -> dict:
+    """{net_repayment, share_of_fcfe, years}: median over the basis years of debt repaid − debt issued (EUR), and its
+    share of the FCFE. None when the debt flows are not reported (unknown — disclosed, not assumed zero)."""
+    rows = basis_rows(hist_fcf, ticker)
+    if rows.empty or not {"debt_issued", "debt_repaid"} <= set(rows.columns):
+        return {"net_repayment": None, "share_of_fcfe": None, "years": 0}
+    rep = pd.to_numeric(rows["debt_repaid"], errors="coerce")
+    iss = pd.to_numeric(rows["debt_issued"], errors="coerce")
+    known = rep.notna() | iss.notna()
+    if not known.any():
+        return {"net_repayment": None, "share_of_fcfe": None, "years": 0}
+    net = (rep.fillna(0).abs() - iss.fillna(0).abs())[known]
+    med = float(net.median())
+    f = _finite(fcfe)
+    share = (max(med, 0.0) / f) if f and f > 0 else None
+    return {"net_repayment": med, "share_of_fcfe": share, "years": int(known.sum())}
+
+
+def fcfe_adjustments(hist_fcf: pd.DataFrame, ticker: str, years: int = BASIS_YEARS) -> list:
+    """Financing deductions applied in every basis year — reported (incl. zero) or estimated (empty = none)."""
+    st = fcfe_deduction_status(hist_fcf, ticker, years)
+    return [c for c in FINANCING_DEDUCTIONS if st[c]["by_year"]
+            and all(s in (OBSERVED, CONFIRMED_ZERO, ESTIMATED) for s in st[c]["by_year"].values())]
+
+
+def normalized_statement_fcf(hist_fcf: pd.DataFrame, ticker: str, years: int = BASIS_YEARS) -> Optional[float]:
+    """Median of the basis years' statement FCF after the deductions that are reported (EUR) — damps spikes and cycles.
+    A missing deduction is left out of the figure here; whether the figure may drive a trade is decided by
+    fcfe_deduction_status (UNKNOWN → not reliable), never by this number."""
+    rows = basis_rows(hist_fcf, ticker, years)
+    return _finite(_after_sbc(rows).median()) if not rows.empty else None
+
+
+def sbc_available(hist_fcf: pd.DataFrame, ticker: str, years: int = BASIS_YEARS) -> bool:
+    """True only when the basis is `years` consecutive fiscal years AND each carries a reported SBC figure (a reported
+    0 counts; a missing figure is unknown, not zero — R3-K3 / R4-02)."""
+    rows = basis_rows(hist_fcf, ticker, years)
+    if not basis_complete(rows, years):
         return False
-    rows = hist_fcf[(hist_fcf["ticker"] == ticker) & hist_fcf["free_cash_flow"].notna()].sort_values("year").tail(years)
-    return bool(rows["stock_based_comp"].notna().any())
+    return all(s in (OBSERVED, CONFIRMED_ZERO)
+               for s in fcfe_deduction_status(hist_fcf, ticker, years)["stock_based_comp"]["by_year"].values())
 
 
 def dcf_equity_value(fcfe: float, growth: float, discount_rate: float,
@@ -216,6 +405,79 @@ class Scenario:
     growth: float
     discount_rate: float
     value_per_share: Optional[float]
+
+
+def terminal_value_share(fcfe, growth, discount_rate, terminal_growth=TERMINAL_GROWTH, years=EXPLICIT_YEARS):
+    """Share of the DCF value that comes from the terminal value (0-1); None when not computable."""
+    fcfe = _finite(fcfe)
+    if not fcfe or fcfe <= 0 or discount_rate <= terminal_growth:
+        return None
+    total = dcf_equity_value(fcfe, growth, discount_rate, terminal_growth, years)
+    pv, cf = 0.0, float(fcfe)
+    for t in range(1, years + 1):
+        cf *= 1 + growth + (terminal_growth - growth) * (t - 1) / max(years - 1, 1)
+        pv += cf / (1 + discount_rate) ** t
+    return 1 - pv / total if total > 0 else None
+
+
+def _scenario_flows(fcfe, growth, r, tg, years=EXPLICIT_YEARS):
+    """Per-period cash flows of the DCF (t = 1..years) and the terminal value at `years` (undiscounted)."""
+    cf, flows = float(fcfe), []
+    for t in range(1, years + 1):
+        cf *= 1 + growth + (tg - growth) * (t - 1) / max(years - 1, 1)
+        flows.append(cf)
+    return flows, flows[-1] * (1 + tg) / (r - tg)
+
+
+def scenario_irr(fcfe, shares, growth, discount_rate, terminal_growth, price, horizon: int = 4,
+                 years: int = EXPLICIT_YEARS) -> Optional[float]:
+    """
+    Holding-period IRR of buying at `price` if the scenario materialises (audit A06): per-share cash flows to equity in
+    years 1..H, plus the model's own value of everything after year H, received at H. Assumes cash flow to equity is
+    distributed or reinvested at the cost of equity, a constant share count (SBC is already deducted from the cash
+    flow) and no re-rating beyond the model. Property: price == scenario value  ->  IRR == discount rate.
+    """
+    fcfe, shares, price = _finite(fcfe), _finite(shares), _finite(price)
+    if not fcfe or fcfe <= 0 or not shares or shares <= 0 or not price or price <= 0 or discount_rate <= terminal_growth:
+        return None
+    flows, tv = _scenario_flows(fcfe, growth, discount_rate, terminal_growth, years)
+    H = int(min(max(horizon, 1), years))
+    per_share = [f / shares for f in flows]
+    exit_value = (sum(per_share[t - 1] / (1 + discount_rate) ** (t - H) for t in range(H + 1, years + 1))
+                  + tv / shares / (1 + discount_rate) ** (years - H))
+    cfs = per_share[:H]
+
+    def npv(x):
+        return sum(c / (1 + x) ** t for t, c in enumerate(cfs, 1)) + exit_value / (1 + x) ** H - price
+
+    lo, hi = -0.95, 3.0
+    if npv(lo) < 0 or npv(hi) > 0:
+        return None
+    for _ in range(100):
+        mid = (lo + hi) / 2
+        lo, hi = (mid, hi) if npv(mid) > 0 else (lo, mid)
+    return (lo + hi) / 2
+
+
+SCENARIO_PROBABILITIES = {"bear": 0.25, "base": 0.50, "bull": 0.25}
+MAX_TERMINAL_SHARE = 0.80      # above this the value is mostly a perpetuity assumption (F-09)
+
+
+def scenario_probabilities() -> dict:
+    p = _valuation_config().get("scenario_probabilities") or SCENARIO_PROBABILITIES
+    tot = sum(float(p.get(k, 0)) for k in ("bear", "base", "bull"))
+    return {k: float(p.get(k, 0)) / tot for k in ("bear", "base", "bull")} if tot > 0 else dict(SCENARIO_PROBABILITIES)
+
+
+def expected_value(scen: dict) -> Optional[float]:
+    """Probability-weighted value of the bear / base / bull scenarios (None if any is missing)."""
+    if not scen:
+        return None
+    vals = {k: (scen[k].value_per_share if k in scen else None) for k in ("bear", "base", "bull")}
+    if any(v is None for v in vals.values()):
+        return None
+    p = scenario_probabilities()
+    return sum(p[k] * vals[k] for k in vals)
 
 
 def dcf_scenarios(fcfe, shares, growth, discount_rate, terminal_growth=TERMINAL_GROWTH) -> dict:
@@ -312,6 +574,39 @@ def normalized_roe(annual_fin: Optional[pd.DataFrame], ticker: str, fallback=Non
     return None if r is None else float(np.clip(r, 0.0, 0.25))
 
 
+CAPITAL_DEFAULTS = {"bank_min_cet1_pct": 11.0, "bank_max_npl_pct": 4.0, "insurer_min_solvency_pct": 150.0}
+
+
+def capital_inputs_check(ticker: str, meta) -> tuple:
+    """(reliable, note) for a bank / insurer from decision_rules.yaml → valuation.bank_capital_inputs[TICKER]:
+    banks need cet1_pct ≥ bank_min_cet1_pct AND npl_pct ≤ bank_max_npl_pct; insurers need solvency_ratio_pct ≥
+    insurer_min_solvency_pct. Every entry needs `source` and `as_of` (latest annual / Pillar 3 / SFCR report). Missing,
+    unsourced or failing inputs keep the justified-P/B value as context only."""
+    cfg = _valuation_config()
+    th = {k: float(cfg.get(k, v)) for k, v in CAPITAL_DEFAULTS.items()}
+    entry = ((cfg.get("bank_capital_inputs") or {}).get(str(ticker)) or {}) if ticker else {}
+    if not entry or not str(entry.get("source") or "").strip() or not str(entry.get("as_of") or "").strip():
+        return False, ("No sourced capital-adequacy / asset-quality inputs (CET1, NPLs; solvency ratio for insurers) — "
+                       "the justified-P/B value is context only, not used for BUY/AVOID. Record them with source and "
+                       "date in decision_rules.yaml → valuation.bank_capital_inputs.")
+    insurer = "insur" in str(meta.get("sector") or "").lower() or "insur" in str(meta.get("industry") or "").lower()
+    if insurer:
+        sol = _finite(entry.get("solvency_ratio_pct"))
+        if sol is None or sol < th["insurer_min_solvency_pct"]:
+            return False, (f"Solvency ratio {sol if sol is not None else 'unknown'}% vs the "
+                           f"{th['insurer_min_solvency_pct']:.0f}% floor ({entry['source']}, {entry['as_of']}) — "
+                           f"not used for BUY/AVOID.")
+        return True, None
+    cet1, npl = _finite(entry.get("cet1_pct")), _finite(entry.get("npl_pct"))
+    if cet1 is None or npl is None:
+        return False, f"CET1 and NPL ratio both required ({entry['source']}) — not used for BUY/AVOID."
+    if cet1 < th["bank_min_cet1_pct"] or npl > th["bank_max_npl_pct"]:
+        return False, (f"CET1 {cet1:.1f}% (floor {th['bank_min_cet1_pct']:.0f}%) / NPL {npl:.1f}% (cap "
+                       f"{th['bank_max_npl_pct']:.0f}%) per {entry['source']}, {entry['as_of']} — capital or asset "
+                       f"quality fails; not used for BUY/AVOID.")
+    return True, None
+
+
 def _financial_inputs(meta, price: float, annual_fin, ticker: str, coe: float, tg: float, ass: dict) -> dict:
     mcap = _finite(meta.get("market_cap"))
     shares = mcap / price if mcap and price else None
@@ -337,6 +632,10 @@ def _financial_inputs(meta, price: float, annual_fin, ticker: str, coe: float, t
     elif implied is not None and implied > 0.35:
         reliable, note = False, (f"The price implies a perpetual ROE of {implied:.0%} — beyond what a lender or insurer "
                                  f"can sustain; the model is not informative here.")
+    elif _required("require_bank_capital_inputs"):
+        # Four benign years of ROE capitalised on book value is not an underwriting of a lender or insurer (R3-K3).
+        # Issuer-level capital / asset-quality inputs with a source unlock the model only when they pass (P1/3).
+        reliable, note = capital_inputs_check(ticker, meta)
     else:
         reliable, note = True, None
     return {
@@ -352,7 +651,8 @@ def _financial_inputs(meta, price: float, annual_fin, ticker: str, coe: float, t
         "rate_source": ass["source"], "scenarios": scen, "base": base, "bear": bear, "bull": bull,
         "implied_growth": implied, "roe": roe, "roe_normalised": roe_norm, "book_per_share": bvps,
         "justified_pb": (roe - tg) / (coe - tg) if roe is not None and coe > tg else None,
-        "sbc_adjusted": False,
+        "sbc_adjusted": False, "fcfe_adjustments": [], "terminal_share": None, "growth_note": None, "irr": {},
+        "expected_value": expected_value(scen), "probabilities": scenario_probabilities(),
     }
 
 
@@ -401,6 +701,30 @@ def risk_free_from_macro(macro: dict) -> float:
     return v / 100 if v and 0.1 < v < 20 else RISK_FREE
 
 
+def holding_horizon() -> int:
+    try:
+        import yaml
+        from pathlib import Path
+        cfg = yaml.safe_load(open(Path(__file__).resolve().parent.parent / "config" / "decision_rules.yaml",
+                                  encoding="utf-8")) or {}
+        return int((cfg.get("valuation") or {}).get("horizon_years", 4))
+    except (OSError, TypeError, ValueError):
+        return 4
+
+
+def _irrs(scen, fcfe, shares, price, tg) -> dict:
+    """Bear / base / bull IRR (fractions) and their probability-weighted average."""
+    if not scen:
+        return {}
+    H = holding_horizon()
+    out = {k: scenario_irr(fcfe, shares, s.growth, s.discount_rate, tg, price, H) for k, s in scen.items()}
+    p = scenario_probabilities()
+    out["expected"] = (sum(p[k] * out[k] for k in ("bear", "base", "bull"))
+                       if all(out.get(k) is not None for k in ("bear", "base", "bull")) else None)
+    out["horizon_years"] = H
+    return out
+
+
 def valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, macro: dict,
                      annual_fin: Optional[pd.DataFrame] = None) -> dict:
     """
@@ -419,23 +743,68 @@ def valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, ma
     statement_fcf = normalized_statement_fcf(hist_fcf, ticker)
     sbc = sbc_available(hist_fcf, ticker)
     fcfe = statement_fcf if statement_fcf is not None else _finite(meta.get("free_cashflow"))
-    fcf_source = (("cash-flow statement FCF (OCF − capex − stock-based comp), median of last 3 years" if sbc
-                   else "cash-flow statement FCF (OCF − capex; stock comp not available), median of last 3 years")
+    adj = fcfe_adjustments(hist_fcf, ticker)
+    fcf_source = (("cash-flow statement FCF (OCF − capex − stock-based comp" if sbc
+                   else "cash-flow statement FCF (OCF − capex; stock comp not available")
+                  + ("".join(f" − {a.replace('_', ' ')}" for a in adj))
+                  + ("), median of last 3 years" if adj else
+                     "; interest/lease payments in financing NOT deducted — overstated for IFRS filers), median of last 3 years")
+                  + _deduction_evidence_text(fcfe_deduction_status(hist_fcf, ticker))
                   if statement_fcf is not None else "Yahoo levered FCF")
     mcap = _finite(meta.get("market_cap"))
     shares = mcap / price if mcap and price else None
-    hist = _after_sbc(hist_fcf[hist_fcf["ticker"] == ticker].sort_values("year")).tail(5) \
-        if hist_fcf is not None and not hist_fcf.empty else []
+    hist_rows = _with_estimates(hist_fcf[hist_fcf["ticker"] == ticker].sort_values("year")).tail(5) \
+        if hist_fcf is not None and not hist_fcf.empty else pd.DataFrame(columns=["year", "free_cash_flow"])
+    hist_cagr = cagr_by_year(hist_rows["year"], _after_sbc(hist_rows)) if not hist_rows.empty else None
     growth, sources = anchor_growth(meta.get("revenue_growth"), meta.get("earnings_growth"),
-                                    fcf_cagr(hist), revenue_cagr=revenue_cagr(annual_fin, ticker))
+                                    hist_cagr, revenue_cagr=revenue_cagr(annual_fin, ticker))
     valuable = bool(fcfe and fcfe > 0 and shares)
     scen = dcf_scenarios(fcfe, shares, growth, coe, tg) if valuable else {}
     base = scen["base"].value_per_share if scen else None
     bull = scen["bull"].value_per_share if scen else None
     implied = reverse_dcf_growth(price, fcfe, shares, coe, tg) if valuable else None
     reliable, note = dcf_reliability(None, price, base, bull, implied)       # sector test already done by uses_book_model
+    rev_cagr = revenue_cagr(annual_fin, ticker)
+    tv_share = terminal_value_share(fcfe, growth, coe, tg) if valuable else None
+    growth_note = None
+    if valuable and rev_cagr is None:
+        growth_note = ("Growth anchor is not a multi-year revenue CAGR (fewer than 3 annual statements) — it rests on "
+                       "single-quarter YoY figures; treat the base value as low-evidence.")
+    if reliable and tv_share is not None and tv_share > MAX_TERMINAL_SHARE:
+        reliable, note = False, (f"{tv_share:.0%} of the value is terminal value — the result is a perpetuity "
+                                 f"assumption, not a forecast. Not used for BUY/AVOID.")
+    # Unverified claims ahead of equity (R3-K3): an unknown deduction is not a confirmed zero, so the value is shown
+    # but cannot drive BUY / AVOID. Switch: valuation.require_verified_fcfe_deductions in decision_rules.yaml.
+    # R4-02: EVERY applicable deduction must be known for EVERY one of 3 consecutive fiscal years — one verified item
+    # no longer lets an unknown one through, and the filer's country is not evidence of its cash-flow classification.
+    deduction_status = fcfe_deduction_status(hist_fcf, ticker)
+    if reliable and valuable and _required("require_verified_fcfe_deductions"):
+        _unknown = [k for k, s in deduction_status.items() if s["status"] == UNKNOWN]
+        if statement_fcf is None:
+            reliable, note = False, ("Only the provider's levered FCF is available — not reconciled to a cash-flow "
+                                     "statement. Not used for BUY/AVOID.")
+        elif not basis_complete(basis_rows(hist_fcf, ticker)):
+            reliable, note = False, (f"Fewer than {BASIS_YEARS} consecutive annual cash-flow statements — the "
+                                     f"normalised cash flow to equity is not established. Not used for BUY/AVOID.")
+        elif _unknown:
+            _names = {"stock_based_comp": "stock-based compensation", "interest_paid_cff": "interest paid in financing",
+                      "lease_principal_paid": "lease principal"}
+            reliable, note = False, (
+                f"Unknown for at least one of the last {BASIS_YEARS} years: {', '.join(_names[k] for k in _unknown)} — "
+                "unknown is not zero, so the cash flow to equity may be overstated. Not used for BUY/AVOID until each "
+                "item is reported or recorded as not applicable with a source (decision_rules.yaml → "
+                "valuation.fcfe_not_applicable).")
+    # E6: the cash flow above assumes NET BORROWING = 0 (maturing debt is refinanced); it has no debt schedule.
+    # Refinancing stress: if the company has been repaying more debt than it raised, by at least half of the FCFE,
+    # the value depends on continued access to credit → not used for BUY/AVOID. Net borrowing is never ADDED.
+    refi = refinancing_stress(hist_fcf, ticker, fcfe)
+    fcf_source += " · assumes net borrowing = 0 (debt refinanced at maturity)"
+    if reliable and valuable and refi["share_of_fcfe"] is not None and refi["share_of_fcfe"] >= REFINANCING_STRESS_SHARE:
+        reliable, note = False, (f"Net debt repayment (median {refi['net_repayment']:,.0f} EUR a year) is "
+                                 f"{refi['share_of_fcfe']:.0%} of the cash flow to equity — the value assumes the debt "
+                                 f"can keep being refinanced. Not used for BUY/AVOID without a debt schedule.")
     return {
-        "model": "dcf", "fcfe": fcfe, "fcf_source": fcf_source, "shares": shares,
+        "model": "dcf", "fcfe": fcfe, "fcf_source": fcf_source, "shares": shares, "refinancing": refi,
         "growth": growth, "growth_sources": sources, "reliable": reliable, "note": note,
         "risk_free": rf, "cost_of_equity": coe, "terminal_growth": tg, "currency": ass["currency"],
         "rate_source": ass["source"], "scenarios": scen,
@@ -443,4 +812,8 @@ def valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, ma
         "bear": scen["bear"].value_per_share if scen else None,
         "bull": bull,
         "implied_growth": implied, "sbc_adjusted": sbc,
+        "fcfe_adjustments": adj, "fcfe_deduction_status": {k: s["status"] for k, s in deduction_status.items()},
+        "terminal_share": tv_share, "growth_note": growth_note,
+        "irr": _irrs(scen, fcfe, shares, price, tg),
+        "expected_value": expected_value(scen) if scen else None, "probabilities": scenario_probabilities(),
     }

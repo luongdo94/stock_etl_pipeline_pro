@@ -5,7 +5,7 @@ import pandas as pd
 from core.levels import get_tactical_metrics
 from core.rating import compute_institutional_rating, verdict
 from core.smart_money import get_sm_spirit_unified_v2
-from core.decision import decide, load_rules, to_date
+from core.decision import BUY, decide, load_rules, to_date, with_conflict
 from core.valuation import uses_book_model, valuation_inputs
 from core.scoring import score_universe
 from etl.utils import clean_upside_pct
@@ -13,7 +13,7 @@ from etl.utils import clean_upside_pct
 
 def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
                          _hist_fcf=None, _macro=None, _estimates=None,
-                         track_record_ok=False) -> pd.DataFrame:
+                         track_record_ok=False, _earnings_cal=None) -> pd.DataFrame:
     """
     One row per investable ticker. Two distinct outputs:
       - "Signal"   (column "Action"): 6-pillar technical + quality composite — an INPUT
@@ -39,11 +39,16 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
         """Returns 'Accelerating', 'Decelerating', or 'Neutral'.
         Uses QoQ growth rates for 2 most recent consecutive quarters.
         """
+        if _quarterly_fin is None or qoq_col not in _quarterly_fin.columns:
+            return 'Neutral'
         t_q = _quarterly_fin[_quarterly_fin['ticker'] == ticker].sort_values('report_date', ascending=False)
         if len(t_q) < 2:
             return 'Neutral'
-        vals = t_q[qoq_col].dropna().head(2).tolist()
-        if len(vals) < 2:
+        # E3: the TWO MOST RECENT quarters, both with a QoQ figure. dropna() used to skip a gap and pair two
+        # non-consecutive readings; QoQ is NULL unless the previous quarter is adjacent, so two non-null
+        # latest values are three consecutive quarters.
+        vals = t_q[qoq_col].head(2).tolist()
+        if len(vals) < 2 or any(pd.isna(v) for v in vals):
             return 'Neutral'
         if vals[0] > threshold and vals[1] > threshold:
             return 'Accelerating'
@@ -51,7 +56,8 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
             return 'Decelerating'
         return 'Neutral'
 
-    # Build lookups by ticker (QoQ — consecutive quarter growth)
+    # Build lookups by ticker (QoQ — consecutive quarter growth). These used to read the YoY columns while the label,
+    # presets and docstring promised QoQ (audit R3-E). QoQ is seasonal: read it with the fiscal calendar in mind.
     _eps_mom_lookup = {
         t: _two_quarter_momentum(t, 'eps_growth_qoq_pct')
         for t in _companies_df['ticker'].unique()
@@ -60,6 +66,15 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
         t: _two_quarter_momentum(t, 'revenue_growth_qoq_pct')
         for t in _companies_df['ticker'].unique()
     }
+
+    # Next earnings date per ticker: the scanner's Decision gets the same blackout gate as the deep dive
+    _next_er = {}
+    if _earnings_cal is not None and not _earnings_cal.empty and {"ticker", "earnings_date"} <= set(_earnings_cal.columns):
+        _today = pd.Timestamp.today().normalize()
+        _er = _earnings_cal[["ticker", "earnings_date"]].copy()
+        _er["earnings_date"] = pd.to_datetime(_er["earnings_date"], errors="coerce")
+        _er = _er[_er["earnings_date"] >= _today]
+        _next_er = {t: d.date() for t, d in _er.groupby("ticker")["earnings_date"].min().items()}
     
     for _, row in _companies_df.iterrows():
         ticker = row['ticker']
@@ -87,7 +102,8 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
         latest_p = ticker_prices.iloc[-1]
         # ── SCORES (core/scoring.py): Quality, Value, Momentum ────────────────────────
         _sc = _scores.loc[ticker]
-        ai_score = float(_sc["quality"]) if pd.notnull(_sc["quality"]) else 50.0     # no data = neutral
+        quality_raw = float(_sc["quality"]) if pd.notnull(_sc["quality"]) else None
+        ai_score = quality_raw if quality_raw is not None else 50.0   # display / Signal only — the Decision gets quality_raw
         value_score = float(_sc["value"]) if pd.notnull(_sc["value"]) else None
         momentum = float(_sc["momentum"]) if pd.notnull(_sc["momentum"]) else float("nan")
         _cov = min(_sc["quality_coverage"], _sc["value_coverage"])
@@ -106,9 +122,11 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
         _vin = valuation_inputs(row, float(cur_p), _hist_fcf, ticker, _macro or {}, _annual_fin)
         _dec = decide(
             price=float(cur_p), vin=_vin, stop_loss=_tm["stop_loss"], meta=row,
-            scores={"quality": ai_score, "value": value_score, "flags": _sc["flags"], "coverage": _cov,
-                    "missing": _sc["missing"]},
-            price_date=to_date(latest_p.get("date")), track_record_ok=_track_record_ok, rules=_rules)
+            scores={"quality": quality_raw, "value": value_score, "flags": _sc["flags"], "coverage": _cov,
+                    "missing": _sc["missing"], "momentum": None if pd.isna(momentum) else momentum,
+                    "adv_eur": _sc["adv_eur"] if pd.notnull(_sc["adv_eur"]) else None},
+            price_date=to_date(latest_p.get("date")), next_earnings=_next_er.get(ticker),
+            track_record_ok=_track_record_ok, rules=_rules)
         _mos = (_vin["base"] / float(cur_p) - 1) * 100 if (_vin["base"] and _vin["reliable"]) else None
 
         # Volume flow (Unified v6.0 with sector awareness)
@@ -118,22 +136,29 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
         sm_layer = sm_result["layer"]
 
         # ── Signal: context for the Decision (reward/risk is the Decision's own) ──
-        _rating = compute_institutional_rating(
-            ai_score   = ai_score,
-            ma_sig     = ma_sig,
-            latest_rsi = _tm["rsi"],
-            upside     = float(upside),
-            pe_v       = pe_v,
-            peg_v      = peg_v,
-            sector     = str(row.get('sector', '')),
-            w52_pos    = _tm["w52_pos"],
-            rr         = _dec.reward_risk,
-            sm_status  = sm_spirit,
-            sm_strength = sm_strength,
-            sm_layer   = sm_layer,
-            value_score = value_score,
-            decision_stance = _dec.stance,
-        )
+        def _signal(stance):
+            return compute_institutional_rating(
+                ai_score   = ai_score,
+                ma_sig     = ma_sig,
+                latest_rsi = _tm["rsi"],
+                upside     = float(upside),
+                pe_v       = pe_v,
+                peg_v      = peg_v,
+                sector     = str(row.get('sector', '')),
+                w52_pos    = _tm["w52_pos"],
+                rr         = _dec.reward_risk,
+                sm_status  = sm_spirit,
+                sm_strength = sm_strength,
+                sm_layer   = sm_layer,
+                value_score = value_score,
+                decision_stance = stance,
+            )
+        _rating = _signal(_dec.stance)
+        if _rating["clamped"] and _dec.stance == BUY:
+            # BUY vs an UNFAVOURABLE set-up: a review state, not a relabelled signal (R3-E)
+            _dec = with_conflict(_dec, f"timing context is {_rating['raw_label']} (trend / value / volume flow against "
+                                       f"the valuation case)")
+            _rating = _signal(_dec.stance)
         action_label = _rating["action_label"]
 
         # Additional metrics
@@ -177,15 +202,24 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
             "MoS (%)": round(_mos, 0) if _mos is not None else float("nan"),   # numeric column → blank, not "None"
             "Action": action_label,
             "Verdict": verdict(_dec.stance, action_label),
-            "Quality": ai_score,
+            "Quality": quality_raw if quality_raw is not None else float("nan"),   # unknown stays visibly unknown
+            "Conflicts": "; ".join(_dec.conflicts),
             "Value": value_score if value_score is not None else float("nan"),
             "Momentum": momentum,
             "Revisions": float(_sc["revisions"]) if pd.notnull(_sc["revisions"]) else float("nan"),
+            # raw inputs of the shared sizing rule (core.decision.size_limits) for portfolio rebalances (R4-F02)
+            "_adv_eur": float(_sc["adv_eur"]) if pd.notnull(_sc["adv_eur"]) else float("nan"),
+            "_stop_distance_pct": _dec.downside_pct if _dec.downside_pct is not None else float("nan"),
+            "_thesis_stop": _dec.stop if _dec.stop is not None else float("nan"),   # recorded once at opening (P1/5)
             "ADV (EUR M)": round(float(_sc["adv_eur"]) / 1e6, 1) if pd.notnull(_sc["adv_eur"]) else float("nan"),
             "Coverage (%)": float(_cov) if pd.notnull(_cov) else 0.0,
             "Flags": _sc["flags"],
             "Missing": _sc["missing"],
             "Components": _sc["components"],
+            "_quality_raw": quality_raw if quality_raw is not None else float("nan"),
+            "_valuation": {k: _vin.get(k) for k in ("model", "base", "bear", "bull", "expected_value", "fcfe", "growth",
+                                                     "cost_of_equity", "terminal_growth", "terminal_share", "reliable",
+                                                     "fcfe_adjustments", "currency")},
             "Upside (%)": round(upside, 1),
             "1D Chg (%)": round(chg_1d, 2),
             "Price": cur_p,

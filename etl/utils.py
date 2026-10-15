@@ -99,6 +99,32 @@ def needs_earnings_refresh(conn: duckdb.DuckDBPyConnection, threshold_hours: int
         return True
 
 
+FULL_REFRESH_BELOW_FRESH_SHARE = 0.5     # most tickers out of SLA → refresh everything; otherwise per-ticker recovery
+
+
+def stale_tickers(conn: duckdb.DuckDBPyConnection, table: str, ts_col: str, threshold_hours: int, tickers) -> list:
+    """E7: tickers whose OWN latest row in `table` is older than the SLA. A table-wide MAX(ts) let one fresh ticker
+    hide hundreds of stale ones."""
+    try:
+        rows = conn.execute(f"""SELECT ticker FROM {table} GROUP BY ticker
+                                HAVING MAX({ts_col}) < CURRENT_TIMESTAMP - INTERVAL {int(threshold_hours)} HOUR""").fetchall()
+    except Exception:
+        return []
+    wanted = set(tickers or [])
+    return sorted(r[0] for r in rows if not wanted or r[0] in wanted)
+
+
+def fresh_share(conn: duckdb.DuckDBPyConnection, table: str, ts_col: str, threshold_hours: int) -> float:
+    """Share of tickers in `table` whose own latest row is within the SLA (0 when the table is empty / missing)."""
+    try:
+        r = conn.execute(f"""SELECT AVG(CASE WHEN m >= CURRENT_TIMESTAMP - INTERVAL {int(threshold_hours)} HOUR
+                                        THEN 1.0 ELSE 0.0 END)
+                             FROM (SELECT ticker, MAX({ts_col}) m FROM {table} GROUP BY ticker)""").fetchone()[0]
+        return float(r or 0.0)
+    except Exception:
+        return 0.0
+
+
 def needs_fundamentals_refresh(conn: duckdb.DuckDBPyConnection, threshold_hours: int = 168) -> bool:
     """
     Checks if dynamic fundamental data (Quarterlies, Cashflows, FCF) needs a refresh.
@@ -121,10 +147,9 @@ def needs_fundamentals_refresh(conn: duckdb.DuckDBPyConnection, threshold_hours:
         
         if ticker_count < (total_target * 0.90): # Lower threshold for obscure stocks
             return True
-            
-        from datetime import datetime
-        hours_since = (datetime.now() - last_load).total_seconds() / 3600
-        return hours_since > threshold_hours
+        # E7: per-ticker freshness — a few fresh tickers no longer make the whole table look fresh; stale tickers
+        # below this share are refreshed individually by get_smart_recovery_targets
+        return fresh_share(conn, "raw.quarterly_financials", "_loaded_at", threshold_hours) < FULL_REFRESH_BELOW_FRESH_SHARE
     except Exception:
         return True
 
@@ -153,10 +178,8 @@ def needs_metadata_refresh(conn: duckdb.DuckDBPyConnection, threshold_hours: int
         
         if ticker_count < (total_target * 0.95):
             return True # Metadata should be high coverage
-            
-        from datetime import datetime
-        hours_since = (datetime.now() - last_load).total_seconds() / 3600
-        return hours_since > threshold_hours
+        # E7: per-ticker freshness (see needs_fundamentals_refresh)
+        return fresh_share(conn, "raw.company_info", "_loaded_at", threshold_hours) < FULL_REFRESH_BELOW_FRESH_SHARE
     except Exception:
         return True
 def get_config_tickers() -> dict:
@@ -271,6 +294,23 @@ def get_smart_recovery_targets(conn: duckdb.DuckDBPyConnection, all_tickers: dic
             logger.info(f"   🔍 Smart Recovery identified {len(gap_tickers)} tickers with fundamental gaps (e.g., {gap_tickers[:3]})")
     except Exception as e:
         logger.debug(f"Earnings season check skipped: {e}")
+
+    # ── E7: per-ticker SLA — tickers whose OWN rows are older than the refresh interval ──────────────────────────
+    try:
+        from etl.config_manager import get_etl_config
+        ri = get_etl_config()["refresh_intervals"]
+        stale_meta = stale_tickers(conn, "raw.company_info", "_loaded_at", ri["metadata_hours"], all_tickers)
+        stale_fund = stale_tickers(conn, "raw.quarterly_financials", "_loaded_at", ri["fundamentals_hours"],
+                                   equity_tickers)
+        for t in stale_meta:
+            missing_meta.setdefault(t, all_tickers.get(t, {}))
+        for t in stale_fund:
+            missing_fundamentals.setdefault(t, equity_tickers.get(t, {}))
+        if stale_meta or stale_fund:
+            logger.info(f"   ⏰ Out of SLA: {len(stale_meta)} metadata / {len(stale_fund)} fundamentals ticker(s) "
+                        f"refreshed individually")
+    except Exception as e:
+        logger.debug(f"per-ticker SLA check skipped: {e}")
 
     # ── Earnings Season Smart Detection ───────────────────────────────────
     # Only target tickers that:

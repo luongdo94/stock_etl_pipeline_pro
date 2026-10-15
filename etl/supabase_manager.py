@@ -42,7 +42,11 @@ TABLES = (
     ("marts.dim_quarterly_financials", "dim_quarterly_financials", "SELECT * FROM marts.dim_quarterly_financials", None, False),
     ("marts.dim_forward_estimates", "dim_forward_estimates", "SELECT * FROM marts.dim_forward_estimates", None, True),
     ("marts.score_snapshots", "score_snapshots", "SELECT * FROM marts.score_snapshots", None, True),
+    # long outcome history for Track Record / evidence (R2-02); optional until the first snapshot run created it
+    ("marts.track_prices", "track_prices", "SELECT * FROM marts.track_prices", "ticker, date", True),
     ("raw.hist_fcf", "hist_fcf", "SELECT * FROM raw.hist_fcf", None, False),
+    ("marts.etl_exceptions", "etl_exceptions", "SELECT * FROM marts.etl_exceptions", None, True),
+    ("marts.security_lifecycle", "security_lifecycle", "SELECT * FROM marts.security_lifecycle", None, True),
     ("raw.hist_fcf_quarterly", "hist_fcf_quarterly", "SELECT * FROM raw.hist_fcf_quarterly", None, False),
     ("raw.historical_financials", "historical_financials", "SELECT * FROM raw.historical_financials", None, False),
     ("raw.quarterly_financials", "quarterly_financials", "SELECT * FROM raw.quarterly_financials", None, False),

@@ -3,7 +3,7 @@ import pandas as pd
 import streamlit as st
 
 from services.db import load_track_record
-from services.user_store import load_portfolio_from_db
+from services.user_store import read_portfolio_snapshot
 from ui.decision_panel import render_decision_panel
 from views.stock_analysis.layout import layer_banner
 
@@ -18,9 +18,10 @@ def render(dd, ctx):
     layer_banner(1, "Structural context", "#3498db", top=10, bottom=0)
 
     def _holdings_value():
-        _pf = load_portfolio_from_db()
+        """({ticker: EUR value}, cash EUR) — the panel sizes against NAV = holdings + cash."""
+        _pf, _cash, _ = read_portfolio_snapshot()
         _last = prices_full.sort_values("date").groupby("ticker")["price_close"].last()
-        return {t: v.get("shares", 0) * float(_last.get(t, 0)) for t, v in _pf.items()}
+        return {t: v.get("shares", 0) * float(_last.get(t, 0)) for t, v in _pf.items()}, _cash
 
     render_decision_panel(
         ticker=dd.ticker, meta=meta, price=float(dd.cur_p),
@@ -29,7 +30,8 @@ def render(dd, ctx):
         missing=dd.scores["missing"], scores=dd.scores,
         next_earnings=dd.next_earnings, quality=dd.ai_score,
         snapshots=load_track_record(), prices=prices_full,
-        holdings_loader=_holdings_value, companies=ctx["companies_full"])
+        holdings_loader=_holdings_value, companies=ctx["companies_full"],
+        signal_conflict=dd.extra.get("signal_conflict"))
 
     pos, lo, hi = dd.w52_pos, dd.tm["w52_lo"], dd.tm["w52_hi"]
     zone = "Near Low" if pos < 20 else ("Near High" if pos > 80 else "Mid-Range")

@@ -84,6 +84,66 @@ def run_dq_validations(db_path: str = None):
                 "critical": True
             },
 
+            # --- E9: raw ingestion & financial-semantic checks (raw rows can vanish before the mart checks) ---
+            {
+                "id": "raw_future_dates",
+                "name": "RAW: No price dated in the future",
+                "query": "SELECT COUNT(*) FROM raw.stock_prices WHERE CAST(date AS DATE) > CURRENT_DATE",
+                "ticker_query": "SELECT DISTINCT ticker FROM raw.stock_prices WHERE CAST(date AS DATE) > CURRENT_DATE LIMIT 50",
+                "critical": True
+            },
+            {
+                "id": "raw_ohlc_ordering",
+                "name": "RAW: OHLC ordering (low ≤ open/close ≤ high)",
+                "query": """SELECT COUNT(*) FROM raw.stock_prices WHERE high < low * 0.999
+                            OR close > high * 1.001 OR close < low * 0.999 OR open > high * 1.001 OR open < low * 0.999""",
+                "ticker_query": """SELECT DISTINCT ticker FROM raw.stock_prices WHERE high < low * 0.999
+                            OR close > high * 1.001 OR close < low * 0.999 LIMIT 50""",
+                "critical": False
+            },
+            {
+                "id": "raw_fx_rate_valid",
+                "name": "RAW: FX rate present, finite and > 0",
+                "query": "SELECT COUNT(*) FROM raw.stock_prices WHERE fx_rate IS NULL OR NOT isfinite(fx_rate) OR fx_rate <= 0",
+                "ticker_query": "SELECT DISTINCT ticker FROM raw.stock_prices WHERE fx_rate IS NULL OR NOT isfinite(fx_rate) OR fx_rate <= 0 LIMIT 50",
+                "critical": False
+            },
+            {
+                "id": "raw_min_price",
+                "name": f"RAW: Close above the configured minimum ({_dq['min_price']})",
+                "query": f"SELECT COUNT(*) FROM raw.stock_prices WHERE close < {float(_dq['min_price'])}",
+                "ticker_query": f"SELECT DISTINCT ticker FROM raw.stock_prices WHERE close < {float(_dq['min_price'])} LIMIT 50",
+                "critical": False
+            },
+            {
+                "id": "raw_to_mart_rejection",
+                "name": "RAW→MART: rows rejected by staging (> 1% flags)",
+                "query": """SELECT CASE WHEN r > 0 AND (r - m) * 1.0 / r > 0.01 THEN r - m ELSE 0 END FROM
+                            (SELECT (SELECT COUNT(*) FROM raw.stock_prices) r, (SELECT COUNT(*) FROM marts.fct_daily_returns) m)""",
+                "ticker_query": """SELECT ticker FROM (SELECT ticker, COUNT(*) n FROM raw.stock_prices GROUP BY 1) r
+                            LEFT JOIN (SELECT ticker, COUNT(*) n FROM marts.fct_daily_returns GROUP BY 1) m USING (ticker)
+                            WHERE COALESCE(m.n, 0) < r.n * 0.99 LIMIT 50""",
+                "critical": False
+            },
+            {
+                "id": "annual_period_gaps",
+                "name": "FIN: Consecutive annual statements ≤ 400 days apart",
+                "query": """SELECT COUNT(*) FROM (SELECT ticker, date_diff('day', LAG(report_date) OVER
+                            (PARTITION BY ticker ORDER BY report_date), report_date) d FROM marts.dim_annual_financials) WHERE d > 400""",
+                "ticker_query": """SELECT DISTINCT ticker FROM (SELECT ticker, date_diff('day', LAG(report_date) OVER
+                            (PARTITION BY ticker ORDER BY report_date), report_date) d FROM marts.dim_annual_financials) WHERE d > 400 LIMIT 50""",
+                "critical": False
+            },
+            {
+                "id": "universe_without_prices",
+                "name": "UNIVERSE: every expected ticker has prices",
+                "query": """SELECT COUNT(*) FROM raw.universe u WHERE NOT EXISTS
+                            (SELECT 1 FROM raw.stock_prices p WHERE p.ticker = u.ticker)""",
+                "ticker_query": """SELECT ticker FROM raw.universe u WHERE NOT EXISTS
+                            (SELECT 1 FROM raw.stock_prices p WHERE p.ticker = u.ticker) LIMIT 50""",
+                "critical": False
+            },
+
             # --- SOFT (Dashboard Telemetry) ---
             {
                 "id": "fct_price_jumps",
@@ -305,7 +365,14 @@ def run_dq_validations(db_path: str = None):
         conn.execute("DELETE FROM marts.dq_warnings") # Clear old results in shadow
         
         for t in tests:
-            raw = conn.execute(t["query"]).fetchone()
+            try:
+                raw = conn.execute(t["query"]).fetchone()
+            except duckdb.Error as e:
+                # a soft check over an optional table / column (older warehouse) is skipped; a critical one fails
+                if not t["critical"]:
+                    logger.warning(f"   ⚠️ DQ check {t['id']} skipped: {e}")
+                    continue
+                raise
             val = raw[0] if raw else 0  # HAVING clause returns no row when condition not met → val = 0
             failed = val > 0
             

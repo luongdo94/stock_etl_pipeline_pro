@@ -122,6 +122,13 @@ def render(dd, ctx):
                         "company":       meta.get("company", deep_ticker),
                         "sector":        meta.get("sector", "N/A"),
                         "ai_score":      ai_score,
+                        # the computed Decision is the ONLY rating the LLM may state (audit F-06)
+                        "decision": (lambda _d, _v: None if _d is None else {
+                            "stance": _d.stance, "confidence": _d.confidence, "reliable": _v.get("reliable"),
+                            "base": _v.get("base"), "bear": _v.get("bear"), "bull": _v.get("bull"),
+                            "expected_value": _v.get("expected_value"), "horizon_irr": _d.horizon_irr_pct,
+                            "reasons": _d.reasons})(dd.extra.get("decision"), dd.vin),
+                        "decision_stance": getattr(dd.extra.get("decision"), "stance", "N/A"),
 
                         "price":         cur_p,
                         "market_regime": regime,

@@ -37,7 +37,24 @@ gates:
   continuity_move: 0.25            # one-run move that counts as a discontinuity (unit / FX / split bug)
   mcap_ratio_bounds: [0.5, 2.0]    # market cap vs previous warehouse; outside bounds counts as a unit / FX discontinuity
   max_mcap_share: 0.05             # share of tickers outside the bounds above -> critical
-  min_company_coverage: 0.80       # company_info rows / tickers in the universe
+  min_company_coverage: 0.80       # universe tickers with a company row that has a market cap / universe size
+  min_vs_previous_fundamentals: 0.95  # annual statements / annual cash flows / payout: tickers and rows vs previous production
+
+# Security lifecycle and history audit (per ticker; never fails a run — written to marts.etl_exceptions).
+lifecycle:
+  inactive_after_days: 10     # last price this many calendar days before the newest date -> INACTIVE (delisted / renamed /
+                              # suspended): recorded with its last date and price, excluded from new score snapshots
+  unexplained_jump_pct: 40    # full-history audit: |daily return| above this ...
+  market_quiet_pct: 5         # ... on a day the benchmark moved less than this -> corporate-action / data-error candidate
+
+# Provider guard (etl/fetch_guard.py): how the extractors react when Yahoo refuses requests or has no data.
+provider:
+  block_share: 0.3          # a batch with at least this share of refused tickers triggers a cool-down
+  cooldown_base_s: 30       # first cool-down; doubles on each consecutive refused batch ...
+  cooldown_cap_s: 300       # ... up to this
+  cooldown_budget_s: 900    # total cool-down per extractor and run; past it the circuit opens (no more requests)
+  retry_pause_s: 1.5        # pause between single-ticker retries
+  no_data_ttl_days: 14      # a ticker the provider has no data for is not asked again (per extractor) for this long
 
 swap:
   attempts: 60            # os.replace retries while a dashboard connection still holds the production file

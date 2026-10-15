@@ -59,3 +59,4 @@ warehouse/*.parquet
 warehouse/local_user/
 warehouse/etl.lock
 warehouse/*.wal
+warehouse/provider_no_data.json

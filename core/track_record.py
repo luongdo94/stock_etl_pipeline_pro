@@ -13,57 +13,131 @@ Outputs
   action_scorecard — hit rate / mean excess return per action label (BUY, SELL, …)
   recommendation_log — every time a ticker's action label changed (the "calls" to be judged)
 """
+from typing import Optional
+
 import numpy as np
 import pandas as pd
 
-HORIZONS = (21, 63, 126)   # ≈ 1, 3, 6 months of trading days
+HORIZONS = (21, 63, 126, 252)   # ≈ 1, 3, 6, 12 months of trading days
+HORIZON_LABELS = {21: "1 month", 63: "3 months", 126: "6 months", 252: "12 months"}   # the ONE label source (audit A02)
+
+
+def horizon_label(h: int) -> str:
+    return HORIZON_LABELS.get(int(h), f"{int(h)} trading days")
 BENCHMARK = "SPY"
+
+
+def _ns(s) -> pd.Series:
+    """Datetime at one resolution (DuckDB returns µs, pandas builds ns; merge_asof refuses to mix them)."""
+    return pd.to_datetime(s).astype("datetime64[ns]")
+
+
+def daily_returns_from_prices(prices: pd.DataFrame) -> pd.DataFrame:
+    """Close-to-close returns computed INSIDE one price snapshot (one adjustment basis). A split or dividend re-basing
+    of the provider's history rescales all earlier closes by the same factor, so the returns between them do not
+    change — storing returns, not levels, keeps an append-only history consistent across corporate actions (R2-01)."""
+    px = prices[["date", "ticker", "price_close"]].dropna().copy()
+    px["date"] = _ns(px["date"])
+    px = px[px["price_close"] > 0].sort_values(["ticker", "date"])
+    px["ret"] = px.groupby("ticker")["price_close"].pct_change()
+    return px.dropna(subset=["ret"])[["date", "ticker", "ret"]]
+
+
+def price_index_from_returns(rets: pd.DataFrame) -> pd.DataFrame:
+    """Total-return index per ticker (first stored day = 1 × (1 + its return)); a level series for forward_returns."""
+    r = rets[["date", "ticker", "ret"]].dropna().copy()
+    r["date"] = _ns(r["date"])
+    r = r.sort_values(["ticker", "date"])
+    r["price_close"] = (1 + r["ret"].clip(lower=-0.999999)).groupby(r["ticker"]).cumprod()
+    return r[["date", "ticker", "price_close"]]
 
 
 def forward_returns(snapshots: pd.DataFrame, prices: pd.DataFrame,
                     horizons=HORIZONS, benchmark: str = BENCHMARK) -> pd.DataFrame:
-    """Adds fwd_{h} (stock) and xs_{h} (stock minus benchmark) columns; NaN where the future isn't known yet."""
+    """Adds entry_date, fwd_{h} (stock) and xs_{h} (stock minus benchmark); NaN where the future isn't known yet.
+    Returns are measured from the close of the first session AFTER the signal was knowable (see below)."""
     if snapshots.empty:
         return snapshots.assign(**{f"fwd_{h}": [] for h in horizons}, **{f"xs_{h}": [] for h in horizons})
     px = prices[["date", "ticker", "price_close"]].copy()
-    px["date"] = pd.to_datetime(px["date"])
+    px["date"] = _ns(px["date"])
     px = px.sort_values(["ticker", "date"])
     px["pos"] = px.groupby("ticker").cumcount()
-
     snap = snapshots.copy()
-    snap["as_of_date"] = pd.to_datetime(snap["as_of_date"])
-    # anchor each snapshot on the ticker's last trading day on/before as_of_date
-    snap = snap.sort_values("as_of_date")
-    anchored = pd.merge_asof(snap, px.rename(columns={"date": "as_of_date", "price_close": "px0"})
-                             .sort_values("as_of_date"),
-                             on="as_of_date", by="ticker", direction="backward")
+    snap["as_of_date"] = _ns(snap["as_of_date"])
+    # Entry = the ticker's FIRST session strictly after the signal could be known (R2-03): after the as-of close, and
+    # after the day of `knowledge_at` when the snapshot was written later (weekend run, ETL outage). A signal is never
+    # credited with a move that happened before it existed.
+    known = snap["as_of_date"]
+    if "knowledge_at" in snap.columns:
+        ka = pd.to_datetime(snap["knowledge_at"], errors="coerce")
+        ka = ka.dt.tz_localize(None) if getattr(ka.dt, "tz", None) is not None else ka
+        known = pd.concat([known, _ns(ka.dt.normalize())], axis=1).max(axis=1)
+    snap["_known"] = _ns(known)
+    snap = snap.sort_values("_known")
+    entries = px.rename(columns={"date": "entry_date", "price_close": "px0"}).sort_values("entry_date")
+    anchored = pd.merge_asof(snap, entries, left_on="_known", right_on="entry_date", by="ticker",
+                             direction="forward", allow_exact_matches=False)
     bench = px[px["ticker"] == benchmark][["date", "price_close", "pos"]]
     bench_by_date = bench.set_index("date")["price_close"]
-
     lookup = px.set_index(["ticker", "pos"])[["date", "price_close"]]
+    pos = anchored["pos"].astype("Int64")
     for h in horizons:
-        keys = list(zip(anchored["ticker"], anchored["pos"] + h))
+        keys = [(t, (p + h) if pd.notna(p) else -1) for t, p in zip(anchored["ticker"], pos)]
         fut = lookup.reindex(keys)
         anchored[f"fwd_{h}"] = fut["price_close"].to_numpy() / anchored["px0"].to_numpy() - 1
-        # benchmark over the same calendar window
-        b0 = bench_by_date.reindex(anchored["as_of_date"], method="ffill").to_numpy()
-        b1 = bench_by_date.reindex(pd.to_datetime(fut["date"].to_numpy()), method="ffill").to_numpy()
+        # benchmark over the same calendar window (entry session → exit session)
+        b0 = bench_by_date.reindex(_ns(anchored["entry_date"]), method="ffill").to_numpy() if len(bench_by_date) else np.nan
+        b1 = bench_by_date.reindex(_ns(pd.Series(fut["date"].to_numpy())), method="ffill").to_numpy() \
+            if len(bench_by_date) else np.nan
         anchored[f"xs_{h}"] = anchored[f"fwd_{h}"] - (b1 / b0 - 1)
-    return anchored.drop(columns=["pos"])
+    return anchored.drop(columns=["pos", "_known"])
+
+
+def newey_west_t(x, lag: int) -> Optional[float]:
+    """t-stat of the mean of x with Newey-West (Bartlett) standard errors. Daily ICs on h-day forward returns overlap
+    by h-1 days, so they are autocorrelated; the naive t-stat overstated significance ~sqrt(h) times (audit F-01)."""
+    x = np.asarray(x, dtype=float)
+    n = len(x)
+    if n < 3:
+        return None
+    e = x - x.mean()
+    s = e @ e / n
+    for lag_i in range(1, min(lag, n - 1) + 1):
+        s += 2 * (1 - lag_i / (lag + 1)) * (e[lag_i:] @ e[:-lag_i]) / n
+    if not np.isfinite(s) or s <= 0:
+        return None
+    return float(x.mean() / np.sqrt(s / n))
 
 
 def information_coefficient(fr: pd.DataFrame, h: int, score_col: str = "quality") -> dict:
-    """Mean of daily cross-sectional Spearman IC between score and forward excess return."""
+    """Mean of daily cross-sectional Spearman IC between score and forward excess return, with a Newey-West t-stat
+    (lag h-1) and the number of non-overlapping h-day periods actually observed."""
     col = f"xs_{h}"
-    daily = []
-    for _, g in fr.dropna(subset=[score_col, col]).groupby("as_of_date"):
+    daily, days = [], []
+    for d, g in fr.dropna(subset=[score_col, col]).groupby("as_of_date"):
         if len(g) >= 10 and g[score_col].nunique() > 1:
             daily.append(g[score_col].rank().corr(g[col].rank()))
-    daily = pd.Series(daily, dtype=float).dropna()
+            days.append(d)
+    daily = pd.Series(daily, index=pd.to_datetime(days), dtype=float).dropna()
     if daily.empty:
-        return {"ic": None, "t_stat": None, "n_days": 0}
-    t = daily.mean() / (daily.std(ddof=1) / np.sqrt(len(daily))) if len(daily) > 1 and daily.std() > 0 else None
-    return {"ic": float(daily.mean()), "t_stat": float(t) if t is not None else None, "n_days": int(len(daily))}
+        return {"ic": None, "t_stat": None, "n_days": 0, "n_independent": 0}
+    t = newey_west_t(daily.to_numpy(), lag=max(h - 1, 1))
+    # Independent periods: the smaller of the observation count / h and an explicit calendar-block count (each block
+    # starts at least h trading days ≈ h·365/252 calendar days after the previous one), so gaps in the snapshot history
+    # can never be counted as extra independent periods (R3-A).
+    return {"ic": float(daily.mean()), "t_stat": t, "n_days": int(len(daily)),
+            "n_independent": int(min(len(daily) // max(h, 1), calendar_blocks(daily.index, h)))}
+
+
+def calendar_blocks(dates, h: int) -> int:
+    """Number of non-overlapping h-trading-day periods among the signal origins (greedy on calendar days). Every origin
+    passed in already has a matured h-day outcome, so each selected origin is one complete, non-overlapping period."""
+    span = pd.Timedelta(days=int(np.ceil(h * 365 / 252)))
+    n, start = 0, None
+    for d in sorted(pd.to_datetime(pd.Index(dates)).unique()):
+        if start is None or d >= start + span:
+            n, start = n + 1, d
+    return n
 
 
 def quintile_returns(fr: pd.DataFrame, h: int, score_col: str = "quality") -> pd.DataFrame:
@@ -79,6 +153,22 @@ def quintile_returns(fr: pd.DataFrame, h: int, score_col: str = "quality") -> pd
     out["mean_excess_pct"] *= 100
     out["quintile"] = out["quintile"].astype(int)
     return out
+
+
+def decision_scorecard(fr: pd.DataFrame, h: int = 252) -> pd.DataFrame:
+    """Hit rate / mean excess return per Decision stance (BUY / RESEARCH CANDIDATE, HOLD / WATCH, AVOID / TRIM) — the label the
+    user acts on, validated on a long horizon (audit F-10). Excess = vs the equal-weight snapshot universe that day."""
+    col = f"fwd_{h}"
+    if "decision" not in fr.columns or col not in fr.columns:
+        return pd.DataFrame(columns=["decision", "n", "hit_rate_pct", "mean_excess_pct"])
+    d = fr.dropna(subset=[col, "decision"]).copy()
+    if d.empty:
+        return pd.DataFrame(columns=["decision", "n", "hit_rate_pct", "mean_excess_pct"])
+    d["xs_universe"] = d[col] - d.groupby("as_of_date")[col].transform("mean")
+    g = d.groupby("decision")["xs_universe"]
+    out = pd.DataFrame({"n": g.size(), "hit_rate_pct": g.apply(lambda s: (s > 0).mean() * 100),
+                        "mean_excess_pct": g.mean() * 100}).reset_index()
+    return out.sort_values("mean_excess_pct", ascending=False)
 
 
 def action_scorecard(fr: pd.DataFrame, h: int, action_col: str = "action") -> pd.DataFrame:
@@ -110,25 +200,44 @@ SCORES = {"quality": "Quality", "value": "Value", "momentum": "Momentum", "revis
 
 
 def current_definitions(snapshots: pd.DataFrame) -> pd.DataFrame:
-    """Rows scored with the current score definitions (core.scoring.SCORE_VERSION).
+    """Rows scored with the current score definitions: core.scoring.SCORE_VERSION AND the current scoring_rules.yaml.
 
     Quality used to mean something else (valuation, momentum and analyst ratings were inside it);
-    mixing those rows into one IC would measure nothing. Tables without a score_version column
-    (tests, very old files) are returned unchanged."""
+    mixing those rows into one IC would measure nothing. A weight or threshold edit in scoring_rules.yaml without a
+    SCORE_VERSION bump changes the score too, so rows stamped with another scoring-rules hash — or with none — are
+    excluded as well (R3-A). Tables without a score_version column (tests, very old files) are returned unchanged."""
     if snapshots.empty or "score_version" not in snapshots.columns:
         return snapshots
     from core.scoring import SCORE_VERSION
-    return snapshots[snapshots["score_version"] == SCORE_VERSION]
+    out = snapshots[snapshots["score_version"] == SCORE_VERSION]
+    if "rules_version" in out.columns:
+        out = out[out["rules_version"].astype(str).str.startswith(scoring_definition() + "|")
+                  | (out["rules_version"].astype(str) == scoring_definition())]
+    return out
 
 
-MIN_EVIDENCE_DAYS = 60   # ≈ 3 months of daily snapshots with a known 3-month outcome
+def scoring_definition() -> str:
+    """'<SCORE_VERSION>|<scoring_rules.yaml hash>' — the prefix of etl.snapshot.rules_version() that defines the scores."""
+    import hashlib
+    from pathlib import Path
+    from core.scoring import SCORE_VERSION
+    try:
+        h = hashlib.sha1((Path(__file__).resolve().parent.parent / "config" / "scoring_rules.yaml").read_bytes())
+        return f"{SCORE_VERSION}|{h.hexdigest()[:12]}"
+    except OSError:
+        return f"{SCORE_VERSION}|missing"
 
 
-def evidence_status(snapshots: pd.DataFrame, prices: pd.DataFrame, h: int = 63) -> dict:
+MIN_EVIDENCE_DAYS = 60          # snapshot days with a known outcome (kept for the label)
+MIN_INDEPENDENT_PERIODS = 6     # non-overlapping h-day periods: one period of 63 days is ONE observation, not 63
+EVIDENCE_HORIZON = 252          # 12 months: the shortest horizon that says something about a 3-5-year mandate (F-10)
+
+
+def evidence_status(snapshots: pd.DataFrame, prices: pd.DataFrame, h: int = EVIDENCE_HORIZON) -> dict:
     """
-    Is there statistical evidence that the Quality score predicts excess returns?
-    ok = at least MIN_EVIDENCE_DAYS snapshot days with a known h-day outcome, positive mean IC
-    and t-stat > 2. Until then every recommendation is an unvalidated hypothesis.
+    Is there statistical evidence that the Quality score predicts excess returns over h trading days?
+    ok = at least MIN_INDEPENDENT_PERIODS non-overlapping h-day periods, positive mean IC and a Newey-West
+    t-stat > 2. With h = 252 this needs years of snapshots — that is the honest answer for a long-horizon score.
     """
     legacy_days = history_days(snapshots) - history_days(current_definitions(snapshots))
     snapshots = current_definitions(snapshots)
@@ -140,11 +249,14 @@ def evidence_status(snapshots: pd.DataFrame, prices: pd.DataFrame, h: int = 63) 
                      f"measured something else and are ignored — evidence restarts with the next ETL runs.")
         return {"ok": False, "ic": None, "t_stat": None, "n_days": 0, "label": label}
     ic = information_coefficient(forward_returns(snapshots, prices, horizons=(h,)), h)
-    ok = bool(ic["n_days"] >= MIN_EVIDENCE_DAYS and (ic["ic"] or 0) > 0 and (ic["t_stat"] or 0) > 2)
-    if ic["n_days"] < MIN_EVIDENCE_DAYS:
-        label = (f"{days} snapshot day(s); {ic['n_days']} usable for a {h}-day test "
-                 f"(outcome known, ≥10 tickers; need {MIN_EVIDENCE_DAYS}) — not yet validated.")
+    n_ind = ic.get("n_independent", 0)
+    enough = ic["n_days"] >= MIN_EVIDENCE_DAYS and n_ind >= MIN_INDEPENDENT_PERIODS
+    ok = bool(enough and (ic["ic"] or 0) > 0 and (ic["t_stat"] or 0) > 2)
+    if not enough:
+        label = (f"{days} snapshot day(s); {ic['n_days']} usable for a {h}-day test = {n_ind} independent period(s) "
+                 f"(need {MIN_INDEPENDENT_PERIODS}) — not yet validated.")
     else:
-        label = (f"{h}-day IC {ic['ic']:+.3f} (t = {ic['t_stat']:.1f}, {ic['n_days']} days) — "
+        t_txt = f"{ic['t_stat']:.1f}" if ic["t_stat"] is not None else "n/a"
+        label = (f"{h}-day IC {ic['ic']:+.3f} (Newey-West t = {t_txt}, {n_ind} independent periods) — "
                  + ("statistically supported." if ok else "NOT statistically supported."))
     return {**ic, "ok": ok, "label": label}

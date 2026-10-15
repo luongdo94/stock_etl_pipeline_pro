@@ -58,8 +58,8 @@ def render(ctx):
             horizon = st.slider("Horizon (trading days)", 5, 90, 21, key="risk_days_form")
         with c3:
             n_sims = st.selectbox("Monte Carlo paths", [1000, 2000, 5000], index=1, key="risk_sims_form")
-        check = st.checkbox("Calibration check (re-fits the model on 8 earlier windows and tests the range)", value=True,
-                            key="risk_cal_form")
+        check = st.checkbox("Calibration check (re-fits the model on up to 60 earlier non-overlapping windows and tests "
+                            "the range)", value=True, key="risk_cal_form")
         run = st.form_submit_button("🎲 COMPUTE RISK RANGE", width="stretch", type="primary")
 
     if not (run and ticker):
@@ -82,14 +82,30 @@ def render(ctx):
     with st.spinner("Fitting volatility and simulating..."):
         fit = rr.fit_volatility(returns, horizon)
         sigma = fit["sigma"]
-        paths = rr.simulate_paths(last, sigma, n_sims, nu=fit["nu"], seed=42)
+        paths, sim_diag = rr.simulate_paths(last, sigma, n_sims, nu=fit["nu"], seed=42, garch=fit.get("garch"),
+                                            return_diagnostics=True)
         m = rr.risk_metrics(paths, last)
-        cov = rr.coverage_backtest(closes, horizon, windows=8, n_sims=1000) if check else None
+        # as many non-overlapping windows as the history allows (the verdict needs ≥ 30) — R2-07
+        _max_w = max(0, (len(closes) - 1 - 250) // max(horizon, 1))
+        cov = rr.coverage_backtest(closes, horizon, windows=min(_max_w, 60), n_sims=500) if check else None
+        if check and _max_w < rr.MIN_CALIBRATION_WINDOWS:
+            st.caption(f"Only {_max_w} non-overlapping {horizon}-day windows fit in the available history "
+                       f"(need {rr.MIN_CALIBRATION_WINDOWS}); shorten the horizon for a calibration verdict.")
 
     realised = float(returns.tail(21).std())
     avg_sigma = float(np.sqrt(np.mean(sigma ** 2)))
     tail = "fat-tailed (Student-t, ν = %.1f)" % fit["nu"] if fit["nu"] else "normal shocks"
-    st.caption(f"Model: {fit['model']} · {tail} · fitted on the last {min(len(returns), 500)} daily returns · zero drift.")
+    _path = ("variance re-evolved along each path (a crash raises that path's later volatility)" if fit.get("garch")
+             else "one deterministic volatility path for all simulations")
+    st.caption(f"Model: {fit['model']} · {tail} · {_path} · fitted on the last {min(len(returns), 500)} daily returns · "
+               f"zero drift (expected price = today's).")
+    st.caption(f"Path risk: P(touches −10% at any point) {m['prob_touch_loss10']:.0%} · 5% worst interim loss "
+               f"−{m['worst_interim_p5'] * 100:.1f}%. A stop at −10% triggers on the first figure, not on the horizon loss; "
+               f"gaps, halts and default are not modelled beyond the fitted shocks.")
+    st.caption(f"Loss floor (numerical guard, not a default model): a day's loss is limited to "
+               f"−{sim_diag['floor']:.0%}; it bound on {sim_diag['floor_hit_share_days']:.4%} of simulated days "
+               f"({sim_diag['floor_hit_share_paths']:.2%} of paths). Its drift is removed exactly (mean correction "
+               f"{sim_diag['mean_drift_correction']:.2e} a day), so the expected price stays today's price.")
 
     # ── headline numbers ────────────────────────────────────────────────────────────────────
     tiles = "".join([

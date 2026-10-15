@@ -33,33 +33,60 @@ def collect_stats(conn: duckdb.DuckDBPyConnection) -> dict:
     except duckdb.Error:
         return {}
     return {"tickers": tickers, "rows": rows, "max_date": max_date,
-            "last_close": {t: (d, float(c)) for t, d, c in last if c}, "mcap": mcap}
+            "last_close": {t: (d, float(c)) for t, d, c in last if c}, "mcap": mcap,
+            "fundamentals": fundamentals_stats(conn)}
 
 
-def evaluate_gates(conn: duckdb.DuckDBPyConnection, prev: Optional[dict], universe_size: int, cfg: dict,
+# E9: fundamentals a run must not silently lose (table → what is counted)
+RETENTION_TABLES = {"raw.historical_financials": "annual statements", "raw.hist_fcf": "annual cash flows",
+                    "raw.cashflows": "payout"}
+
+
+def fundamentals_stats(conn) -> dict:
+    """{table: (tickers, rows)} for the retention gate; missing tables are skipped."""
+    out = {}
+    for table in RETENTION_TABLES:
+        try:
+            out[table] = tuple(conn.execute(f"SELECT COUNT(DISTINCT ticker), COUNT(*) FROM {table}").fetchone())
+        except duckdb.Error:
+            continue
+    return out
+
+
+def evaluate_gates(conn: duckdb.DuckDBPyConnection, prev: Optional[dict], universe, cfg: dict,
                    today: Optional[date] = None) -> list:
-    """Compare the shadow warehouse with the universe and with `prev` (collect_stats of the old production)."""
+    """Compare the shadow warehouse with the universe and with `prev` (collect_stats of the old production).
+    `universe` is the expected ticker set (or, for old callers, just its size)."""
     today = today or date.today()
     issues = []
     crit = lambda code, msg: issues.append(Issue("critical", code, msg))     # noqa: E731
     warn = lambda code, msg: issues.append(Issue("warning", code, msg))      # noqa: E731
+    expected = None if isinstance(universe, int) else set(universe or [])
+    universe_size = len(expected) if expected is not None else int(universe or 0)
 
     try:
-        tickers, rows, max_date = conn.execute(
+        _, rows, max_date = conn.execute(
             "SELECT COUNT(DISTINCT ticker), COUNT(*), MAX(date) FROM raw.stock_prices").fetchone()
-        companies = conn.execute("SELECT COUNT(*) FROM raw.company_info").fetchone()[0]
+        priced = {r[0] for r in conn.execute("SELECT DISTINCT ticker FROM raw.stock_prices").fetchall()}
+        # a company row counts only with a usable market cap (E9: an all-NULL row is not coverage)
+        companies_set = {r[0] for r in conn.execute(
+            "SELECT DISTINCT ticker FROM raw.company_info WHERE market_cap > 0").fetchall()}
     except duckdb.Error as e:
         return [Issue("critical", "unreadable", f"shadow warehouse cannot be read: {e}")]
     if not rows:
         return [Issue("critical", "no_prices", "raw.stock_prices is empty")]
+    # E9: coverage = key intersection with the EXPECTED universe — retained rows of tickers outside it no longer
+    # hide extraction failures inside it
+    tickers = len(priced & expected) if expected is not None else len(priced)
+    companies = len(companies_set & expected) if expected is not None else len(companies_set)
 
     # ── completeness vs the universe ───────────────────────────────────────────────────────
     if universe_size and tickers < cfg["min_universe_coverage"] * universe_size:
         crit("universe_coverage", f"only {tickers} of {universe_size} universe tickers have prices "
                                   f"(< {cfg['min_universe_coverage']:.0%})")
     if universe_size and companies < cfg["min_company_coverage"] * universe_size:
-        crit("company_coverage", f"only {companies} company records for {universe_size} tickers "
-                                 f"(< {cfg['min_company_coverage']:.0%})")
+        crit("company_coverage", f"only {companies} usable company records (market cap known) for {universe_size} "
+                                 f"tickers (< {cfg['min_company_coverage']:.0%})")
 
     # ── freshness ────────────────────────────────────────────────────────────────────────
     age = (today - max_date).days
@@ -82,6 +109,16 @@ def evaluate_gates(conn: duckdb.DuckDBPyConnection, prev: Optional[dict], univer
             crit("ticker_drop", f"{tickers} tickers vs {prev['tickers']} before (< {cfg['min_vs_previous_tickers']:.0%})")
         if prev.get("rows") and rows < cfg["min_vs_previous_rows"] * prev["rows"]:
             crit("row_drop", f"{rows:,} price rows vs {prev['rows']:,} before (< {cfg['min_vs_previous_rows']:.0%})")
+        # ── E9: fundamentals retention — a partial or truncated response must not shrink statements / payout ──
+        keep = cfg.get("min_vs_previous_fundamentals", 0.95)
+        now_f = fundamentals_stats(conn)
+        for table, (p_tickers, p_rows) in (prev.get("fundamentals") or {}).items():
+            n_tickers, n_rows = now_f.get(table, (0, 0))
+            label = RETENTION_TABLES.get(table, table)
+            if p_tickers and n_tickers < keep * p_tickers:
+                crit("fundamentals_retention", f"{label}: {n_tickers} tickers vs {p_tickers} before (< {keep:.0%})")
+            elif p_rows and n_rows < keep * p_rows:
+                crit("fundamentals_retention", f"{label}: {n_rows:,} rows vs {p_rows:,} before (< {keep:.0%})")
 
         # ── continuity: same ticker, same date, new vs old value (units, FX, splits) ─────
         # A real split or restated history moves a handful of tickers; a unit / FX bug moves many at once —

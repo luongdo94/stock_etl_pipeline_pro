@@ -13,7 +13,8 @@ RULES = decision.load_rules()
 
 def _decide(**kw):
     base = dict(price=100, base_value=150, bear_value=90, stop_loss=92, currency="EUR", track_record_ok=True,
-                today=date(2026, 1, 10), rules=RULES)
+                today=date(2026, 1, 10), rules=RULES, price_date=date(2026, 1, 10), fundamentals_date=date(2026, 1, 10), market_cap_eur=30e9, statement_date=date(2025, 12, 31), coverage_pct=90,
+                adv_eur=50e6)
     base.update(kw)
     return decision.build_decision(**base)
 
@@ -26,8 +27,11 @@ def test_quality_floor_blocks_a_cheap_but_weak_business():
     assert weak.position["size_pct"] == 0
 
 
-def test_unknown_quality_does_not_block():
-    assert _decide(quality_score=None).stance == "BUY CANDIDATE"
+def test_unknown_quality_blocks_buy():
+    # audit F-02: unknown quality is not neutral evidence — a cheap stock with no quality evidence is never a BUY
+    d = _decide(quality_score=None)
+    assert d.stance == "HOLD / WATCH" and any("Quality is unknown" in r for r in d.reasons)
+    assert _decide(quality_score=70).stance == "BUY CANDIDATE"
 
 
 def test_value_crosscheck_lowers_confidence_only_when_dcf_says_cheap():
@@ -131,5 +135,5 @@ def test_screener_table_exposes_scores_flags_and_coverage(tmp_path):
     t = build_screener_table(frames[1], frames[0], frames[4], frames[3], frames[7])
     for col in ("Quality", "Value", "Momentum", "Coverage (%)", "Flags", "Missing", "Components"):
         assert col in t.columns
-    assert t["Quality"].between(0, 100).all()
+    assert t["Quality"].dropna().between(0, 100).all()      # unknown Quality stays NaN (R3-E), never a fake 50
     assert set(t["Ticker"]).isdisjoint({"SPY", "^VIX"})

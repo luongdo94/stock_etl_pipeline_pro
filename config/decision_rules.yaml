@@ -19,12 +19,39 @@ risk:
   max_position_pct: 10.0      # hard cap per position
   min_reward_risk: 2.0        # expected upside / downside required for a BUY candidate
   earnings_blackout_days: 7   # warn before buying this close to an earnings release
+  earnings_blackout_blocks_buy: true   # inside the blackout a BUY becomes HOLD / WATCH with the conflict named
   min_stop_pct: 8.0           # thesis stop is never tighter than this (valuation theses need room)
+  # A stop is a trigger, not a guaranteed price: gaps lose more than account_risk_pct. Portfolio-wide stress-loss,
+  # factor and sector budgets are NOT enforced by this file — set them in your mandate.
+
+portfolio:
+  # Aggregate budgets on NAV (holdings + cash), enforced on every BUY size and every rebalance (core/portfolio_policy.py).
+  # Illustrative defaults — set them from your mandate. Only additions are cut; an existing breach is reported.
+  max_sector_pct: 30.0          # one sector
+  max_currency_pct: 50.0        # each currency other than costs.base_currency
+  max_stress_loss_pct: 25.0     # NAV lost if every holding falls at once by min(100%, beta x market drop + gap)
+  stress_market_drop_pct: 35.0  # market crash in the scenario
+  stress_gap_pct: 10.0          # extra single-name gap that no stop prevents
+  unknown_beta: 1.5             # used when a holding's beta is unknown (conservative)
+
+evidence:
+  # BUY (with a size) only once the Track Record shows the signals predict forward returns. Until then a stock that
+  # passes every other gate is a RESEARCH CANDIDATE with no size. Setting false restores sized BUYs on unvalidated signals.
+  require_validated_evidence_for_buy: true
+
+liquidity:
+  min_adv_eur_for_buy: 2000000    # median daily traded value (60 sessions) below this — or unknown — blocks a BUY
+                                  # (was 5M; with portfolio_nav_eur set, the exit-capacity cap is the precise limit)
+  portfolio_nav_eur: null         # set your NAV (EUR) to cap each BUY at what can be exited in max_exit_days
+  max_participation: 0.10         # share of ADV you are willing to trade per day
+  max_exit_days: 5
 
 valuation:
   # DCF verdicts are very sensitive to these two numbers — change them deliberately.
   equity_risk_premium: 0.05   # cost of equity = 10Y yield + Blume beta x ERP
   required_margin_of_safety: 0.25   # BUY needs base value >= price x 1.25; AVOID needs price > bull case
+  horizon_years: 4             # holding horizon for the annualised return shown with the Decision
+  scenario_probabilities: {bear: 0.25, base: 0.50, bull: 0.25}   # probability-weighted value (judgement, edit)
   # Risk-free rate (10Y government yield) and long-run nominal growth of the CURRENCY the cash flows are earned in.
   # Discounting euro or yen cash flows at the US 10Y overstated their cost of equity by 1.5-3.5pp and flipped
   # verdicts. USD uses the live ^TNX when available; the rest are approximate levels (as_of below) — edit them.
@@ -49,8 +76,33 @@ valuation:
     default: {risk_free: 0.040, terminal_growth: 0.025}
   stale_price_days: 5         # price older than this lowers confidence
   stale_fundamentals_days: 35
+  max_statement_age_days: 550   # latest annual statement period older than this — or unknown — blocks a BUY (A05, R2-06)
+  # Fail-closed valuation switches (unknown is not zero). With true, the value is still shown but cannot drive BUY/AVOID:
+  require_verified_fcfe_deductions: true   # 3 consecutive years; SBC, interest paid in financing AND lease principal
+                                           # each reported (0 counts) or recorded as not applicable below, every year
+  # Interest paid known only as a supplemental amount (classification unknown): deduct it as if it were in financing.
+  # Conservative — it can only lower the value (double-counts when it is already inside operating cash flow).
+  deduct_unclassified_interest: true
+  # Lease principal: Yahoo has no cash-flow field; it is estimated from the lease liabilities due within 12 months at
+  # the prior year-end (balance sheet) and deducted. Interest reported inside operating cash flow needs no deduction.
+  # Issuer-level evidence that a deduction does not apply (e.g. a US GAAP filer reports interest in operating cash
+  # flow). A missing provider field is never treated as "not applicable"; each entry needs a source note.
+  fcfe_not_applicable: {}
+  #   MSFT: {interest_paid_cff: "10-K FY2025, cash flow statement: interest paid within operating activities"}
+  require_bank_capital_inputs: true        # banks/insurers: P/B value drives BUY/AVOID only with sourced inputs below
+  bank_min_cet1_pct: 11.0
+  bank_max_npl_pct: 4.0
+  insurer_min_solvency_pct: 150.0
+  bank_capital_inputs: {}
+  #   BNP.PA: {cet1_pct: 12.9, npl_pct: 2.1, source: "Pillar 3 report FY2025", as_of: 2025-12-31}
+  #   ALV.DE: {solvency_ratio_pct: 209, source: "SFCR FY2025", as_of: 2025-12-31}
 
 scores:
   min_quality_for_buy: 50       # a BUY CANDIDATE needs Quality >= this: cheap-and-weak is the classic value trap
   value_crosscheck_below: 30    # DCF says cheap but the Value score (multiples vs peers) is below this -> confidence note
-  min_coverage_pct: 60          # below this share of observable scoring inputs -> confidence note
+  min_coverage_pct: 60          # below this share of observable scoring inputs -> confidence note AND no BUY
+  min_market_cap_eur_for_buy: 2000000000    # mandate floor (EUR); 0 disables. Was 10bn (a large-fund floor): it
+                                            # blocked a third of the BUY pool while ADV / exit capacity handle liquidity
+  momentum_conflict_below: 10   # Momentum score below this turns a would-be BUY into HOLD / WATCH with a named conflict.
+                                # Was 20: cheap stocks are low-momentum by construction (27% of the BUY pool); 10 = bottom decile
+  coverage_counts_below: 80     # "missing inputs" lowers confidence only below this coverage (scores unshrunk above it)

@@ -1,35 +1,25 @@
+# Core runtime (dashboard + ETL). Unused packages removed in the audit (great_expectations, shap, statsmodels,
+# dbt-duckdb, textblob, sqlalchemy, google-genai, tradingview-ta). Optional ML / sentiment: requirements-ml.txt.
+# Reproducible installs: generate a lock file (e.g. `uv pip compile requirements.txt -o requirements.lock`).
 yfinance>=0.2.51
-pandas>=2.2.0
-duckdb>=1.4.4
-dbt-duckdb>=1.8.0
-sqlalchemy>=2.0.0
-plotly>=5.22.0
-python-dotenv>=1.0.0
-torch
-numpy
-arch
-scikit-learn>=1.2.0
-textblob>=0.17.0
-feedparser>=6.0.0
-pyyaml>=6.0
-google-genai>=0.8.0
-cohere
-scipy
-statsmodels
-transformers
-sentencepiece
-protobuf
-shap
-pytest
-pytest-mock
-supabase
-extra-streamlit-components
-great_expectations
-duckdb-engine
-streamlit>=1.50.0
-openpyxl
 yahooquery>=2.3.7
 tradingview-screener>=3.1.0
-tradingview-ta>=3.3.0
+pandas>=2.2.0
+numpy>=1.26
+scipy>=1.11
+arch>=6.2             # Risk Lab GJR-GARCH: without it the deployed image silently used the fallback model
+duckdb>=1.4.4,<1.5   # 1.5.0 raised INTERNAL 'index out of vector' errors in the warehouse/cloud-sync tests (2026-10)
+duckdb-engine
+pyyaml>=6.0
+python-dotenv>=1.0.0
 requests
 beautifulsoup4
+feedparser>=6.0.0
+plotly>=5.22.0
+streamlit>=1.50.0
+extra-streamlit-components
+openpyxl
+supabase
+cohere
+pytest
+pytest-mock
