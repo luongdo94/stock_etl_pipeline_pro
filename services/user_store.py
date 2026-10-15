@@ -107,11 +107,27 @@ CASH_KEY = "__CASH__"
 # The ORIGINAL thesis stop of each position (roadmap P1/5) is stored the same way: "__STOP__:<ticker>", shares = stop
 # price. It is written once, when the position is opened, and never moved by a later recomputation of the Decision.
 STOP_PREFIX = "__STOP__:"
+# Target weight of each position (P3/c), % of NAV: "__TARGET__:<ticker>", shares = target %. Set by the user.
+TARGET_PREFIX = "__TARGET__:"
+
+
+def split_targets(raw: dict) -> dict:
+    """{ticker: target % of NAV} from the stored rows."""
+    out = {}
+    for k, v in dict(raw or {}).items():
+        if str(k).startswith(TARGET_PREFIX):
+            try:
+                w = float((v or {}).get("shares", 0.0))
+                if w > 0:
+                    out[str(k)[len(TARGET_PREFIX):]] = w
+            except (TypeError, ValueError, AttributeError):
+                pass
+    return out
 
 
 def split_reserved(raw: dict) -> tuple:
     """(holdings {ticker: {shares, cost}}, cash EUR, original stops {ticker: price}) from the stored rows."""
-    raw = dict(raw or {})
+    raw = {k: v for k, v in dict(raw or {}).items() if not str(k).startswith(TARGET_PREFIX)}
     cash = raw.pop(CASH_KEY, None)
     try:
         cash_eur = max(float((cash or {}).get("shares", 0.0)), 0.0)
@@ -139,8 +155,10 @@ def load_portfolio_with_cash() -> tuple:
     """(holdings, cash EUR) — the portfolio's NAV is Σ holdings at market + cash. Also refreshes the session's
     original stops (st.session_state["portfolio_stops"])."""
     st.session_state["portfolio_load_failed"] = False         # set again by _load_portfolio_raw on a failed read
-    holdings, cash_eur, stops = split_reserved(_load_portfolio_raw())
+    raw = _load_portfolio_raw()
+    holdings, cash_eur, stops = split_reserved(raw)
     st.session_state["portfolio_stops"] = stops
+    st.session_state["portfolio_targets"] = split_targets(raw)
     return holdings, cash_eur
 
 
@@ -188,11 +206,11 @@ def _load_portfolio_raw():
         return {}
 
 
-def save_portfolio_checked(shares_dict, cost_dict, cash_eur=None, stops=None) -> tuple:
+def save_portfolio_checked(shares_dict, cost_dict, cash_eur=None, stops=None, targets=None) -> tuple:
     """(saved: bool, message). Holdings + cash + original stops in ONE replace. Only True means the store now holds
     exactly this portfolio; False covers "not saved" and "outcome unknown" (the message says which) — the caller
     must then keep its proposal and must not present the session as synced.
-    cash_eur / stops = None keep the session's values, so a save that only edits holdings never drops them."""
+    cash_eur / stops / targets = None keep the session's values, so a save that only edits holdings never drops them."""
     if st.session_state.get("portfolio_load_failed"):
         return False, ("Not saved: the stored portfolio could not be read, so saving would overwrite it. Reload and "
                        "check what is stored first.")
@@ -200,7 +218,9 @@ def save_portfolio_checked(shares_dict, cost_dict, cash_eur=None, stops=None) ->
         cash_eur = float(st.session_state.get("portfolio_cash_eur", 0.0) or 0.0)
     if stops is None:
         stops = dict(st.session_state.get("portfolio_stops", {}) or {})
-    reserved = lambda t: t == CASH_KEY or str(t).startswith(STOP_PREFIX)   # noqa: E731
+    if targets is None:
+        targets = dict(st.session_state.get("portfolio_targets", {}) or {})
+    reserved = lambda t: t == CASH_KEY or str(t).startswith((STOP_PREFIX, TARGET_PREFIX))   # noqa: E731
     shares_dict = {t: v for t, v in dict(shares_dict).items() if not reserved(t)}
     cost_dict = {t: v for t, v in dict(cost_dict).items() if not reserved(t)}
     held = set(shares_dict)
@@ -209,6 +229,9 @@ def save_portfolio_checked(shares_dict, cost_dict, cash_eur=None, stops=None) ->
     for t, px in (stops or {}).items():
         if t in held and px and float(px) > 0:                # a closed position takes its stop with it
             shares_dict[STOP_PREFIX + t], cost_dict[STOP_PREFIX + t] = float(px), 0.0
+    for t, w in (targets or {}).items():
+        if t in held and w and float(w) > 0:                   # a target without a position is dropped with it
+            shares_dict[TARGET_PREFIX + t], cost_dict[TARGET_PREFIX + t] = float(w), 0.0
     if auth.local_dev_mode():
         try:
             local_store.save_portfolio(shares_dict, cost_dict)
@@ -236,3 +259,46 @@ def save_portfolio_to_db(shares_dict, cost_dict, cash_eur=None, stops=None):
     if not ok:
         st.sidebar.error(f"⚠️ Portfolio not saved — {msg}")
     return ok
+
+
+# ── Trade ledger (P3/c) ──────────────────────────────────────────────────────────────────────────────────────────
+def load_trades() -> pd.DataFrame:
+    """The user's trade ledger, oldest first (core.ledger.COLUMNS)."""
+    from core.ledger import COLUMNS
+    if auth.local_dev_mode():
+        rows = local_store.load_trades()
+    elif not st.session_state.get("authenticated") or not st.session_state.get("user_id"):
+        rows = []
+    else:
+        try:
+            supabase = auth.get_supabase_client()
+            rows = (supabase.table("portfolio_trades").select(", ".join(COLUMNS))
+                    .eq("user_id", st.session_state["user_id"]).order("traded_at").execute().data or [])
+        except Exception as e:
+            st.session_state["trades_load_error"] = str(e)
+            rows = []
+    return pd.DataFrame(rows, columns=COLUMNS)
+
+
+def append_trades(rows: list) -> tuple:
+    """(ok, message). Called AFTER the portfolio itself was saved: a failed ledger write never undoes a trade, it is
+    reported so the user knows the history has a gap."""
+    if not rows:
+        return True, "nothing to record"
+    if auth.local_dev_mode():
+        try:
+            local_store.append_trades(rows)
+            return True, "recorded locally"
+        except OSError as e:
+            return False, f"ledger not written locally ({e})"
+    if not st.session_state.get("authenticated") or not st.session_state.get("user_id"):
+        return False, "ledger not written: not signed in"
+    try:
+        supabase = auth.get_supabase_client()
+        uid = st.session_state["user_id"]
+        supabase.table("portfolio_trades").insert([{**r, "user_id": uid} for r in rows]).execute()
+        return True, "recorded"
+    except Exception as e:
+        hint = (" — create the table with docs/sql/portfolio_trades.sql" if "portfolio_trades" in str(e)
+                and ("does not exist" in str(e) or "PGRST205" in str(e) or "schema cache" in str(e)) else "")
+        return False, f"ledger not written ({e}){hint}"

@@ -248,15 +248,25 @@ def evidence_status(snapshots: pd.DataFrame, prices: pd.DataFrame, h: int = EVID
             label = (f"the scores were redefined (see SCORE_VERSION in core/scoring.py): {legacy_days} earlier snapshot day(s) "
                      f"measured something else and are ignored — evidence restarts with the next ETL runs.")
         return {"ok": False, "ic": None, "t_stat": None, "n_days": 0, "label": label}
-    ic = information_coefficient(forward_returns(snapshots, prices, horizons=(h,)), h)
+    fr = forward_returns(snapshots, prices, horizons=(h,))
+    ic = information_coefficient(fr, h)
     n_ind = ic.get("n_independent", 0)
     enough = ic["n_days"] >= MIN_EVIDENCE_DAYS and n_ind >= MIN_INDEPENDENT_PERIODS
-    ok = bool(enough and (ic["ic"] or 0) > 0 and (ic["t_stat"] or 0) > 2)
+    fm = {"premium": None, "t_stat": None}
+    if enough:
+        # the rank correlation must survive the factors an index fund already sells (beta, size, value, momentum):
+        # a Quality score that only picks large low-beta stocks is a risk tilt, not evidence (core/factor_test.py)
+        from core.factor_test import fama_macbeth, factor_exposures
+        fm = fama_macbeth(forward_returns(factor_exposures(snapshots, prices), prices, horizons=(h,)), h, "quality")
+    ok = bool(enough and (ic["ic"] or 0) > 0 and (ic["t_stat"] or 0) > 2
+              and (fm["premium"] or 0) > 0 and (fm["t_stat"] or 0) > 2)
     if not enough:
         label = (f"{days} snapshot day(s); {ic['n_days']} usable for a {h}-day test = {n_ind} independent period(s) "
                  f"(need {MIN_INDEPENDENT_PERIODS}) — not yet validated.")
     else:
         t_txt = f"{ic['t_stat']:.1f}" if ic["t_stat"] is not None else "n/a"
-        label = (f"{h}-day IC {ic['ic']:+.3f} (Newey-West t = {t_txt}, {n_ind} independent periods) — "
+        f_txt = (f"; factor-adjusted premium {fm['premium']:+.2f}% per SD (t = {fm['t_stat']:.1f})"
+                 if fm["premium"] is not None and fm["t_stat"] is not None else "; factor-adjusted premium n/a")
+        label = (f"{h}-day IC {ic['ic']:+.3f} (Newey-West t = {t_txt}, {n_ind} independent periods){f_txt} — "
                  + ("statistically supported." if ok else "NOT statistically supported."))
-    return {**ic, "ok": ok, "label": label}
+    return {**ic, "ok": ok, "label": label, "factor_premium": fm["premium"], "factor_t": fm["t_stat"]}

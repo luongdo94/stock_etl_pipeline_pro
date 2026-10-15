@@ -516,6 +516,20 @@ def reference_mask(index, rules: dict, reference_tickers=None) -> pd.Series:
     return mask
 
 
+# The measured values behind the Quality sub-scores (shown next to them, not only as 0-100 points):
+# key → (feature column, multiplier to display units)
+RAW_METRICS = {
+    "roic_pct": ("roc", 1.0),                    # ROIC % (median of up to 3 years) — or the legacy return on capital
+    "fcf_conversion": ("fcf_conversion", 1.0),   # FCF after SBC / trailing earnings (×)
+    "net_debt_ebitda": ("net_debt_ebitda", 1.0), # net debt / EBITDA (×); 99 = debt without positive EBITDA
+    "rev_cagr_pct": ("rev_cagr", 1.0),           # revenue CAGR over the stored years (%)
+    "eps_cagr_pct": ("eps_cagr", 1.0),           # diluted EPS CAGR (%)
+    "profit_years_pct": ("profit_years", 100.0), # share of stored years with a profit (%)
+    "margin_vol_pp": ("margin_vol", 1.0),        # volatility of the net margin (percentage points)
+    "fcf_margin_pct": ("fcf_margin", 1.0),       # FCF after SBC / revenue (%)
+}
+
+
 def score_universe(companies: pd.DataFrame, annual_fin: pd.DataFrame = None, prices: pd.DataFrame = None,
                    rules: dict = None, hist_fcf: pd.DataFrame = None, estimates: pd.DataFrame = None,
                    reference_tickers=None) -> pd.DataFrame:
@@ -532,7 +546,7 @@ def score_universe(companies: pd.DataFrame, annual_fin: pd.DataFrame = None, pri
         f["is_reference"] = reference_mask(f.index, rules, reference_tickers)
     if f.empty:
         return pd.DataFrame(columns=["quality", "value", "momentum", "revisions", "quality_coverage", "value_coverage",
-                                     "flags", "missing", "components", "adv_eur", "sbc_adjusted"])
+                                     "flags", "missing", "components", "metrics", "adv_eur", "sbc_adjusted"])
     full_at = rules["coverage"]["full_at"]
     group = f["group"]
 
@@ -560,7 +574,7 @@ def score_universe(companies: pd.DataFrame, annual_fin: pd.DataFrame = None, pri
 
     min_w = rules["missing_report_min_weight"]
     all_comps = pd.concat([qc.add_prefix("q_"), vc.add_prefix("v_"), mc.add_prefix("m_")], axis=1)
-    rows_missing, rows_flags, rows_comps = [], [], []
+    rows_missing, rows_flags, rows_comps, rows_metrics = [], [], [], []
     for t in f.index:
         g = group[t]
         miss = [COMPONENT_LABELS[k] for k, w in qw[g].items() if w >= min_w and pd.isna(qc.at[t, k])]
@@ -569,11 +583,15 @@ def score_universe(companies: pd.DataFrame, annual_fin: pd.DataFrame = None, pri
         rows_flags.append("; ".join([FLAG_LABELS[k] for k in flags.columns if flags.at[t, k]]
                                     + [FLAG_LABELS[k] for k in info_flags.columns if info_flags.at[t, k]]))
         rows_comps.append({k: (None if pd.isna(v) else round(float(v), 1)) for k, v in all_comps.loc[t].items()})
+        rows_metrics.append({k: (None if pd.isna(f.at[t, col]) else float(f.at[t, col]) * mult)
+                             for k, (col, mult) in RAW_METRICS.items()}
+                            | {"roic_is_roic": bool(f.at[t, "roc_is_roic"]),
+                               "roic_estimated": bool(info_flags.at[t, "roic_estimated"])})
 
     out = pd.DataFrame({
         "quality": quality.round(), "value": value.round(), "momentum": momentum.round(), "revisions": revisions.round(),
         "adv_eur": f["adv_eur"], "sbc_adjusted": f["sbc_adjusted"],
         "quality_coverage": (q_cov * 100).round(), "value_coverage": (v_cov * 100).round(),
-        "flags": rows_flags, "missing": rows_missing, "components": rows_comps,
+        "flags": rows_flags, "missing": rows_missing, "components": rows_comps, "metrics": rows_metrics,
     }, index=f.index)
     return out

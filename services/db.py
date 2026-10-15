@@ -450,6 +450,36 @@ def load_etl_exceptions() -> pd.DataFrame:
         return pd.DataFrame(columns=["ticker", "stage", "reason", "detail", "detected_at"])
 
 
+@st.cache_data(ttl=600, show_spinner=False)
+def load_ticker_provenance(ticker: str) -> dict:
+    """Per-ticker data confidence for the Stock Analysis page: payout evidence, fields kept from an earlier extraction,
+    independent-source checks, when the latest statements became public, and history-audit findings. Each part is
+    empty when its table is not in this warehouse (older file, cloud snapshot without it)."""
+    q = {
+        "payout": "SELECT payout_status, payout_note, payout_years FROM raw.cashflows WHERE ticker = ?",
+        "stale": """SELECT stale_fields FROM raw.company_info WHERE ticker = ?
+                    QUALIFY ROW_NUMBER() OVER (ORDER BY _extracted_at DESC) = 1""",
+        "sources": """SELECT check_name, period, ours, theirs, diff_pct, status, source, detail FROM raw.source_reconciliation
+                      WHERE ticker = ? ORDER BY source, check_name, period DESC""",
+        "annual_pit": """SELECT date, available_date, available_source FROM raw.historical_financials WHERE ticker = ?
+                         ORDER BY date DESC LIMIT 1""",
+        "quarterly_pit": """SELECT date, available_date, available_source FROM raw.quarterly_financials WHERE ticker = ?
+                            ORDER BY date DESC LIMIT 1""",
+        "exceptions": "SELECT stage, reason, detail FROM marts.etl_exceptions WHERE ticker = ?",
+    }
+    out = {}
+    try:
+        with get_db_connection(read_only=True) as conn:
+            for k, sql in q.items():
+                try:
+                    out[k] = conn.execute(sql, [ticker]).df()
+                except Exception:
+                    out[k] = pd.DataFrame()
+    except Exception:
+        pass
+    return {k: out.get(k, pd.DataFrame()) for k in q}
+
+
 _HEALTH_QUERIES = {
     "runs": """SELECT start_time, end_time, status, mode, rows_processed, error_message FROM marts.etl_audit
                WHERE status <> 'STARTED' ORDER BY start_time DESC LIMIT 60""",

@@ -149,7 +149,7 @@ def render(dd, ctx):
             _COL_DEFS = base_cols + [
                 ("gross_margin",     "Gross Mgn",         "pct",        "higher"),
                 ("operating_margin", "Op Mgn",            "pct",        "higher"),
-                ("roe_pct",          "ROIC/ROE",          "pct",        "higher"),
+                ("roe_pct",          "ROE",               "pct",        "higher"),
                 ("net_debt_ebitda",  "ND/EBITDA",         "x",          "lower"),
                 ("ev_to_ebitda",     "EV/EBITDA",         "x",          "lower"),
                 ("peg_ratio",        "PEG",               "x1",         "lower"),

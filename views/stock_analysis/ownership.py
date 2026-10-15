@@ -69,3 +69,38 @@ def render(dd, ctx):
         st.plotly_chart(fig_short, use_container_width=True)
         
         st.markdown(f"<p style='text-align:center; color:#bbb; font-size:1rem;'>Short Ratio (Days to Cover): <b>{short_ratio:.1f} days</b></p>", unsafe_allow_html=True)
+
+    _render_insider_activity(dd)
+
+
+_INSIDER_COLOR = {"NET BUY": "#2ecc71", "NET SELL": "#e74c3c", "NO TRADES": "#8899aa", "NO DATA": "#667788"}
+
+
+def _render_insider_activity(dd):
+    """6-month insider buying / selling (provider summary) and the latest Form 4 open-market trades of this ticker."""
+    ins = dd.scores.get("insider") or {}
+    status = ins.get("status") or "NO DATA"
+    st.markdown("**Insider activity — last 6 months**")
+    if status == "NO DATA":
+        st.caption("No insider-trading data for this listing (the provider covers US filers; zero is not reported as "
+                   "'no trades').")
+        return
+    c1, c2, c3 = st.columns(3)
+    net_pct = ins.get("net_pct")
+    c1.markdown(f"<div style='color:{_INSIDER_COLOR[status]};font-size:1.3rem;font-weight:800;'>{status}</div>"
+                f"<div style='color:#8899aa;font-size:0.75rem;'>net "
+                f"{'n/a' if net_pct is None else f'{net_pct:+.2f}% of insider holdings'}</div>", unsafe_allow_html=True)
+    c2.metric("Shares bought", f"{ins.get('buys') or 0:,.0f}")
+    c3.metric("Shares sold", f"{ins.get('sells') or 0:,.0f}")
+    st.caption("Open-market buying by several insiders is informative; selling is often routine (taxes, diversification, "
+               "planned 10b5-1 sales). Not part of the scores until the Track Record shows it adds information.")
+    try:
+        from services.db import load_insider_transactions
+        tx = load_insider_transactions(ticker=dd.ticker, days=180, limit=15)
+    except Exception:
+        tx = pd.DataFrame()
+    if tx is not None and not tx.empty:
+        with st.expander(f"Latest Form 4 transactions ({len(tx)})"):
+            cols = [c for c in ("transaction_date", "insider_name", "position", "transaction_type", "shares", "value")
+                    if c in tx.columns]
+            st.dataframe(tx[cols], hide_index=True, width="stretch")

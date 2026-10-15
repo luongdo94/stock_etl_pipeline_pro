@@ -79,7 +79,7 @@ EXPLICIT_YEARS = 10
 GROWTH_FLOOR, GROWTH_CAP = -0.05, 0.20
 GROWTH_BAND = 0.05   # earnings / FCF may move the anchor by at most ±5pp around revenue growth
 REQUIRED_MARGIN_OF_SAFETY = _configured("required_margin_of_safety", 0.25)
-FADE_KEEP = 0.7                   # share of a bank's normalised ROE assumed to persist (the rest converges to the cost of equity)
+
 IMPLAUSIBLE_MARGIN = 1.5          # value > 2.5x price → suspect the inputs, not the market
 # Sectors where free-cash-flow DCF is not meaningful (cash flow includes customer deposits / float)
 DCF_NOT_APPLICABLE_SECTORS = {"banks", "capital markets", "financial services", "financials", "insurance"}
@@ -563,6 +563,69 @@ def justified_pb_value(book_per_share, roe, discount_rate, growth) -> Optional[f
     return bv * (roe - g) / (r - g)
 
 
+RI_FADE_YEARS = 10                # residual-income horizon over which ROE converges to the cost of equity
+DEFAULT_PAYOUT = 0.5              # share of earnings paid out (dividends + buybacks) when the provider does not say
+
+
+def residual_income_value(book_per_share, roe, discount_rate, growth, payout=DEFAULT_PAYOUT,
+                          years: int = RI_FADE_YEARS) -> Optional[float]:
+    """
+    Multi-stage residual-income value per share of a bank / insurer:
+        V = B0 + Σ_{t=1..N} (ROE_t − r) · B_{t−1} / (1 + r)^t,
+    with ROE fading LINEARLY from today's normalised ROE to the cost of equity over N years (competition erodes
+    excess returns; nothing is capitalised for ever) and book value growing by retained earnings,
+    B_t = B_{t−1} · (1 + ROE_t · (1 − payout)). After year N the franchise earns its cost of equity, so it adds nothing
+    beyond book. A bank earning below its cost of equity is valued BELOW book (it destroys value while it converges).
+    None when inputs are missing or r ≤ g.
+    """
+    bv, roe, r, g = _finite(book_per_share), _finite(roe), _finite(discount_rate), _finite(growth)
+    if bv is None or bv <= 0 or roe is None or r is None or g is None or r <= g:
+        return None
+    keep = 1.0 - float(np.clip(_finite(payout) if _finite(payout) is not None else DEFAULT_PAYOUT, 0.0, 1.0))
+    value, book = bv, bv
+    for t in range(1, int(years) + 1):
+        roe_t = roe + (r - roe) * t / years
+        value += (roe_t - r) * book / (1 + r) ** t
+        book *= 1 + max(roe_t, 0.0) * keep
+    return float(value)
+
+
+def payout_ratio(meta, price) -> Optional[float]:
+    """(Dividends + net buybacks) / earnings from the provider's yields: net payout yield / earnings yield."""
+    eps, npy = _finite(meta.get("trailing_eps")), _finite(meta.get("net_payout_yield_pct"))
+    if eps is None or eps <= 0 or npy is None or not price:
+        return None
+    return float(np.clip(npy / 100 * price / eps, 0.0, 1.0))
+
+
+def pb_roe_peer_fit(companies: Optional[pd.DataFrame], ticker: str, min_peers: int = 8) -> Optional[dict]:
+    """Relative value of a financial: P/B regressed on ROE across its sector peers (banks with banks, insurers with
+    insurers). {fitted_pb, actual_pb, residual_pct, slope, r2, n} — a bank trading below the P/B its ROE earns in the
+    peer group is cheap RELATIVE to peers (not necessarily cheap). None with too few usable peers."""
+    if companies is None or companies.empty or not {"ticker", "sector", "price_to_book", "roe"} <= set(companies.columns):
+        return None
+    c = companies.drop_duplicates("ticker")
+    me = c[c["ticker"] == ticker]
+    if me.empty:
+        return None
+    sector = str(me["sector"].iloc[0])
+    peers = c[c["sector"].astype(str) == sector][["ticker", "price_to_book", "roe"]].copy()
+    peers["pb"], peers["roe_"] = pd.to_numeric(peers["price_to_book"], errors="coerce"), pd.to_numeric(peers["roe"], errors="coerce")
+    peers = peers[(peers["pb"] > 0) & (peers["pb"] < 10) & peers["roe_"].between(-0.2, 0.5)]
+    mine = peers[peers["ticker"] == ticker]
+    if len(peers) < min_peers or mine.empty:
+        return None
+    slope, intercept = np.polyfit(peers["roe_"], peers["pb"], 1)
+    fitted = intercept + slope * peers["roe_"]
+    ss_res, ss_tot = float(((peers["pb"] - fitted) ** 2).sum()), float(((peers["pb"] - peers["pb"].mean()) ** 2).sum())
+    my_fit = float(intercept + slope * mine["roe_"].iloc[0])
+    actual = float(mine["pb"].iloc[0])
+    return {"sector": sector, "fitted_pb": my_fit, "actual_pb": actual, "roe": float(mine["roe_"].iloc[0]),
+            "residual_pct": (actual / my_fit - 1) * 100 if my_fit > 0 else None, "slope": float(slope),
+            "intercept": float(intercept), "r2": 1 - ss_res / ss_tot if ss_tot > 0 else None, "n": int(len(peers)),
+            "peers": peers[["ticker", "pb", "roe_"]].rename(columns={"roe_": "roe"})}
+
+
 def normalized_roe(annual_fin: Optional[pd.DataFrame], ticker: str, fallback=None, years: int = 4) -> Optional[float]:
     """Median of the last `years` annual net income / equity (through the cycle), clipped to [0, 25%]."""
     roes = []
@@ -613,20 +676,25 @@ def _financial_inputs(meta, price: float, annual_fin, ticker: str, coe: float, t
     pb = _finite(meta.get("price_to_book"))
     bvps = price / pb if pb and pb > 0 else None
     roe_norm = normalized_roe(annual_fin, ticker, fallback=meta.get("roe"))
-    # Competitive fade: a return above (or below) the cost of equity does not last forever, so the sustainable ROE
-    # is pulled 30% of the way toward it (only when above it). Without this, a reinsurer earning 20% is capitalised at 20% for ever.
-    # Only EXCESS returns fade: a franchise below its cost of equity is not rescued by assuming it converges up.
-    roe = None if roe_norm is None else (FADE_KEEP * roe_norm + (1 - FADE_KEEP) * coe if roe_norm > coe else roe_norm)
+    # Residual income (P3/b): today's normalised ROE fades LINEARLY to the cost of equity over RI_FADE_YEARS, book grows
+    # by retained earnings. (It replaced a constant-ROE justified P/B with a fixed 30% fade, which still capitalised an
+    # above-cost ROE for ever and could not value a franchise earning below its cost of equity.)
+    roe = roe_norm
+    payout = payout_ratio(meta, price)
     scen = {}
     for name, d_roe, d_r in (("bear", -0.03, +0.01), ("base", 0.0, 0.0), ("bull", +0.03, -0.01)):
         r = max(coe + d_r, tg + 0.01)
         rr = None if roe is None else max(roe + d_roe, 0.0)
-        scen[name] = Scenario(name, rr if rr is not None else 0.0, r, justified_pb_value(bvps, rr, r, tg))
+        scen[name] = Scenario(name, rr if rr is not None else 0.0, r,
+                              residual_income_value(bvps, rr, r, tg, payout if payout is not None else DEFAULT_PAYOUT))
     base, bear, bull = (scen[k].value_per_share for k in ("base", "bear", "bull"))
-    implied = tg + (price / bvps) * (coe - tg) if bvps else None          # ROE the price already assumes
+    implied = tg + (price / bvps) * (coe - tg) if bvps else None          # perpetual ROE the price already assumes
     if base is None:
-        reliable, note = False, ("The sustainable ROE is not above long-run growth (or book value / ROE is missing) — "
-                                 "a justified-P/B value cannot be computed. Judge on P/B, ROE trend and credit quality.")
+        reliable, note = False, ("Book value / ROE is missing — a residual-income value cannot be computed. Judge on "
+                                 "P/B, ROE trend and credit quality.")
+    elif roe is not None and roe <= tg:
+        reliable, note = False, (f"Normalised ROE {roe:.1%} is not above long-run growth — the franchise destroys value "
+                                 f"while it lasts (value below book). Judge on P/B, ROE trend and credit quality.")
     elif base / price - 1 > IMPLAUSIBLE_MARGIN:
         reliable, note = False, "Value is >2.5x the price — verify book value and ROE before acting."
     elif implied is not None and implied > 0.35:
@@ -639,14 +707,16 @@ def _financial_inputs(meta, price: float, annual_fin, ticker: str, coe: float, t
     else:
         reliable, note = True, None
     return {
-        "model": "justified_pb", "fcfe": None, "fcf_source": "n/a (bank / insurer: cash flows include deposits and float)",
-        "shares": shares, "growth": roe or 0.0,
-        "growth_sources": [f"normalised ROE {roe_norm:.1%} (median of up to 4 annual ROEs), faded 30% toward the cost of equity"
-                           if roe_norm is not None else "ROE unavailable"],
+        "model": "residual_income", "fcfe": None, "fcf_source": "n/a (bank / insurer: cash flows include deposits and float)",
+        "shares": shares, "growth": roe or 0.0, "payout": payout,
+        "growth_sources": [f"normalised ROE {roe_norm:.1%} (median of up to 4 annual ROEs), fading to the cost of equity "
+                           f"over {RI_FADE_YEARS} years" if roe_norm is not None else "ROE unavailable"],
         "reliable": reliable, "note": note,
-        "model_note": ("Justified P/B = (ROE − g) / (r − g) on current book value per share. ROE is the 4-year median "
-                       "faded 30% toward the cost of equity (excess returns do not last); still sensitive to the credit "
-                       "or underwriting cycle."),
+        "model_note": (f"Residual income: book value per share plus the discounted excess return (ROE − cost of equity) "
+                       f"on book, with ROE fading linearly to the cost of equity over {RI_FADE_YEARS} years and book "
+                       f"growing by retained earnings (payout "
+                       f"{f'{payout:.0%}' if payout is not None else f'{DEFAULT_PAYOUT:.0%} assumed'}). Still sensitive "
+                       f"to the credit or underwriting cycle."),
         "risk_free": ass["risk_free"], "cost_of_equity": coe, "terminal_growth": tg, "currency": ass["currency"],
         "rate_source": ass["source"], "scenarios": scen, "base": base, "bear": bear, "bull": bull,
         "implied_growth": implied, "roe": roe, "roe_normalised": roe_norm, "book_per_share": bvps,
@@ -665,7 +735,7 @@ def latest_statement_fcf(hist_fcf: pd.DataFrame, ticker: str) -> Optional[float]
 
 
 def uses_book_model(meta, hist_fcf=None, ticker=None) -> bool:
-    """True for banks, insurers, brokers and other balance-sheet financials (justified P/B); False for everything the
+    """True for banks, insurers, brokers and other balance-sheet financials (residual income on book); False for everything the
     free-cash-flow DCF can value, including asset-light fee businesses that report positive free cash flow."""
     if str(meta.get("sector") or "").strip().lower() not in DCF_NOT_APPLICABLE_SECTORS:
         return False
@@ -730,7 +800,7 @@ def valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, ma
     """
     Company-anchored intrinsic value inputs + scenarios + reverse model (EUR, per share).
 
-    Industrials and tech: FCFE DCF. Banks, insurers and other financials: justified P/B (residual income).
+    Industrials and tech: FCFE DCF. Banks, insurers and other financials: residual income on book value (ROE fading to the cost of equity).
     The risk-free rate and terminal growth come from the currency the cash flows are earned in.
     """
     ass = currency_assumptions(meta.get("currency"), macro)

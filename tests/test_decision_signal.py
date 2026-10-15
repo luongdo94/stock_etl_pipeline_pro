@@ -122,7 +122,7 @@ def test_exchanges_with_positive_fcf_use_the_dcf_but_brokers_and_banks_keep_book
     assert not v.uses_book_model(company(sector="Software", industry="Software"))
     vin = v.valuation_inputs(company(), 100.0, pd.DataFrame(), "X", MACRO)
     assert vin["model"] == "dcf" and vin["base"] is not None
-    assert v.valuation_inputs(company(industry="Capital Markets"), 100.0, pd.DataFrame(), "X", MACRO)["model"] == "justified_pb"
+    assert v.valuation_inputs(company(industry="Capital Markets"), 100.0, pd.DataFrame(), "X", MACRO)["model"] == "residual_income"
 
 def test_verdict_is_the_decision_plus_one_timing_arrow():
     from core.rating import TIMING_ARROWS, timing_arrow, verdict

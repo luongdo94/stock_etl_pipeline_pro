@@ -7,9 +7,49 @@ import streamlit as st
 from views.stock_analysis.layout import layer_banner
 
 from services.market_data import get_forex_rates
+from services.db import load_ticker_provenance
 from ui.components import render_metric_row
+from ui.provenance import payout_status
 from ui.icons import render_header
 
+
+
+# (label, metric key, display format, Quality sub-score key, help)
+QUALITY_MEASURES = (
+    ("ROIC (3y median)", "roic_pct", "{:.1f}%", "q_roc", "NOPAT / invested capital (equity + debt − cash)"),
+    ("FCF conversion", "fcf_conversion", "{:.2f}x", "q_earnings_quality", "FCF after stock comp / net income"),
+    ("Net debt / EBITDA", "net_debt_ebitda", "{:.2f}x", "q_balance_sheet", "Negative = net cash"),
+    ("Revenue CAGR", "rev_cagr_pct", "{:+.1f}%", "q_growth_stability", "Over the stored annual statements"),
+    ("Profitable years", "profit_years_pct", "{:.0f}%", "q_growth_stability", "Share of stored years with a profit"),
+    ("Net margin volatility", "margin_vol_pp", "{:.1f} pp", "q_growth_stability", "Std. dev. of the net margin"),
+    ("FCF margin (after SBC)", "fcf_margin_pct", "{:.1f}%", "q_fcf_margin", "Free cash flow after stock comp / revenue"),
+)
+
+
+def _render_quality_measures(scores: dict, card_style: str, header_style: str):
+    """The measured values behind the Quality radar: '18.3% → 72/100', so a sub-score can be checked."""
+    met, comp = scores.get("metrics") or {}, scores.get("components") or {}
+    if not met:
+        return
+    cols = st.columns(len(QUALITY_MEASURES))
+    for col, (label, key, fmt, sub, help_text) in zip(cols, QUALITY_MEASURES):
+        v = met.get(key)
+        if key == "net_debt_ebitda" and v is not None and v >= 99:
+            txt = "debt, EBITDA ≤ 0"
+        elif key == "roic_pct" and v is not None and not met.get("roic_is_roic"):
+            txt = fmt.format(v) + "*"
+            help_text += " · *proxy (net income / equity + debt): EBIT not stored"
+        else:
+            txt = "N/A" if v is None else fmt.format(v)
+        if key == "roic_pct" and met.get("roic_estimated"):
+            help_text += " · tax rate or cash assumed in some years"
+        s = comp.get(sub)
+        with col:
+            st.markdown(f"<div style='{card_style}'><div style='{header_style}'>{label}</div>"
+                        f"<div style='color:#e8eaf6;font-size:1.15rem;font-weight:800;padding:0 8px;'>{txt}</div>"
+                        f"<div style='color:#8899aa;font-size:0.7rem;padding:2px 8px 6px 8px;' title='{help_text}'>"
+                        f"{'score ' + format(s, '.0f') + '/100' if s is not None else 'not scored'} · {help_text}</div>"
+                        f"</div>", unsafe_allow_html=True)
 
 
 def render(dd, ctx):
@@ -36,6 +76,8 @@ def render(dd, ctx):
 
     def _txt(v, fmt):
         return "N/A" if v is None else fmt.format(v)
+
+    _render_quality_measures(dd.scores, _card_style, _header_style)
 
     with st.container():
         kcol1, kcol2, kcol3, kcol4, kcol5 = st.columns(5)
@@ -74,8 +116,11 @@ def render(dd, ctx):
             # Net Payout = Div + Buybacks
             net_payout = _num(meta.get('net_payout_yield_pct'))
             bb_yield   = _num(meta.get('buyback_yield_pct'))
-            render_metric_row("Net Payout", _txt(net_payout, "{:.2f}%"),
-                              delta=f"BB: {bb_yield:.1f}%" if bb_yield is not None else None)
+            _pst, _pnote = payout_status(load_ticker_provenance(deep_ticker))
+            render_metric_row("Net Payout" + (f" ⚠️ {_pst}" if _pst and _pst != "OBSERVED" else ""),
+                              _txt(net_payout, "{:.2f}%"),
+                              delta=f"BB: {bb_yield:.1f}%" if bb_yield is not None else None,
+                              help_text=(f"Payout evidence {_pst}: {_pnote}" if _pst else None))
 
             _roe = _num(meta.get('roe'))
             roe_raw = _roe * 100 if _roe is not None else None

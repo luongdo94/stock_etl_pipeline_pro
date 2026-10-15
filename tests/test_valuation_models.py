@@ -85,7 +85,7 @@ def test_normalised_roe_is_a_median_and_clipped():
     assert v.normalized_roe(None, "X") is None
 
 
-def test_banks_get_a_justified_pb_value_instead_of_no_model(monkeypatch):
+def test_banks_get_a_residual_income_value_instead_of_no_model(monkeypatch):
     bank = company(sector="Banks", currency="EUR", price_to_book=1.0, roe=0.12)
     price = 20.0
     # R3-K3: by default the value is context only — no capital-adequacy / asset-quality inputs exist
@@ -93,19 +93,18 @@ def test_banks_get_a_justified_pb_value_instead_of_no_model(monkeypatch):
     assert default["base"] is not None and default["reliable"] is False and "capital" in default["note"]
     monkeypatch.setattr(v, "_required", lambda key, default=True: False)       # switch off in decision_rules.yaml
     vin = v.valuation_inputs(bank, price, pd.DataFrame(), "X", MACRO, annual(0.12))
-    assert vin["model"] == "justified_pb" and vin["fcfe"] is None and vin["reliable"] is True
+    assert vin["model"] == "residual_income" and vin["fcfe"] is None and vin["reliable"] is True
     assert vin["book_per_share"] == pytest.approx(20.0)
     r, tg = vin["cost_of_equity"], vin["terminal_growth"]
-    assert vin["roe_normalised"] == pytest.approx(0.12)
-    assert vin["roe"] == pytest.approx(0.7 * 0.12 + 0.3 * r)                   # faded toward the cost of equity
-    assert vin["base"] == pytest.approx(20.0 * (vin["roe"] - tg) / (r - tg))
+    assert vin["roe_normalised"] == pytest.approx(0.12) and vin["roe"] == pytest.approx(0.12)   # the fade is in the model
+    assert vin["base"] == pytest.approx(v.residual_income_value(20.0, 0.12, r, tg, v.DEFAULT_PAYOUT))
     assert vin["bear"] < vin["base"] < vin["bull"]
     assert vin["implied_growth"] == pytest.approx(tg + 1.0 * (r - tg))         # ROE the price already assumes (P/B 1.0)
 
 
-def test_banks_with_roe_below_growth_are_not_valued():
+def test_banks_with_roe_below_growth_are_valued_below_book_and_not_actionable():
     vin = v.valuation_inputs(company(sector="Insurance", price_to_book=0.8, roe=0.01), 20.0, pd.DataFrame(), "X", MACRO, annual(0.01))
-    assert vin["base"] is None and vin["reliable"] is False and "ROE" in vin["note"]
+    assert vin["base"] < vin["book_per_share"] and vin["reliable"] is False and "ROE" in vin["note"]
 
 
 def test_implausible_bank_values_are_flagged():
@@ -116,8 +115,8 @@ def test_implausible_bank_values_are_flagged():
 
 
 def test_a_cheap_bank_is_only_actionable_once_capital_inputs_are_not_required(monkeypatch):
-    bank = company(sector="Banks", currency="EUR", price_to_book=1.1, roe=0.13)          # clearly below justified value
-    price = 14.0
+    bank = company(sector="Banks", currency="EUR", price_to_book=0.8, roe=0.13)          # clearly below its value
+    price = 10.0
 
     def _decide(vin):
         return decision.build_decision(price=price, base_value=vin["base"], bear_value=vin["bear"], bull_value=vin["bull"],
@@ -151,6 +150,32 @@ def test_dcf_value_drops_when_stock_comp_is_deducted_and_the_source_says_so():
 
 def test_excess_roe_fades_so_a_high_return_is_not_capitalised_for_ever():
     great = v.valuation_inputs(company(sector="Insurance", currency="EUR", price_to_book=2.0, roe=0.22), 40.0, pd.DataFrame(), "X", MACRO, annual(0.22))
-    assert great["roe"] < 0.22 and great["roe"] > great["cost_of_equity"]
-    unfaded = 20.0 * (0.22 - great["terminal_growth"]) / (great["cost_of_equity"] - great["terminal_growth"])
-    assert great["base"] < unfaded * 2          # book value per share is 20 here (price 40 / P/B 2)
+    r, tg = great["cost_of_equity"], great["terminal_growth"]
+    perpetual = 20.0 * (0.22 - tg) / (r - tg)    # book value per share is 20 here (price 40 / P/B 2)
+    assert 20.0 < great["base"] < perpetual       # worth more than book, far less than 22% ROE for ever
+
+
+def test_residual_income_properties():
+    r, g = 0.09, 0.02
+    assert v.residual_income_value(20, r, r, g) == pytest.approx(20.0)             # earns its cost: worth book
+    assert v.residual_income_value(20, 0.04, r, g) < 20                            # below its cost: worth less
+    hi, lo = v.residual_income_value(20, 0.15, r, g, payout=0.2), v.residual_income_value(20, 0.15, r, g, payout=0.8)
+    assert hi > lo > 20                            # retaining more at an above-cost ROE compounds more excess return
+    assert v.residual_income_value(20, 0.15, r, g, years=20) > v.residual_income_value(20, 0.15, r, g, years=5)
+    assert v.residual_income_value(None, 0.12, r, g) is None and v.residual_income_value(20, 0.12, 0.02, 0.02) is None
+
+
+def test_payout_ratio_from_the_provider_yields():
+    assert v.payout_ratio({"trailing_eps": 2.0, "net_payout_yield_pct": 5.0}, 20.0) == pytest.approx(0.5)
+    assert v.payout_ratio({"trailing_eps": -1.0, "net_payout_yield_pct": 5.0}, 20.0) is None
+    assert v.payout_ratio({"trailing_eps": 1.0, "net_payout_yield_pct": 30.0}, 20.0) == 1.0     # clipped
+
+
+def test_peer_pb_roe_line_shows_relative_cheapness():
+    roes = [0.04, 0.06, 0.08, 0.10, 0.12, 0.14, 0.16, 0.18]
+    peers = pd.DataFrame({"ticker": [f"B{i}" for i in range(8)], "sector": "Banks", "roe": roes,
+                          "price_to_book": [0.2 + 10 * x for x in roes]})
+    peers.loc[3, "price_to_book"] = 0.6                                            # B3: ROE 10% → line says 1.2x
+    fit = v.pb_roe_peer_fit(pd.concat([peers, pd.DataFrame([{"ticker": "IND", "sector": "Software"}])]), "B3")
+    assert fit["n"] == 8 and fit["residual_pct"] < -40 and fit["actual_pb"] == 0.6
+    assert v.pb_roe_peer_fit(peers.head(5), "B3") is None                          # too few peers

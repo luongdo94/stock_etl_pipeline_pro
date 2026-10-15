@@ -154,12 +154,24 @@ def build_snapshot(db_path: str = DB_PATH, track_db_path: str = TRACK_DB_PATH) -
         "rsi": table["RSI (14)"].astype(float),
         "trend": table["Trend"].astype(str),
         "sector": table["Sector"].astype(str),
+        # factor exposures known that day (core/factor_test.py): size, value, market beta — the score must beat them
+        "region": table["Region"].astype(str),
+        "market_cap_eur": pd.to_numeric(table["MCap (B)"], errors="coerce").where(lambda s: s > 0) * 1e9,
+        "book_to_price": table["Ticker"].map(_by_ticker(companies, "price_to_book")).pipe(
+            lambda s: 1 / s.where(s > 0)).astype(float),
+        "beta": table["Ticker"].map(_by_ticker(companies, "beta")).astype(float),
         # what the system KNEW: score components, flags, missing inputs and valuation assumptions (audit F-07)
         "inputs": [json.dumps({"components": c, "flags": f, "missing": list(m) if m is not None else [], "valuation": v},
                               default=str)
                    for c, f, m, v in zip(table["Components"], table["Flags"], table["Missing"],
                                          table["_valuation"] if "_valuation" in table else [None] * len(table))],
     })
+
+
+def _by_ticker(companies: pd.DataFrame, col: str) -> dict:
+    if companies is None or companies.empty or col not in companies.columns:
+        return {}
+    return pd.to_numeric(companies.drop_duplicates("ticker").set_index("ticker")[col], errors="coerce").to_dict()
 
 
 def save_snapshot(rows: pd.DataFrame, track_db_path: str = TRACK_DB_PATH, db_path: str = DB_PATH) -> int:
@@ -171,7 +183,8 @@ def save_snapshot(rows: pd.DataFrame, track_db_path: str = TRACK_DB_PATH, db_pat
         tconn.execute(_DDL)
         # older track-record files predate these columns; their rows keep NULL = earlier definitions
         for ddl in ("decision VARCHAR", "value INTEGER", "momentum INTEGER", "revisions INTEGER", "score_version VARCHAR",
-                    "inputs VARCHAR", "knowledge_at TIMESTAMP", "run_id VARCHAR", "rules_version VARCHAR"):
+                    "inputs VARCHAR", "knowledge_at TIMESTAMP", "run_id VARCHAR", "rules_version VARCHAR",
+                    "region VARCHAR", "market_cap_eur DOUBLE", "book_to_price DOUBLE", "beta DOUBLE"):
             tconn.execute(f"ALTER TABLE signals.score_snapshots ADD COLUMN IF NOT EXISTS {ddl}")
         tconn.register("snap_rows", rows)
         # FIRST knowledge wins (audit A14): a re-run after the close (weekend news, a restatement) can no longer

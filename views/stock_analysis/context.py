@@ -118,6 +118,11 @@ def build(ctx, deep_ticker):
         "flags": str(_row.iloc[0]["Flags"]) if not _row.empty else "",
         "missing": list(_row.iloc[0]["Missing"]) if not _row.empty else [],
         "components": dict(_row.iloc[0]["Components"]) if not _row.empty else {},
+        # measured values behind the sub-scores, and 6-month insider activity (core.screener)
+        "metrics": dict(_row.iloc[0]["_metrics"]) if not _row.empty and "_metrics" in _row.columns
+        and isinstance(_row.iloc[0]["_metrics"], dict) else {},
+        "insider": dict(_row.iloc[0]["_insider"]) if not _row.empty and "_insider" in _row.columns
+        and isinstance(_row.iloc[0]["_insider"], dict) else {},
     }
     ai_score = scores["quality"] if scores["quality"] is not None else 50.0   # Signal input only; tiles show "N/A"
     # Upgrade / downgrade counts (30d) shown under the Revisions tile

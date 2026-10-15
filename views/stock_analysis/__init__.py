@@ -40,4 +40,5 @@ def render(ctx):
     for section in SECTIONS:
         section.render(dd, ctx)
         if section is fundamentals:
-            render_valuation_section(meta=dd.meta, price=float(dd.cur_p), vin=dd.vin, relval=dd.relval)
+            render_valuation_section(meta=dd.meta, price=float(dd.cur_p), vin=dd.vin, relval=dd.relval,
+                                         companies=ctx["companies_full"])

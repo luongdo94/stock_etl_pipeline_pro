@@ -51,6 +51,7 @@ TABLES = (
     ("marts.security_master", "security_master", "SELECT * FROM marts.security_master", None, True),
     ("marts.symbol_history", "symbol_history", "SELECT * FROM marts.symbol_history", None, True),
     ("raw.source_reconciliation", "source_reconciliation", "SELECT * FROM raw.source_reconciliation", None, True),
+    ("raw.cashflows", "cashflows", "SELECT * FROM raw.cashflows", None, True),      # payout evidence per ticker
     ("raw.hist_fcf_quarterly", "hist_fcf_quarterly", "SELECT * FROM raw.hist_fcf_quarterly", None, False),
     ("raw.historical_financials", "historical_financials", "SELECT * FROM raw.historical_financials", None, False),
     ("raw.quarterly_financials", "quarterly_financials", "SELECT * FROM raw.quarterly_financials", None, False),

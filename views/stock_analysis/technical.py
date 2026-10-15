@@ -6,6 +6,9 @@ import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 
+from services.db import load_ticker_provenance
+from ui.provenance import history_jumps
+
 from views.stock_analysis.layout import layer_banner
 
 from core.symbols import get_tv_symbol
@@ -25,6 +28,10 @@ def render(dd, ctx):
     deep_ticker = dd.ticker
     df_deep = dd.df_deep
     p_sm = dd.sm["signal"]
+    _jumps = history_jumps(load_ticker_provenance(deep_ticker))
+    for _j in _jumps.itertuples():
+        st.warning(f"Price history: {_j.reason} — {_j.detail}. Returns, risk and backtests over that date may include "
+                   f"an unadjusted corporate action (spin-off, special dividend, ratio error).", icon="⚠️")
     p_sm_layer = dd.sm["layer"]
     p_sm_strength = dd.sm["strength"]
     st.markdown("---")

@@ -17,7 +17,10 @@ from core.portfolio_risk import (apply_rebalance, complete_returns, rebalance_li
                                  record_trade, shrink_expected_returns, weight_budget)
 from services.alerts import add_alert_rule, delete_alert_rule, load_alert_rules
 from services.market_data import fetch_dividend_calendar
-from services.user_store import load_portfolio_with_cash, save_portfolio_checked, save_portfolio_to_db
+from core.ledger import realized_pnl, trade as ledger_trade, trades_from_diff
+from core.stress import estimate_sensitivities, historical_replay, load_scenarios, scenario_losses
+from services.user_store import (append_trades, load_portfolio_with_cash, load_trades, save_portfolio_checked,
+                                 save_portfolio_to_db)
 from ui.components import render_metric_tile
 from ui.decision_panel import render_alert_inbox
 from ui.icons import render_header
@@ -62,15 +65,27 @@ def render(ctx):
             return {}
         return {t: float(v) for t, v in m_df.set_index("Ticker")["_thesis_stop"].items() if pd.notna(v) and v > 0}
 
-    def _save(shares, costs, cash=None):
+    def _save(shares, costs, cash=None, targets=None):
         """Every portfolio write: original stops follow the holdings; the outcome is shown, never assumed."""
         stops = opening_stops(st.session_state.get("portfolio_stops", {}), shares, _thesis_stops())
-        ok, msg = save_portfolio_checked(shares, costs, cash, stops)
+        ok, msg = save_portfolio_checked(shares, costs, cash, stops, targets)
         if ok:
             st.session_state["portfolio_stops"] = stops
+            if targets is not None:
+                st.session_state["portfolio_targets"] = dict(targets)
         else:
             st.session_state["_save_error"] = msg
         return ok
+
+    def _record(rows):
+        """Append to the trade ledger AFTER the portfolio was saved; a failure is reported, never hidden."""
+        ok, msg = append_trades(rows)
+        if not ok:
+            st.session_state["_ledger_warning"] = msg
+        return ok
+
+    if st.session_state.get("_ledger_warning"):
+        st.warning(f"Trade ledger: {st.session_state.pop('_ledger_warning')} — the portfolio itself was saved.", icon="📒")
     st.write("Craft your portfolio by selecting tickers and entering your holdings below. High-density quantitative analysis will follow.")
 
     # 1. LOCAL TICKER SELECTION
@@ -235,6 +250,9 @@ def render(ctx):
                         st.session_state.portfolio_tickers + [mt_ticker]) if t in _t["shares"]]
                     st.session_state['_portfolio_version'] += 1
                     st.session_state.pop("_save_error", None)
+                    _fee_pct = float(load_decision_rules()["costs"]["commission_pct"]) / 100
+                    _record([ledger_trade(mt_ticker, _side, mt_shares, mt_price, mt_shares * mt_price * _fee_pct,
+                                          _t["cash"], "manual" if mt_from_cash else "manual (new deposit)")])
                     st.toast(f"✅ {_side} {mt_shares:.4g} {mt_ticker} @ €{mt_price:,.2f} · cash €{_t['cash']:,.2f}")
                     st.rerun()
                 else:
@@ -257,6 +275,7 @@ def render(ctx):
            "Action" not in st.session_state.portfolio_df.columns or \
            not any(emoji in str(x) for x in st.session_state.portfolio_df.get("Action", []) for emoji in ["🟢", "🔴", "🟡", "⚪", "🔵"]) or \
            "Region" not in st.session_state.portfolio_df.columns or \
+           "Target (%)" not in st.session_state.portfolio_df.columns or \
            "Stop (orig)" not in st.session_state.portfolio_df.columns:
             
             st.session_state.last_portfolio_tickers = p_tickers
@@ -280,6 +299,7 @@ def render(ctx):
                     # what the Decision means for a position you HOLD (P1/5): ADD / HOLD — no adds / TRIM / EXIT …
                     "Action": _act_emoji + holding_action(_act, held=True),
                     "Stop (orig)": st.session_state.get("portfolio_stops", {}).get(t, float("nan")),
+                    "Target (%)": st.session_state.get("portfolio_targets", {}).get(t, float("nan")),
                     "Region": meta.get("Region", "US"),
                     "Market Cap (B)": meta.get("MCap (B)", 0),
                     "Z-Score": meta.get("Z-Score", 0.0),
@@ -307,6 +327,7 @@ def render(ctx):
         _nav = _t_val + _cash_eur                                         # weights are of NAV, cash included (R4-F01)
         disp_df["Weight (%)"] = (disp_df["Market Value"] / _nav * 100).fillna(0) if _nav > 0 else 0
         disp_df["Contribution (%)"] = (disp_df["Unrealized PnL (€)"] / _t_cost * 100).fillna(0) if _t_cost > 0 else 0
+        disp_df["Drift (pp)"] = disp_df["Weight (%)"] - disp_df["Target (%)"]   # NaN where no target is set
 
         with st.form("portfolio_builder_main_form"):
             # KEY FIX: The data_editor should be the ONLY way to change weights for the current tickers
@@ -331,9 +352,14 @@ def render(ctx):
                     "Unrealized PnL (€)": st.column_config.NumberColumn("PnL (€)", format="€%.2f", disabled=True),
                     "Unrealized PnL (%)": st.column_config.NumberColumn("PnL (%)", format="%.2f%%", disabled=True),
                     "Contribution (%)": st.column_config.NumberColumn("Contribution", format="%.2f%%", disabled=True),
-                    "Weight (%)": st.column_config.NumberColumn("Weight", format="%.2f%%", disabled=True)
+                    "Weight (%)": st.column_config.NumberColumn("Weight", format="%.2f%%", disabled=True),
+                    "Target (%)": st.column_config.NumberColumn("Target", min_value=0.0, max_value=100.0, step=0.5,
+                                                                format="%.1f%%",
+                                                                help="Your target weight (% of NAV). Leave empty for no target."),
+                    "Drift (pp)": st.column_config.NumberColumn("Drift", format="%+.1f pp", disabled=True,
+                                                                help="Weight minus target, percentage points of NAV.")
                 },
-                column_order=["Ticker", "Company", "Action", "Shares", "Cost Basis (€)", "Price (€)", "Stop (orig)", "Total Cost (€)", "Market Value", "Unrealized PnL (€)", "Unrealized PnL (%)", "Z-Score", "RSI (14)", "Smart Money", "Contribution (%)", "Weight (%)"],
+                column_order=["Ticker", "Company", "Action", "Shares", "Cost Basis (€)", "Price (€)", "Stop (orig)", "Total Cost (€)", "Market Value", "Unrealized PnL (€)", "Unrealized PnL (%)", "Z-Score", "RSI (14)", "Smart Money", "Contribution (%)", "Weight (%)", "Target (%)", "Drift (pp)"],
                 hide_index=True,
                 width="stretch",
                 key=f"p_portfolio_editor_v{_cur_version}"
@@ -347,7 +373,14 @@ def render(ctx):
         if recompute:
             shares_dict = edited_df.set_index("Ticker")["Shares"].to_dict()
             cost_dict = edited_df.set_index("Ticker")["Cost Basis (€)"].to_dict()
-            if _save(shares_dict, cost_dict, float(cash_in)):              # session changes only on a confirmed save
+            _targets = {t: float(v) for t, v in edited_df.set_index("Ticker")["Target (%)"].items()
+                        if pd.notna(v) and float(v) > 0}
+            _old_shares = dict(st.session_state.get("portfolio_shares", {}))
+            if sum(_targets.values()) > 100 + 1e-9:
+                st.error(f"Targets add up to {sum(_targets.values()):.1f}% of NAV (> 100%) — not saved.", icon="🛑")
+            elif _save(shares_dict, cost_dict, float(cash_in), _targets):   # session changes only on a confirmed save
+                _record(trades_from_diff(_old_shares, shares_dict, latest_prices, 0.0, "edit", float(cash_in),
+                                         "grid edit (booked at the current price)"))
                 st.session_state.portfolio_df = edited_df.copy()
                 st.session_state.portfolio_shares = shares_dict
                 st.session_state.portfolio_cost = cost_dict
@@ -355,8 +388,9 @@ def render(ctx):
                 st.session_state.pop("_save_error", None)
                 st.toast("☁️ Portfolio saved.", icon="🚀")
                 st.rerun()
-            st.error(f"Portfolio NOT saved — {st.session_state.get('_save_error')} Your edits are shown but not stored.",
-                     icon="🛑")
+            else:
+                st.error(f"Portfolio NOT saved — {st.session_state.get('_save_error')} Your edits are shown but not "
+                         f"stored.", icon="🛑")
         else:
             edited_df = st.session_state.portfolio_df.copy()
 
@@ -723,28 +757,8 @@ def render(ctx):
             align_df = pd.concat([port_daily, bench_spy_daily], axis=1).dropna()
             port_beta = align_df.iloc[:, 0].cov(align_df.iloc[:, 1]) / align_df.iloc[:, 1].var() if (len(align_df) > 30 and align_df.iloc[:, 1].var() > 0) else 1.0
 
-            render_header("alert-triangle", f"Historical Stress Test (Beta: {port_beta:.2f})", level="#####")
-            st.caption("Estimated impact based on S&P 500 historical crashes mapped to your portfolio's current beta.")
-            
-            scenarios = [
-                ("📉 2008 Financial Crisis", -0.509),
-                ("🦠 2020 COVID Crash", -0.339),
-                ("🐻 2022 Bear Market", -0.254)
-            ]
-            
-            s_cols = st.columns(3)
-            for i, (s_name, s_drop) in enumerate(scenarios):
-                est_drop_pct = s_drop * port_beta
-                est_drop_val = total_p_val * est_drop_pct
-                with s_cols[i]:
-                    st.markdown(f"""
-                    <div style='background:rgba(231,76,60,0.08); border:1px solid rgba(231,76,60,0.4); border-radius:8px; padding:15px; text-align:center;'>
-                        <div style='color:#e74c3c; font-size:0.85rem; font-weight:700; margin-bottom:5px;'>{s_name}</div>
-                        <div style='color:#e74c3c; font-size:1.5rem; font-weight:900;'>{est_drop_pct*100:.1f}%</div>
-                        <div style='color:#ff9999; font-size:0.9rem;'>Est. Loss: -€{abs(est_drop_val):,.0f}</div>
-                    </div>
-                    """, unsafe_allow_html=True)
-            
+            _render_stress_and_ledger(ctx, current_tickers, weights, nav_eur, _pol_meta, port_beta,
+                                      ret_matrix, _stances, _sizing_limits, _portfolio_policy, latest_prices)
             st.markdown("---")
     
             # ═══════════════════════════════════════════════════════════════════
@@ -791,7 +805,8 @@ def render(ctx):
                 )
                 fig_corr.update_layout(height=360, margin=dict(l=0, r=0, t=10, b=0))
                 st.plotly_chart(fig_corr, use_container_width=True)
-    
+
+            _render_factor_tilts(ctx, dict(zip(current_tickers, weights)))
             st.markdown("<br>", unsafe_allow_html=True)
 
 
@@ -1283,6 +1298,9 @@ def render(ctx):
                             st.session_state["_apply_error"] = _msg
                         else:
                             st.session_state.pop("_apply_error", None)
+                            _record(trades_from_diff(_cur_shares, new_shares_dict, latest_prices,
+                                                     float(_rules_now["costs"]["commission_pct"]) / 100, "rebalance",
+                                                     _res["cash"], str(st.session_state.get("pending_opt_strategy") or "")))
                             st.session_state.portfolio_shares = new_shares_dict
                             st.session_state.portfolio_cost = new_cost_dict
                             st.session_state.portfolio_cash_eur = _res["cash"]
@@ -1506,3 +1524,131 @@ def render(ctx):
                     st.rerun()
                 except Exception as _e:
                     st.error(f"Could not save the rule: {_e}")
+
+
+def _render_stress_and_ledger(ctx, tickers, weights, nav_eur, meta, port_beta, ret_matrix, stances, sizing_limits,
+                              portfolio_policy, latest_prices):
+    """Scenario stress test, historical replay, target-weight drift and the trade ledger (P3/c)."""
+    prices_full = ctx["prices_full"]
+    rules = load_decision_rules()
+    w = {t: float(x) for t, x in zip(tickers, weights)}
+    render_header("alert-triangle", f"Stress Test — Scenarios and History (beta {port_beta:.2f})", level="#####")
+    sens = estimate_sensitivities(prices_full, tickers)
+    full_meta = {t: {**(meta.get(t) or {})} for t in tickers}
+    comp = ctx.get("companies_full")
+    if comp is not None and not comp.empty and "industry" in comp.columns:
+        ind = comp.drop_duplicates("ticker").set_index("ticker")["industry"].to_dict()
+        for t in tickers:
+            full_meta[t]["industry"] = ind.get(t)
+    res = scenario_losses(w, full_meta, sens, load_scenarios(rules), portfolio_policy["policy"]["base_currency"],
+                          portfolio_policy["policy"]["unknown_beta"])
+    limit = portfolio_policy["policy"]["max_stress_loss_pct"] / 100
+    res["loss_eur"] = res["return"] * nav_eur
+    st.dataframe(res.assign(**{"return": res["return"] * 100})[["scenario", "return", "loss_eur", "worst"]],
+                 hide_index=True, width="stretch", column_config={
+                     "scenario": st.column_config.TextColumn("Scenario"),
+                     "return": st.column_config.NumberColumn("NAV change", format="%+.1f%%"),
+                     "loss_eur": st.column_config.NumberColumn("€", format="€%+,.0f"),
+                     "worst": st.column_config.TextColumn("Largest contributors (share of NAV)")})
+    worst = float(res["return"].min()) if not res.empty else 0.0
+    rate_known = int(sens["rate_beta"].notna().sum()) if not sens.empty else 0
+    st.caption(f"Each holding moves by its own estimated market beta × the market move, its rate sensitivity × the "
+               f"yield move (estimated for {rate_known} of {len(tickers)} holdings from the US 10-year yield; unknown = no "
+               f"rate effect), the translation loss of a stronger {portfolio_policy['policy']['base_currency']} on "
+               f"foreign holdings, sector shocks and gaps. Cash does not move. Worst scenario {worst:+.1%} of NAV vs the "
+               f"policy limit of −{limit:.0%} (config/decision_rules.yaml → portfolio).")
+    if worst < -limit:
+        st.error(f"A scenario loses more than the {limit:.0%} stress budget — reduce the most exposed lines first.", icon="🛑")
+    if not sens.empty:
+        with st.expander("Per-holding sensitivities used above"):
+            sv = sens.assign(weight=sens["ticker"].map(w) * 100, rate_beta=sens["rate_beta"] * 100,
+                             currency=sens["ticker"].map(lambda t: (full_meta.get(t) or {}).get("currency")),
+                             sector=sens["ticker"].map(lambda t: (full_meta.get(t) or {}).get("sector")))
+            st.dataframe(sv[["ticker", "weight", "beta", "rate_beta", "n", "currency", "sector"]], hide_index=True,
+                         width="stretch", column_config={
+                             "weight": st.column_config.NumberColumn("Weight", format="%.1f%%"),
+                             "beta": st.column_config.NumberColumn("Market beta", format="%.2f"),
+                             "rate_beta": st.column_config.NumberColumn("Return per +1 pp 10Y", format="%+.1f%%"),
+                             "n": st.column_config.NumberColumn("Days used")})
+            st.caption("Estimated on up to 2 years of daily EUR returns against SPY and the change of the US 10-year "
+                       "yield (one regression). Blank = not enough history; the scenario then uses the provider's beta "
+                       "(or the policy's unknown beta) and no rate effect.")
+    rep = historical_replay(ret_matrix, w)
+    if not rep.empty:
+        st.caption("Historical replay (today's weights on the stored returns, no model): " + " · ".join(
+            f"worst {r.window} {r['return']:+.1%} ({pd.Timestamp(r.start):%d %b %Y} → {pd.Timestamp(r.end):%d %b %Y})"
+            for _, r in rep.iterrows()) + ". Only as bad as the history in the selected horizon.")
+
+    # ── target weights: drift and the trades the policy allows ──
+    targets = dict(st.session_state.get("portfolio_targets", {}) or {})
+    with st.expander(f"🎯 Target weights ({len(targets)} set)", expanded=bool(targets)):
+        if not targets:
+            st.caption("Set a Target % per line in the Capital Allocation Grid and save; drift and the trades to reach "
+                       "the targets appear here.")
+        else:
+            cur = np.array([w[t] for t in tickers])
+            tgt = np.array([targets.get(t, w[t] * 100) / 100 for t in tickers])     # no target: keep the current weight
+            pol = rebalance_policy(tickers, cur, tgt, stances, float(rules["risk"]["max_position_pct"]),
+                                   limits=sizing_limits(nav_eur), portfolio=portfolio_policy)
+            allowed = np.asarray(pol["weights"], dtype=float)
+            rows = []
+            for i, t in enumerate(tickers):
+                px = float(latest_prices.get(t) or 0.0)
+                d_val = (allowed[i] - cur[i]) * nav_eur
+                rows.append({"Ticker": t, "Weight %": cur[i] * 100, "Target %": targets.get(t, float("nan")),
+                             "Drift pp": cur[i] * 100 - targets[t] if t in targets else float("nan"),
+                             "Allowed %": allowed[i] * 100, "Trade (shares)": d_val / px if px > 0 else float("nan"),
+                             "Why limited": pol["blocked"].get(t, "")})
+            st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch", column_config={
+                "Weight %": st.column_config.NumberColumn(format="%.1f%%"),
+                "Target %": st.column_config.NumberColumn(format="%.1f%%"),
+                "Drift pp": st.column_config.NumberColumn(format="%+.1f"),
+                "Allowed %": st.column_config.NumberColumn(format="%.1f%%"),
+                "Trade (shares)": st.column_config.NumberColumn(format="%+.2f")})
+            st.caption("Allowed = the target after the same rules as every rebalance: only BUY-stance lines may grow, the "
+                       "position cap, liquidity / stop sizing and the sector / currency / stress budgets. Execute with "
+                       "➕ Add Trade so the ledger records it.")
+
+    # ── trade ledger ──
+    trades = load_trades()
+    with st.expander(f"📒 Trade ledger ({len(trades)} trades)", expanded=False):
+        if trades.empty:
+            st.caption("Every trade recorded with ➕ Add Trade, a rebalance or a grid edit appears here with its price, "
+                       "fees and the cash left. Cloud users: create the table once with docs/sql/portfolio_trades.sql.")
+        else:
+            pnl = realized_pnl(trades)
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Realised P&L (net of fees)", f"€{pnl['realized_eur'].sum():,.2f}")
+            c2.metric("Fees paid", f"€{pnl['fees_eur'].sum():,.2f}")
+            c3.metric("Trades", f"{len(trades)}", f"{trades['ticker'].nunique()} tickers", delta_color="off")
+            if (pnl["unmatched_qty"] > 0).any():
+                st.caption("Some sells exceed the shares bought in the ledger (positions opened before the ledger "
+                           "existed); their P&L counts only the recorded part.")
+            st.dataframe(trades.sort_values("traded_at", ascending=False), hide_index=True, width="stretch")
+            st.download_button("⬇️ Export ledger (CSV)", trades.to_csv(index=False).encode("utf-8"),
+                               file_name="trade_ledger.csv", mime="text/csv")
+
+
+def _render_factor_tilts(ctx, weights: dict):
+    """Where the portfolio leans vs the average stock of the universe (P3 / exposure)."""
+    from core.factor_test import portfolio_tilts
+    try:
+        tilts = portfolio_tilts(weights, ctx["companies_full"], ctx["prices_full"])
+    except Exception as e:                                   # diagnostics must never break the page
+        st.caption(f"Factor tilts unavailable: {e}")
+        return
+    tilts = tilts.dropna(subset=["tilt_sd"])
+    if tilts.empty:
+        return
+    render_header("layers", "Factor Tilts vs the Universe", level="#####")
+    fig = go.Figure(go.Bar(x=tilts["tilt_sd"], y=tilts["label"], orientation="h",
+                           marker_color=["#e67e22" if abs(v) > 0.5 else "#3498db" for v in tilts["tilt_sd"]],
+                           text=[f"{v:+.2f} SD · {c:.0%} covered" for v, c in zip(tilts["tilt_sd"], tilts["coverage"])],
+                           textposition="auto"))
+    fig.update_layout(template="plotly_dark", height=230, margin=dict(l=0, r=0, t=10, b=0),
+                      xaxis_title="weighted exposure, standard deviations of the universe")
+    st.plotly_chart(fig, use_container_width=True)
+    st.caption("0 = like the average stock in the universe. Beyond ±0.5 SD the portfolio is a deliberate bet on that "
+               "factor: high beta loses most in sell-offs, small size and value tilts earn (or lose) their premia over "
+               "years, momentum reverses sharply in rebounds. Size uses log market cap; value book / price.")
+

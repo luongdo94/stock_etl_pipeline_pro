@@ -45,6 +45,14 @@ def save_portfolio(shares: dict, costs: dict) -> None:
     write("portfolio", {t: {"shares": float(shares.get(t, 0)), "cost": float(costs.get(t, 0))} for t in shares})
 
 
+def load_trades() -> list:
+    return read("trades", [])
+
+
+def append_trades(rows: list) -> None:
+    write("trades", load_trades() + list(rows))
+
+
 def load_alerts() -> list:
     return read("alerts", [])
 

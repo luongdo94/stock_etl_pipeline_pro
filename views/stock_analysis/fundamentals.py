@@ -7,7 +7,8 @@ import streamlit as st
 
 from views.stock_analysis.layout import layer_banner
 
-from services.db import get_db_connection
+from services.db import get_db_connection, load_ticker_provenance
+from ui.provenance import pit_caption
 from services.market_data import get_forex_rates
 
 
@@ -216,6 +217,9 @@ def render(dd, ctx):
             fig_fin.update_yaxes(title_text="Earnings Per Share (€)", secondary_y=True)
             
             st.plotly_chart(fig_fin, use_container_width=True)
+            _pit = pit_caption(load_ticker_provenance(deep_ticker), "annual")
+            if _pit:
+                st.caption("🕰️ " + _pit)
 
 
 
@@ -469,6 +473,9 @@ def render(dd, ctx):
                 fig_fin_q.update_yaxes(title_text="Earnings Per Share (€)", secondary_y=True)
                 
                 st.plotly_chart(fig_fin_q, use_container_width=True)
+                _pit_q = pit_caption(load_ticker_provenance(deep_ticker), "quarterly")
+                if _pit_q:
+                    st.caption("🕰️ " + _pit_q)
 
             else:
                 st.info("No historical quarterly financial data available for this ticker.")

@@ -15,6 +15,14 @@ def _forward(snapshots: pd.DataFrame, prices: pd.DataFrame) -> pd.DataFrame:
     return tr.forward_returns(snapshots, prices)
 
 
+@st.cache_data(ttl=3600, show_spinner="Adjusting for risk factors and costs...")
+def _evidence(snapshots: pd.DataFrame, prices: pd.DataFrame) -> pd.DataFrame:
+    from core.decision import load_rules
+    from core.factor_test import evidence_table
+    return evidence_table(snapshots, prices, cost_bps=(load_rules().get("costs") or {}).get("one_way_bps_by_region"),
+                          min_independent=tr.MIN_INDEPENDENT_PERIODS)
+
+
 def render(ctx):
     """Render the 📈 Track Record tab. ctx is the context dict built in app.py."""
     prices_full = ctx['prices_full']
@@ -96,7 +104,34 @@ def render(ctx):
                        "signal was knowable." if _by == "decision" else
                        "Excess over SPY; returns run from the first session after the signal was knowable.")
 
-    # ── 3. Recommendation log ─────────────────────────────────────────────────
+    # ── 3. Alpha or risk premium? Factors, costs, number of tests ──────────────
+    st.markdown("**Is it alpha? — after risk factors, trading costs and the number of tests**")
+    ev = _evidence(snaps, _px)
+    if ev.empty or ev["premium_pct"].isna().all():
+        st.info("Needs at least 20 stocks per snapshot day with a known outcome for the horizon. The table fills in as "
+                "the snapshot history matures.")
+    else:
+        st.dataframe(ev.assign(horizon=ev["horizon"].map(tr.horizon_label), turnover=ev["turnover"] * 100)[
+            ["score", "horizon", "raw_premium_pct", "premium_pct", "t_stat", "p_holm", "n_independent",
+             "top_gross_pct", "top_net_pct", "turnover", "significant"]],
+            hide_index=True, width="stretch", column_config={
+                "raw_premium_pct": st.column_config.NumberColumn("Raw % / SD", format="%+.2f"),
+                "premium_pct": st.column_config.NumberColumn("Factor-adj. % / SD", format="%+.2f"),
+                "t_stat": st.column_config.NumberColumn("t (NW)", format="%.1f"),
+                "p_holm": st.column_config.NumberColumn("p (Holm)", format="%.3f"),
+                "n_independent": st.column_config.NumberColumn("Indep. periods"),
+                "top_gross_pct": st.column_config.NumberColumn("Top 20% gross", format="%+.2f%%"),
+                "top_net_pct": st.column_config.NumberColumn("Top 20% net", format="%+.2f%%"),
+                "turnover": st.column_config.NumberColumn("Turnover", format="%.0f%%"),
+                "significant": st.column_config.CheckboxColumn("Evidence")})
+    st.caption("Raw = forward return per +1 standard deviation of the score. Factor-adjusted = the same with market "
+               "beta, size, value (book/price) and 12-1 month momentum held fixed, within each region (Fama-MacBeth, "
+               "Newey-West t). p (Holm) accounts for testing 4 scores × 4 horizons. Top 20% = equal-weight top quintile "
+               "over non-overlapping periods vs the universe, before and after the one-way costs of the names it "
+               "replaces (decision_rules.yaml → costs.one_way_bps_by_region). Evidence = factor-adjusted premium > 0, "
+               "Holm p < 5%, ≥ 6 independent periods and positive after costs.")
+
+    # ── 4. Recommendation log ─────────────────────────────────────────────────
     st.markdown("**Recommendation log — every change of call, and how it has done since**")
     _call = "decision" if "decision" in snaps.columns and snaps["decision"].notna().any() else "action"
     log = tr.recommendation_log(snaps, action_col=_call)

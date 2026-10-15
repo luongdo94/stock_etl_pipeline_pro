@@ -2,7 +2,9 @@
 Decision Summary + Valuation sections of the Stock Analysis tab, and the alert inbox.
 All numbers come from core.valuation / core.decision / core.track_record; this module only renders.
 """
+import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
 from core import decision as dec
@@ -168,15 +170,16 @@ def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, re
     return d
 
 
-def _render_financial_valuation(meta, price, vin):
-    """Banks, insurers, financial services: justified P/B (residual income) instead of a cash-flow DCF."""
+def _render_financial_valuation(meta, price, vin, companies=None):
+    """Banks, insurers, financial services: residual income on book value instead of a cash-flow DCF, plus where the
+    stock sits on its peers' P/B-vs-ROE line."""
     from ui.icons import render_header
     st.markdown("---")
-    render_header("gem", "Intrinsic Valuation (Justified P/B) — Banks & Insurers")
+    render_header("gem", "Intrinsic Valuation (Residual Income) — Banks & Insurers")
     if vin["note"]:
         st.warning("⚠️ " + vin["note"])
     if not vin["book_per_share"]:
-        st.info("Book value per share is not available, so a P/B-based value cannot be computed.")
+        st.info("Book value per share is not available, so a book-based value cannot be computed.")
         return
     st.caption(f"{vin['model_note']} Rates: {vin['currency']} risk-free {vin['risk_free']:.1%} ({vin['rate_source']}), "
                f"cost of equity {vin['cost_of_equity']:.1%}, long-run growth {vin['terminal_growth']:.1%}.")
@@ -184,45 +187,71 @@ def _render_financial_valuation(meta, price, vin):
             "Summary, scanner, alerts, watchlist and AI brief keep using the system defaults shown in the inputs' "
             "starting values.", icon="🧪")
     c1, c2, c3 = st.columns(3)
-    roe = c1.number_input("Sustainable ROE (%)", value=round((vin["roe"] or 0) * 100, 1), step=0.5,
+    roe = c1.number_input("Normalised ROE today (%)", value=round((vin["roe"] or 0) * 100, 1), step=0.5,
                           key=f"pb_roe_{meta.get('ticker')}") / 100
-    tg = c2.number_input("Long-run growth (%)", value=round(vin["terminal_growth"] * 100, 2), step=0.25,
-                         key=f"pb_g_{meta.get('ticker')}") / 100
+    payout = c2.number_input("Payout (%)", value=round((vin.get("payout") if vin.get("payout") is not None
+                                                        else val.DEFAULT_PAYOUT) * 100, 0), step=5.0,
+                             min_value=0.0, max_value=100.0, key=f"pb_pay_{meta.get('ticker')}") / 100
     r = c3.number_input("Cost of equity (%)", value=round(vin["cost_of_equity"] * 100, 1), step=0.5,
                         key=f"pb_r_{meta.get('ticker')}") / 100
+    tg = vin["terminal_growth"]
     if r <= tg:
         st.warning("Cost of equity must exceed long-run growth.")
         return
     bv = vin["book_per_share"]
+
+    def value(o, x):
+        return val.residual_income_value(bv, max(o, 0), max(x, tg + 0.01), tg, payout)
     cols = st.columns(3)
     for col, (key, d_roe, d_r, color) in zip(cols, (("bear", -0.03, +0.01, "#e74c3c"), ("base", 0.0, 0.0, "#3498db"),
                                                     ("bull", +0.03, -0.01, "#2ecc71"))):
-        value = val.justified_pb_value(bv, max(roe + d_roe, 0), max(r + d_r, tg + 0.01), tg)
-        mos = value / price - 1 if value else None
-        body = (f"€{value:,.2f}</div><div style='color:{color}; font-weight:700;'>{mos:+.0%} vs price · "
-                f"{val.valuation_verdict(mos)}") if value else "n/a</div><div style='color:#8899aa;'>ROE not above growth"
+        v = value(roe + d_roe, r + d_r)
+        mos = v / price - 1 if v else None
+        body = (f"€{v:,.2f}</div><div style='color:{color}; font-weight:700;'>{mos:+.0%} vs price · "
+                f"{val.valuation_verdict(mos)}") if v else "n/a</div><div style='color:#8899aa;'>inputs missing"
         col.markdown(f"""<div style='border-top:3px solid {color}; background:rgba(255,255,255,0.03);
             border-radius:8px; padding:10px 12px;'>
             <div style='color:#8899aa; font-size:0.7rem; text-transform:uppercase;'>{key} · ROE {max(roe + d_roe, 0):.1%} · r {max(r + d_r, tg + 0.01):.1%}</div>
             <div style='color:#fff; font-size:1.5rem; font-weight:800;'>{body}</div></div>""", unsafe_allow_html=True)
     implied = tg + (price / bv) * (r - tg)
-    st.markdown(f"**Reverse model:** at €{price:,.2f} (book €{bv:,.2f}, P/B {price / bv:.2f}x) the market prices in a perpetual "
-                f"ROE of **{implied:.1%}** (your base case {roe:.1%}).")
+    st.markdown(f"**Reverse model:** at €{price:,.2f} (book €{bv:,.2f}, P/B {price / bv:.2f}x) the market prices in a "
+                f"perpetual ROE of **{implied:.1%}** (normalised ROE today {roe:.1%}, fading to {r:.1%} in "
+                f"{val.RI_FADE_YEARS} years in this model).")
     rois = [roe - 0.04, roe - 0.02, roe, roe + 0.02, roe + 0.04]
     rates = [x for x in (r - 0.02, r - 0.01, r, r + 0.01, r + 0.02) if x > tg]
-    table = pd.DataFrame({f"{x:.1%}": [val.justified_pb_value(bv, max(o, 0), x, tg) for o in rois] for x in rates},
-                         index=[f"{o:.1%}" for o in rois])
-    st.markdown("**Sensitivity — value per share (rows: sustainable ROE, columns: cost of equity)**")
+    table = pd.DataFrame({f"{x:.1%}": [value(o, x) for o in rois] for x in rates}, index=[f"{o:.1%}" for o in rois])
+    st.markdown("**Sensitivity — value per share (rows: ROE today, columns: cost of equity)**")
     st.dataframe(table.style.format("€{:,.2f}", na_rep="—")
                  .map(lambda v: "color:#2ecc71" if v and v >= price * (1 + val.REQUIRED_MARGIN_OF_SAFETY)
                       else ("color:#e74c3c" if v and v < price else "")), width="stretch")
 
+    fit = val.pb_roe_peer_fit(companies, meta.get("ticker"))
+    if fit:
+        st.markdown(f"**Peers — P/B vs ROE ({fit['sector']}, {fit['n']} stocks, R² {fit['r2']:.2f})**")
+        p = fit["peers"]
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=p["roe"] * 100, y=p["pb"], mode="markers", text=p["ticker"], name="peers",
+                                 marker=dict(color="#8899aa", size=8)))
+        xs = np.linspace(p["roe"].min(), p["roe"].max(), 20)
+        fig.add_trace(go.Scatter(x=xs * 100, y=fit["intercept"] + fit["slope"] * xs, mode="lines", name="peer line",
+                                 line=dict(color="#3498db", dash="dot")))
+        fig.add_trace(go.Scatter(x=[fit["roe"] * 100], y=[fit["actual_pb"]], mode="markers+text", text=[meta.get("ticker")],
+                                 textposition="top center", name=meta.get("ticker"), marker=dict(color="#f1c40f", size=14)))
+        fig.update_layout(template="plotly_dark", height=320, xaxis_title="ROE (%)", yaxis_title="P/B",
+                          margin=dict(t=10, b=10), showlegend=False)
+        st.plotly_chart(fig, width="stretch")
+        rel = fit["residual_pct"]
+        st.caption(f"At its ROE of {fit['roe']:.1%} the peer line implies P/B {fit['fitted_pb']:.2f}x; the stock trades at "
+                   f"{fit['actual_pb']:.2f}x ({rel:+.0f}% vs the line). Below the line = cheap RELATIVE to peers, which "
+                   f"is often explained by asset quality, capital or growth the line does not see."
+                   + (" The fit is weak (R² < 0.3) — treat it as context." if (fit["r2"] or 0) < 0.3 else ""))
 
-def render_valuation_section(*, meta, price, vin, relval):
+
+def render_valuation_section(*, meta, price, vin, relval, companies=None):
     """Replaces the old one-size DCF: company-anchored inputs, scenarios, sensitivity, reverse DCF."""
     from ui.icons import render_header
-    if vin.get("model") == "justified_pb":
-        return _render_financial_valuation(meta, price, vin)
+    if vin.get("model") in ("residual_income", "justified_pb"):
+        return _render_financial_valuation(meta, price, vin, companies)
     st.markdown("---")
     render_header("gem", "Intrinsic Valuation (FCFE DCF) — Scenarios & Sensitivity")
     if not vin["fcfe"] or vin["fcfe"] <= 0 or not vin["shares"]:
@@ -261,6 +290,7 @@ def render_valuation_section(*, meta, price, vin, relval):
             <div style='color:#fff; font-size:1.5rem; font-weight:800;'>€{s.value_per_share:,.2f}</div>
             <div style='color:{color}; font-weight:700;'>{mos:+.0%} vs price · {val.valuation_verdict(mos)}</div></div>""",
                      unsafe_allow_html=True)
+    _render_model_risk(vin, scen, price)
     implied = val.reverse_dcf_growth(price, vin["fcfe"], vin["shares"], r, tg)
     if implied is not None:
         st.markdown(f"**Reverse DCF:** at €{price:,.2f} the market prices in **{implied:+.1%}** starting growth "
@@ -275,6 +305,44 @@ def render_valuation_section(*, meta, price, vin, relval):
                  width="stretch")
     st.caption(f"Required margin of safety for 'UNDERVALUED': {val.REQUIRED_MARGIN_OF_SAFETY:.0%}. "
                "Excess cash is not in the warehouse and is not added (conservative for cash-rich firms).")
+
+
+TERMINAL_SHARE_WARN = 0.75      # above this, most of the value is the perpetuity — the explicit years barely matter
+
+
+def _render_model_risk(vin: dict, scen: dict, price: float):
+    """How much of the DCF is assumption: value from the terminal year, debt the FCFE assumes is refinanced, and the
+    scenario weights behind the expected value (system defaults, not the sandbox inputs)."""
+    ts = vin.get("terminal_share")
+    refi = vin.get("refinancing") or {}
+    probs = vin.get("probabilities") or val.scenario_probabilities()
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        color = "#e74c3c" if ts is not None and ts > TERMINAL_SHARE_WARN else "#e8eaf6"
+        st.markdown(f"<div style='color:#8899aa;font-size:0.7rem;text-transform:uppercase;'>Value after year "
+                    f"{val.EXPLICIT_YEARS}</div><div style='color:{color};font-size:1.3rem;font-weight:800;'>"
+                    f"{'n/a' if ts is None else f'{ts:.0%}'}</div>", unsafe_allow_html=True)
+        st.caption("Share of the base value that comes from the terminal value."
+                   + (" Most of it is a perpetuity assumption — small changes in r or g move it a lot."
+                      if ts is not None and ts > TERMINAL_SHARE_WARN else ""))
+    with c2:
+        share, net = refi.get("share_of_fcfe"), refi.get("net_repayment")
+        color = "#e74c3c" if share is not None and share >= val.REFINANCING_STRESS_SHARE else "#e8eaf6"
+        st.markdown(f"<div style='color:#8899aa;font-size:0.7rem;text-transform:uppercase;'>Net debt repayment / FCFE"
+                    f"</div><div style='color:{color};font-size:1.3rem;font-weight:800;'>"
+                    f"{'n/a' if share is None else f'{share:.0%}'}</div>", unsafe_allow_html=True)
+        st.caption("FCFE assumes maturing debt is refinanced (net borrowing = 0). "
+                   + ("Debt flows not reported." if net is None else
+                      f"Median net repayment €{net / 1e6:,.0f}M over {refi.get('years', 0)} year(s); at "
+                      f"{val.REFINANCING_STRESS_SHARE:.0%}+ the DCF is not actionable."))
+    with c3:
+        ev = val.expected_value(scen)
+        st.markdown(f"<div style='color:#8899aa;font-size:0.7rem;text-transform:uppercase;'>Probability-weighted value"
+                    f"</div><div style='color:#e8eaf6;font-size:1.3rem;font-weight:800;'>"
+                    f"{'n/a' if ev is None else f'€{ev:,.2f}'}</div>", unsafe_allow_html=True)
+        st.caption(f"Weights bear {probs['bear']:.0%} · base {probs['base']:.0%} · bull {probs['bull']:.0%} "
+                   f"(decision_rules.yaml → valuation.scenario_probabilities), on the scenarios above"
+                   + (f"; {ev / price - 1:+.0%} vs price." if ev else "."))
 
 
 def render_alert_inbox(items: list, title: str = "🔔 Alerts & Sell-Discipline Inbox"):

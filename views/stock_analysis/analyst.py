@@ -114,6 +114,22 @@ def render(dd, ctx):
                 <div style='color:#556677; font-size:0.65rem;'>analysts covering</div>
             </div>""", unsafe_allow_html=True)
 
+        # ── ROW 1b: the near term and the revenue line (shown nowhere else) ─────
+        _q_cur, _q_next = _plausible(_fv("eps_growth_cur_q")), _plausible(_fv("eps_growth_next_q"))
+        _n_q = _fv("n_analysts_cur_q")
+        _ny_now, _ny_30 = _fv("eps_trend_next_y"), _fv("eps_trend_next_y_30d")
+        _ny_drift = (_ny_now / _ny_30 - 1) if _ny_now is not None and _ny_30 and _ny_30 > 0 else None
+        _rev_cy, _rev_ny = _fv("rev_est_cur_y"), _fv("rev_est_next_y")
+        _ccy = str(meta.get("currency") or "")
+
+        def _big(v):
+            return "N/A" if v is None else (f"{v / 1e9:,.1f}B" if abs(v) >= 1e9 else f"{v / 1e6:,.0f}M")
+        _pct = lambda v: "N/A" if v is None else f"{v:+.1%}"   # noqa: E731
+        st.caption(f"**This quarter** EPS {_pct(_q_cur)} · **next quarter** {_pct(_q_next)}"
+                   f"{f' ({int(_n_q)} analysts)' if _n_q else ''} — vs the same quarter a year ago. "
+                   f"**Next-year EPS estimate, last 30 days:** {_pct(_ny_drift)}. "
+                   f"**Revenue estimate:** {_big(_rev_cy)} this year → {_big(_rev_ny)} next year ({_ccy}, consensus).")
+
         st.markdown("<div style='margin-top:14px;'></div>", unsafe_allow_html=True)
 
         # ── ROW 2: Charts ────────────────────────────────────────────────────

@@ -959,6 +959,10 @@ tickers:
     name: CBOE Volatility Index
     sector: Benchmark
     region: US
+  ^TNX:                          # US 10-year yield: rate sensitivity of holdings in the portfolio stress test
+    name: US 10-Year Treasury Yield
+    sector: Benchmark
+    region: US
   ABBV:
     name: AbbVie
     sector: Pharma

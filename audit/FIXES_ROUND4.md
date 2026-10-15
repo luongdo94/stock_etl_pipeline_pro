@@ -211,8 +211,39 @@ Full suite **538 passed** (14 live deselected). New columns (`debt_issued`, `deb
 Full suite **562 passed**. Still manual: `ETL_WEBHOOK_URL` / SMTP for alerts, `SEC_USER_AGENT` for the SEC check,
 `register_daily_etl.ps1` for the schedule, and the outcome (cash / shares) of delisted securities in tickers.yaml.
 
+## Round 7 — decision quality (2026-10-16)
+
+| Item | Change | Tests |
+|---|---|---|
+| Alpha vs risk premium | `core/factor_test.py`: Fama-MacBeth regression of forward returns on each score with market beta, size, value (B/P) and 12-1 momentum held fixed, region-neutral, Newey-West t; snapshots now store region, market cap, B/P and beta | `tests/test_decision_quality.py`: beta-disguised score → no premium, real alpha survives, regional move not credited, exposures point-in-time |
+| Costs | top-quintile portfolio over non-overlapping periods, net of the one-way cost of the names it replaces (`decision_rules.yaml → costs.one_way_bps_by_region`) | `test_top_quintile_pays_for_its_turnover` |
+| Multiple testing | Holm-adjusted p-values over the 4 scores × 4 horizons shown in the Track Record; the evidence gate behind sized BUYs (Quality, 12 months) now also needs the factor-adjusted premium > 0 with t > 2 | `test_holm_controls_the_family_of_tests`, `test_evidence_needs_the_factor_adjusted_premium_too` |
+| Banks / insurers | residual-income model (4-year normalised ROE fading linearly to the cost of equity over 10 years, book growing by retained earnings, payout from the provider's net payout yield) replaces the constant-ROE justified P/B with a fixed 30% fade; a franchise below its cost of equity is valued below book; peer P/B-vs-ROE regression in the Decision panel | `tests/test_valuation_models.py` (updated + 3 new) |
+| Stress test | `core/stress.py`: per-holding market beta and US-10Y rate sensitivity estimated from history; six configurable scenarios (bear, crash + gaps, rates +100 bp, stagflation, base currency +10%, tech −30%) with the largest contributors and the policy limit; historical replay of today's weights (worst 1- and 3-month windows); `^TNX` added to the universe | `test_scenarios_combine_…`, `test_sensitivities_are_estimated_from_history`, `test_historical_replay_finds_the_worst_window` |
+| Trade ledger | `core/ledger.py` + `docs/sql/portfolio_trades.sql`: every Add Trade, rebalance and grid edit is appended with price, fees and cash after; realised P&L (average cost, net of fees), CSV export | `test_realized_pnl_…`, `test_trades_from_diff_…`, `test_portfolio_tab_shows_stress_targets_and_records_a_rebalance` |
+| Target weights | per-position target % stored with the portfolio (`__TARGET__:` rows), drift column in the grid, and the trades the rebalance rules allow toward the targets | `test_targets_and_ledger_round_trip_locally` |
+
+Cloud users must run `docs/sql/portfolio_trades.sql` once in Supabase for the ledger; the next ETL run fetches `^TNX`
+and starts storing the factor exposures in the snapshots.
+
+## Round 7b — metrics that were computed but not shown (2026-10-16)
+
+| Where | Now shown | Source |
+|---|---|---|
+| Stock Analysis › Diagnostics | measured values behind the Quality radar: ROIC (3y median, `*` = proxy), FCF conversion, net debt / EBITDA, revenue CAGR, profitable years, net-margin volatility, FCF margin after SBC — each with its sub-score | `core.scoring.RAW_METRICS` → screener `_metrics` |
+| Scanner › More columns | ROIC %, Net Debt/EBITDA (what the score uses; the old Debt/EBITDA is gross), FCF Conversion, Insider 6M % | `core/screener.py` |
+| Stock Analysis › Ownership | 6-month insider activity (NET BUY / NET SELL / NO TRADES / NO DATA — all-zero rows are no data, not neutral) and the latest Form 4 trades | `insider_activity()` |
+| Stock Analysis › Valuation (DCF) | share of value after year 10, net debt repayment / FCFE, probability-weighted value and its weights | `ui.decision_panel._render_model_risk` |
+| Stock Analysis › Analyst | EPS growth this / next quarter, next-year EPS estimate drift (30 d), revenue estimates | `marts.dim_forward_estimates` |
+| Stock Analysis › Decision Summary | one "Data confidence" line: fields kept from an earlier extraction, payout evidence, independent-source disagreements, history jumps, terminal share > 75% | `ui/provenance.py`, `services.db.load_ticker_provenance` |
+| Stock Analysis › Diagnostics / Fundamentals / Technical | payout-evidence badge on Net Payout; when the latest annual / quarterly statement became public; unexplained price-jump warning | same |
+| Portfolio | per-holding market beta / rate sensitivity behind the stress test; factor tilts vs the universe (beta, size, value, momentum, in SD) | `core.factor_test.portfolio_tilts` |
+
+Peers: the column labelled "ROIC/ROE" was ROE and is now labelled so. Tests: `tests/test_exposed_metrics.py`.
+Full suite **585 passed**.
+
 ## Still open (design / infrastructure, unchanged)
-Delisting / merger payoffs (outcome still entered by hand); a licensed data source (TradingView / SEC are cross-checks, not a feed); portfolio
-stress-loss / factor budgets and a trade ledger; holdings-aware actions (tax lots, target weights); persisted original
-stop per position (a recomputed stop can still move); issuer-specific cash-flow and bank capital models; factor-adjusted
-alpha attribution, multiple-testing controls, spread / impact / borrow costs; dependency lock file.
+Delisting / merger payoffs (outcome still entered by hand); a licensed data source (TradingView / SEC are cross-checks,
+not a feed); factor risk budgets inside the optimiser; tax lots; issuer-specific cash-flow models and automatic bank
+capital data (CET1 / NPL still entered by hand); borrow costs. (Done since: trade ledger, target weights, scenario
+stress test, persisted original stops, factor-adjusted / cost-aware / multiple-testing evidence, lock file.)

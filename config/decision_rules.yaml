@@ -4,6 +4,9 @@ costs:
   base_currency: EUR
   commission_pct: 0.10        # per side, % of trade value
   fx_spread_pct: 0.25         # per conversion, only when the stock is not in base_currency
+  # All-in one-way cost (commission + half spread + impact) by region, in basis points — used by the Track Record to
+  # judge a score's top quintile net of the turnover it causes (core/factor_test.py). Mid/large caps, retail size.
+  one_way_bps_by_region: {US: 10, EU: 15, JP: 15, CN: 25, TW: 25, KR: 25, VN: 40, OTHER: 30}
   # Dividend withholding tax actually lost after treaty relief, by country (fraction of dividend)
   dividend_withholding:
     United States: 0.15

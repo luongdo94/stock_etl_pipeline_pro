@@ -11,6 +11,22 @@ from core.scoring import score_universe
 from etl.utils import clean_upside_pct
 
 
+def insider_activity(row) -> dict:
+    """Insider buying / selling over 6 months from the provider's net share purchase activity:
+    {status: NET BUY / NET SELL / NO TRADES / NO DATA, net_pct (% of insider holdings), net_shares, buys, sells}.
+    All-zero rows are "no data" (most non-US listings): the transform's NEUTRAL label cannot tell them apart."""
+    def num(k):
+        v = row.get(k)
+        return float(v) if v is not None and pd.notnull(v) else None
+    buys, sells, net = num("insider_purchases_6m"), num("insider_sales_6m"), num("insider_net_shares_6m")
+    pb, ps = num("insider_pct_buy"), num("insider_pct_sell")
+    if not any(x for x in (buys, sells, net, pb, ps)):
+        return {"status": "NO DATA", "net_pct": None, "net_shares": None, "buys": None, "sells": None}
+    status = "NET BUY" if (net or 0) > 0 else ("NET SELL" if (net or 0) < 0 else "NO TRADES")
+    net_pct = ((pb or 0) - (ps or 0)) * 100 if pb is not None or ps is not None else None
+    return {"status": status, "net_pct": net_pct, "net_shares": net, "buys": buys, "sells": sells}
+
+
 def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
                          _hist_fcf=None, _macro=None, _estimates=None,
                          track_record_ok=False, _earnings_cal=None) -> pd.DataFrame:
@@ -189,9 +205,17 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
         vol_30d = row.get('volatility_30d', 0) or 0
         short_pct = (row.get('short_percent_of_float', 0) * 100) if pd.notnull(row.get('short_percent_of_float')) else 0
 
+        # measured values behind the Quality sub-scores (shown next to them); insider net activity over 6 months
+        _met = dict(_sc["metrics"]) if isinstance(_sc.get("metrics"), dict) else {}
+        _nde = _met.get("net_debt_ebitda")
+        roic_pct = _met.get("roic_pct") if _met.get("roic_is_roic") else None
+        _ins = insider_activity(row)
+
         # Cash-flow and leverage ratios are meaningless for banks/insurers (deposits, float)
         if uses_book_model(row, _hist_fcf, ticker):
             fcf_margin, debt_ebitda = float("nan"), float("nan")
+            roic_pct, _nde = None, None
+            _met = {**_met, "fcf_conversion": None, "net_debt_ebitda": None, "roic_pct": None}
 
         screener_rows.append({
             "Ticker": ticker,
@@ -236,6 +260,12 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
             "EV/EBITDA": round(ev_ebitda, 1),
             "PEG": round(float(row['peg_ratio']), 2) if pd.notnull(row.get('peg_ratio')) else float("nan"),
             "Debt/EBITDA": round(debt_ebitda, 2),
+            "ROIC (%)": round(roic_pct, 1) if roic_pct is not None else float("nan"),
+            "Net Debt/EBITDA": round(_nde, 2) if _nde is not None and _nde < 99 else float("nan"),
+            "FCF Conversion (x)": round(_met["fcf_conversion"], 2) if _met.get("fcf_conversion") is not None else float("nan"),
+            "Insider 6M (%)": round(_ins["net_pct"], 2) if _ins["net_pct"] is not None else float("nan"),
+            "_metrics": _met,
+            "_insider": _ins,
             "Vol 30D (%)": round(vol_30d, 1) if vol_30d else 0,
             "Short %": round(short_pct, 1),
             "Trend": latest_p.get('ma_signal', 'NEUTRAL'),

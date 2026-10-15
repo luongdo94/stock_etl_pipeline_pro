@@ -10,7 +10,8 @@ from core.scan_presets import ELITE, FAIR, SOLID
 DEFAULT_COLS = ["Ticker", "Company", "Verdict", "MoS (%)", "Quality", "Value", "Momentum", "Revisions", "Flags",
                 "Conflicts", "ADV (EUR M)", "RSI (14)"]
 EXTRA_COLS = ["Sector", "Action", "Smart Money", "Z-Score", "vs MA200 (%)", "P/E (Fwd)", "EV/EBITDA", "PEG", "FCF Margin (%)",
-              "ROE (%)", "Yield (%)", "Net Payout (%)", "Debt/EBITDA"]
+              "ROE (%)", "Yield (%)", "Net Payout (%)", "Debt/EBITDA", "ROIC (%)", "Net Debt/EBITDA",
+              "FCF Conversion (x)", "Insider 6M (%)"]
 from ui.icons import render_header
 
 
@@ -357,7 +358,19 @@ def render(ctx):
             "ROE (%)":         st.column_config.NumberColumn("ROE", format="%.1f%%"),
             "Yield (%)":       st.column_config.NumberColumn("Yield", format="%.2f%%"),
             "Net Payout (%)":  st.column_config.NumberColumn("Net Payout", format="%.2f%%"),
-            "Debt/EBITDA":     st.column_config.NumberColumn("Debt/EBITDA", format="%.2fx"),
+            "Debt/EBITDA":     st.column_config.NumberColumn("Debt/EBITDA", format="%.2fx",
+                                                             help="Gross debt / EBITDA. The Quality score uses NET debt."),
+            "ROIC (%)":        st.column_config.NumberColumn("ROIC", format="%.1f%%",
+                                                             help="NOPAT / invested capital, median of up to 3 years "
+                                                                  "(blank for banks / insurers and when not measurable)."),
+            "Net Debt/EBITDA": st.column_config.NumberColumn("Net Debt/EBITDA", format="%.2fx",
+                                                             help="What the Quality score uses; negative = net cash."),
+            "FCF Conversion (x)": st.column_config.NumberColumn("FCF Conv.", format="%.2fx",
+                                                                help="Free cash flow after stock comp / net income. "
+                                                                     "Below ~0.8x: earnings not backed by cash."),
+            "Insider 6M (%)":  st.column_config.NumberColumn("Insider 6M", format="%+.2f%%",
+                                                             help="Net insider buying over 6 months, % of insider "
+                                                                  "holdings (US filers; blank = no data)."),
     }
     st.dataframe(styled_df, use_container_width=True, height=550, hide_index=True,
                  column_config={c: v for c, v in col_cfg.items() if c in display_cols})
