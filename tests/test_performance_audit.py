@@ -94,3 +94,51 @@ def test_pivot_masks_match_the_per_bar_loop_including_ties_and_nans(seed):
         got, ref = levels._pivot_masks(df, half), _reference_masks(df, half)
         assert (got[0] == ref[0]).all() and (got[1] == ref[1]).all()
 
+
+
+# ── PERF-05 / PERF-03: prepared issuer inputs and per-ticker partitions give the same valuation ──────────────────
+def _hist(ticker, n=5, base=1e9):
+    return pd.DataFrame({"ticker": ticker, "year": list(range(2021, 2021 + n)), "free_cash_flow": [base * (1 + .05 * i) for i in range(n)],
+                         "stock_based_comp": [-1e7] * n, "interest_paid_cff": [-2e7] * n,
+                         "lease_liability_current": [3e7] * n, "lease_liability_total": [9e7] * n})
+
+
+def _meta(ticker):
+    return pd.Series({"ticker": ticker, "sector": "Industrials", "industry": "Machinery", "currency": "EUR",
+                      "country": "Germany", "market_cap": 2e10, "beta": 1.0, "revenue_growth": .04,
+                      "earnings_growth": .05, "free_cashflow": 9e8})
+
+
+def test_valuation_memo_returns_exactly_the_unmemoised_result(monkeypatch):
+    from core import valuation as v
+    hist = pd.concat([_hist("A.DE"), _hist("B.DE", base=2e9)], ignore_index=True)
+    memoised = v.valuation_inputs(_meta("A.DE"), 40.0, hist, "A.DE", {})
+    monkeypatch.setattr(v, "_memo", lambda key, build: build())                  # every helper recomputes
+    plain = v.valuation_inputs(_meta("A.DE"), 40.0, hist, "A.DE", {})
+    assert repr(memoised) == repr(plain)
+    assert v._MEMO.get() is None                                                    # the memo ends with the call
+
+
+def test_valuation_memo_hands_out_independent_copies():
+    from core import valuation as v
+    hist = _hist("A.DE")
+    token = v._MEMO.set({})
+    try:
+        first = v.basis_rows(hist, "A.DE")
+        first.loc[first.index[0], "free_cash_flow"] = -1.0                          # a caller edits its copy
+        st = v.fcfe_deduction_status(hist, "A.DE")
+        st["stock_based_comp"]["status"] = "EDITED"
+        assert v.basis_rows(hist, "A.DE")["free_cash_flow"].min() > 0
+        assert v.fcfe_deduction_status(hist, "A.DE")["stock_based_comp"]["status"] != "EDITED"
+    finally:
+        v._MEMO.reset(token)
+
+
+def test_issuer_partition_matches_the_full_frame_mask():
+    from core.screener import _by_ticker
+    rng = np.random.default_rng(3)
+    df = pd.DataFrame({"ticker": rng.choice(["A", "B", "C"], 200), "date": rng.integers(0, 50, 200), "x": rng.random(200)})
+    parts = _by_ticker(df)
+    for t in ("A", "B", "C"):
+        assert parts[t].equals(df[df["ticker"] == t]) and list(parts[t].index) == list(df.index[df["ticker"] == t])
+    assert _by_ticker(None) == {} and _by_ticker(df.iloc[:0]) == {}

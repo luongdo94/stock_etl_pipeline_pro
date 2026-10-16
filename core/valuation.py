@@ -16,6 +16,8 @@ period. A 5-year fade is too short for reinvesting compounders and labelled most
 When the price implies growth beyond what the model can represent, or the result looks implausible
 (margin of safety > 150%), the DCF is reported as uninformative instead of driving a decision.
 """
+import contextvars
+import copy
 from dataclasses import dataclass
 from datetime import date
 from typing import Iterable, Optional
@@ -27,6 +29,19 @@ RISK_FREE = 0.04             # fallback when no live 10Y yield is available
 
 
 _CFG_CACHE: dict = {}
+# Per-call memo of prepared issuer inputs, active only inside valuation_inputs (contextvar: thread/session-safe).
+_MEMO: contextvars.ContextVar = contextvars.ContextVar("valuation_memo", default=None)
+
+
+def _memo(key: tuple, build):
+    """build() once per key within the current valuation_inputs call; every caller gets its own deep copy, so a
+    caller that edits the result cannot change what the next one sees. Outside a call: plain build()."""
+    memo = _MEMO.get()
+    if memo is None:
+        return build()
+    if key not in memo:
+        memo[key] = build()
+    return copy.deepcopy(memo[key])
 
 
 def _valuation_config() -> dict:
@@ -312,10 +327,13 @@ def basis_rows(hist_fcf: pd.DataFrame, ticker: str, years: int = BASIS_YEARS) ->
     Lease-principal estimates are derived on the full history first (they need the prior year-end)."""
     if hist_fcf is None or hist_fcf.empty or "free_cash_flow" not in hist_fcf.columns:
         return pd.DataFrame(columns=["ticker", "year", "free_cash_flow"])
-    rows = hist_fcf[(hist_fcf["ticker"] == ticker) & hist_fcf["free_cash_flow"].notna()].copy()
-    order = ["year", "_extracted_at"] if "_extracted_at" in rows.columns else ["year"]
-    rows = rows.sort_values(order).drop_duplicates(subset=["year"], keep="last")
-    return _with_estimates(rows).tail(years)
+
+    def build():
+        rows = hist_fcf[(hist_fcf["ticker"] == ticker) & hist_fcf["free_cash_flow"].notna()].copy()
+        order = ["year", "_extracted_at"] if "_extracted_at" in rows.columns else ["year"]
+        rows = rows.sort_values(order).drop_duplicates(subset=["year"], keep="last")
+        return _with_estimates(rows).tail(years)
+    return _memo(("basis", id(hist_fcf), ticker, years), build)
 
 
 def basis_complete(rows: pd.DataFrame, years: int = BASIS_YEARS) -> bool:
@@ -340,6 +358,11 @@ def fcfe_deduction_status(hist_fcf: pd.DataFrame, ticker: str, years: int = BASI
     lease principal, over the valuation basis years. An item is only as known as its worst year:
     UNKNOWN > ASSUMED > ESTIMATED > OBSERVED / NOT_APPLICABLE. `ctx` (deduction_context) enables the accounting-
     standard rules and the stated assumptions; without it only reported evidence counts."""
+    return _memo(("status", id(hist_fcf), ticker, years, tuple(sorted((ctx or {}).items()))),
+                 lambda: _deduction_status(hist_fcf, ticker, years, ctx))
+
+
+def _deduction_status(hist_fcf, ticker, years, ctx) -> dict:
     rows = basis_rows(hist_fcf, ticker, years)
     na = _not_applicable_registry().get(str(ticker), {})
     ctx = ctx or {}
@@ -866,6 +889,19 @@ def _irrs(scen, fcfe, shares, price, tg) -> dict:
 
 def valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, macro: dict,
                      annual_fin: Optional[pd.DataFrame] = None) -> dict:
+    """Valuation of one issuer. Within this call the issuer's basis rows and deduction status are prepared once and
+    reused (PERF-05: they were rebuilt ~7× per issuer); the memo lives only for the call, so nothing can go stale."""
+    if _MEMO.get() is not None:
+        return _valuation_inputs(meta, price, hist_fcf, ticker, macro, annual_fin)
+    token = _MEMO.set({})
+    try:
+        return _valuation_inputs(meta, price, hist_fcf, ticker, macro, annual_fin)
+    finally:
+        _MEMO.reset(token)
+
+
+def _valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, macro: dict,
+                      annual_fin: Optional[pd.DataFrame] = None) -> dict:
     """
     Company-anchored intrinsic value inputs + scenarios + reverse model (EUR, per share).
 

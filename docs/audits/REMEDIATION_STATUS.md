@@ -70,7 +70,11 @@ valuation ~21 % (of which `holding_horizon` re-parsing YAML 613× ~6 %), per-iss
 | PERF-04 tactical levels | **Fixed** | pivot test on whole arrays (`core.levels._pivot_masks`); the few pivots are read exactly as before. Parity on the real warehouse: 3,364 `get_tactical_metrics` calls (downcast, float64, 3 % NaN bars, numeric-only frames) + odd lookbacks — **0 differences** (repr-equal, types included); levels 4.4× faster |
 | PERF-05 `holding_horizon` parse | **Fixed** | reads the mtime-versioned valuation config |
 | PERF-15 unversioned scoring `lru_cache` | **Fixed** | `scoring_rules.yaml` and `tickers.yaml` cached by (mtime, size): an edit is used at once in a running app |
-| PERF-03, PERF-05 basis rows, PERF-06…14 | Open | next: per-issuer prepared basis/deduction inputs (~20 % of the screener now), groupby partition of prices |
+| PERF-03 per-issuer full-frame masks | **Fixed** | prices, statement FCF, annual and quarterly rows are partitioned once per screener build (`core.screener._by_ticker`, original order and index); the same sorts follow; a ticker without rows still gets the full frame |
+| PERF-05 repeated basis / deduction preparation | **Fixed** | `basis_rows` and `fcfe_deduction_status` are built once per `valuation_inputs` call (contextvar memo, deep copies handed out, gone when the call returns — nothing can go stale). The five-year growth history is still prepared separately |
+| PERF-06 to PERF-14 | Open | evidence history reuse, header/news laziness, export pagination, risk calibration, factor exposure |
 
 Measured after the fixes (same data, same machine): `build_screener_table` 129.4 s → **61.1 s**, `build_snapshot`
-134.2 s → **64.8 s** (2.1×). Tests: `tests/test_performance_audit.py`; full suite 635 passed.
+134.2 s → **64.8 s** (2.1×). Round 2 (PERF-03 + PERF-05 basis): `build_screener_table` 67.8 s → **34.2 s** on the
+same warehouse copy, and the complete table of the old and new code compared cell by cell (46,816 cells, repr — types
+and NaN included): **0 differences**. Overall since the audit: ~129 s → ~34 s (3.8×). Tests: `tests/test_performance_audit.py`.

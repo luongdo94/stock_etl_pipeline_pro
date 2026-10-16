@@ -27,6 +27,13 @@ def insider_activity(row) -> dict:
     return {"status": status, "net_pct": net_pct, "net_shares": net, "buys": buys, "sells": sells}
 
 
+def _by_ticker(df) -> dict:
+    """{ticker: that ticker's rows} in original order (df.iloc of the group positions); {} when there is nothing."""
+    if df is None or df.empty or "ticker" not in df.columns:
+        return {}
+    return {t: df.iloc[idx] for t, idx in df.groupby("ticker", sort=False, observed=True).indices.items()}
+
+
 def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
                          _hist_fcf=None, _macro=None, _estimates=None,
                          track_record_ok=False, _earnings_cal=None) -> pd.DataFrame:
@@ -57,7 +64,7 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
         """
         if _quarterly_fin is None or qoq_col not in _quarterly_fin.columns:
             return 'Neutral'
-        t_q = _quarterly_fin[_quarterly_fin['ticker'] == ticker].sort_values('report_date', ascending=False)
+        t_q = _q_by.get(ticker, _quarterly_fin.iloc[:0]).sort_values('report_date', ascending=False)
         if len(t_q) < 2:
             return 'Neutral'
         # E3: the TWO MOST RECENT quarters, both with a QoQ figure. dropna() used to skip a gap and pair two
@@ -71,6 +78,11 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
         if vals[0] < -threshold and vals[1] < -threshold:
             return 'Decelerating'
         return 'Neutral'
+
+    # PERF-03: each issuer's rows come from a partition built once instead of masking the whole frame per issuer.
+    # Same rows, order, index and dtypes as the old `frame[frame.ticker == t]`, and the same sorts are applied after;
+    # a ticker without rows still gets the full frame (financial helpers then filter it as before).
+    _px_by, _fcf_by, _ann_by, _q_by = (_by_ticker(f) for f in (_prices_df, _hist_fcf, _annual_fin, _quarterly_fin))
 
     # Build lookups by ticker (QoQ — consecutive quarter growth). These used to read the YoY columns while the label,
     # presets and docstring promised QoQ (audit R3-E). QoQ is seasonal: read it with the fiscal calendar in mind.
@@ -97,7 +109,8 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
         # Skip indices and volatility
         if ticker in _non_equities: continue
         if str(row.get('sector', '')).strip() in _non_equity_sectors: continue
-        ticker_prices = _prices_df[_prices_df['ticker'] == ticker].sort_values('date')
+        ticker_prices = _px_by.get(ticker, _prices_df.iloc[:0]).sort_values('date')
+        _t_fcf, _t_ann = _fcf_by.get(ticker, _hist_fcf), _ann_by.get(ticker, _annual_fin)
         if ticker_prices.empty or ticker not in _scores.index: continue
         
         # RSI (Pre-calculated in transform.py)
@@ -135,7 +148,7 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
             cur_p,
             analyst_target=float(row.get('target_mean_price') or 0)
         )
-        _vin = valuation_inputs(row, float(cur_p), _hist_fcf, ticker, _macro or {}, _annual_fin)
+        _vin = valuation_inputs(row, float(cur_p), _t_fcf, ticker, _macro or {}, _t_ann)
         _dec = decide(
             price=float(cur_p), vin=_vin, stop_loss=_tm["stop_loss"], meta=row,
             scores={"quality": quality_raw, "value": value_score, "flags": _sc["flags"], "coverage": _cov,
@@ -215,7 +228,7 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
         _exp_irr = (_vin.get("irr") or {}).get("expected") if _vin.get("reliable") else None
 
         # Cash-flow and leverage ratios are meaningless for banks/insurers (deposits, float)
-        if uses_book_model(row, _hist_fcf, ticker):
+        if uses_book_model(row, _t_fcf, ticker):
             fcf_margin, debt_ebitda = float("nan"), float("nan")
             roic_pct, _nde = None, None
             _met = {**_met, "fcf_conversion": None, "net_debt_ebitda": None, "roic_pct": None, "fcf_yield_pct": None}
