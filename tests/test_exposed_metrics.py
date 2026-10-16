@@ -107,3 +107,29 @@ def test_stock_analysis_shows_measures_confidence_and_model_risk(warehouse, monk
         assert "Value after year" in html and "Net debt repayment / FCFE" in html
     captions = " ".join(c.value for c in at.caption)
     assert "This quarter" in captions or "No analyst estimates" in " ".join(i.value for i in at.info)
+
+
+# ── Scanner review (2026-10-16): default columns every stock has, near-duplicates out ──────────────────────────────
+def test_scanner_defaults_answer_quality_price_expectations_and_events():
+    from views.scanner import DEFAULT_COLS, EXTRA_COLS
+    assert {"FCF Yield (%)", "Growth Gap (pp)", "Next ER (days)"} <= set(DEFAULT_COLS)
+    assert not {"MoS (%)", "RSI (14)", "ADV (EUR M)"} & set(DEFAULT_COLS)          # still one click away
+    assert {"MoS (%)", "RSI (14)", "ADV (EUR M)", "Exp. Return (%/yr)"} <= set(EXTRA_COLS)
+    assert not {"Yield (%)", "Debt/EBITDA"} & set(EXTRA_COLS)                       # duplicates of Net Payout / Net Debt
+    assert not set(DEFAULT_COLS) & set(EXTRA_COLS)
+
+
+def test_growth_gap_compares_delivered_with_priced_in_growth(table):
+    t = table.set_index("Ticker")
+    for tk in t.index:
+        gap, imp = t.at[tk, "Growth Gap (pp)"], t.at[tk, "Implied Growth (%)"]
+        base_g = (t.at[tk, "_valuation"] or {}).get("growth")
+        if pd.notna(gap):
+            assert gap == pytest.approx(base_g * 100 - imp, abs=0.11)        # both sides: starting FCF growth
+    assert t["FCF Yield (%)"].notna().any() and t["Next ER (days)"].dropna().ge(0).all()
+
+
+def test_earnings_blackout_leaves_the_conflicts_column():
+    from views.scanner import _clean_conflicts
+    assert _clean_conflicts("Earnings in 5 day(s) (21 Oct) — no new position into the release.; Price momentum 4/100")         == "Price momentum 4/100"
+    assert _clean_conflicts(None) == ""

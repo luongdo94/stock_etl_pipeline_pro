@@ -14,11 +14,20 @@ def _path(name: str) -> Path:
     return STORE_DIR / f"{name}.json"
 
 
+class LocalStoreError(OSError):
+    """A local file exists but cannot be read or parsed. Callers must not overwrite it (audit F23)."""
+
+
 def read(name: str, default):
-    try:
-        return json.loads(_path(name).read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+    """`default` only when the file does not exist yet. A corrupt or unreadable file raises LocalStoreError and is left
+    untouched (it used to read as empty, and the next save replaced it)."""
+    p = _path(name)
+    if not p.exists():
         return default
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        raise LocalStoreError(f"{p} could not be read ({e}); it was left untouched — fix or move it, then reload") from e
 
 
 def write(name: str, data) -> None:

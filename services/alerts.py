@@ -1,7 +1,7 @@
-"""Per-user alert rules persisted in Supabase (table: docs/sql/stock_alerts.sql)."""
+"""Per-user alert rules persisted in Supabase (table: sql/supabase/stock_alerts.sql)."""
 import streamlit as st
 
-import auth
+from services import auth
 from services import local_store
 
 _TABLE = "stock_alerts"
@@ -15,7 +15,11 @@ def _user_id():
 
 def load_alert_rules() -> list:
     if auth.local_dev_mode():
-        return local_store.load_alerts()
+        try:
+            return local_store.load_alerts()
+        except local_store.LocalStoreError as e:
+            st.caption(f"⚠️ Alert rules unavailable: {e}")
+            return []
     uid = _user_id()
     if not uid:
         return []
@@ -24,7 +28,7 @@ def load_alert_rules() -> list:
             .order("created_at").execute()
         return resp.data or []
     except Exception as e:
-        st.caption(f"⚠️ Alert rules unavailable ({e}). Create the table with docs/sql/stock_alerts.sql.")
+        st.caption(f"⚠️ Alert rules unavailable ({e}). Create the table with sql/supabase/stock_alerts.sql.")
         return []
 
 

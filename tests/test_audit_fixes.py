@@ -1,4 +1,4 @@
-"""Regression tests for the defects found in the 2026-10 audit (see audit/FINDINGS_REGISTER.md).
+"""Regression tests for the defects found in the 2026-10 audit (see audit/reports/FINDINGS_REGISTER.md).
 Each test fails on the pre-audit code and passes after the fix."""
 from datetime import date
 

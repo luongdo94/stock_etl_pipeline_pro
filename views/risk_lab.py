@@ -1,7 +1,7 @@
 """View: 🎲 Risk Lab — a volatility risk range, tail risk and a calibration check.
 
 It forecasts no direction. The neural price forecasts that used to live here did not beat a no-change forecast on real stocks
-(utils/ml_walkforward.py) and are archived at the git tag `archive/ml-neural-lab`. Nothing on this tab feeds the Decision Summary.
+(scripts/tools/ml_walkforward.py) and are archived at the commit `06b9bf9` of the git history. Nothing on this tab feeds the Decision Summary.
 """
 import numpy as np
 import pandas as pd

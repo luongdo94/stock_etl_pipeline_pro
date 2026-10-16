@@ -114,12 +114,17 @@ def _region_demean(df: pd.DataFrame, cols) -> pd.DataFrame:
 
 
 def fama_macbeth(fr: pd.DataFrame, h: int, score_col: str = "quality", controls=tuple(FACTORS),
-                 ret_col: Optional[str] = None) -> dict:
-    """{premium, t_stat, raw_premium, raw_t, controls, n_days, n_independent} — premium = forward return (%) per +1 SD
-    of score with the controls held fixed; raw_* = the same regression without controls."""
+                 ret_col: Optional[str] = None, require_controls: bool = False) -> dict:
+    """{premium, t_stat, raw_premium, raw_t, controls, n_days, n_independent, days_skipped, identified} — premium =
+    forward return (%) per +1 SD of score with the controls held fixed; raw_* = the same regression without controls.
+
+    require_controls (audit F07): a day enters only when EVERY requested control has coverage and the design matrix has
+    full rank — otherwise a beta proxy regressed on nothing but itself would come back as "factor-adjusted alpha".
+    Without it (exploratory table), controls that are missing on a day are dropped for that day and reported."""
     ret_col = ret_col or f"fwd_{h}"
     ctrl_cols = {"beta": "beta_x", "size": "size", "value": "value", "momentum": "momentum"}
     coefs, raw, days, used = [], [], [], set()
+    skipped = 0
     for d, g in fr.dropna(subset=[score_col, ret_col]).groupby("as_of_date"):
         if len(g) < MIN_NAMES or g[score_col].nunique() < 3:
             continue
@@ -133,6 +138,9 @@ def fama_macbeth(fr: pd.DataFrame, h: int, score_col: str = "quality", controls=
                 g[f"_{c}"] = v.fillna(v.mean())                          # missing = cross-sectional mean
                 x_cols.append(f"_{c}")
                 used.add(c)
+        if require_controls and len(x_cols) - 1 < len(controls):
+            skipped += 1
+            continue
         # region-neutral FIRST, then standardise: the score is measured within its region (a score that only says
         # "European" has no within-region spread left and gets no credit for Europe's market move)
         dm = _region_demean(g[[ret_col] + x_cols].astype(float).assign(region=g.get("region")), [ret_col] + x_cols)
@@ -142,6 +150,9 @@ def fama_macbeth(fr: pd.DataFrame, h: int, score_col: str = "quality", controls=
         if not dm["_score"].abs().sum():
             continue
         Y, X = dm[ret_col].to_numpy(), dm[x_cols].to_numpy()
+        if np.linalg.matrix_rank(X) < X.shape[1]:          # collinear score / controls: not identified on this day
+            skipped += 1
+            continue
         beta, *_ = np.linalg.lstsq(X, Y, rcond=None)
         coefs.append(beta[0])
         rb, *_ = np.linalg.lstsq(X[:, :1], Y, rcond=None)
@@ -149,12 +160,13 @@ def fama_macbeth(fr: pd.DataFrame, h: int, score_col: str = "quality", controls=
         days.append(d)
     if not coefs:
         return {"premium": None, "t_stat": None, "raw_premium": None, "raw_t": None, "controls": [], "n_days": 0,
-                "n_independent": 0}
+                "n_independent": 0, "days_skipped": skipped, "identified": False}
     lag = max(h - 1, 1)
     return {"premium": float(np.mean(coefs) * 100), "t_stat": newey_west_t(coefs, lag),
             "raw_premium": float(np.mean(raw) * 100), "raw_t": newey_west_t(raw, lag),
             "controls": [c for c in controls if c in used], "n_days": len(coefs),
-            "n_independent": int(min(len(coefs) // max(h, 1), calendar_blocks(days, h)))}
+            "n_independent": int(min(len(coefs) // max(h, 1), calendar_blocks(days, h))),
+            "days_skipped": skipped, "identified": bool(require_controls or used >= set(controls))}
 
 
 def rebalance_dates(dates, h: int) -> list:
@@ -176,22 +188,29 @@ def quintile_net_of_costs(fr: pd.DataFrame, h: int, score_col: str = "quality", 
     d = fr.dropna(subset=[score_col, col])
     if d.empty:
         return {"periods": 0, "gross_pct": None, "net_pct": None, "turnover": None, "cost_pct": None}
-    rows, prev = [], set()
+    # Audit F17: costs follow WEIGHTS. The holdings drift with their returns over the period; each rebalance trades from
+    # the drifted weights to equal weights — buys at the bought name's regional cost, sells at the sold name's. (The
+    # name-count version charged the incoming names' cost for the sells and an unchanged set nothing for drift.)
+    rows, held, held_region = [], pd.Series(dtype=float), {}
+    bps_of = lambda reg: cost_bps.get(str(reg), cost_bps["OTHER"])            # noqa: E731
     for day in rebalance_dates(d["as_of_date"].unique(), h):
         g = d[d["as_of_date"] == day]
         if len(g) < 10:
             continue
         top = g[g[score_col].rank(pct=True, method="first") > 0.8]
-        names = set(top["ticker"])
-        new = names - prev
-        turnover = len(new) / max(len(names), 1)
-        reg = top.set_index("ticker").get("region", pd.Series(dtype=object))
-        bps = np.mean([cost_bps.get(str(reg.get(t, "OTHER")), cost_bps["OTHER"]) for t in new]) if new else 0.0
-        # buying the new names and (after the first period) selling the ones they replace
-        cost = turnover * bps / 1e4 * (2 if prev else 1)
+        reg = top.set_index("ticker")["region"].to_dict() if "region" in top.columns else {}
+        target = pd.Series(1.0 / len(top), index=top["ticker"])
+        prev = held.reindex(target.index.union(held.index)).fillna(0.0)
+        new = target.reindex(prev.index).fillna(0.0)
+        delta = new - prev
+        buys, sells = delta.clip(lower=0), (-delta).clip(lower=0)
+        cost = (sum(w * bps_of(reg.get(t, "OTHER")) for t, w in buys.items() if w)
+                + sum(w * bps_of(held_region.get(t, reg.get(t, "OTHER"))) for t, w in sells.items() if w)) / 1e4
         gross = float(top[col].mean() - g[col].mean())
-        rows.append({"date": day, "gross": gross, "net": gross - cost, "turnover": turnover, "cost": cost})
-        prev = names
+        rows.append({"date": day, "gross": gross, "net": gross - cost, "turnover": float(buys.sum()), "cost": cost})
+        grown = target * (1 + top.set_index("ticker")[col].reindex(target.index).fillna(0.0))
+        held = grown / grown.sum() if grown.sum() > 0 else target                # weights at the next rebalance
+        held_region = {**held_region, **reg}
     if not rows:
         return {"periods": 0, "gross_pct": None, "net_pct": None, "turnover": None, "cost_pct": None}
     r = pd.DataFrame(rows)
@@ -228,10 +247,11 @@ def evidence_table(snapshots: pd.DataFrame, prices: pd.DataFrame, horizons=HORIZ
     rows = []
     for s in scores:
         for h in horizons:
-            fm = fama_macbeth(fr, h, s)
+            fm = fama_macbeth(fr, h, s, require_controls=True)       # only fully controlled, identified days (F07)
+            unadj = fama_macbeth(fr, h, s, controls=())
             q = quintile_net_of_costs(fr, h, s, cost_bps)
             rows.append({"score": SCORES.get(s, s), "horizon": h, "premium_pct": fm["premium"], "t_stat": fm["t_stat"],
-                         "raw_premium_pct": fm["raw_premium"], "raw_t": fm["raw_t"], "controls": ", ".join(fm["controls"]),
+                         "raw_premium_pct": unadj["premium"], "raw_t": unadj["t_stat"], "controls": ", ".join(fm["controls"]),
                          "n_days": fm["n_days"], "n_independent": fm["n_independent"], "periods": q["periods"],
                          "top_gross_pct": q["gross_pct"], "top_net_pct": q["net_pct"], "turnover": q["turnover"],
                          "p": p_value(fm["t_stat"]) if fm["premium"] is not None else None})

@@ -76,10 +76,10 @@ ORDER BY total_value DESC
 
 ```bash
 # Manual update
-python3 load_insider_data.py
+python3 scripts/tools/load_insider_data.py
 
 # Check status
-python3 quick_check_insider.py
+python3 scripts/tools/quick_check_insider.py
 
 # Run transform
 python3 run.py --fast

@@ -3,7 +3,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-from core.backtest import run_backtest_simulation
+from core.backtest import STATIC_QUALITY, run_backtest_simulation
 from ui.components import render_metric_tile
 from ui.icons import render_header
 
@@ -56,7 +56,7 @@ def render(ctx):
             bt_prices = prices_full[prices_full["ticker"] == bt_ticker].sort_values("date").copy()
             
             all_strats = [
-                "Institutional Quality Pulse (AI Score > 75)",
+                f"{STATIC_QUALITY} (today's Quality > 75 — lookahead, not evidence)",
                 "Trend Following (MA20/50 Cross)", 
                 "RSI Mean Reversion (30/70)",
                 "Z-Score Mean Reversion (Deep Value)",
@@ -96,11 +96,16 @@ def render(ctx):
                         "Win Rate %": s_res["win_rate"],
                         "Trades": s_res["n_trades"],
                         "Lookahead": s_res.get("lookahead", False),
+                        "Missing returns": s_res.get("missing_returns", 0),
                     })
 
                 # Lookahead-biased rows sink to the bottom so iloc[0] is always a fair winner
                 comp_df = pd.DataFrame(comp_data).sort_values(["Lookahead", "Sharpe"], ascending=[True, False],
                                                               na_position="last")
+                _gaps = int(comp_df["Missing returns"].max() or 0)
+                if _gaps:
+                    st.warning(f"{_gaps} trading day(s) without a return inside {bt_ticker}'s history were counted as 0% — "
+                               f"read these results as indicative, not as a clean performance record.", icon="⚠️")
 
                 # Only call a "winner" if it actually beats doing nothing (buy & hold) after costs
                 best = comp_df.iloc[0]

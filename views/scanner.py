@@ -6,12 +6,23 @@ from services.market_data import get_forex_rates
 from core import scan_presets as presets
 from core.scan_presets import ELITE, FAIR, SOLID
 
-# Fixed column set: the three scores already summarise the detail columns, which stay one click away.
-DEFAULT_COLS = ["Ticker", "Company", "Verdict", "MoS (%)", "Quality", "Value", "Momentum", "Revisions", "Flags",
-                "Conflicts", "ADV (EUR M)", "RSI (14)"]
-EXTRA_COLS = ["Sector", "Action", "Smart Money", "Z-Score", "vs MA200 (%)", "P/E (Fwd)", "EV/EBITDA", "PEG", "FCF Margin (%)",
-              "ROE (%)", "Yield (%)", "Net Payout (%)", "Debt/EBITDA", "ROIC (%)", "Net Debt/EBITDA",
-              "FCF Conversion (x)", "Insider 6M (%)"]
+# Default columns answer the four questions of a long-horizon screen, each with a number every stock has:
+#   is the business good (Quality), is the price cheap (Value, FCF yield), what does the price already assume
+#   (Growth Gap = delivered revenue growth − growth implied by the price), and is there an event / red flag now
+#   (Next ER, Flags, Conflicts). Measured on the real universe (2026-10-16): MoS was blank for 87% of stocks,
+#   RSI is a 2-week signal for a 3-5-year mandate, ADV is above €8M for 90% (illiquid names are already flagged).
+DEFAULT_COLS = ["Ticker", "Company", "Verdict", "Quality", "Value", "Momentum", "Revisions", "FCF Yield (%)",
+                "Growth Gap (pp)", "Next ER (days)", "Flags", "Conflicts"]
+# Detail one click away; near-duplicates removed (dividend yield ≈ net payout, ρ 0.99; gross ≈ net debt/EBITDA, ρ 0.80)
+EXTRA_COLS = ["Sector", "MCap (B)", "MoS (%)", "Exp. Return (%/yr)", "Implied Growth (%)", "P/E (Fwd)", "EV/EBITDA",
+              "PEG", "ROIC (%)", "ROE (%)", "FCF Margin (%)", "FCF Conversion (x)", "Net Debt/EBITDA", "Net Payout (%)",
+              "Insider 6M (%)", "ADV (EUR M)", "Action", "Smart Money", "vs MA200 (%)", "Z-Score", "RSI (14)"]
+
+
+def _clean_conflicts(text) -> str:
+    """The earnings blackout has its own column (Next ER); keep the other open conflicts."""
+    parts = [x for x in str(text or "").split("; ") if x and not x.startswith("Earnings in ")]
+    return "; ".join(parts)
 from ui.icons import render_header
 
 
@@ -193,6 +204,10 @@ def render(ctx):
             z_score_range = st.slider("Z-Score Range", -5.0, 5.0, (-5.0, 5.0), step=0.1)
         with rcol3:
             peg_range = st.slider("PEG Range", -5.0, 10.0, (-5.0, 10.0), step=0.1)
+            min_fcf_yield = st.slider("Min FCF yield (%)", -10.0, 15.0, -10.0, step=0.5,
+                                      help="Free cash flow after stock comp / market cap. Leave at -10 to keep everything.")
+            skip_er = st.checkbox("Hide stocks reporting within 7 days", value=False, key="scan_skip_er",
+                                  help="No new position into a release: the Decision blocks BUYs in that window anyway.")
             filter_sm = st.selectbox(
                 "Smart Money",
                 options=["🌎 All", "🟢 Accumulation only", "🔴 Distribution only"],
@@ -215,6 +230,10 @@ def render(ctx):
         f_df = f_df[f_df["Z-Score"].between(*z_score_range)]
     if peg_range != (-5.0, 10.0):
         f_df = f_df[f_df["PEG"].between(*peg_range)]
+    if min_fcf_yield > -10.0:
+        f_df = f_df[f_df["FCF Yield (%)"] >= min_fcf_yield]
+    if skip_er:
+        f_df = f_df[~(f_df["Next ER (days)"] <= 7)]
     if "Accumulation only" in filter_sm:
         f_df = f_df[f_df["Smart Money"].str.contains("ACCUMULATION", na=False)]
     elif "Distribution only" in filter_sm:
@@ -225,14 +244,18 @@ def render(ctx):
     extras = st.multiselect("More columns", EXTRA_COLS, key="scan_extra_cols",
                             help="Detail behind the scores. Hidden by default: Quality, Value and Momentum already summarise them.")
     display_cols = DEFAULT_COLS + [c for c in EXTRA_COLS if c in extras]
-    # Sort by the recommendation first (BUY → HOLD → AVOID → n/a), then margin of safety, then Quality
+    # Sort by the recommendation first (BUY → RESEARCH → HOLD → AVOID → n/a), then by quality at a fair price (the mean of
+    # Quality and Value — known for every stock; the margin of safety is blank for most of them)
     from core import decision as _dec
     _decision_rank = {_dec.BUY: 0, _dec.RESEARCH: 1, _dec.HOLD: 2, _dec.AVOID: 3, _dec.NO_DATA: 4}
-    display_df = (f_df.assign(_r=f_df["Decision"].map(_decision_rank).fillna(5))
-                  .sort_values(["_r", "MoS (%)", "Quality"], ascending=[True, False, False], na_position="last")
+    display_df = (f_df.assign(_r=f_df["Decision"].map(_decision_rank).fillna(5),
+                              _qv=f_df[["Quality", "Value"]].mean(axis=1),
+                              Conflicts=f_df["Conflicts"].map(_clean_conflicts))
+                  .sort_values(["_r", "_qv", "Quality"], ascending=[True, False, False], na_position="last")
                   [display_cols])
 
-    st.markdown(f"**Found {len(display_df)} stocks** — sorted by Decision, then margin of safety, then Quality")
+    st.markdown(f"**Found {len(display_df)} stocks** — sorted by Decision, then quality at a fair price "
+                f"(average of Quality and Value)")
     st.caption("▲ timing context supportive · neutral ▼ against (trend, quality, value, volume flow). "
                "The label is the recommendation; the arrow is context only.")
     
@@ -307,6 +330,28 @@ def render(ctx):
             except: pass
             return ''
 
+        def color_fcf_yield(val):
+            try:
+                v = float(val)
+                if v >= 5: return 'color: #2ecc71'
+                if v < 0: return 'color: #e74c3c'
+            except: pass
+            return ''
+
+        def color_gap(val):
+            try:
+                v = float(val)
+                if v >= 0: return 'color: #2ecc71'
+                if v <= -20: return 'color: #e74c3c'
+            except: pass
+            return ''
+
+        def color_er(val):
+            try:
+                if float(val) <= 7: return 'color: #f39c12; font-weight: bold'
+            except: pass
+            return ''
+
         def on(*cols):
             return [c for c in cols if c in df.columns]
 
@@ -317,8 +362,11 @@ def render(ctx):
                          .map(color_rsi, subset=on("RSI (14)")) \
                          .map(color_peg, subset=on("PEG")) \
                          .map(color_debt, subset=on("Debt/EBITDA")) \
-                         .map(lambda x: color_high_good(x, 3.0), subset=on("Yield (%)")) \
-                         .map(lambda x: color_high_good(x, 15.0), subset=on("ROE (%)"))
+                         .map(color_debt, subset=on("Net Debt/EBITDA")) \
+                         .map(lambda x: color_high_good(x, 15.0), subset=on("ROE (%)", "ROIC (%)")) \
+                         .map(color_fcf_yield, subset=on("FCF Yield (%)")) \
+                         .map(color_gap, subset=on("Growth Gap (pp)")) \
+                         .map(color_er, subset=on("Next ER (days)"))
         return styler
 
     styled_df = style_opportunity_df(paged_df)
@@ -368,6 +416,25 @@ def render(ctx):
             "FCF Conversion (x)": st.column_config.NumberColumn("FCF Conv.", format="%.2fx",
                                                                 help="Free cash flow after stock comp / net income. "
                                                                      "Below ~0.8x: earnings not backed by cash."),
+            "FCF Yield (%)":   st.column_config.NumberColumn("FCF Yield", format="%.1f%%",
+                                                             help="Free cash flow after stock comp / market cap — what the price "
+                                                                  "earns in cash today (blank for banks / insurers)."),
+            "Growth Gap (pp)": st.column_config.NumberColumn("Growth vs priced-in", format="%+.0f pp",
+                                                             help="Starting FCF growth the model anchors on the company's own "
+                                                                  "history (revenue / earnings / FCF CAGR) minus the starting FCF "
+                                                                  "growth the price IMPLIES (reverse DCF, same model). ≥ 0: the "
+                                                                  "price asks for no more than history; ≤ −20: it needs much "
+                                                                  "faster growth than the company has shown."),
+            "Implied Growth (%)": st.column_config.NumberColumn("Priced-in growth", format="%+.0f%%",
+                                                                help="Starting FCF growth (fading over 10 years) that makes the "
+                                                                     "DCF equal to today's price."),
+            "Exp. Return (%/yr)": st.column_config.NumberColumn("Exp. return", format="%+.1f%%",
+                                                                help="Probability-weighted IRR of the bear / base / bull DCF over "
+                                                                     "the holding horizon (only where the valuation is reliable)."),
+            "Next ER (days)":  st.column_config.NumberColumn("Next ER", format="%d d",
+                                                             help="Days to the next earnings report (Yahoo; may be an estimate). "
+                                                                  "≤ 7: no new position into the release."),
+            "MCap (B)":        st.column_config.NumberColumn("MCap €B", format="%.1f"),
             "Insider 6M (%)":  st.column_config.NumberColumn("Insider 6M", format="%+.2f%%",
                                                              help="Net insider buying over 6 months, % of insider "
                                                                   "holdings (US filers; blank = no data)."),

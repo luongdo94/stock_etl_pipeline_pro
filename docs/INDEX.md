@@ -75,15 +75,15 @@ Complete documentation for the Stock ETL Pipeline & Analytics Platform.
 
 ### **Status & Release Notes**
 
-- **[status/CURRENT_STATUS.md](./status/CURRENT_STATUS.md)** — Current system status
-- **[status/SMART_MONEY_V6_RELEASE.md](./status/SMART_MONEY_V6_RELEASE.md)** — Smart Money v6.0 release notes
-- **[status/RATING_SYSTEM_V14_UPGRADE.md](./status/RATING_SYSTEM_V14_UPGRADE.md)** — Rating system v14
-- **[status/SMART_MONEY_V5_UPGRADE.md](./status/SMART_MONEY_V5_UPGRADE.md)** — Smart Money v5 (legacy)
-- **[status/IMPLEMENTATION_COMPLETE.md](./status/IMPLEMENTATION_COMPLETE.md)** — Implementation status
-- **[status/DATA_FLOW_EXPLANATION.md](./status/DATA_FLOW_EXPLANATION.md)** — Data flow
-- **[status/SCANNER_STRATEGIES_UPDATE.md](./status/SCANNER_STRATEGIES_UPDATE.md)** — Scanner strategies
-- **[status/MERGE_STATUS_REPORT.md](./status/MERGE_STATUS_REPORT.md)** — Merge status
-- **[status/GIT_PUSH_SUCCESS.md](./status/GIT_PUSH_SUCCESS.md)** — Git push status
+- **[status/CURRENT_STATUS.md](archive/status/CURRENT_STATUS.md)** — Current system status
+- **[status/SMART_MONEY_V6_RELEASE.md](archive/status/SMART_MONEY_V6_RELEASE.md)** — Smart Money v6.0 release notes
+- **[status/RATING_SYSTEM_V14_UPGRADE.md](archive/status/RATING_SYSTEM_V14_UPGRADE.md)** — Rating system v14
+- **[status/SMART_MONEY_V5_UPGRADE.md](archive/status/SMART_MONEY_V5_UPGRADE.md)** — Smart Money v5 (legacy)
+- **[status/IMPLEMENTATION_COMPLETE.md](archive/status/IMPLEMENTATION_COMPLETE.md)** — Implementation status
+- **[status/DATA_FLOW_EXPLANATION.md](archive/status/DATA_FLOW_EXPLANATION.md)** — Data flow
+- **[status/SCANNER_STRATEGIES_UPDATE.md](archive/status/SCANNER_STRATEGIES_UPDATE.md)** — Scanner strategies
+- **[status/MERGE_STATUS_REPORT.md](archive/status/MERGE_STATUS_REPORT.md)** — Merge status
+- **[status/GIT_PUSH_SUCCESS.md](archive/status/GIT_PUSH_SUCCESS.md)** — Git push status
 
 ---
 
@@ -91,23 +91,23 @@ Complete documentation for the Stock ETL Pipeline & Analytics Platform.
 
 Complete documentation for Smart Money Detection v6.0 upgrade:
 
-**[smart-money-v6/](./smart-money-v6/)** — Dedicated folder
-- **[README.md](./smart-money-v6/README.md)** — Documentation index
-- **[README_SMART_MONEY_V6.md](./smart-money-v6/README_SMART_MONEY_V6.md)** — Quick start guide
-- **[UPGRADE_SUMMARY.md](./smart-money-v6/UPGRADE_SUMMARY.md)** — Quick reference
-- **[VISUAL_SUMMARY.md](./smart-money-v6/VISUAL_SUMMARY.md)** — Visual overview
-- **[SMART_MONEY_V6_UPGRADE.md](./smart-money-v6/SMART_MONEY_V6_UPGRADE.md)** — Technical details
-- **[IMPLEMENTATION_CHECKLIST.md](./smart-money-v6/IMPLEMENTATION_CHECKLIST.md)** — Progress tracking
-- **[SKILL_UPDATE_SUMMARY.md](./smart-money-v6/SKILL_UPDATE_SUMMARY.md)** — Skills update
-- **[FINAL_SUMMARY.md](./smart-money-v6/FINAL_SUMMARY.md)** — Complete overview
+**[archive/smart-money-v6/](./archive/smart-money-v6/)** — Dedicated folder
+- **[README.md](archive/smart-money-v6/README.md)** — Documentation index
+- **[README_SMART_MONEY_V6.md](archive/smart-money-v6/README_SMART_MONEY_V6.md)** — Quick start guide
+- **[UPGRADE_SUMMARY.md](archive/smart-money-v6/UPGRADE_SUMMARY.md)** — Quick reference
+- **[VISUAL_SUMMARY.md](archive/smart-money-v6/VISUAL_SUMMARY.md)** — Visual overview
+- **[SMART_MONEY_V6_UPGRADE.md](archive/smart-money-v6/SMART_MONEY_V6_UPGRADE.md)** — Technical details
+- **[IMPLEMENTATION_CHECKLIST.md](archive/smart-money-v6/IMPLEMENTATION_CHECKLIST.md)** — Progress tracking
+- **[SKILL_UPDATE_SUMMARY.md](archive/smart-money-v6/SKILL_UPDATE_SUMMARY.md)** — Skills update
+- **[FINAL_SUMMARY.md](archive/smart-money-v6/FINAL_SUMMARY.md)** — Complete overview
 
 ---
 
 ### **Data Dictionaries**
 
-- **[data_dictionary_en.md](./data_dictionary_en.md)** — English
-- **[data_dictionary_vi.md](./data_dictionary_vi.md)** — Vietnamese
-- **[data_dictionary_fr.md](./data_dictionary_fr.md)** — French
+- **[data_dictionary/en.md](./data_dictionary/en.md)** — English
+- **[data_dictionary/vi.md](./data_dictionary/vi.md)** — Vietnamese
+- **[data_dictionary/fr.md](./data_dictionary/fr.md)** — French
 
 ---
 
@@ -123,7 +123,7 @@ Complete documentation for Smart Money Detection v6.0 upgrade:
 ### **By Role:**
 
 #### **Traders/Users:**
-- Start: [smart-money-v6/README_SMART_MONEY_V6.md](./smart-money-v6/README_SMART_MONEY_V6.md)
+- Start: [archive/smart-money-v6/README_SMART_MONEY_V6.md](archive/smart-money-v6/README_SMART_MONEY_V6.md)
 - Algorithms: [en/ALGORITHMS.md](./en/ALGORITHMS.md)
 - AI Systems: [en/AI_INTELLIGENCE.md](./en/AI_INTELLIGENCE.md)
 - Vietnamese: [vi/SYSTEM_GUIDE.md](./vi/SYSTEM_GUIDE.md)
@@ -132,22 +132,22 @@ Complete documentation for Smart Money Detection v6.0 upgrade:
 - Architecture: [en/ETL_ARCHITECTURE.md](./en/ETL_ARCHITECTURE.md)
 - Testing: [en/TESTING.md](./en/TESTING.md)
 - API: [en/API.md](./en/API.md)
-- Smart Money v6: [smart-money-v6/SMART_MONEY_V6_UPGRADE.md](./smart-money-v6/SMART_MONEY_V6_UPGRADE.md)
+- Smart Money v6: [archive/smart-money-v6/SMART_MONEY_V6_UPGRADE.md](archive/smart-money-v6/SMART_MONEY_V6_UPGRADE.md)
 
 #### **Data Engineers:**
 - ETL: [en/ETL_ARCHITECTURE.md](./en/ETL_ARCHITECTURE.md)
 - Data Quality: [en/DATA_QUALITY.md](./en/DATA_QUALITY.md)
-- Data Dictionary: [data_dictionary_en.md](./data_dictionary_en.md)
+- Data Dictionary: [data_dictionary/en.md](./data_dictionary/en.md)
 
 #### **Project Managers:**
-- Status: [status/CURRENT_STATUS.md](./status/CURRENT_STATUS.md)
-- Releases: [status/](./status/)
-- Smart Money v6: [smart-money-v6/FINAL_SUMMARY.md](./smart-money-v6/FINAL_SUMMARY.md)
+- Status: [status/CURRENT_STATUS.md](archive/status/CURRENT_STATUS.md)
+- Releases: [status/](./archive/status/)
+- Smart Money v6: [archive/smart-money-v6/FINAL_SUMMARY.md](archive/smart-money-v6/FINAL_SUMMARY.md)
 
 #### **AI Agents:**
 - Skills: [../.agents/skills/](../.agents/skills/)
 - Algorithms: [en/ALGORITHMS.md](./en/ALGORITHMS.md)
-- Smart Money: [smart-money-v6/SMART_MONEY_V6_UPGRADE.md](./smart-money-v6/SMART_MONEY_V6_UPGRADE.md)
+- Smart Money: [archive/smart-money-v6/SMART_MONEY_V6_UPGRADE.md](archive/smart-money-v6/SMART_MONEY_V6_UPGRADE.md)
 
 ---
 
@@ -160,7 +160,7 @@ Complete documentation for Smart Money Detection v6.0 upgrade:
   - Added Volume Quality Scoring
   - Added sector-specific thresholds
   - -36% false positives, +10% true positives
-  - Documentation: [smart-money-v6/](./smart-money-v6/)
+  - Documentation: [archive/smart-money-v6/](./archive/smart-money-v6/)
 
 ---
 

@@ -39,10 +39,11 @@ def _runs(runs: pd.DataFrame):
                 st.markdown(f"**{f.start_time:%Y-%m-%d %H:%M}** — {str(f.error_message).strip().splitlines()[-1][:300]}")
 
 
-def _dq(dq: pd.DataFrame):
+def _dq(dq: pd.DataFrame, unavailable: bool = False):
     st.markdown("##### Data-quality checks and release gates (last run)")
-    if dq.empty:
-        st.info("No data-quality results in this warehouse yet.")
+    if unavailable or dq.empty:
+        st.warning("Data-quality results unavailable — status UNKNOWN. Every ETL run writes one row per check, so an "
+                   "empty table means the checks did not run or could not be read, not that the data is clean.")
         return
     d = dq.copy()
     d["result"] = d["status"].where(d["violations"].fillna(0) > 0, "PASS")
@@ -116,8 +117,11 @@ def _identity(sec: pd.DataFrame, sym: pd.DataFrame, life: pd.DataFrame):
                 st.dataframe(inactive, hide_index=True, width="stretch")
 
 
-def _exceptions(exc: pd.DataFrame):
+def _exceptions(exc: pd.DataFrame, unavailable: bool = False):
     st.markdown("##### Per-ticker exceptions (last run)")
+    if unavailable:
+        st.warning("The exception ledger could not be read — status UNKNOWN (not the same as no exceptions).")
+        return
     if exc.empty:
         st.success("No ticker exception in the last run.")
         return
@@ -136,7 +140,7 @@ def render(ctx):
     st.markdown("---")
     left, right = st.columns(2)
     with left:
-        _dq(h["dq"])
+        _dq(h["dq"], "dq" in h["failed"])
     with right:
         _pit(h["pit"])
     st.markdown("---")
@@ -144,4 +148,4 @@ def render(ctx):
     st.markdown("---")
     _identity(h["securities"], h["symbols"], h["lifecycle"])
     st.markdown("---")
-    _exceptions(h["exceptions"])
+    _exceptions(h["exceptions"], "exceptions" in h["failed"])

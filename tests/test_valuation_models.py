@@ -99,7 +99,8 @@ def test_banks_get_a_residual_income_value_instead_of_no_model(monkeypatch):
     assert vin["roe_normalised"] == pytest.approx(0.12) and vin["roe"] == pytest.approx(0.12)   # the fade is in the model
     assert vin["base"] == pytest.approx(v.residual_income_value(20.0, 0.12, r, tg, v.DEFAULT_PAYOUT))
     assert vin["bear"] < vin["base"] < vin["bull"]
-    assert vin["implied_growth"] == pytest.approx(tg + 1.0 * (r - tg))         # ROE the price already assumes (P/B 1.0)
+    assert vin["implied_roe"] == pytest.approx(tg + 1.0 * (r - tg))            # ROE the price already assumes (P/B 1.0)
+    assert vin["implied_growth"] is None                                       # audit F33: not an FCF growth
 
 
 def test_banks_with_roe_below_growth_are_valued_below_book_and_not_actionable():
@@ -166,9 +167,14 @@ def test_residual_income_properties():
 
 
 def test_payout_ratio_from_the_provider_yields():
-    assert v.payout_ratio({"trailing_eps": 2.0, "net_payout_yield_pct": 5.0}, 20.0) == pytest.approx(0.5)
-    assert v.payout_ratio({"trailing_eps": -1.0, "net_payout_yield_pct": 5.0}, 20.0) is None
-    assert v.payout_ratio({"trailing_eps": 1.0, "net_payout_yield_pct": 30.0}, 20.0) == 1.0     # clipped
+    assert v.payout_ratio({"pe_ratio": 10.0, "net_payout_yield_pct": 5.0}) == pytest.approx(0.5)
+    assert v.payout_ratio({"pe_ratio": -3.0, "net_payout_yield_pct": 5.0}) is None              # losses: unknown
+    assert v.payout_ratio({"pe_ratio": 20.0, "net_payout_yield_pct": 30.0}) == 1.0             # clipped
+    # audit F09: the payout no longer divides a EUR price by a native-currency EPS — the same company quoted with a
+    # USD or a EUR EPS (same P/E) gets the same payout
+    usd = v.payout_ratio({"pe_ratio": 10.0, "net_payout_yield_pct": 5.0, "trailing_eps": 10.0}, 90.0)
+    eur = v.payout_ratio({"pe_ratio": 10.0, "net_payout_yield_pct": 5.0, "trailing_eps": 9.0}, 90.0)
+    assert usd == eur == pytest.approx(0.5)
 
 
 def test_peer_pb_roe_line_shows_relative_cheapness():

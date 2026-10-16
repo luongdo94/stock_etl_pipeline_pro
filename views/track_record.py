@@ -51,6 +51,14 @@ def render(ctx):
     fr = _forward(snaps, _px)
     st.markdown(f"**History:** {days} snapshot day(s), {snaps['ticker'].nunique()} tickers, "
                 f"{pd.to_datetime(snaps['as_of_date']).min():%d %b %Y} → {pd.to_datetime(snaps['as_of_date']).max():%d %b %Y}.")
+    # survivorship (audit F08): signals whose horizon has passed but that have no outcome are counted, never dropped
+    _cov = [(hh, tr.outcome_coverage(fr, _px, hh)) for hh in tr.HORIZONS]
+    _cov = [(hh, c) for hh, c in _cov if c["matured"]]
+    if _cov:
+        st.caption("Outcome coverage (matured signals with a known return): " + " · ".join(
+            f"{tr.horizon_label(hh)} {1 - c['share']:.1%} of {c['matured']:,}" for hh, c in _cov)
+            + (f". Missing outcomes (stopped quoting): {', '.join(_cov[-1][1]['tickers'][:8])}" if _cov[-1][1]["tickers"] else "")
+            + f". Above {tr.MAX_CENSORED_SHARE:.0%} missing, the evidence gate does not trust the result.")
 
     # ── 1. Information coefficient per horizon ─────────────────────────────────
     avail = [k for k in tr.SCORES if k in fr.columns and fr[k].notna().any()]
@@ -135,17 +143,18 @@ def render(ctx):
     st.markdown("**Recommendation log — every change of call, and how it has done since**")
     _call = "decision" if "decision" in snaps.columns and snaps["decision"].notna().any() else "action"
     log = tr.recommendation_log(snaps, action_col=_call)
-    last = prices_full.sort_values("date").groupby("ticker")["price_close"].last()
-    log = log.assign(price_now=log["ticker"].map(last))
-    log["since_call_pct"] = (log["price_now"] / log["price_close"] - 1) * 100
+    # one price basis: the stored return index (or the dashboard history), entry = first session after the call
+    log = log.assign(since_call_pct=tr.since_call_returns(log, _px) * 100)
     st.dataframe(
-        log[["as_of_date", "ticker", "previous_action", _call, "quality", "price_close", "price_now", "since_call_pct"]].head(300),
+        log[["as_of_date", "ticker", "previous_action", _call, "quality", "price_close", "since_call_pct"]].head(300),
         hide_index=True, width="stretch",
         column_config={
             "as_of_date": st.column_config.DateColumn("Date"),
             "previous_action": st.column_config.TextColumn("Previous call"),
             _call: st.column_config.TextColumn("Call" if _call == "decision" else "Signal"),
             "price_close": st.column_config.NumberColumn("Price at call", format="€%.2f"),
-            "price_now": st.column_config.NumberColumn("Price now", format="€%.2f"),
-            "since_call_pct": st.column_config.NumberColumn("Since call", format="%+.1f%%"),
+            "since_call_pct": st.column_config.NumberColumn("Since call", format="%+.1f%%",
+                                                            help="Total return from the first session after the call "
+                                                                 "to the latest close, on one adjusted price basis "
+                                                                 "(splits and dividends do not distort it)."),
         })

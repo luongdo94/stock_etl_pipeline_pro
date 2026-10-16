@@ -103,14 +103,14 @@ def test_scanner_keeps_stocks_with_unknown_fundamentals(warehouse):
     assert not at.exception, [e.value for e in at.exception]
     default = [d.value for d in at.dataframe if "Ticker" in getattr(d.value, "columns", [])][-1]
     assert list(default.columns) == scanner_view.DEFAULT_COLS            # slim fixed default; detail columns hidden
-    at.multiselect(key="scan_extra_cols").select("P/E (Fwd)").select("Debt/EBITDA").run()
+    at.multiselect(key="scan_extra_cols").select("P/E (Fwd)").select("Net Debt/EBITDA").run()
     assert not at.exception, [e.value for e in at.exception]
     tables = [d.value for d in at.dataframe if "Ticker" in getattr(d.value, "columns", [])]
     assert tables, "scanner table not rendered"
     t = tables[-1].set_index("Ticker")
     assert "KO" in t.index and "JNJ" in t.index
     assert pd.isna(t.at["KO", "P/E (Fwd)"])
-    assert pd.isna(t.at["JNJ", "Debt/EBITDA"])
+    assert pd.isna(t.at["JNJ", "Net Debt/EBITDA"])
 
 def test_decision_and_signal_never_contradict_across_the_universe(warehouse):
     """The scanner shows ONE label (Decision + timing arrow): AVOID / TRIM is never next to a supportive arrow, and the

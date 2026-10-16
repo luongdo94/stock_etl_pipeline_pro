@@ -121,9 +121,13 @@ def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, re
             st.markdown(f"- Relative to {relval['group']} ({relval['n_peers']} peers; 0 = cheapest): " + ", ".join(parts))
         if relval["pe_vs_5y"]:
             st.markdown(f"- P/E is {relval['pe_vs_5y']:.2f}× its own 5-year average.")
-        if vin["implied_growth"] is not None:
+        if vin.get("implied_growth") is not None:
             st.markdown(f"- The price implies **{vin['implied_growth']:+.1%}** starting FCF growth "
                         f"(model base case: {vin['growth']:+.1%}).")
+        elif vin.get("implied_roe") is not None:
+            st.markdown(f"- At its P/B the price implies a **perpetual ROE of {vin['implied_roe']:.1%}** (justified-P/B "
+                        f"inverse; the residual-income value instead fades today's {vin['roe'] or 0:.1%} to the cost of "
+                        f"equity over {val.RI_FADE_YEARS} years).")
     with c2:
         st.markdown("**What would make this wrong (sell discipline)**")
         for r in d.invalidation:

@@ -14,7 +14,6 @@ Design rules (thresholds live in config/scoring_rules.yaml):
     worst case. With little observable weight the score is shrunk toward 50 (little evidence = neutral).
   * Momentum never leaks into Quality or Value; analyst ratings are not scored at all.
 """
-from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -47,10 +46,24 @@ FLAG_LABELS = {
 }
 
 
-@lru_cache(maxsize=1)
+_YAML_CACHE: dict = {}
+
+
+def _yaml_versioned(path: Path):
+    """Parsed YAML, re-read whenever the file's modification time or size changes (PERF-15: an unversioned
+    lru_cache kept serving the old rules in a running app after the YAML was edited, while the screener's outer
+    cache key, a hash of the YAML, already said "new rules")."""
+    st = path.stat()
+    key = (st.st_mtime_ns, st.st_size)
+    hit = _YAML_CACHE.get(path)
+    if hit is None or hit[0] != key:
+        hit = (key, yaml.safe_load(path.read_text(encoding="utf-8")))
+        _YAML_CACHE[path] = hit
+    return hit[1]
+
+
 def load_rules() -> dict:
-    with open(_RULES_PATH, encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    return _yaml_versioned(_RULES_PATH)
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────────────────────
@@ -355,7 +368,11 @@ def build_features(companies: pd.DataFrame, annual_fin: pd.DataFrame = None, pri
     # legacy proxy only where EBIT is not in the warehouse yet, and only with positive book equity
     legacy = (f["ni_median"] / (f["last_equity"] + debt).where(lambda s: s > 0) * 100).where(f["last_equity"] > 0)
     f["roc"] = roic.where(f["nopat_median"].notna(), legacy)
-    f["roc_is_roic"] = f["nopat_median"].notna()
+    # Audit F05: only a year-by-year ROIC on ADJACENT capital pairs is observed ROIC. The pooled NOPAT / capital fallback
+    # (non-adjacent or single-year history) still feeds the return-on-capital score, but as an ESTIMATED proxy.
+    f["roc_is_roic"] = f["roic_median"].notna()
+    pooled = f["roic_median"].isna() & f["nopat_median"].notna() & f["roc"].notna()
+    f["roic_estimated"] = f["roic_estimated"].astype("boolean").fillna(False).astype(bool) | pooled
     if "ni_cagr" not in f:
         f["ni_cagr"] = np.nan
 
@@ -496,12 +513,10 @@ def momentum_score(f: pd.DataFrame, rules: dict):
 _TICKERS_PATH = Path(__file__).resolve().parent.parent / "config" / "tickers.yaml"
 
 
-@lru_cache(maxsize=1)
 def config_tickers() -> frozenset:
     """Tickers of the curated universe (config/tickers.yaml) — the reference set for peer percentiles."""
     try:
-        with open(_TICKERS_PATH, encoding="utf-8") as fh:
-            return frozenset((yaml.safe_load(fh) or {}).get("tickers", {}) or {})
+        return frozenset((_yaml_versioned(_TICKERS_PATH) or {}).get("tickers", {}) or {})
     except OSError:
         return frozenset()
 
@@ -527,6 +542,7 @@ RAW_METRICS = {
     "profit_years_pct": ("profit_years", 100.0), # share of stored years with a profit (%)
     "margin_vol_pp": ("margin_vol", 1.0),        # volatility of the net margin (percentage points)
     "fcf_margin_pct": ("fcf_margin", 1.0),       # FCF after SBC / revenue (%)
+    "fcf_yield_pct": ("fcf_yield", 1.0),         # FCF after SBC / market cap (%) — the largest Value input
 }
 
 
@@ -567,7 +583,7 @@ def score_universe(companies: pd.DataFrame, annual_fin: pd.DataFrame = None, pri
         "illiquid": (f["adv_eur"] < liq["min_adv_eur"]).fillna(False),
         "adv_unknown": f["adv_eur"].isna(),          # NaN < threshold is False: unknown used to pass silently (R3-D6)
         # E8: ROIC built on an assumed 21% tax rate or an assumed zero cash balance — estimated, not observed
-        "roic_estimated": (f["roic_estimated"].astype("boolean").fillna(False) & f["roc_is_roic"]).astype(bool),
+        "roic_estimated": f["roic_estimated"].astype("boolean").fillna(False).astype(bool),
         "micro_cap": f["micro_cap"],
         "peak_margin": f["peak_margin"],
     })

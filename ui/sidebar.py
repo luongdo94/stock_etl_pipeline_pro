@@ -66,6 +66,8 @@ def render_pulse(etl_audit, dq_warnings):
     warn = len(violated) - crit if not violated.empty else 0
     dq_color = "#2ecc71" if crit == warn == 0 else ("#e74c3c" if crit else "#f1c40f")
     dq_text = "CLEAN" if crit == warn == 0 else (f"{crit} CRIT" if crit else f"{warn} WARN")
+    if dq_warnings.empty:          # every run writes one row per check: no rows = checks unavailable, not clean (F25)
+        dq_color, dq_text = "#8899aa", "UNKNOWN"
     st.sidebar.markdown(f"""
 <div style='padding:8px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:6px; margin-bottom:6px;'>
 <div style='display:flex; align-items:center; gap:8px;'>
@@ -105,50 +107,61 @@ def render_macro_panel(placeholder, macro, fred):
     """Rates, curve and FRED fundamentals into the placeholder reserved at the top of the sidebar."""
     if not macro:
         return
-    def g(k): return macro.get(k, {"val": 0, "chg": 0, "pct": 0})
-    tnx_v, tnx_p, irx_v = g("US10Y")["val"], g("US10Y")["pct"], g("US2Y")["val"]
-    spread = tnx_v - irx_v
+    # Audit F26: an observation the source did not supply is N/A, not a green 0
+    def _num(d, k):
+        try:
+            v = float((d or {}).get(k, {}).get("val"))
+            return v if v == v else None
+        except (TypeError, ValueError):
+            return None
+
+    def _fmt(v, f):
+        return "N/A" if v is None else format(v, f) + "%"
+    tnx_v, irx_v = _num(macro, "US10Y"), _num(macro, "US2Y")
+    tnx_p = (macro.get("US10Y") or {}).get("pct") or 0
+    spread = tnx_v - irx_v if tnx_v is not None and irx_v is not None else None
     fred = fred or {}
-    cpi = fred.get("CPI", {}).get("val", 0)
-    un = fred.get("UNRATE", {}).get("val", 0)
-    ff = fred.get("FEDFUNDS", {}).get("val", 0)
-    month = fred.get("CPI", {}).get("date", "")[:7] or "N/A"
+    cpi, un, ff = _num(fred, "CPI"), _num(fred, "UNRATE"), _num(fred, "FEDFUNDS")
+    month = str(fred.get("CPI", {}).get("date") or "")[:7] or "N/A"
+    _sp_col = "#8899aa" if spread is None else ("#2ecc71" if spread > 0 else "#e74c3c")
+    _cpi_col, _cpi_ic = ("#8899aa", "") if cpi is None else (("#e74c3c", "⚠️") if cpi > 2.5 else ("#2ecc71", "✅"))
+    _un_col, _un_ic = ("#8899aa", "") if un is None else (("#e74c3c", "⚠️") if un > 4.5 else ("#2ecc71", "✅"))
     placeholder.markdown(f"""
     <div class='sb-section-label'>Economic Fundamentals</div>
     <div style='display:flex; gap:6px; margin-bottom:6px;'>
         <div class='sb-macro-row' style='flex:1; margin-bottom:0;'>
             <div class='sb-macro-label' style='font-size:0.55rem;'>US10Y</div>
             <div style='display:flex; justify-content:space-between; align-items:center;'>
-                <span class='sb-macro-val' style='font-size:0.7rem;'>{tnx_v:.2f}%</span>
+                <span class='sb-macro-val' style='font-size:0.7rem;'>{_fmt(tnx_v, ".2f")}</span>
                 {_delta(tnx_p, invert=True)}
             </div>
         </div>
         <div class='sb-macro-row' style='flex:1; margin-bottom:0;'>
             <div class='sb-macro-label' style='font-size:0.55rem;' title='10-year yield minus 13-week T-bill (^TNX − ^IRX)'>10Y–3M</div>
             <div style='display:flex; justify-content:space-between; align-items:center;'>
-                <span class='sb-macro-val' style='font-size:0.7rem; color:{"#2ecc71" if spread > 0 else "#e74c3c"}'>{spread:.2f}%</span>
+                <span class='sb-macro-val' style='font-size:0.7rem; color:{_sp_col}'>{_fmt(spread, ".2f")}</span>
             </div>
         </div>
     </div>
     <div class='sb-macro-row' style='display:block; border-left: 2px solid #3498db; padding: 3px 8px;'>
         <div style='display:flex; justify-content:space-between; align-items:center;'>
             <span class='sb-macro-label' style='color:#3498db; font-size:0.6rem;'>CPI YOY</span>
-            <span class='sb-macro-val' style='font-size:0.75rem;'>{cpi:.2f}%</span>
-            <span style='color:{"#e74c3c" if cpi > 2.5 else "#2ecc71"}; font-size:0.55rem; font-weight:700;'>{"⚠️" if cpi > 2.5 else "✅"}</span>
+            <span class='sb-macro-val' style='font-size:0.75rem;'>{_fmt(cpi, ".2f")}</span>
+            <span style='color:{_cpi_col}; font-size:0.55rem; font-weight:700;'>{_cpi_ic}</span>
         </div>
         <div style='font-size:0.5rem; color:#8899aa; text-align:right; margin-top:1px; text-transform:uppercase;'>Last: {month}</div>
     </div>
     <div class='sb-macro-row' style='display:block; border-left: 2px solid #9b59b6; padding: 3px 8px;'>
         <div style='display:flex; justify-content:space-between; align-items:center;'>
             <span class='sb-macro-label' style='color:#9b59b6; font-size:0.6rem;'>UNEMPLOY</span>
-            <span class='sb-macro-val' style='font-size:0.75rem;'>{un:.1f}%</span>
-            <span style='color:{"#e74c3c" if un > 4.5 else "#2ecc71"}; font-size:0.55rem; font-weight:700;'>{"⚠️" if un > 4.5 else "✅"}</span>
+            <span class='sb-macro-val' style='font-size:0.75rem;'>{_fmt(un, ".1f")}</span>
+            <span style='color:{_un_col}; font-size:0.55rem; font-weight:700;'>{_un_ic}</span>
         </div>
     </div>
     <div class='sb-macro-row' style='display:block; padding: 3px 8px;'>
         <div style='display:flex; justify-content:space-between; align-items:center;'>
             <span class='sb-macro-label' style='font-size:0.6rem;'>FED FUNDS</span>
-            <span class='sb-macro-val' style='font-size:0.75rem;'>{ff:.2f}%</span>
+            <span class='sb-macro-val' style='font-size:0.75rem;'>{_fmt(ff, ".2f")}</span>
         </div>
     </div>
     """, unsafe_allow_html=True)

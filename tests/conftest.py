@@ -1,5 +1,31 @@
 """Shared test isolation."""
+import os
+import socket
+
 import pytest
+
+_REAL_CONNECT = socket.socket.connect
+_LOCAL = ("127.0.0.1", "::1", "localhost")
+
+
+def _guarded_connect(self, address):
+    host = address[0] if isinstance(address, tuple) else address
+    if str(host) in _LOCAL or str(host).startswith("127."):
+        return _REAL_CONNECT(self, address)
+    raise OSError(f"network disabled in offline tests (tried {address}); mark the test `live` and set RUN_LIVE=1")
+
+
+@pytest.fixture(autouse=True)
+def _no_network(request):
+    """Offline tests must not reach Yahoo / FRED / TradingView / SEC (audit F24). Live tests opt in."""
+    if request.node.get_closest_marker("live") and os.environ.get("RUN_LIVE") == "1":
+        yield
+        return
+    socket.socket.connect = _guarded_connect
+    try:
+        yield
+    finally:
+        socket.socket.connect = _REAL_CONNECT
 
 
 @pytest.fixture(autouse=True)
@@ -9,3 +35,16 @@ def _isolated_provider_cache(tmp_path):
     fetch_guard.reset_cache(fetch_guard.NoDataCache(path=tmp_path / "provider_no_data.json"))
     yield
     fetch_guard.reset_cache(None)
+
+
+@pytest.fixture(autouse=True)
+def _clean_store_flags():
+    """Read-failure flags (audit F21 / F23) live in st.session_state, which bare-mode tests share — never let one test's
+    simulated failure block another test's save."""
+    yield
+    try:
+        import streamlit as st
+        for k in ("portfolio_load_failed", "watchlist_load_failed", "trades_load_error"):
+            st.session_state.pop(k, None)
+    except Exception:
+        pass

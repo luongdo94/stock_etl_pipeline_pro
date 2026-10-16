@@ -20,8 +20,10 @@ class FakeBucket:
         self.files, self.calls, self.fail = {}, [], set(fail)
 
     # publisher side (etl.supabase_manager.SupabaseStorage interface)
-    def upload(self, remote, local):
+    def upload(self, remote, local, overwrite=False):
         self.calls.append(("upload", remote))
+        if remote in self.files and not overwrite:
+            raise RuntimeError("object exists")              # create-only, like the real bucket with upsert=false
         if any(f in remote for f in self.fail):
             raise RuntimeError("storage unavailable")
         self.files[remote] = Path(local).read_bytes()
@@ -117,10 +119,10 @@ def test_sync_reports_failure_instead_of_claiming_success(wh, tmp_path):
 def test_dashboard_can_read_the_warehouse_while_the_upload_runs(wh, tmp_path):
     """The old sync held a read-write lock for the whole upload, so local dashboard connections failed."""
     class ReadingBucket(FakeBucket):
-        def upload(self, remote, local):
+        def upload(self, remote, local, overwrite=False):
             with duckdb.connect(wh, read_only=True) as c:
                 assert c.execute("SELECT COUNT(*) FROM marts.dim_companies").fetchone()[0] > 0
-            super().upload(remote, local)
+            super().upload(remote, local, overwrite)
     assert sm.sync_to_supabase(wh, storage=ReadingBucket(), work_dir=tmp_path / "w") is True
 
 
@@ -179,3 +181,19 @@ def test_partial_download_never_looks_complete(wh, tmp_path, monkeypatch):
     assert not list((tmp_path / "cache").rglob("*.part"))
     bucket.files[victim] = real
     assert sdb._ensure_local_cache() is True                                    # recovers on the next call
+
+
+def test_a_reused_snapshot_version_never_touches_the_live_files(tmp_path, wh):
+    """Audit F16: same candidate version + a failure mid-upload must not modify or delete snapshot A."""
+    bucket = FakeBucket()
+    out = tmp_path / "a"
+    assert sm.publish(bucket, sm.export_snapshot(wh, out), out, version="20260101T000000Z")
+    live = {k: v for k, v in bucket.files.items() if k.startswith("snapshots/20260101T000000Z/")}
+    out2 = tmp_path / "b"
+    bad = FakeBucket.__new__(FakeBucket)
+    bad.files, bad.calls, bad.fail = bucket.files, [], {"dim_companies"}
+    assert sm.publish(bad, sm.export_snapshot(wh, out2), out2, version="20260101T000000Z") is False
+    assert {k: v for k, v in bucket.files.items() if k.startswith("snapshots/20260101T000000Z/")} == live
+    auto = FakeBucket()
+    assert sm.publish(auto, sm.export_snapshot(wh, tmp_path / "c"), tmp_path / "c")
+    assert len(json.loads(auto.files["manifest.json"])["version"]) > len("20260101T000000Z")      # random suffix

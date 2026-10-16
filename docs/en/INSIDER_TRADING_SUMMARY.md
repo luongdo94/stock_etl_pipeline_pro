@@ -157,7 +157,7 @@ print(df)
 
 ### Manual Update:
 ```bash
-python3 load_insider_data.py
+python3 scripts/tools/load_insider_data.py
 ```
 
 ### Automatic Update (Airflow):
@@ -167,7 +167,7 @@ python3 load_insider_data.py
 
 ### Check Data Status:
 ```bash
-python3 quick_check_insider.py
+python3 scripts/tools/quick_check_insider.py
 ```
 
 ---
@@ -268,8 +268,8 @@ if show_insider_buys:
 etl/insider_trading.py              -- Extraction module
 docs/en/INSIDER_TRADING_GUIDE.md    -- Comprehensive guide
 docs/en/INSIDER_TRADING_SUMMARY.md  -- This file
-load_insider_data.py                -- Manual load script
-quick_check_insider.py              -- Verification script
+scripts/tools/load_insider_data.py                -- Manual load script
+scripts/tools/quick_check_insider.py              -- Verification script
 test_insider_trading.py             -- Test script
 ```
 
@@ -314,7 +314,7 @@ airflow/dags/stock_etl_dag.py       -- Integrated insider extraction
 
 For questions or issues:
 1. Check `docs/en/INSIDER_TRADING_GUIDE.md` for detailed documentation
-2. Run `python3 quick_check_insider.py` to verify data status
+2. Run `python3 scripts/tools/quick_check_insider.py` to verify data status
 3. Review Airflow DAG logs for extraction issues
 
 ---

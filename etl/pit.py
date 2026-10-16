@@ -12,6 +12,8 @@ raw.historical_financials / raw.quarterly_financials gets
                                         follows the period end
                       LAG_ESTIMATE      period end + a conservative lag (annual 90 days, quarterly 60 days) when
                                         neither is known
+      …+RESTATED        the provider changed the figures after they were first stored: available only from
+                        the day the current figures first appeared (the original version is not kept)
 
 core/pit.py filters a statement table "as of" a date with these columns. Recomputed after every load (cheap): rows
 re-loaded by the extractor lose nothing.
@@ -45,6 +47,8 @@ def assign_available_dates(conn) -> dict:
             continue
         conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS available_date DATE")
         conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS available_source VARCHAR")
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS values_first_seen DATE")
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS revised BOOLEAN")
         sec = (f"""(SELECT MIN(s.filed) FROM raw.sec_filings s WHERE s.ticker = t.ticker AND s.form = ANY(?)
                     AND ABS(date_diff('day', s.period_end, t.date)) <= 10 AND s.filed > t.date)""" if has_sec else "NULL")
         er = (f"""(SELECT MIN(CAST(e.earnings_ts AS DATE)) FROM raw.earnings_events e WHERE e.ticker = t.ticker
@@ -53,9 +57,14 @@ def assign_available_dates(conn) -> dict:
         params = [list(forms)] if has_sec else []
         conn.execute(f"""
             UPDATE {table} t SET
-                available_date = COALESCE(x.sec, x.er, CAST(t.date + INTERVAL {int(lag)} DAY AS DATE)),
+                -- audit F02: restated figures were not public at the original filing — they count from the day
+                -- they first appeared (etl.load._mark_revisions)
+                available_date = CASE WHEN t.revised AND t.values_first_seen IS NOT NULL
+                    THEN greatest(COALESCE(x.sec, x.er, CAST(t.date + INTERVAL {int(lag)} DAY AS DATE)), t.values_first_seen)
+                    ELSE COALESCE(x.sec, x.er, CAST(t.date + INTERVAL {int(lag)} DAY AS DATE)) END,
                 available_source = CASE WHEN x.sec IS NOT NULL THEN 'SEC_FILING'
                                         WHEN x.er IS NOT NULL THEN 'EARNINGS_RELEASE' ELSE 'LAG_ESTIMATE' END
+                                   || CASE WHEN t.revised THEN '+RESTATED' ELSE '' END
             FROM (SELECT t.ticker, t.date, {sec} AS sec, {er} AS er FROM {table} t) x
             WHERE t.ticker = x.ticker AND t.date = x.date""", params)
         out[table] = dict(conn.execute(f"SELECT available_source, COUNT(*) FROM {table} GROUP BY 1").fetchall())

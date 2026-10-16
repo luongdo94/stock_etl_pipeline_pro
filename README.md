@@ -34,7 +34,7 @@ The backbone of Honest Quant is a robust, production-ready Data Engineering pipe
   - **`marts.dim_companies`**: The master static dimension table containing aggregated fundamental markers (Market Cap, Sub-Sector, Beta, Short Interest).
   - **`marts.fct_daily_returns`**: The time-series fact table computing daily logarithmic returns, Technical Indicators ($MA_{20}, MA_{50}, MA_{200}$, RSI), and Rolling Volatility arrays.
   - **`marts.dim_quarterly_financials` & `dim_annual_financials`**: Financial statements optimized for longitudinal queries.
-- **Automation**: `python run.py` is the single entry point; schedule it with Windows Task Scheduler (`register_daily_etl.ps1`) or cron. Each run is locked against overlap, validated against the universe and the previous production warehouse, and swapped in atomically (see *ETL reliability* below).
+- **Automation**: `python run.py` is the single entry point; schedule it with Windows Task Scheduler (`scripts/windows/register_daily_etl.ps1`) or cron. Each run is locked against overlap, validated against the universe and the previous production warehouse, and swapped in atomically (see *ETL reliability* below).
 
 ---
 
@@ -48,7 +48,7 @@ The **Risk Lab** tab estimates *how far a price can wander*; it forecasts no dir
 - Logic and tests: `core/risk_range.py`, `tests/test_risk_range.py`.
 
 ### Why there are no neural price forecasts
-The former ML Predictor (LSTM, Transformer, PatchTST, ARIMA, a direction classifier) was removed. A walk-forward test on 12 real stocks / 36 windows (21-day horizon) found none of them better than a no-change forecast: mean skill LSTM -17%, Transformer -30%, ARIMA -22%, PatchTST -41% (significantly worse). The code is kept at the git tag `archive/ml-neural-lab` and the test is reproducible with `python utils/ml_walkforward.py` (the ARIMA row needs `pmdarima`, which is no longer in requirements.txt).
+The former ML Predictor (LSTM, Transformer, PatchTST, ARIMA, a direction classifier) was removed. A walk-forward test on 12 real stocks / 36 windows (21-day horizon) found none of them better than a no-change forecast: mean skill LSTM -17%, Transformer -30%, ARIMA -22%, PatchTST -41% (significantly worse). The code is kept at the commit `06b9bf9` of the git history and the test is reproducible with `python scripts/tools/ml_walkforward.py` (the ARIMA row needs `pmdarima`, which is no longer in requirements.txt).
 
 ### Context shown next to the range
 - FinBERT sentiment of recent headlines and the volume-flow reading are shown as unvalidated context; they do not change the range.
@@ -170,7 +170,7 @@ what happened next vs SPY: IC per horizon, returns by score quintile, hit rate p
 log of every change of call. Logic: `core/track_record.py`.
 
 ### Alerts & sell discipline
-Alert rules are stored per user in Supabase (create the table once with `docs/sql/stock_alerts.sql`)
+Alert rules are stored per user in Supabase (create the table once with `sql/supabase/stock_alerts.sql`)
 and evaluated in-app on every load. The Watchlist tab flags ideas whose invalidation level, take
 profit, entry zone or intrinsic value has been reached, and holdings/ideas reporting soon.
 
@@ -266,7 +266,7 @@ To run the dashboard on the web (e.g., Streamlit Cloud) without pushing the data
 
 ### Step 5. Scheduling
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\register_daily_etl.ps1     # Windows, Mon–Sat 07:00
+powershell -ExecutionPolicy Bypass -File .\scripts\windows\register_daily_etl.ps1     # Windows, Mon–Sat 07:00
 ```
 or `docker compose run --rm pipeline` from cron. Failures are alerted (see *ETL reliability*).
 
@@ -275,40 +275,29 @@ or `docker compose run --rm pipeline` from cron. Failures are alerted (see *ETL 
 ## 📂 7. Directory Structure
 ```text
 stock_etl_pipeline/
-│
-├── etl/                   # Data extraction, normalization, and Quant Engine functions
-│   ├── extract.py         # ThreadPool API scrapers (yfinance)
-│   ├── transform.py       # DuckDB Star Schema generation 
-│   ├── load.py            # Local warehouse persistor
-│   └── utils.py           # Watermarks, refresh rules, upside cleaning, email report (scores live in core/scoring.py)
-│
-├── core/                  # Pure analytics — no Streamlit, unit-testable
-│   ├── indicators.py      # Wilder RSI (shared by ETL + dashboard)
-│   ├── smart_money.py     # Institutional flow engine
-│   ├── rating.py          # 6-pillar institutional rating
-│   ├── levels.py          # Swing support/resistance, tactical trade metrics
-│   ├── backtest.py        # Strategy Lab simulator
-│   └── symbols.py         # Yahoo → TradingView symbol mapping
-│
-├── services/              # I/O: warehouse, live market data, AI, user store
-│   ├── db.py              # get_db_connection (local / parquet cache / S3), load_data
-│   ├── market_data.py     # Macro, FX, dividend calendar (with DB fallbacks)
-│   ├── screener.py        # Master screener table
-│   ├── ai.py              # Cohere narratives, FinBERT sentiment
-│   └── user_store.py      # Watchlist / portfolio persistence (Supabase)
-│
-├── ui/                    # Theme CSS, icons, metric tiles
-├── views/                 # One module per dashboard tab: render(ctx)
-│
-├── warehouse/             # Local database location
-│   └── stock_dw.duckdb    # Compiled Analytics Database
-│
-├── tests/                 # pytest suite (+ synthetic_warehouse.py, app smoke tests)
 ├── app.py                 # Dashboard shell: auth, data load, sidebar, KPI header, tab routing
-├── auth.py                # Supabase login + signed session cookie
-├── run.py                 # Pipeline trigger entry point
-├── requirements.txt       # Python dependencies
-└── README.md              # Documentation
+├── run.py                 # ETL entry point (also --only-sync, --promote, --test-alert, --check-tickers)
+│
+├── etl/                   # Extract → load → transform, release gates, DQ, reconciliation, security master
+├── core/                  # Pure analytics (no Streamlit): scoring, valuation, decision, risk, stress, factor tests
+├── services/              # I/O: warehouse access, market data, AI, auth, per-user store
+├── ui/                    # Theme, icons, shared panels (Decision Summary, data-confidence badges)
+├── views/                 # One module per dashboard tab: render(ctx); stock_analysis/ = one module per section
+├── config/                # tickers.yaml, etl_config.yaml, decision_rules.yaml, scoring_rules.yaml
+├── tests/                 # pytest suite (+ synthetic_warehouse.py, AppTest smoke tests)
+│
+├── scripts/
+│   ├── windows/           # register_daily_etl.ps1 (Task Scheduler), start_dashboard.ps1, run_fast_etl.ps1, …
+│   └── tools/             # one-off CLIs: insider data, TradingView discovery, ML walk-forward study
+├── sql/supabase/          # tables / functions to create once in Supabase (user rows, alerts, trade ledger)
+├── infra/terraform/       # cloud storage for the published warehouse snapshots
+├── docs/                  # guides (en / vi / de), data dictionary, setup/; archive/ = historical status notes
+├── audit/                 # reports/ (independent audits), reviews/ (review inputs), fixes/ (what was fixed), repro/
+├── warehouse/             # local DuckDB files (git-ignored)
+│
+├── requirements.txt       # direct dependencies · requirements.lock = exact tested versions (CI, Docker)
+├── Dockerfile, docker-compose.yml, .devcontainer/, .github/workflows/
+└── pytest.ini
 ```
 
 `app.py` loads the data and computes the shared state (scores, regime, KPIs), then calls
@@ -328,7 +317,7 @@ minor unit (GBp = GBP/100) but company-level amounts are always in the major uni
 rate leaves the value empty instead of storing it unconverted. Annual/quarterly FCF is stored in
 EUR. After upgrading, run one full refresh (`python run.py --full`) so older rows are re-converted.
 
-**Daily schedule** (needed for the Track Record): `powershell -ExecutionPolicy Bypass -File .\register_daily_etl.ps1`
+**Daily schedule** (needed for the Track Record): `powershell -ExecutionPolicy Bypass -File .\scripts\windows\register_daily_etl.ps1`
 registers a Windows task (Mon–Sat 07:00, never overlapping) that runs `run.py` and logs to `logs/scheduled_etl.log`.
 
 ### ETL reliability

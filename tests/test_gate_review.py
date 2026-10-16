@@ -11,10 +11,18 @@ from etl import extract as ex
 TODAY = date(2026, 10, 14)
 
 
+def _gated_rules():
+    """The evidence gate ON, whatever config/decision_rules.yaml currently says (the owner may switch it off)."""
+    rules = decision.load_rules()
+    rules["evidence"] = {"require_validated_evidence_for_buy": True}
+    return rules
+
+
 def _d(**kw):
     base = dict(price=100, base_value=150, bear_value=90, bull_value=200, stop_loss=92, currency="EUR",
                 quality_score=70, coverage_pct=90, market_cap_eur=30e9, track_record_ok=True, today=TODAY,
-                price_date=TODAY, fundamentals_date=TODAY, statement_date=date(2025, 12, 31), adv_eur=50e6)
+                price_date=TODAY, fundamentals_date=TODAY, statement_date=date(2025, 12, 31), adv_eur=50e6,
+                rules=_gated_rules())
     base.update(kw)
     return decision.build_decision(**base)
 

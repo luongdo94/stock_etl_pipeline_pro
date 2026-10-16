@@ -24,7 +24,7 @@ try:  # .env (COHERE_API_KEY, ...) — optional
 except ImportError:
     pass
 
-import auth
+from services import auth
 from core import market_regime as mr
 from etl.utils import clean_upside_pct
 from services.db import DB_PATH, load_data, track_record_ok

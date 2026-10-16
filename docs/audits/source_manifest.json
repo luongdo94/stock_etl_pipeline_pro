@@ -1,0 +1,155 @@
+{
+  "auditDate": "2026-10-15",
+  "head": "19f4e812c2199ce9b5cf4b3f4039024462e50530",
+  "scope": "Hashes of finding-support source files captured at audit handoff; not a start-to-end no-change proof or a clean-tree claim.",
+  "files": {
+    ".dockerignore": {
+      "sha256": "d58bed0e8f579927852b2fc1d089a4dbca483623273f6f84c28aac007fa915bb",
+      "lines": 41
+    },
+    ".github/workflows/tests.yml": {
+      "sha256": "b4fa0720dd81226caf2d1db1e2f35d8a47e0481a1da817b5d67a30e53cb09526",
+      "lines": 20
+    },
+    "Dockerfile": {
+      "sha256": "4a7d011f85eeb978db6e8d590c2a1449d98c1062ae7745cc15f3783c8cb5806a",
+      "lines": 27
+    },
+    "app.py": {
+      "sha256": "3a6fcb9b835bc6420fa7d87f6a15da9c24442d9cfbd81e6174e3662e9f98b0a2",
+      "lines": 220
+    },
+    "core/backtest.py": {
+      "sha256": "4aa79cc4e9ce5489677c97caa5df8eead23bfc726a9b88cb664b80187b6157f5",
+      "lines": 148
+    },
+    "core/decision.py": {
+      "sha256": "6603918904aaa188c9ae9c517cea16c2d7ec78c1ca7afeccc4c64a65e16c1dfe",
+      "lines": 460
+    },
+    "core/factor_test.py": {
+      "sha256": "e1728e3fc189add2fcb73531a47e4fa4dcc872d67a6fc23894ad530aa0178854",
+      "lines": 245
+    },
+    "core/ledger.py": {
+      "sha256": "2a17af371e34b357a6b8377fc77f7bae614c45d3e48fdb693c4c0c35a2da0986",
+      "lines": 72
+    },
+    "core/pit.py": {
+      "sha256": "37451f0cdd188e42b8c6c5dbca5350a02cb298a5b0b417503942ccd78e72b794",
+      "lines": 24
+    },
+    "core/scoring.py": {
+      "sha256": "e503fc1f660926369ac59e72fdb56f48f2caea8d268975e64c1f388b2ea302bc",
+      "lines": 598
+    },
+    "core/track_record.py": {
+      "sha256": "0c68c96cc59133c8faa09f200aa901d9d43c52c48167c2836f16fb40eae1173e",
+      "lines": 273
+    },
+    "core/valuation.py": {
+      "sha256": "a0cf5880c548a755d6dd4a29e7f67bde568cbdefc11f45387cabdab63c2be5f3",
+      "lines": 890
+    },
+    "docker-compose.yml": {
+      "sha256": "154098278f0b730b5f707333addaab597a9c385453b5a0e5953164ded996d468",
+      "lines": 21
+    },
+    "etl/extract.py": {
+      "sha256": "a0ab9e603ec36cb3b167dd95836c26ea18c81abef1ea749e739fead1b3884e13",
+      "lines": 1871
+    },
+    "etl/gates.py": {
+      "sha256": "9b8fe4f3585528ddfa22140116c45db2102dfbe18fdbdc69c4489552625dec4c",
+      "lines": 206
+    },
+    "etl/lifecycle.py": {
+      "sha256": "c1a6f1503b400d9a84c80048a8c2c55b80de91049ae237a4a93392a37ce3ce76",
+      "lines": 87
+    },
+    "etl/load.py": {
+      "sha256": "b2c444d4cd1121014d63351aea0077fe0b130371917a7c285ca0334d6d9bbdb0",
+      "lines": 1015
+    },
+    "etl/pipeline.py": {
+      "sha256": "fe461d88033d769081fffc15a5c45de30a3b0eda616c41d131e4105a91ecf34c",
+      "lines": 640
+    },
+    "etl/pit.py": {
+      "sha256": "95a05e1c323ec22deb25512480d419bf376646479e11d5604c2ecfdbf5d7d8a2",
+      "lines": 64
+    },
+    "etl/security_master.py": {
+      "sha256": "dfd363de3f8c1d1f8e1c4922cfd689a4a90c0db967b7aac076bf3b86b3c03521",
+      "lines": 192
+    },
+    "etl/snapshot.py": {
+      "sha256": "994c7925d948fe2137c404c77c249a7c22ce50de20559e4142ab5df5765ed643",
+      "lines": 248
+    },
+    "etl/supabase_manager.py": {
+      "sha256": "9578eb06ab92d67b59438bd887ac4d1592fcf894ff42f4902640b8b44093c450",
+      "lines": 236
+    },
+    "etl/transform.py": {
+      "sha256": "1bfdd181e9aab489480c04d80a5cf7e276577b5388f6f36f44767409a346e4f6",
+      "lines": 753
+    },
+    "etl/universe.py": {
+      "sha256": "7746349e32e373c1df0f0cbb14ec737ccf4238b3fd7f3168c2874a2db13a9848",
+      "lines": 146
+    },
+    "services/db.py": {
+      "sha256": "0f2716459f7145ccb3e3f402446be3a8be1c5e8dacc3cee3a85a76c5625bfd30",
+      "lines": 582
+    },
+    "services/local_store.py": {
+      "sha256": "5787a9a2cc5a3c40b0d40603b7d3fa292c2ed29846102fd1f6beb1eff14ce0b7",
+      "lines": 69
+    },
+    "services/market_data.py": {
+      "sha256": "e990b7e579e628db5c975daac5266a87dcb4ec9b12b4a90503228406fd996b2c",
+      "lines": 275
+    },
+    "services/screener.py": {
+      "sha256": "db4230d20c6cfcc7f83846843fc599f1ab123ac331e1b146805d606ed4cf55fc",
+      "lines": 67
+    },
+    "services/user_store.py": {
+      "sha256": "70f7371d08c1ca19c8d5f43cb0b15970266983238f0801ffc262f99eae288317",
+      "lines": 305
+    },
+    "tests/test_app_smoke.py": {
+      "sha256": "7be213b34deb5f56dcc4724857abfdeb3bf2b2ecebd2e484e43a6c14b7688a44",
+      "lines": 171
+    },
+    "tests/test_insider_trading.py": {
+      "sha256": "32bb8a3b2640839984fdb44b4ec9b690f43bd788b2870d764f96434c38f57f6b",
+      "lines": 91
+    },
+    "ui/decision_panel.py": {
+      "sha256": "392efa110ecd70c7fb7f4306047e4f86cb02f277bc2196af95ce9278ecde46ae",
+      "lines": 358
+    },
+    "ui/sidebar.py": {
+      "sha256": "b1e49b31df4213c38c83a47da9df1526c6f49b55a39f1f8e429234a9717c75ee",
+      "lines": 155
+    },
+    "views/data_health.py": {
+      "sha256": "b41bdaea7a7d5baf8ae65272895cf91cc7a6482044774586624db224c16ddb8b",
+      "lines": 148
+    },
+    "views/portfolio.py": {
+      "sha256": "fb437294c9b3e3056eae089d0e57a1f13fe7820f62d59494d8a53e95a4bbf929",
+      "lines": 1655
+    },
+    "views/stock_analysis/watchlist_save.py": {
+      "sha256": "e4db5e959d2b48adea734599a711fdb7ac1437e43b907afb9ece10cbf2b93297",
+      "lines": 65
+    },
+    "views/track_record.py": {
+      "sha256": "53d411179e1919b0de4593c0e80d5f5132d1146f6927c5bfced26719d5329659",
+      "lines": 152
+    }
+  }
+}

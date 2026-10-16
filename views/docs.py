@@ -53,7 +53,7 @@ def render(ctx):
         st.markdown("### ⚠️ 2. Point-in-time limits (read this)")
         st.warning("""
         - **Fundamentals are a current snapshot**, not a history as of each past date. Anything that
-          combines today's fundamentals with past prices (e.g. the *Institutional Quality* backtest rule)
+          combines today's fundamentals with past prices (e.g. the *Static Quality demo* backtest rule)
           has look-ahead bias — it is flagged and never ranked.
         - **Survivorship bias**: the universe is today's ticker list plus currently discovered names;
           companies that dropped out are not in the history.

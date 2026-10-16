@@ -210,12 +210,15 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
         _nde = _met.get("net_debt_ebitda")
         roic_pct = _met.get("roic_pct") if _met.get("roic_is_roic") else None
         _ins = insider_activity(row)
+        # reverse DCF: the starting FCF growth the price assumes (DCF only; the bank model has no growth to invert)
+        _implied = _vin.get("implied_growth") if _vin.get("model") == "dcf" and (_vin.get("fcfe") or 0) > 0 else None
+        _exp_irr = (_vin.get("irr") or {}).get("expected") if _vin.get("reliable") else None
 
         # Cash-flow and leverage ratios are meaningless for banks/insurers (deposits, float)
         if uses_book_model(row, _hist_fcf, ticker):
             fcf_margin, debt_ebitda = float("nan"), float("nan")
             roic_pct, _nde = None, None
-            _met = {**_met, "fcf_conversion": None, "net_debt_ebitda": None, "roic_pct": None}
+            _met = {**_met, "fcf_conversion": None, "net_debt_ebitda": None, "roic_pct": None, "fcf_yield_pct": None}
 
         screener_rows.append({
             "Ticker": ticker,
@@ -264,6 +267,15 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
             "Net Debt/EBITDA": round(_nde, 2) if _nde is not None and _nde < 99 else float("nan"),
             "FCF Conversion (x)": round(_met["fcf_conversion"], 2) if _met.get("fcf_conversion") is not None else float("nan"),
             "Insider 6M (%)": round(_ins["net_pct"], 2) if _ins["net_pct"] is not None else float("nan"),
+            # valuation every reader can compare: what the price yields, and what growth it already assumes
+            "FCF Yield (%)": round(_met["fcf_yield_pct"], 1) if _met.get("fcf_yield_pct") is not None else float("nan"),
+            "Implied Growth (%)": round(_implied * 100, 1) if _implied is not None else float("nan"),
+            # same basis on both sides: the model's history-anchored starting FCF growth vs the starting FCF growth the
+            # price implies, in the same DCF (it used to subtract FCF growth from a REVENUE CAGR)
+            "Growth Gap (pp)": (round((_vin["growth"] - _implied) * 100, 1)
+                                if _implied is not None and _vin.get("growth") is not None else float("nan")),
+            "Exp. Return (%/yr)": round(_exp_irr * 100, 1) if _exp_irr is not None else float("nan"),
+            "Next ER (days)": (_next_er[ticker] - pd.Timestamp.today().date()).days if ticker in _next_er else float("nan"),
             "_metrics": _met,
             "_insider": _ins,
             "Vol 30D (%)": round(vol_30d, 1) if vol_30d else 0,

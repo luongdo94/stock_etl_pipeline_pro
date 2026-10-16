@@ -1,4 +1,4 @@
-"""Acceptance tests for the ETL review E1–E9 (codex_output.md, 2026-10-15)."""
+"""Acceptance tests for the ETL review E1–E9 (audit/reviews/ETL_REVIEW_2026-10-15.md, 2026-10-15)."""
 from datetime import date
 from unittest.mock import Mock, patch
 

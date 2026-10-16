@@ -71,8 +71,11 @@ def move_history(conn, table: str, cols: list, old: str, new: str) -> int:
         if dcol is None:                                   # one row per ticker (company info, payout): keep the new one
             conn.execute(f"DELETE FROM {table} WHERE ticker = ?", [old])
             return 0
-        conn.execute(f"""DELETE FROM {table} WHERE ticker = ? AND {dcol} >=
-                         (SELECT MIN({dcol}) FROM {table} WHERE ticker = ?)""", [old, new])
+        # audit F15: an anti-join on the date, not "everything from the new symbol's first date" (old Jan 3 between
+        # new Jan 2 and Jan 4 used to be deleted)
+        key = f"({dcol}, quarter)" if dcol == "year" and "quarter" in cols else dcol      # quarterly tables: both
+        conn.execute(f"""DELETE FROM {table} WHERE ticker = ? AND {key} IN
+                         (SELECT {key} FROM {table} WHERE ticker = ?)""", [old, new])
     # INSERT + DELETE rather than UPDATE: works for any primary key / index on ticker
     conn.execute(f"INSERT INTO {table} SELECT * REPLACE (CAST(? AS VARCHAR) AS ticker) FROM {table} WHERE ticker = ?",
                  [new, old])

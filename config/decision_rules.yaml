@@ -40,7 +40,10 @@ portfolio:
 evidence:
   # BUY (with a size) only once the Track Record shows the signals predict forward returns. Until then a stock that
   # passes every other gate is a RESEARCH CANDIDATE with no size. Setting false restores sized BUYs on unvalidated signals.
-  require_validated_evidence_for_buy: true
+  # 2026-10-16: set to false by the owner's decision — sized BUYs are shown before the Track Record validates the
+  # signals (it needs ~6 independent 12-month periods). Every other BUY gate still applies; the Decision Summary keeps
+  # the "not yet validated" note and confidence is capped at MEDIUM. Set back to true to require the evidence.
+  require_validated_evidence_for_buy: false
 
 liquidity:
   min_adv_eur_for_buy: 2000000    # median daily traded value (60 sessions) below this — or unknown — blocks a BUY
@@ -82,6 +85,12 @@ valuation:
   max_statement_age_days: 550   # latest annual statement period older than this — or unknown — blocks a BUY (A05, R2-06)
   # Fail-closed valuation switches (unknown is not zero). With true, the value is still shown but cannot drive BUY/AVOID:
   require_verified_fcfe_deductions: true   # 3 consecutive years; SBC, interest paid in financing AND lease principal
+  # When a deduction is reported NOWHERE (Yahoo cash flow, SEC XBRL) and no accounting rule settles it, an explicit
+  # assumption may stand in — US GAAP finance-lease principal = 0, SBC = 0 outside the sectors below — always written
+  # on the Decision as "ASSUMED …" and counted against confidence. false = such stocks stay "not reliable".
+  allow_assumed_fcfe_deductions: true
+  sbc_material_sector_keywords: [software, saas, semiconductor, internet, ecommerce, e-commerce, social, biotech,
+                                 platform, cyber, cloud, fintech, gaming, interactive, it services]
                                            # each reported (0 counts) or recorded as not applicable below, every year
   # Interest paid known only as a supplemental amount (classification unknown): deduct it as if it were in financing.
   # Conservative — it can only lower the value (double-counts when it is already inside operating cash flow).

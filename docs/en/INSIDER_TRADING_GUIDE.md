@@ -319,7 +319,7 @@ Never rely on insider data alone. Use in conjunction with:
 
 - **Daily (Fast Mode)**: Skip insider data (too slow)
 - **Weekly (Full Mode - Mondays)**: Extract insider summary for US stocks
-- **Manual**: Run `python3 load_insider_data.py` for immediate update
+- **Manual**: Run `python3 scripts/tools/load_insider_data.py` for immediate update
 
 ### Coverage
 
@@ -349,7 +349,7 @@ Never rely on insider data alone. Use in conjunction with:
 
 ```bash
 # 1. Load insider data
-python3 load_insider_data.py
+python3 scripts/tools/load_insider_data.py
 
 # 2. Run transform to update dim_companies
 python3 run.py --fast

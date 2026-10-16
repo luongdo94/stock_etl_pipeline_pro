@@ -2,14 +2,22 @@
 import pandas as pd
 import streamlit as st
 
-import auth
+from services import auth
 from services import local_store
 
 
 def load_watchlist():
+    """The user's watchlist. A failed read returns an empty frame AND sets watchlist_load_failed, so save_watchlist —
+    which replaces the whole list — refuses to run until a reload reads it (audit F21)."""
     cols = ["Ticker", "Status", "Thesis", "Catalyst", "Entry Target", "Invalidation Level", "Take Profit", "Next Earnings", "Added Date"]
+    st.session_state["watchlist_load_failed"] = False
     if auth.local_dev_mode():
-        records = local_store.load_watchlist_records()
+        try:
+            records = local_store.load_watchlist_records()
+        except local_store.LocalStoreError as e:
+            st.session_state["watchlist_load_failed"] = True
+            st.sidebar.error(f"⚠️ Watchlist not readable: {e}")
+            return pd.DataFrame(columns=cols)
         return pd.DataFrame(records, columns=cols) if records else pd.DataFrame(columns=cols)
     if not st.session_state.get("authenticated") or not st.session_state.get("user_id"):
         return pd.DataFrame(columns=cols)
@@ -39,6 +47,7 @@ def load_watchlist():
         
         return df[cols]
     except Exception as e:
+        st.session_state["watchlist_load_failed"] = True
         st.sidebar.error(f"⚠️ Data Sync Error (Supabase Load): {e}")
         return pd.DataFrame(columns=cols)
 
@@ -53,7 +62,7 @@ def _rpc_missing(err: Exception) -> bool:
 
 
 def _replace_user_rows(supabase, table: str, user_id, records: list) -> None:
-    """Replace a user's rows in ONE server-side transaction (docs/sql/replace_user_rows.sql) — fail closed (R2-04).
+    """Replace a user's rows in ONE server-side transaction (sql/supabase/replace_user_rows.sql) — fail closed (R2-04).
     There is no client-side delete/insert fallback any more: two separate requests can always leave the user with
     nothing. If the function is missing nothing was written; on any other error the outcome is unknown."""
     try:
@@ -61,11 +70,14 @@ def _replace_user_rows(supabase, table: str, user_id, records: list) -> None:
     except Exception as e:
         if _rpc_missing(e):
             raise UserDataSaveError("Not saved: the database function replace_user_rows is not installed "
-                                    "(docs/sql/replace_user_rows.sql). Nothing was changed.") from e
+                                    "(sql/supabase/replace_user_rows.sql). Nothing was changed.") from e
         raise UserDataSaveError(f"Save status unknown ({e}). Reload to check what is stored before editing again.") from e
 
 
 def save_watchlist(df):
+    if st.session_state.get("watchlist_load_failed"):
+        raise UserDataSaveError("Not saved: the stored watchlist could not be read, so replacing it would lose it. "
+                                "Reload and check what is stored first.")
     if auth.local_dev_mode():
         local_store.save_watchlist_records(df.astype(object).where(df.notna(), None).to_dict("records"))
         return
@@ -179,7 +191,12 @@ def load_portfolio_from_db():
 
 def _load_portfolio_raw():
     if auth.local_dev_mode():
-        return local_store.load_portfolio()
+        try:
+            return local_store.load_portfolio()
+        except local_store.LocalStoreError as e:                  # corrupt file: unknown, not empty (audit F23)
+            st.session_state["portfolio_load_failed"] = True
+            st.sidebar.error(f"⚠️ Portfolio not readable: {e}")
+            return {}
     if not st.session_state.get("authenticated") or not st.session_state.get("user_id"):
         return {}
     try:
@@ -266,7 +283,11 @@ def load_trades() -> pd.DataFrame:
     """The user's trade ledger, oldest first (core.ledger.COLUMNS)."""
     from core.ledger import COLUMNS
     if auth.local_dev_mode():
-        rows = local_store.load_trades()
+        try:
+            rows = local_store.load_trades()
+        except local_store.LocalStoreError as e:
+            st.session_state["trades_load_error"] = str(e)
+            rows = []
     elif not st.session_state.get("authenticated") or not st.session_state.get("user_id"):
         rows = []
     else:
@@ -299,6 +320,6 @@ def append_trades(rows: list) -> tuple:
         supabase.table("portfolio_trades").insert([{**r, "user_id": uid} for r in rows]).execute()
         return True, "recorded"
     except Exception as e:
-        hint = (" — create the table with docs/sql/portfolio_trades.sql" if "portfolio_trades" in str(e)
+        hint = (" — create the table with sql/supabase/portfolio_trades.sql" if "portfolio_trades" in str(e)
                 and ("does not exist" in str(e) or "PGRST205" in str(e) or "schema cache" in str(e)) else "")
         return False, f"ledger not written ({e}){hint}"

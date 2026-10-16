@@ -7,8 +7,8 @@ the GJR variance recursion along every path, tail-risk figures, and a calibratio
 what actually happened.
 
 History: this replaced the neural price forecasts of the former ML Predictor tab (archived at the git tag
-`archive/ml-neural-lab`). On 12 real stocks / 36 walk-forward windows none of LSTM, Transformer, PatchTST or ARIMA beat a
-no-change forecast (utils/ml_walkforward.py). The risk range is the part with a theory behind it, and it is validated here.
+commit `06b9bf9`). On 12 real stocks / 36 walk-forward windows none of LSTM, Transformer, PatchTST or ARIMA beat a
+no-change forecast (scripts/tools/ml_walkforward.py). The risk range is the part with a theory behind it, and it is validated here.
 
 Bugs fixed on the way (found in the audit): the arch library's rescale factor (x100) was used as a decimal volatility and then
 pinned at 4x the real level, so every band was 4x too wide.
@@ -228,7 +228,7 @@ def calibration_verdict(cov: dict, tolerance: float = 0.15) -> str:
 # ── helper kept for the research script ──────────────────────────────────────────────────────
 def skill_vs_naive(actual: np.ndarray, predicted: np.ndarray, last_price: float) -> dict:
     """Error of a price-path forecast next to 'the price stays where it is' (RMSE, final-price error, direction hit).
-    skill = 1 - model_rmse / naive_rmse; > 0 means better than no change. Used by utils/ml_walkforward.py."""
+    skill = 1 - model_rmse / naive_rmse; > 0 means better than no change. Used by scripts/tools/ml_walkforward.py."""
     a, p = np.asarray(actual, dtype=float), np.asarray(predicted, dtype=float)
     m = min(len(a), len(p))
     a, p = a[:m], p[:m]

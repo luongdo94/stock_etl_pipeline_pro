@@ -4,6 +4,10 @@ paid but intraday triggers are not modelled), no point-in-time fundamentals, no 
 import numpy as np
 import pandas as pd
 
+# The "quality" rule reads TODAY's score on every past bar: a timing demonstration with lookahead, never evidence that
+# fundamentals predict returns (audit F31). The label says so wherever the result is shown or exported.
+STATIC_QUALITY = "Static Quality demo"
+
 
 # ── STRATEGY ENGINE ──────────────────────────────────────────────────────────
 def run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct, tx_cost_pct, initial_capital, reco_df):
@@ -19,7 +23,12 @@ def run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct,
 
     prices_arr  = bt_prices["price_close"].values
     # A single NaN return would turn the whole cumprod equity curve into NaN
-    returns_arr = np.nan_to_num(bt_prices["daily_return_pct"].values.astype(float) / 100)
+    raw_rets = bt_prices["daily_return_pct"].values.astype(float) / 100
+    # A gap inside the history is unknown, not 0% (audit F31): it is still filled so the curve can be drawn, but the
+    # result carries the count and the view refuses to treat such a run as a clean performance record
+    _first = int(np.argmax(~np.isnan(raw_rets))) if (~np.isnan(raw_rets)).any() else len(raw_rets)
+    missing_returns = int(np.isnan(raw_rets[_first + 1:]).sum()) if _first < len(raw_rets) else 0
+    returns_arr = np.nan_to_num(raw_rets)
     dates_arr   = bt_prices["date"].values
     
     # Fetch indicators
@@ -72,7 +81,7 @@ def run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct,
                     if rsi_arr[i] > 70: exit_signal = True; exit_reason = "RSI Overbought"
                 elif "Z-Score" in strategy_type:
                     if z_scores[i] > 0.5: exit_signal = True; exit_reason = "Z-Score > 0.5"
-                elif "Institutional Quality" in strategy_type:
+                elif STATIC_QUALITY in strategy_type:
                     if static_score < 60 or ma20_arr[i] < ma50_arr[i]: exit_signal = True; exit_reason = "Quality Degraded/Trend Change"
                 elif "Buy on Dip" in strategy_type or "Multi-Indicator Breakout" in strategy_type:
                     if current_price < ma50_arr[i]: exit_signal = True; exit_reason = "Price < MA50"
@@ -95,7 +104,7 @@ def run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct,
                 if rsi_arr[i] < 30 and rsi_arr[i-1] >= 30: entry_signal = True; entry_reason = "RSI Oversold"
             elif "Z-Score" in strategy_type:
                 if z_scores[i] < -2.0 and z_scores[i-1] >= -2.0: entry_signal = True; entry_reason = "Z-Score < -2.0"
-            elif "Institutional Quality" in strategy_type:
+            elif STATIC_QUALITY in strategy_type:
                 if static_score >= 75 and ma20_arr[i] > ma50_arr[i]: entry_signal = True; entry_reason = "High Quality + Trend"
             elif "Buy on Dip" in strategy_type:
                 if ma20_arr[i] > ma50_arr[i] and rsi_arr[i] < 40 and rsi_arr[i-1] >= 40: entry_signal = True; entry_reason = "Uptrend + RSI Dip"
@@ -140,7 +149,7 @@ def run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct,
         "ticker": bt_ticker, "strategy": strategy_type,
         # static_score is TODAY's quality score applied to every past bar → lookahead bias.
         # Such results are shown for reference but never crowned the winner.
-        "lookahead": "Institutional Quality" in strategy_type,
+        "lookahead": STATIC_QUALITY in strategy_type, "missing_returns": missing_returns,
         "total_return": total_return, "bnh_return": bnh_return, "sharpe": sharpe, "max_dd": max_dd,
         "win_rate": win_rate, "n_trades": n_trades, "dates_arr": dates_arr, "equity_curve": equity_curve,
         "bnh_curve": bnh_curve, "trade_log": trade_log

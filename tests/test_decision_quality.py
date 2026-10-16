@@ -88,9 +88,10 @@ def test_evidence_needs_the_factor_adjusted_premium_too(monkeypatch):
                    + [pd.DataFrame({"date": days, "ticker": "SPY", "price_close": 100.0 + np.arange(len(days)) * 0.01})])
     snaps = pd.DataFrame([(d, t, i) for d in days[:-260] for i, t in enumerate(tick)],
                          columns=["as_of_date", "ticker", "quality"])
-    monkeypatch.setattr(ft, "fama_macbeth", lambda *a, **k: {"premium": 1.0, "t_stat": 3.0})
+    monkeypatch.setattr(ft, "fama_macbeth", lambda *a, **k: {"premium": 1.0, "t_stat": 3.0, "n_independent": 6})
+    monkeypatch.setattr(ft, "quintile_net_of_costs", lambda *a, **k: {"net_pct": 0.5})
     assert tr.evidence_status(snaps, px)["ok"] is True                      # higher score → higher return, by design
-    monkeypatch.setattr(ft, "fama_macbeth", lambda *a, **k: {"premium": 0.1, "t_stat": 0.5})
+    monkeypatch.setattr(ft, "fama_macbeth", lambda *a, **k: {"premium": 0.1, "t_stat": 0.5, "n_independent": 6})
     res = tr.evidence_status(snaps, px)
     assert res["ok"] is False and "factor-adjusted premium" in res["label"]
 

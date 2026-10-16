@@ -71,6 +71,22 @@ def to_date(x) -> Optional[date]:
         return None
 
 
+def fundamentals_as_of(meta) -> Optional[date]:
+    """Age of the fundamentals the Decision uses = the OLDEST of the row's extraction date and every field kept from an
+    earlier extraction (raw.company_info.stale_fields). Audit F01: a refresh that kept last week's revenue stamped the
+    whole row with today's date, so stale inputs passed the freshness gate."""
+    row = to_date(meta.get("info_updated_at")) if hasattr(meta, "get") else None
+    raw = meta.get("stale_fields") if hasattr(meta, "get") else None
+    kept = []
+    for part in str(raw or "").replace(",", ";").split(";"):
+        if "@" in part:
+            d = to_date(part.split("@", 1)[1].strip())
+            if d:
+                kept.append(d)
+    dates = [d for d in [row] + kept if d]
+    return min(dates) if dates else None
+
+
 def round_trip_cost_pct(currency: Optional[str], rules: dict) -> float:
     """Commission in + out, plus FX spread in + out when the stock trades in a foreign currency."""
     c = rules["costs"]
@@ -166,7 +182,7 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
                    coverage_pct: Optional[float] = None, market_cap_eur: Optional[float] = None,
                    expected_value: Optional[float] = None, scenario_irr: Optional[dict] = None,
                    statement_date: Optional[date] = None, momentum_score: Optional[float] = None,
-                   adv_eur: Optional[float] = None,
+                   adv_eur: Optional[float] = None, estimated_inputs: tuple = (), assumed_inputs: tuple = (),
                    today: Optional[date] = None, rules: Optional[dict] = None) -> Decision:
     rules = rules or load_rules()
     today = today or date.today()
@@ -180,7 +196,10 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
 
     exp_ret = (usable_value / price - 1) if usable_value and price else None
     round_trip = round_trip_cost_pct(currency, rules)
-    costs = round_trip + dividend_tax_drag_pct(dividend_yield_pct, country, rules)
+    # Audit F30: the value gap is earned over the thesis horizon, and withholding is lost on every year's dividends in
+    # that horizon — one year's drag against a multi-year gap understated the tax cost of high-yield names
+    horizon_years = float((rules.get("valuation") or {}).get("horizon_years", 4) or 4)
+    costs = round_trip + dividend_tax_drag_pct(dividend_yield_pct, country, rules) * horizon_years
     _wht = rules["costs"]["dividend_withholding"]
     wht_rate = float(_wht.get(country or "", _wht.get("default", 0.15)))
     net_ret = exp_ret - costs if exp_ret is not None else None
@@ -208,6 +227,13 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
         notes.append("Intrinsic value is not informative for this stock (see valuation note).")
     if missing_metrics:
         notes.append(f"Missing inputs: {', '.join(missing_metrics)}.")
+    if estimated_inputs and base_value and valuation_reliable:
+        # audit F12: an estimate is not a reconciled fact — the value stays usable but counts as a weakness
+        notes.append(f"Cash-flow deduction(s) estimated, not reported: {', '.join(estimated_inputs)} — the value is a "
+                     f"model estimate, not reconciled to the cash-flow statement.")
+    if assumed_inputs and base_value and valuation_reliable:
+        # data not reported anywhere: an explicit assumption, named and counted (owner's rule: relax only with a note)
+        notes.append(f"ASSUMED (not reported by Yahoo or SEC): {'; '.join(assumed_inputs)}.")
     if bear_value and base_value and bear_value > 0 and base_value / bear_value > 2.5:
         notes.append("Valuation highly sensitive to assumptions (bull/bear spread wide).")
     if price_date and (today - price_date).days > rules["valuation"]["stale_price_days"]:
@@ -433,6 +459,10 @@ def with_conflict(d: Decision, conflict: str) -> Decision:
                    position={"size_pct": 0.0, "stop_distance_pct": None, "capped": False, "binding": None})
 
 
+_DEDUCTION_NAMES = {"stock_based_comp": "stock-based compensation", "interest_paid_cff": "interest paid",
+                    "lease_principal_paid": "lease principal"}
+
+
 def decide(*, price: float, vin: dict, stop_loss: Optional[float], meta, scores: Optional[dict] = None,
            price_date: Optional[date] = None, next_earnings: Optional[date] = None,
            track_record_ok: bool = False, rules: Optional[dict] = None) -> Decision:
@@ -450,10 +480,15 @@ def decide(*, price: float, vin: dict, stop_loss: Optional[float], meta, scores:
         price=float(price), base_value=vin["base"], bear_value=vin["bear"], bull_value=vin["bull"], stop_loss=stop_loss,
         currency=meta.get("currency"), country=meta.get("country"),
         dividend_yield_pct=_finite(meta.get("dividend_yield_pct")), missing_metrics=tuple(sc.get("missing") or ()),
-        price_date=price_date, fundamentals_date=to_date(meta.get("info_updated_at")), next_earnings=next_earnings,
+        price_date=price_date, fundamentals_date=fundamentals_as_of(meta), next_earnings=next_earnings,
         track_record_ok=track_record_ok, quality_score=sc.get("quality"), valuation_reliable=vin["reliable"],
         valuation_note=vin["note"], value_score=sc.get("value"), risk_flags=sc.get("flags") or "",
         coverage_pct=sc.get("coverage"), market_cap_eur=_finite(meta.get("market_cap")),
         expected_value=vin.get("expected_value"), scenario_irr=vin.get("irr"),
         statement_date=to_date(meta.get("latest_statement_date")), momentum_score=_finite(sc.get("momentum")),
-        adv_eur=_finite(sc.get("adv_eur")), rules=rules)
+        adv_eur=_finite(sc.get("adv_eur")),
+        estimated_inputs=tuple(_DEDUCTION_NAMES.get(k, k) for k, s in (vin.get("fcfe_deduction_status") or {}).items()
+                               if s == "ESTIMATED"),
+        assumed_inputs=tuple(f"{_DEDUCTION_NAMES.get(k, k)} = 0 — {(vin.get('fcfe_deduction_sources') or {}).get(k) or 'assumed'}"
+                             for k, s in (vin.get("fcfe_deduction_status") or {}).items() if s == "ASSUMED"),
+        rules=rules)

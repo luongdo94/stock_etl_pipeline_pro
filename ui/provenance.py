@@ -23,14 +23,9 @@ def _first(df: pd.DataFrame, col: str):
 
 def stale_fields(prov: dict) -> list:
     """[(label, as_of)] of company fields kept from an earlier extraction (the provider returned nothing)."""
-    raw = _first(prov.get("stale"), "stale_fields")
-    out = []
-    for part in str(raw or "").split(","):
-        part = part.strip()
-        if "@" in part:
-            f, d = part.split("@", 1)
-            out.append((_FIELD_LABELS.get(f, f.replace("_", " ")), d))
-    return out
+    from etl.load import parse_stale_fields      # the writer's format: "field@date; field@date"
+    return [(_FIELD_LABELS.get(f, f.replace("_", " ")), d)
+            for f, d in parse_stale_fields(_first(prov.get("stale"), "stale_fields")).items()]
 
 
 def payout_status(prov: dict) -> tuple:
@@ -90,6 +85,9 @@ def pit_caption(prov: dict, kind: str = "annual") -> str:
     d, a, s = _first(df, "date"), _first(df, "available_date"), _first(df, "available_source")
     if d is None or a is None:
         return ""
+    base, restated = str(s).split("+")[0], "+RESTATED" in str(s)
     how = {"SEC_FILING": "SEC filing", "EARNINGS_RELEASE": "earnings release",
-           "LAG_ESTIMATE": "estimated: period end + typical reporting lag"}.get(str(s), str(s))
+           "LAG_ESTIMATE": "estimated: period end + typical reporting lag"}.get(base, base)
+    if restated:
+        how += "; figures restated by the provider later — counted from the restatement"
     return f"Latest {kind} statement (period ending {pd.Timestamp(d):%Y-%m-%d}) public since {pd.Timestamp(a):%Y-%m-%d} ({how})."

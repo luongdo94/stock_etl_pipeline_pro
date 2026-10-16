@@ -30,3 +30,17 @@ README.md
 **/.streamlit/secrets.toml
 warehouse/*.duckdb
 warehouse/*.parquet
+
+# not needed in the dashboard image
+audit
+tests
+infra
+scripts
+.github
+.devcontainer
+
+# private runtime state never goes into an image (audit F22): local user data, provider caches, env files
+warehouse/local_user
+warehouse/*.json
+warehouse/*.lock
+**/.env*

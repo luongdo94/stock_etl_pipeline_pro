@@ -466,6 +466,35 @@ def _statement_currency(t_data: pd.DataFrame, ticker: str) -> str:
     return major_currency(_guess_currency(ticker))
 
 
+def _one_period_per_key(df: pd.DataFrame, keys: list, stage: str) -> pd.DataFrame:
+    """Cash-flow rows are keyed by fiscal YEAR (or calendar year/quarter). Audit F14: a fiscal-year change gives two
+    period ends in one key, and the second silently replaced the first downstream. The latest period end is kept, and
+    every dropped period is recorded in the exception ledger with both dates."""
+    if df is None or df.empty or "period_end" not in df.columns or not set(keys) <= set(df.columns):
+        return df
+    from etl import exceptions as _exc
+    df = df.sort_values("period_end")
+    dup = df.duplicated(keys, keep="last")
+    for r in df[dup].itertuples():
+        kept = df[~dup & (df[keys] == pd.Series({k: getattr(r, k) for k in keys})).all(axis=1)]["period_end"]
+        _exc.record(r.ticker, stage, "two fiscal periods in one key (fiscal-year change?) — the latest is kept",
+                    f"{'/'.join(str(getattr(r, k)) for k in keys[1:])}: dropped period ending {r.period_end}, kept "
+                    f"{kept.iloc[0] if len(kept) else '?'}")
+    return df[~dup].reset_index(drop=True)
+
+
+def _row_currencies(t_data: pd.DataFrame, ticker: str) -> tuple:
+    """(currency per row, EUR rate per row) for a statement frame. Audit F13: one currency used to be applied to every
+    period, so a filer that switched from USD to EUR reporting had its old USD accounts converted as EUR. Each period
+    now keeps its own currencyCode (rows without one fall back to the statement's currency); a row whose currency has
+    no EUR rate gets NaN and is dropped by the caller, instead of the whole ticker."""
+    fallback = _statement_currency(t_data, ticker)
+    ccy = (t_data["currencyCode"].where(t_data["currencyCode"].notna(), fallback).astype(str)
+           if "currencyCode" in t_data.columns else pd.Series(fallback, index=t_data.index))
+    rates = {c: fx_to_eur(c) for c in ccy.unique()}
+    return ccy, ccy.map(lambda c: rates.get(c) if rates.get(c) is not None else np.nan).astype(float)
+
+
 FX_MIN_COVERAGE = 0.9     # a direct {CUR}EUR=X series observed on fewer of the dates than this is replaced
 
 
@@ -548,6 +577,22 @@ def _overlap_days() -> int:
     return int(get_etl_config()["incremental_load"]["overlap_buffer_days"])
 
 
+WATERMARK_BUCKET_DAYS = 7   # tickers whose watermarks lie within this many days share one batch download
+
+
+def watermark_buckets(watermarks: dict, overlap_days: int, bucket_days: int = WATERMARK_BUCKET_DAYS) -> list:
+    """[(start datetime, [tickers])] — tickers grouped by watermark, oldest first. A bucket starts at its OLDEST
+    watermark minus the overlap, so every ticker re-downloads at least `overlap_days` before its own watermark; a
+    ticker joins the open bucket while its watermark is within `bucket_days` of that bucket's oldest one."""
+    out = []
+    for t, d in sorted(watermarks.items(), key=lambda kv: (kv[1], kv[0])):
+        if out and (d - out[-1][0]).days <= bucket_days:
+            out[-1][1].append(t)
+        else:
+            out.append((d, [t]))
+    return [(datetime.combine(d, datetime.min.time()) - timedelta(days=overlap_days), ts) for d, ts in out]
+
+
 def extract_stock_prices(
     tickers: dict = TICKERS,
     lookback_days: int = 365,
@@ -568,24 +613,24 @@ def extract_stock_prices(
     all_ticker_list = list(tickers.keys())
 
     # ── INCREMENTAL: Calculate per-ticker start dates ─────────────────────────
+    buckets = []
     if watermarks:
-        # Global conservative start: earliest watermark minus 2-day buffer
-        # This allows yf.download (which is batch) to work with a single date range
-        # while still being much narrower than lookback_days.
-        min_watermark = min(watermarks.values())
-        # Subtract 2 days as overlap buffer for safety (timezone, holidays)
-        incremental_start = datetime.combine(min_watermark, datetime.min.time()) - timedelta(days=_overlap_days())
-        start_date = incremental_start
+        # Only the requested tickers' watermarks count, and tickers are downloaded in buckets of similar watermarks
+        # (PERF-02): one stale or halted name (EA stopped at 2026-08-04) used to widen the download of every other
+        # ticker to its date. Each ticker still starts at or before its own watermark minus the overlap buffer.
+        buckets = watermark_buckets({t: d for t, d in watermarks.items() if t in tickers}, _overlap_days())
+        start_date = min((b[0] for b in buckets), default=end_date - timedelta(days=_overlap_days()))
         new_tickers = [t for t in all_ticker_list if t not in watermarks]
         if new_tickers:
             # For brand-new tickers, we need to use the full lookback
             # We handle this by doing two separate downloads
             full_start = end_date - timedelta(days=lookback_days)
             logger.info(f"  📦 {len(new_tickers)} new tickers detected → Full bootstrap ({lookback_days}d)")
-            logger.info(f"  ⚡ {len(all_ticker_list) - len(new_tickers)} existing tickers → Incremental from {start_date.date()}")
         else:
             full_start = None
-            logger.info(f"⚡ INCREMENTAL EXTRACT: All {len(all_ticker_list)} tickers from {start_date.date()}")
+        for b_start, b_tickers in buckets:
+            names = f" ({', '.join(b_tickers)})" if len(b_tickers) <= 5 else ""
+            logger.info(f"  ⚡ {len(b_tickers)} existing tickers → Incremental from {b_start.date()}{names}")
     else:
         start_date = end_date - timedelta(days=lookback_days)
         full_start = None
@@ -606,13 +651,14 @@ def extract_stock_prices(
 
     # ── BATCH DOWNLOAD: Incremental (or Full if no watermarks) ───────────────
     existing_tickers = [t for t in all_ticker_list if t not in new_tickers]
-    if existing_tickers:
-        raw_prices = _batch_download(existing_tickers, start_date)
+    ticker_start = {t: b_start for b_start, b_tickers in buckets for t in b_tickers}
+    for b_start, b_tickers in (buckets if watermarks else [(start_date, existing_tickers)] if existing_tickers else []):
+        raw_prices = _batch_download(b_tickers, b_start)
 
         if raw_prices.empty:
-            logger.warning("⚠️ No price data returned for existing tickers in the incremental window.")
+            logger.warning(f"⚠️ No price data returned for {len(b_tickers)} existing tickers in the incremental window.")
         else:
-            all_frames.append(("existing", existing_tickers, raw_prices))
+            all_frames.append(("existing", b_tickers, raw_prices))
 
     # ── BATCH DOWNLOAD: Full history for brand-new tickers ───────────────────
     if new_tickers and full_start:
@@ -623,12 +669,12 @@ def extract_stock_prices(
     # ── PASS 2: SURGICAL RECOVERY FOR FAILED TICKERS ─────────────────────────
     # Identify tickers that were requested but are missing from the batch results
     received_tickers = set()
-    for _, _, _df in all_frames:
+    for _, _tl, _df in all_frames:
         if isinstance(_df.columns, pd.MultiIndex):
             received_tickers.update(_df.columns.get_level_values(1).unique())
-        else:
-            # Single ticker case
-            received_tickers.add(all_ticker_list[0]) if len(all_ticker_list) == 1 else None
+        elif len(_tl) == 1:
+            # Single ticker case (a one-ticker batch or bucket)
+            received_tickers.add(_tl[0])
 
     failed_tickers = [t for t in all_ticker_list if t not in received_tickers]
     
@@ -639,7 +685,8 @@ def extract_stock_prices(
                 # Use single-ticker history call which is often more resilient than batch download
                 t_obj = yf.Ticker(ticker)
                 # Determine correct start date for this ticker
-                t_start = start_date if ticker in existing_tickers else (full_start if full_start else start_date)
+                t_start = (ticker_start.get(ticker, start_date) if ticker in existing_tickers
+                           else (full_start if full_start else start_date))
                 
                 s_df = t_obj.history(start=t_start, end=end_date, auto_adjust=True)
                 if not s_df.empty:
@@ -1119,14 +1166,16 @@ def extract_historical_financials(tickers: dict = None) -> pd.DataFrame:
             "TotalDebt": "total_debt",
             "CashCashEquivalentsAndShortTermInvestments": "cash",
             "CashAndCashEquivalents": "cash_only",
+            # income-statement interest: the stand-in when the cash-flow statement does not report interest PAID
+            "InterestExpense": "interest_expense",
+            "InterestExpenseNonOperating": "interest_expense_nonop",
         }
         
         for ticker in df['symbol'].unique():
             t_data = df[df['symbol'] == ticker].copy()
-            currency = _statement_currency(t_data, ticker)
-            fx_rate = fx_to_eur(currency)
-            if fx_rate is None:
-                logger.error(f"   ❌ {ticker}: no EUR rate for {currency} — statements skipped")
+            currency, fx_rate = _row_currencies(t_data, ticker)
+            if fx_rate.isna().all():
+                logger.error(f"   ❌ {ticker}: no EUR rate for {sorted(set(currency))} — statements skipped")
                 continue
             
             # Map columns and normalize
@@ -1140,7 +1189,13 @@ def extract_historical_financials(tickers: dict = None) -> pd.DataFrame:
                 t_filtered["cash"] = (t_filtered["cash"].fillna(t_filtered["cash_only"]) if "cash" in t_filtered.columns
                                       else t_filtered["cash_only"])
                 t_filtered = t_filtered.drop(columns=["cash_only"])
-            for col in ["revenue", "net_income", "total_equity", "eps", "eps_diluted", "ebit", "total_debt", "cash"]:
+            if "interest_expense_nonop" in t_filtered.columns:
+                t_filtered["interest_expense"] = (t_filtered["interest_expense"].fillna(t_filtered["interest_expense_nonop"])
+                                                  if "interest_expense" in t_filtered.columns
+                                                  else t_filtered["interest_expense_nonop"])
+                t_filtered = t_filtered.drop(columns=["interest_expense_nonop"])
+            for col in ["revenue", "net_income", "total_equity", "eps", "eps_diluted", "ebit", "total_debt", "cash",
+                        "interest_expense"]:
                 if col not in t_filtered.columns:
                     t_filtered[col] = pd.NA
                 else:
@@ -1149,8 +1204,9 @@ def extract_historical_financials(tickers: dict = None) -> pd.DataFrame:
                 t_filtered["tax_rate"] = pd.NA                       # a ratio: no FX
             
             t_filtered["ticker"] = ticker
-            t_filtered["src_currency"] = currency      # provenance: amounts above = reported * fx_to_eur
-            t_filtered["fx_to_eur"] = fx_rate
+            t_filtered["src_currency"] = currency.to_numpy()   # provenance per period: amounts = reported * fx_to_eur
+            t_filtered["fx_to_eur"] = fx_rate.to_numpy()
+            t_filtered = t_filtered[t_filtered["fx_to_eur"].notna()]
             all_data.append(t_filtered)
             successful_set.add(ticker)
 
@@ -1216,10 +1272,9 @@ def extract_quarterly_financials(tickers: dict = None) -> pd.DataFrame:
         
         for ticker in df['symbol'].unique():
             t_data = df[df['symbol'] == ticker].copy()
-            currency = _statement_currency(t_data, ticker)
-            fx_rate = fx_to_eur(currency)
-            if fx_rate is None:
-                logger.error(f"   ❌ {ticker}: no EUR rate for {currency} — statements skipped")
+            currency, fx_rate = _row_currencies(t_data, ticker)
+            if fx_rate.isna().all():
+                logger.error(f"   ❌ {ticker}: no EUR rate for {sorted(set(currency))} — statements skipped")
                 continue
             
             found_cols = [c for c in row_map.keys() if c in t_data.columns]
@@ -1232,11 +1287,12 @@ def extract_quarterly_financials(tickers: dict = None) -> pd.DataFrame:
                 if col not in t_filtered.columns:
                     t_filtered[col] = pd.NA
                 else:
-                    t_filtered[col] = t_filtered[col] * fx_rate
+                    t_filtered[col] = pd.to_numeric(t_filtered[col], errors="coerce") * fx_rate.to_numpy()
             
             t_filtered["ticker"] = ticker
-            t_filtered["src_currency"] = currency      # provenance: amounts above = reported * fx_to_eur
-            t_filtered["fx_to_eur"] = fx_rate
+            t_filtered["src_currency"] = currency.to_numpy()   # provenance per period: amounts = reported * fx_to_eur
+            t_filtered["fx_to_eur"] = fx_rate.to_numpy()
+            t_filtered = t_filtered[t_filtered["fx_to_eur"].notna()]
             all_data.append(t_filtered)
             successful_set.add(ticker)
 
@@ -1516,7 +1572,7 @@ def extract_historical_fcf(tickers: dict = None) -> pd.DataFrame:
                 debt_repaid = _first('RepaymentOfDebt', 'LongTermDebtPayments')
 
                 records_list.append({
-                    "ticker": ticker, "year": int(year),
+                    "ticker": ticker, "year": int(year), "period_end": pd.to_datetime(as_of).date(),
                     "free_cash_flow": float(fcf) if not pd.isna(fcf) else None,
                     "operating_cash_flow": float(ocf) if not pd.isna(ocf) else None,
                     "capex": float(capex) if not pd.isna(capex) else None,
@@ -1547,7 +1603,7 @@ def extract_historical_fcf(tickers: dict = None) -> pd.DataFrame:
                  successful_tickers, "Annual cash flow")
 
     logger.info(f"✅ Historical FCF: {len(successful_tickers)} tickers successful.")
-    return pd.DataFrame(records)
+    return _one_period_per_key(pd.DataFrame(records), ["ticker", "year"], "annual_fcf")
 
 
 def extract_quarterly_fcf(tickers: dict = None) -> pd.DataFrame:
@@ -1601,7 +1657,7 @@ def extract_quarterly_fcf(tickers: dict = None) -> pd.DataFrame:
                 capex = capex * rate if not pd.isna(capex) else capex
                 
                 records_list.append({
-                    "ticker": ticker, "year": int(year), "quarter": int(quarter),
+                    "ticker": ticker, "year": int(year), "quarter": int(quarter), "period_end": dt.date(),
                     "free_cash_flow": float(fcf) if not pd.isna(fcf) else None,
                     "operating_cash_flow": float(ocf) if not pd.isna(ocf) else None,
                     "capex": float(capex) if not pd.isna(capex) else None,
@@ -1619,7 +1675,7 @@ def extract_quarterly_fcf(tickers: dict = None) -> pd.DataFrame:
                  successful_tickers, "Quarterly cash flow")
 
     logger.info(f"✅ Quarterly FCF: {len(successful_tickers)} tickers successful.")
-    return pd.DataFrame(records)
+    return _one_period_per_key(pd.DataFrame(records), ["ticker", "year", "quarter"], "quarterly_fcf")
 
     
 def extract_earnings_calendar(tickers: dict = None) -> pd.DataFrame:

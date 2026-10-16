@@ -181,7 +181,7 @@ Click the **"📥 Download CSV"** button to export:
 
 ### "No insider data available"
 - **Cause**: Database not populated yet
-- **Solution**: Run `python3 load_insider_data.py`
+- **Solution**: Run `python3 scripts/tools/load_insider_data.py`
 
 ### Table not loading
 - **Cause**: Database locked or query timeout
@@ -202,13 +202,13 @@ Click the **"📥 Download CSV"** button to export:
 ### CLI Tools:
 ```bash
 # View transactions via command line
-python3 view_insider_transactions.py --ticker NVDA --days 90
+python3 scripts/tools/view_insider_transactions.py --ticker NVDA --days 90
 
 # Check database status
-python3 quick_check_insider.py
+python3 scripts/tools/quick_check_insider.py
 
 # Update data manually
-python3 load_insider_data.py
+python3 scripts/tools/load_insider_data.py
 ```
 
 ---

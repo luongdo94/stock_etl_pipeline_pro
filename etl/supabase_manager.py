@@ -16,6 +16,7 @@ import logging
 import math
 import os
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -127,9 +128,12 @@ class SupabaseStorage:
     def _b(self):
         return self._client.storage.from_(self._bucket)
 
-    def upload(self, remote_path: str, local_path: Path) -> None:
+    def upload(self, remote_path: str, local_path: Path, overwrite: bool = False) -> None:
+        """Snapshot files are create-only (audit F16): an existing object is never replaced. Only the manifest — the
+        commit pointer — is overwritten."""
         with open(local_path, "rb") as f:
-            self._b.upload(path=remote_path, file=f, file_options={"cache-control": "60", "upsert": "true",
+            self._b.upload(path=remote_path, file=f, file_options={"cache-control": "60",
+                                                                   "upsert": "true" if overwrite else "false",
                                                                    "content-type": "application/octet-stream"})
 
     def list(self, prefix: str) -> list:
@@ -143,12 +147,12 @@ class SupabaseStorage:
         return self._b.download(remote_path)
 
 
-def _upload_with_retries(storage, remote: str, local: Path, attempts: int = 3) -> Optional[str]:
+def _upload_with_retries(storage, remote: str, local: Path, attempts: int = 3, overwrite: bool = False) -> Optional[str]:
     """None on success, the last error message on failure."""
     last = ""
     for i in range(attempts):
         try:
-            storage.upload(remote, local)
+            storage.upload(remote, local, overwrite=overwrite)
             return None
         except Exception as e:
             last = str(e)
@@ -158,8 +162,17 @@ def _upload_with_retries(storage, remote: str, local: Path, attempts: int = 3) -
 
 def publish(storage, exported: dict, out_dir: Path, version: Optional[str] = None) -> bool:
     """Upload a snapshot, then commit it by uploading the manifest. False (previous snapshot stays live) on any failure."""
-    version = version or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    # Audit F16: a version is unique (time + random suffix) and is never reused — two publishes in the same second used
+    # to write into the same prefix, and the failure cleanup could then delete the LIVE snapshot's files
+    version = version or (datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ") + "-" + uuid.uuid4().hex[:8])
     prefix = f"{SNAPSHOT_DIR}/{version}"
+    try:
+        taken = version in set(storage.list(SNAPSHOT_DIR))
+    except Exception:
+        taken = False
+    if taken:
+        logger.error(f"Snapshot version {version} already exists — not overwritten; nothing published")
+        return False
     uploaded, failed = [], []
     for table, files in exported["tables"].items():
         for name in files:
@@ -175,7 +188,7 @@ def publish(storage, exported: dict, out_dir: Path, version: Optional[str] = Non
                 "tables": exported["tables"], "rows": exported["rows"]}
     mpath = Path(out_dir) / MANIFEST_NAME
     mpath.write_text(json.dumps(manifest), encoding="utf-8")
-    err = _upload_with_retries(storage, MANIFEST_NAME, mpath)       # the commit point
+    err = _upload_with_retries(storage, MANIFEST_NAME, mpath, overwrite=True)   # the commit point
     if err:
         logger.error(f"Could not publish {MANIFEST_NAME}: {err}")
         storage.remove(uploaded)

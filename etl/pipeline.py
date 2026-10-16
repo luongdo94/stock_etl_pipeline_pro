@@ -347,7 +347,60 @@ def run_pipeline(lookback_days: int = None, force_full: bool = False, fast_mode:
 
 CARRY_FORWARD_TABLES = ("raw.company_info", "raw.historical_financials", "raw.hist_fcf", "raw.cashflows")
 # accumulated from other sources over many runs (not re-extracted by a full refresh): copied whole, no ledger entry
-REFERENCE_TABLES = ("raw.sec_filings", "raw.source_reconciliation")
+REFERENCE_TABLES = ("raw.sec_filings", "raw.source_reconciliation", "raw.sec_cash_items")
+
+
+# Audit F04: period-keyed history a full refresh must not lose (the provider only returns its current window)
+HISTORY_KEYS = {"raw.historical_financials": ("ticker", "date"), "raw.quarterly_financials": ("ticker", "date"),
+                "raw.hist_fcf": ("ticker", "year"), "raw.hist_fcf_quarterly": ("ticker", "year", "quarter"),
+                "raw.earnings_surprise": ("ticker", "quarter_date"), "raw.earnings_events": ("ticker", "earnings_ts")}
+
+
+def carry_forward_history(conn, prod_path: str, universe) -> dict:
+    """FULL refresh: keep every stored PERIOD the provider no longer returns (older quarters / years of active
+    issuers) and the whole raw history of securities outside today's universe (delisted, removed, inactive) — the
+    evidence past research and the Track Record were built on. Rows present in the new extract win; only missing keys
+    are copied. Prices of ACTIVE tickers are not copied: the new download is on one adjustment basis. {table: rows}."""
+    out = {}
+    if not prod_path or not Path(prod_path).exists():
+        return out
+    try:
+        conn.execute(f"ATTACH '{prod_path}' AS prodh (READ_ONLY)")
+    except duckdb.Error as e:
+        logger.warning(f"   ⚠️ history carry-forward skipped: {e}")
+        return out
+    try:
+        active = sorted(set(universe))
+        plan = dict(HISTORY_KEYS)
+        plan["raw.stock_prices"] = ("ticker", "date")
+        plan["raw.company_info"] = ("ticker",)
+        for table, keys in plan.items():
+            schema, name = table.split(".")
+            try:
+                cols = [r[0] for r in conn.execute(f"DESCRIBE {table}").fetchall()]
+                prod_cols = {r[0] for r in conn.execute(f"DESCRIBE prodh.{schema}.{name}").fetchall()}
+            except duckdb.Error:
+                continue
+            common = [c for c in cols if c in prod_cols]
+            if not set(keys) <= set(common):
+                continue
+            col_list = ", ".join(f'"{c}"' for c in common)
+            on = " AND ".join(f's."{k}" = p."{k}"' for k in keys)
+            # active tickers' prices / company rows come from today's download; only inactive ones are kept whole
+            scope = "AND NOT (p.ticker = ANY(?))" if table in ("raw.stock_prices", "raw.company_info") else ""
+            params = [active] if scope else []
+            n0 = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+            conn.execute(f"""INSERT INTO {table} ({col_list})
+                             SELECT {', '.join(f'p."{c}"' for c in common)} FROM prodh.{schema}.{name} p
+                             WHERE NOT EXISTS (SELECT 1 FROM {table} s WHERE {on}) {scope}""", params)
+            added = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] - n0
+            if added:
+                out[table] = int(added)
+        if out:
+            logger.info("   🗄️  History kept from production: " + ", ".join(f"{t} +{n:,}" for t, n in out.items()))
+    finally:
+        conn.execute("DETACH prodh")
+    return out
 
 
 def carry_forward_reference(conn, prod_path: str, tables=REFERENCE_TABLES) -> dict:
@@ -437,15 +490,18 @@ def _run_pipeline_locked(lookback_days, force_full, fast_mode):
 
     # ── PRE-FLIGHT: run mode + fingerprint of the current production warehouse ──────────
     watermarks, prev_stats, is_incremental = {}, {}, False
-    if not force_full and Path(DB_PATH).exists():
+    if Path(DB_PATH).exists():
         logger.info("\n🔍 PRE-FLIGHT — Checking watermarks...")
         try:
             with duckdb.connect(DB_PATH, read_only=True) as probe_conn:
-                watermarks = get_last_price_dates(probe_conn)
+                # audit F03: the production baseline is read in EVERY mode — a forced full refresh used to skip it, and
+                # with it every shrink / continuity gate against the previous warehouse
                 prev_stats = collect_stats(probe_conn)
-                is_incremental = bool(watermarks) and not needs_full_refresh(probe_conn)
+                if not force_full:
+                    watermarks = get_last_price_dates(probe_conn)
+                    is_incremental = bool(watermarks) and not needs_full_refresh(probe_conn)
         except Exception as e:
-            logger.warning(f"   ⚠️ Could not read watermarks: {e} → falling back to full refresh")
+            logger.warning(f"   ⚠️ Could not read the production warehouse: {e} → full refresh without a baseline")
             watermarks, prev_stats, is_incremental = {}, {}, False
 
     mode_label = "⚡ INCREMENTAL" if is_incremental else "🔄 FULL REFRESH"
@@ -519,6 +575,7 @@ def _run_pipeline_locked(lookback_days, force_full, fast_mode):
                 mark_rebased(conn)                           # a full extract is a rebase
             if not is_incremental:
                 carry_forward_missing(conn, DB_PATH, list(universe))
+                carry_forward_history(conn, DB_PATH, list(universe))
                 carry_forward_reference(conn, DB_PATH)
             logger.info(f"   ⏱  Load: {time.time()-t0:.1f}s")
 
@@ -531,6 +588,16 @@ def _run_pipeline_locked(lookback_days, force_full, fast_mode):
                     recon_summary = reconcile_summary(run_reconciliation(conn, list(universe), rcfg))
                 except Exception as e:                       # an unreachable second source never fails the run
                     logger.warning(f"   ⚠️ reconciliation skipped: {e}")
+            # fill what the provider left empty from second sources, with provenance (owner's rule: supplement first)
+            try:
+                from etl.load import fill_interest_expense
+                from etl.reconcile import apply_sec_supplements
+                apply_sec_supplements(conn)
+                n_int = fill_interest_expense(conn)
+                if n_int:
+                    logger.info(f"   🧩 income-statement interest expense linked to {n_int} cash-flow year(s)")
+            except Exception as e:
+                logger.warning(f"   ⚠️ data supplements skipped: {e}")
             try:
                 assign_available_dates(conn)
             except Exception as e:
@@ -542,7 +609,7 @@ def _run_pipeline_locked(lookback_days, force_full, fast_mode):
             cleanup_stale_tv_tickers(conn, cfg["universe"]["discovery_retention_days"])
             run_transforms(conn, active_tickers=list(universe))
             logger.info(f"   ⏱  Transform: {time.time() - t0:.1f}s")
-            total_time = time.time() - start_time
+            to_transform = time.time() - start_time
 
             # ── STEP 5: RELEASE GATES (new vs universe and vs previous production) ─
             logger.info("\n🚦 STEP 5/6 — RELEASE GATES")
@@ -594,15 +661,21 @@ def _run_pipeline_locked(lookback_days, force_full, fast_mode):
             audit.sync_to_main_warehouse(DB_PATH)
 
             # Point-in-time score snapshot (track record). Non-fatal.
+            t0 = time.time()
             try:
                 from etl.snapshot import run_snapshot
                 run_snapshot(DB_PATH)
             except Exception as e:
                 logger.warning(f"   ⚠️ Score snapshot skipped: {e}")
+            snapshot_time = time.time() - t0
 
+            # PERF-01: the total used to be taken after the transform and printed after the snapshot, leaving out the
+            # gates, DQ, swap and snapshot (~60% of a run). It now spans the whole pipeline, split into its parts.
+            total_time = time.time() - start_time
             logger.info("\n" + "=" * 55)
             logger.info(f"✅ PIPELINE COMPLETED SUCCESSFULLY [{mode_label}]")
-            logger.info(f"   Total time : {total_time:.1f}s")
+            logger.info(f"   Total time : {total_time:.1f}s (extract→transform {to_transform:.1f}s, "
+                        f"gates/DQ/swap {total_time - to_transform - snapshot_time:.1f}s, snapshot {snapshot_time:.1f}s)")
             _log_row_counts()
             return True
 

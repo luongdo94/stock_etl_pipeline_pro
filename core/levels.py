@@ -1,5 +1,23 @@
 """Support / resistance (swing zones) and tactical trade metrics (pure)."""
+import numpy as np
 import pandas as pd
+from numpy.lib.stride_tricks import sliding_window_view
+
+
+def _pivot_masks(df: "pd.DataFrame", half: int) -> tuple:
+    """Bars i in [half, len - half) whose low equals the min (high equals the max) of rows i-half … i+half,
+    NaN skipped like pandas' Series.min/max — a NaN bar is never a pivot. Boolean arrays of len(df)."""
+    n = len(df)
+    is_low, is_high = np.zeros(n, dtype=bool), np.zeros(n, dtype=bool)
+    width = 2 * half + 1
+    if n < width:
+        return is_low, is_high
+    lo = df["price_low"].to_numpy(dtype="float64", na_value=np.nan)
+    hi = df["price_high"].to_numpy(dtype="float64", na_value=np.nan)
+    centre = slice(half, n - half)
+    is_low[centre] = lo[centre] == np.fmin.reduce(sliding_window_view(lo, width), axis=1)
+    is_high[centre] = hi[centre] == np.fmax.reduce(sliding_window_view(hi, width), axis=1)
+    return is_low, is_high
 
 
 def detect_swing_zones(ticker_prices: "pd.DataFrame", cur_p: float, lookback: int = 60, base_window: int = 5) -> dict:
@@ -51,41 +69,39 @@ def detect_swing_zones(ticker_prices: "pd.DataFrame", cur_p: float, lookback: in
     avg_volume = df["volume"].mean()
     
     # ── STEP 2: Detect Raw Swing Points ────────────────────────────────────────
+    # A pivot is a bar whose low (high) equals the NaN-skipping min (max) of the centred window. The test runs on
+    # whole arrays (PERF-04: ~250 pandas slices per call were ~60% of the screener's time); only the few pivots
+    # found are then read row by row exactly as before, so prices, dates, volumes and reactions keep their types.
+    is_low, is_high = _pivot_masks(df, window // 2)
     swing_lows = []
-    for i in range(window // 2, len(df) - window // 2):
-        window_slice = df.iloc[i - window // 2 : i + window // 2 + 1]
+    for i in np.flatnonzero(is_low).tolist():
         pivot_low = df.iloc[i]["price_low"]
-        
-        if pivot_low == window_slice["price_low"].min():
-            # Calculate reaction magnitude (how much price bounced from this low)
-            future_slice = df.iloc[i:min(i+10, len(df))]
-            reaction_magnitude = (future_slice["price_high"].max() - pivot_low) / pivot_low * 100 if len(future_slice) > 0 else 0
-            
-            swing_lows.append({
-                "price": pivot_low,
-                "index": i,
-                "date": df.iloc[i]["date"],
-                "pivot_volume": df.iloc[i]["volume"],
-                "reaction_magnitude": reaction_magnitude
-            })
-    
+        # Calculate reaction magnitude (how much price bounced from this low)
+        future_slice = df.iloc[i:min(i+10, len(df))]
+        reaction_magnitude = (future_slice["price_high"].max() - pivot_low) / pivot_low * 100 if len(future_slice) > 0 else 0
+
+        swing_lows.append({
+            "price": pivot_low,
+            "index": i,
+            "date": df.iloc[i]["date"],
+            "pivot_volume": df.iloc[i]["volume"],
+            "reaction_magnitude": reaction_magnitude
+        })
+
     swing_highs = []
-    for i in range(window // 2, len(df) - window // 2):
-        window_slice = df.iloc[i - window // 2 : i + window // 2 + 1]
+    for i in np.flatnonzero(is_high).tolist():
         pivot_high = df.iloc[i]["price_high"]
-        
-        if pivot_high == window_slice["price_high"].max():
-            # Calculate reaction magnitude (how much price dropped from this high)
-            future_slice = df.iloc[i:min(i+10, len(df))]
-            reaction_magnitude = (pivot_high - future_slice["price_low"].min()) / pivot_high * 100 if len(future_slice) > 0 else 0
-            
-            swing_highs.append({
-                "price": pivot_high,
-                "index": i,
-                "date": df.iloc[i]["date"],
-                "pivot_volume": df.iloc[i]["volume"],
-                "reaction_magnitude": reaction_magnitude
-            })
+        # Calculate reaction magnitude (how much price dropped from this high)
+        future_slice = df.iloc[i:min(i+10, len(df))]
+        reaction_magnitude = (pivot_high - future_slice["price_low"].min()) / pivot_high * 100 if len(future_slice) > 0 else 0
+
+        swing_highs.append({
+            "price": pivot_high,
+            "index": i,
+            "date": df.iloc[i]["date"],
+            "pivot_volume": df.iloc[i]["volume"],
+            "reaction_magnitude": reaction_magnitude
+        })
     
     # ── STEP 3: Cluster nearby swing points into zones ─────────────────────────
     def cluster_swings(swings, zone_width_pct):

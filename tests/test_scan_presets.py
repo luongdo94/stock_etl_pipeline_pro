@@ -84,5 +84,7 @@ def test_scanner_table_has_a_slim_fixed_default_and_unique_columns():
     assert "Conflicts" in scanner.DEFAULT_COLS
     assert len(set(scanner.DEFAULT_COLS + scanner.EXTRA_COLS)) == len(scanner.DEFAULT_COLS + scanner.EXTRA_COLS)
     assert "Upside (%)" not in scanner.DEFAULT_COLS + scanner.EXTRA_COLS           # analyst target: not used by Value / Decision
-    assert {"Verdict", "MoS (%)", "Quality", "Value", "Momentum", "Flags"} <= set(scanner.DEFAULT_COLS)
+    # MoS moved to "More columns" (2026-10-16): blank for 87% of the universe; FCF yield + growth gap are known for most
+    assert {"Verdict", "Quality", "Value", "Momentum", "FCF Yield (%)", "Growth Gap (pp)", "Flags"} <= set(scanner.DEFAULT_COLS)
+    assert "MoS (%)" in scanner.EXTRA_COLS
     assert "Decision" not in scanner.DEFAULT_COLS and "Action" not in scanner.DEFAULT_COLS     # one label, not two

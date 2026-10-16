@@ -17,7 +17,7 @@ from core.portfolio_risk import (apply_rebalance, complete_returns, rebalance_li
                                  record_trade, shrink_expected_returns, weight_budget)
 from services.alerts import add_alert_rule, delete_alert_rule, load_alert_rules
 from services.market_data import fetch_dividend_calendar
-from core.ledger import realized_pnl, trade as ledger_trade, trades_from_diff
+from core.ledger import adjustments_from_edit, realized_pnl, trade as ledger_trade, trades_from_diff
 from core.stress import estimate_sensitivities, historical_replay, load_scenarios, scenario_losses
 from services.user_store import (append_trades, load_portfolio_with_cash, load_trades, save_portfolio_checked,
                                  save_portfolio_to_db)
@@ -379,8 +379,9 @@ def render(ctx):
             if sum(_targets.values()) > 100 + 1e-9:
                 st.error(f"Targets add up to {sum(_targets.values()):.1f}% of NAV (> 100%) — not saved.", icon="🛑")
             elif _save(shares_dict, cost_dict, float(cash_in), _targets):   # session changes only on a confirmed save
-                _record(trades_from_diff(_old_shares, shares_dict, latest_prices, 0.0, "edit", float(cash_in),
-                                         "grid edit (booked at the current price)"))
+                # a grid edit is a correction, not a trade: ADJUST events carry the new quantity and basis (audit F20)
+                _record(adjustments_from_edit(_old_shares, dict(st.session_state.get("portfolio_cost", {})),
+                                              shares_dict, cost_dict, float(cash_in)))
                 st.session_state.portfolio_df = edited_df.copy()
                 st.session_state.portfolio_shares = shares_dict
                 st.session_state.portfolio_cost = cost_dict
@@ -734,8 +735,9 @@ def render(ctx):
                     bench_prices = bench_prices[bench_prices["date"].isin(cum_returns.index)]
                     if not bench_prices.empty and bench_prices["daily_return_pct"].notna().any():
                         bench_daily = bench_prices["daily_return_pct"].fillna(0) / 100
+                        # same anchor as the portfolio line (cum_returns keeps its first return): dividing by the
+                        # first value dropped the benchmark's first day (audit F18)
                         bench_cum   = (1 + bench_daily).cumprod()
-                        bench_cum   = bench_cum / bench_cum.iloc[0]
                         bench_prices = bench_prices.copy()
                         bench_prices["bench_value"] = bench_cum.values * initial_investment
                         fig_bt.add_trace(go.Scatter(
@@ -1494,7 +1496,7 @@ def render(ctx):
 
         st.markdown("---")
 
-        # 6. ── ALERT CENTER (persisted per user in Supabase: docs/sql/stock_alerts.sql) ──
+        # 6. ── ALERT CENTER (persisted per user in Supabase: sql/supabase/stock_alerts.sql) ──
         render_header("activity", "Alert Center", level="###")
         st.caption("Rules are saved to your account and checked against the latest warehouse data every "
                    "time the dashboard loads (in-app; no e-mail delivery is configured).")
@@ -1614,7 +1616,7 @@ def _render_stress_and_ledger(ctx, tickers, weights, nav_eur, meta, port_beta, r
     with st.expander(f"📒 Trade ledger ({len(trades)} trades)", expanded=False):
         if trades.empty:
             st.caption("Every trade recorded with ➕ Add Trade, a rebalance or a grid edit appears here with its price, "
-                       "fees and the cash left. Cloud users: create the table once with docs/sql/portfolio_trades.sql.")
+                       "fees and the cash left. Cloud users: create the table once with sql/supabase/portfolio_trades.sql.")
         else:
             pnl = realized_pnl(trades)
             c1, c2, c3 = st.columns(3)

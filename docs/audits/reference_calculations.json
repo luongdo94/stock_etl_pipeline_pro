@@ -1,0 +1,179 @@
+{
+  "method": "Independently expanded cash-flow reference compared with a manual JavaScript transcription of core/valuation.py:365-384. No repository Python execution. All inputs fictional.",
+  "results": [
+    {
+      "id": "mature",
+      "archetype": "Mature profitable compounder",
+      "cfo": 180,
+      "capex": 60,
+      "sbc": 10,
+      "interest": 5,
+      "lease": 5,
+      "shares": 10,
+      "g": 0.05,
+      "r": 0.09,
+      "fcfe": 100,
+      "expectedHelperValue": 164.92102138041528,
+      "sourceEquivalentValue": 164.9210213804153,
+      "terminalShare": 0.5262338777268747,
+      "explicitPV": 781.3399278072255,
+      "terminalPV": 867.8702859969274
+    },
+    {
+      "id": "growth",
+      "archetype": "High growth with reinvestment and SBC",
+      "cfo": 180,
+      "capex": 100,
+      "sbc": 30,
+      "interest": 0,
+      "lease": 0,
+      "shares": 10,
+      "g": 0.2,
+      "r": 0.11,
+      "fcfe": 50,
+      "expectedHelperValue": 113.6574235652674,
+      "sourceEquivalentValue": 113.6574235652673,
+      "terminalShare": 0.49192625843908666,
+      "explicitPV": 577.4635244697894,
+      "terminalPV": 559.1107111828846
+    },
+    {
+      "id": "cyclical",
+      "archetype": "Cyclical industrial; median of adjusted FCF [80,110,200]",
+      "fcfe": 110,
+      "shares": 10,
+      "g": 0.03,
+      "r": 0.1,
+      "expectedHelperValue": 146.05488635085862,
+      "sourceEquivalentValue": 146.05488635085862,
+      "terminalShare": 0.47388998415935973,
+      "explicitPV": 768.4093857165316,
+      "terminalPV": 692.1394777920548
+    },
+    {
+      "id": "negative",
+      "archetype": "Negative near-term FCFE",
+      "cfo": 50,
+      "capex": 80,
+      "sbc": 10,
+      "interest": 0,
+      "lease": 0,
+      "shares": 10,
+      "g": 0.15,
+      "r": 0.12,
+      "fcfe": -40,
+      "expectedHelperValue": null,
+      "sourceEquivalentValue": null,
+      "note": "dcf_per_share rejects nonpositive initial FCFE; no turnaround forecast implemented"
+    },
+    {
+      "id": "sbc",
+      "archetype": "Substantial SBC",
+      "cfo": 180,
+      "capex": 60,
+      "sbc": 60,
+      "interest": 0,
+      "lease": 0,
+      "shares": 10,
+      "g": 0.1,
+      "r": 0.11,
+      "fcfe": 60,
+      "expectedHelperValue": 93.12008191096606,
+      "sourceEquivalentValue": 93.12008191096615,
+      "terminalShare": 0.45923397242810965,
+      "explicitPV": 503.5617678216217,
+      "terminalPV": 427.639051288039
+    },
+    {
+      "id": "excess_cash",
+      "archetype": "Same operating cash flow; excess cash 500",
+      "fcfe": 100,
+      "shares": 10,
+      "g": 0.05,
+      "r": 0.09,
+      "excessCash": 500,
+      "expectedHelperValue": 164.92102138041528,
+      "sourceEquivalentValue": 164.9210213804153,
+      "terminalShare": 0.5262338777268747,
+      "explicitPV": 781.3399278072255,
+      "terminalPV": 867.8702859969274
+    },
+    {
+      "id": "net_debt",
+      "archetype": "Same operating cash flow; net debt 1000, assumed rolled over",
+      "fcfe": 100,
+      "shares": 10,
+      "g": 0.05,
+      "r": 0.09,
+      "netDebt": 1000,
+      "expectedHelperValue": 164.92102138041528,
+      "sourceEquivalentValue": 164.9210213804153,
+      "terminalShare": 0.5262338777268747,
+      "explicitPV": 781.3399278072255,
+      "terminalPV": 867.8702859969274
+    }
+  ],
+  "sensitivity": [
+    {
+      "r": 0.08,
+      "tg": 0.01,
+      "perShare": 170.368296528678
+    },
+    {
+      "r": 0.08,
+      "tg": 0.02,
+      "perShare": 192.92379484050758
+    },
+    {
+      "r": 0.08,
+      "tg": 0.03,
+      "perShare": 224.42116828004072
+    },
+    {
+      "r": 0.09,
+      "tg": 0.01,
+      "perShare": 148.5613162283361
+    },
+    {
+      "r": 0.09,
+      "tg": 0.02,
+      "perShare": 164.9210213804153
+    },
+    {
+      "r": 0.09,
+      "tg": 0.03,
+      "perShare": 186.67030947037705
+    },
+    {
+      "r": 0.1,
+      "tg": 0.01,
+      "perShare": 131.62185877506522
+    },
+    {
+      "r": 0.1,
+      "tg": 0.02,
+      "perShare": 143.9373362603328
+    },
+    {
+      "r": 0.1,
+      "tg": 0.03,
+      "perShare": 159.71960443678933
+    }
+  ],
+  "controls": {
+    "constantGrowthValue": 1457.1428571428564,
+    "constantGrowthIndependent": 1457.1428571428573,
+    "riAtCostOfEquity": 100,
+    "riAboveCost": 118.95790741472786,
+    "riBelowCost": 82.59541007311263,
+    "payoutNativeEpsBug": 0.45,
+    "payoutSameCurrencyExpected": 0.5,
+    "roicGapFallback": 0.17142857142857143,
+    "missingScoreAt60pctCoverage": 87.5,
+    "portfolioIdenticalReturns": 15.500000000000025,
+    "benchmarkDroppedFirst": 5.000000000000004,
+    "rotationExpectedCostBp": 50,
+    "rotationSourceEquivalentCostBp": 20,
+    "retainedNamesWeightTurnover": 0.6000000000000001
+  }
+}

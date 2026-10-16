@@ -2,6 +2,7 @@
 import os
 import contextlib
 import duckdb
+import numpy as np
 import pandas as pd
 import logging
 import time
@@ -128,7 +129,10 @@ def ensure_company_info(conn: duckdb.DuckDBPyConnection):
 # supplemental (amount only), lease principal from the cash flow (Yahoo has none) and the balance-sheet lease liabilities
 # used to estimate it (core.valuation.fcfe_deduction_status).
 HIST_FCF_EXTRA_COLUMNS = ("interest_paid_cff", "interest_paid_cfo", "interest_paid_supplemental", "lease_principal_paid",
-                          "lease_liability_current", "lease_liability_total", "debt_issued", "debt_repaid")
+                          "lease_liability_current", "lease_liability_total", "debt_issued", "debt_repaid",
+                          "interest_expense_is")
+# provenance of a deduction filled from a second source (SEC XBRL) — VARCHAR, see fill_supplements
+HIST_FCF_SOURCE_COLUMNS = ("sbc_source", "interest_source", "lease_source")
 
 
 def ensure_hist_fcf(conn: duckdb.DuckDBPyConnection):
@@ -150,11 +154,13 @@ def ensure_hist_fcf(conn: duckdb.DuckDBPyConnection):
     conn.execute("ALTER TABLE raw.hist_fcf ADD COLUMN IF NOT EXISTS stock_based_comp DOUBLE")
     for col in HIST_FCF_EXTRA_COLUMNS:                                  # financing deductions (F-03) + evidence (R5)
         conn.execute(f"ALTER TABLE raw.hist_fcf ADD COLUMN IF NOT EXISTS {col} DOUBLE")
+    for col in HIST_FCF_SOURCE_COLUMNS:
+        conn.execute(f"ALTER TABLE raw.hist_fcf ADD COLUMN IF NOT EXISTS {col} VARCHAR")
 
 
 def ensure_annual_roic_columns(conn: duckdb.DuckDBPyConnection):
     """ROIC inputs on raw.historical_financials (audit F-04); older warehouses get the columns added."""
-    for col in ("ebit", "tax_rate", "cash", "total_debt"):
+    for col in ("ebit", "tax_rate", "cash", "total_debt", "interest_expense"):
         conn.execute(f"ALTER TABLE raw.historical_financials ADD COLUMN IF NOT EXISTS {col} DOUBLE")
 
 
@@ -824,6 +830,17 @@ RETAINED_FIELDS = ("market_cap", "revenue_ttm", "total_debt", "ebitda", "free_ca
                    "operating_margin", "beta", "price_to_book", "trailing_eps", "forward_eps")
 
 
+def parse_stale_fields(raw) -> dict:
+    """{field: 'YYYY-MM-DD'} from a stale_fields record ("revenue_ttm@2026-10-07; total_debt@2026-10-07")."""
+    out = {}
+    for part in str(raw or "").replace(",", ";").split(";"):
+        part = part.strip()
+        if "@" in part:
+            f, d = part.split("@", 1)
+            out[f.strip()] = d.strip()
+    return out
+
+
 def retain_last_known_good(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame) -> pd.DataFrame:
     """E7: a refresh with market cap but without, say, financialData used to REPLACE a good row with NULLs. Now a
     field missing from the new record keeps its previous value, and the record says so in `stale_fields`
@@ -833,7 +850,7 @@ def retain_last_known_good(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame) ->
     if df.empty or not fields:
         return df.assign(stale_fields=None) if "stale_fields" not in df.columns else df
     try:
-        old = conn.execute(f"""SELECT ticker, {', '.join(fields)}, _extracted_at FROM raw.company_info
+        old = conn.execute(f"""SELECT ticker, {', '.join(fields)}, _extracted_at, stale_fields FROM raw.company_info
                                WHERE ticker = ANY(?)""", [df["ticker"].tolist()]).df().set_index("ticker")
     except duckdb.Error:
         return df.assign(stale_fields=None)
@@ -845,17 +862,100 @@ def retain_last_known_good(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame) ->
         if t not in old.index:
             continue
         kept = []
+        already = parse_stale_fields(old.at[t, "stale_fields"])
         for f in fields:
             new_v, old_v = row.get(f), old.at[t, f]
             if (new_v is None or pd.isna(new_v)) and old_v is not None and not pd.isna(old_v):
                 df.at[i, f] = old_v
-                when = pd.Timestamp(old.at[t, "_extracted_at"]).date() if pd.notna(old.at[t, "_extracted_at"]) else "?"
+                # audit F01: a value already kept from an earlier run keeps its ORIGINAL date — re-keeping it must
+                # not make it look as recent as the previous extraction
+                when = already.get(f) or (pd.Timestamp(old.at[t, "_extracted_at"]).date()
+                                          if pd.notna(old.at[t, "_extracted_at"]) else "?")
                 kept.append(f"{f}@{when}")
         if kept:
             df.at[i, "stale_fields"] = "; ".join(kept)
             _exc.record(t, "company_info", "fields missing in this refresh — last known values kept (stale)",
                         ", ".join(kept))
     return df
+
+
+REVISION_TOLERANCE = 0.005      # relative change (local currency) that counts as a restated figure
+
+
+def _snapshot_values(conn, table: str, df: pd.DataFrame) -> pd.DataFrame:
+    """Stored local-currency values of the (ticker, date) periods about to be replaced (before the delete)."""
+    conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS values_first_seen DATE")
+    conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS revised BOOLEAN")
+    keys = df[["ticker", "date"]].assign(date=pd.to_datetime(df["date"]).dt.date).drop_duplicates()
+    conn.register("rev_keys", keys)
+    try:
+        return conn.execute(f"""
+            SELECT h.ticker, h.date, h.revenue / NULLIF(h.fx_to_eur, 0) AS rev_l_old,
+                   h.net_income / NULLIF(h.fx_to_eur, 0) AS ni_l_old, h.eps / NULLIF(h.fx_to_eur, 0) AS eps_l_old,
+                   h.values_first_seen, h.revised
+            FROM {table} h JOIN rev_keys k ON h.ticker = k.ticker AND h.date = CAST(k.date AS DATE)""").df()
+    finally:
+        conn.unregister("rev_keys")
+
+
+def _mark_revisions(conn, table: str, before: pd.DataFrame) -> int:
+    """Audit F02: a period whose figures CHANGED since they were stored is a restatement — it was not knowable at the
+    original filing date. values_first_seen = the day the CURRENT figures first appeared; revised = they replaced
+    different ones. Unchanged figures keep their first-seen date; a period seen for the first time gets today with
+    revised = FALSE. Compared in local currency, so an FX move is not a restatement. Returns the revised count."""
+    from datetime import date as _date
+    today = _date.today()
+    keys = before[["ticker", "date"]] if not before.empty else pd.DataFrame(columns=["ticker", "date"])
+    now = conn.execute(f"""SELECT ticker, date, revenue / NULLIF(fx_to_eur, 0) AS rev_l,
+                                  net_income / NULLIF(fx_to_eur, 0) AS ni_l, eps / NULLIF(fx_to_eur, 0) AS eps_l
+                           FROM {table} WHERE values_first_seen IS NULL OR revised IS NULL""").df()
+    if not before.empty:
+        conn.register("rev_keys", keys)
+        now = pd.concat([now, conn.execute(f"""SELECT h.ticker, h.date, h.revenue / NULLIF(h.fx_to_eur, 0) AS rev_l,
+                                                     h.net_income / NULLIF(h.fx_to_eur, 0) AS ni_l,
+                                                     h.eps / NULLIF(h.fx_to_eur, 0) AS eps_l
+                                              FROM {table} h JOIN rev_keys k ON h.ticker = k.ticker
+                                              AND h.date = CAST(k.date AS DATE)""").df()]).drop_duplicates(["ticker", "date"])
+        conn.unregister("rev_keys")
+    if now.empty:
+        return 0
+    now["date"] = pd.to_datetime(now["date"]).dt.date
+    b = before.assign(date=pd.to_datetime(before["date"]).dt.date) if not before.empty else before
+    m = now.merge(b, on=["ticker", "date"], how="left") if not before.empty else         now.assign(rev_l_old=np.nan, ni_l_old=np.nan, eps_l_old=np.nan, values_first_seen=pd.NaT, revised=None)
+    seen = m["rev_l_old"].notna() | m["ni_l_old"].notna() | m["eps_l_old"].notna()
+
+    def moved(a, o):
+        a, o = pd.to_numeric(m[a], errors="coerce"), pd.to_numeric(m[o], errors="coerce")
+        both = a.notna() & o.notna()
+        return (both & ((a - o).abs() > REVISION_TOLERANCE * o.abs().clip(lower=1e-9))) | (a.notna() != o.notna())
+    changed = seen & (moved("rev_l", "rev_l_old") | moved("ni_l", "ni_l_old") | moved("eps_l", "eps_l_old"))
+    old_first = pd.to_datetime(m["values_first_seen"], errors="coerce").dt.date
+    m["vfs"] = [today if c else (o if (s_ and pd.notna(o)) else today) for c, s_, o in zip(changed, seen, old_first)]
+    m["rev"] = [True if c else (bool(r) if (s_ and r is not None and pd.notna(r)) else False)
+                for c, s_, r in zip(changed, seen, m["revised"])]
+    conn.register("rev_upd", m[["ticker", "date", "vfs", "rev"]])
+    conn.execute(f"""UPDATE {table} h SET values_first_seen = u.vfs, revised = u.rev FROM rev_upd u
+                     WHERE h.ticker = u.ticker AND h.date = CAST(u.date AS DATE)""")
+    conn.unregister("rev_upd")
+    return int(changed.sum())
+
+
+def fill_interest_expense(conn) -> int:
+    """raw.hist_fcf.interest_expense_is ← the same fiscal year's income-statement interest expense (EUR) from
+    raw.historical_financials. The valuation uses it, as a disclosed ESTIMATE, only when interest PAID is reported in
+    neither cash-flow section and no accounting rule settles where it sits. Returns rows filled."""
+    try:
+        ensure_hist_fcf(conn)
+        ensure_annual_roic_columns(conn)
+        n0 = conn.execute("SELECT COUNT(*) FROM raw.hist_fcf WHERE interest_expense_is IS NOT NULL").fetchone()[0]
+        conn.execute("""UPDATE raw.hist_fcf f SET interest_expense_is = abs(h.interest_expense)
+                        FROM raw.historical_financials h
+                        WHERE f.ticker = h.ticker AND f.year = EXTRACT(YEAR FROM h.date)
+                          AND h.interest_expense IS NOT NULL""")
+        return conn.execute("SELECT COUNT(*) FROM raw.hist_fcf WHERE interest_expense_is IS NOT NULL").fetchone()[0] - n0
+    except duckdb.Error as e:
+        logger.warning(f"   ⚠️ interest expense not linked to cash flows: {e}")
+        return 0
 
 
 def _with_provenance(df: pd.DataFrame) -> pd.DataFrame:
@@ -878,6 +978,7 @@ def load_historical_financials(
     # Upsert by (ticker, period end) — E2: deleting EVERY stored period of a ticker present in the response let a short
     # response (one year instead of five) wipe good history. Periods not in this response are kept.
     df = _with_provenance(df)
+    before = _snapshot_values(conn, "raw.historical_financials", df)
     conn.register("df_tmp", df)
     conn.execute("""DELETE FROM raw.historical_financials h USING df_tmp d
                     WHERE h.ticker = d.ticker AND h.date = CAST(d.date AS DATE)""")
@@ -899,8 +1000,11 @@ def load_historical_financials(
         FROM df_tmp
     """)
     conn.unregister("df_tmp")
+    n_rev = _mark_revisions(conn, "raw.historical_financials", before)
+    if n_rev:
+        logger.info(f"   ✏️  {n_rev} annual period(s) restated by the provider — available from today, not the filing date")
     ensure_annual_roic_columns(conn)
-    extra = [c for c in ("ebit", "tax_rate", "cash", "total_debt") if c in df.columns]
+    extra = [c for c in ("ebit", "tax_rate", "cash", "total_debt", "interest_expense") if c in df.columns]
     if extra:
         conn.register("df_roic", df[["ticker", "date"] + extra])
         sets = ", ".join(f"{c} = CAST(d.{c} AS DOUBLE)" for c in extra)
@@ -922,6 +1026,7 @@ def load_quarterly_financials(
         return 0
 
     df = _with_provenance(df)
+    before = _snapshot_values(conn, "raw.quarterly_financials", df)
     conn.register("df_tmp", df)
     # INSERT OR REPLACE uses PRIMARY KEY (ticker, date) — does NOT wipe historical rows
     # that are absent from the current extract (e.g. 2022 data won't be deleted when 2025 is fetched)
@@ -941,6 +1046,9 @@ def load_quarterly_financials(
         FROM df_tmp
     """)
     conn.unregister("df_tmp")
+    n_rev = _mark_revisions(conn, "raw.quarterly_financials", before)
+    if n_rev:
+        logger.info(f"   ✏️  {n_rev} quarterly period(s) restated by the provider — available from today")
     logger.info(f"✅ Upserted {len(df)} quarterly financial records → raw.quarterly_financials (history preserved)")
     return len(df)
 

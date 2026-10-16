@@ -317,6 +317,10 @@ def read_warehouse(conn):
 
 
     companies_f = conn.execute("""
+        SELECT d.*, r.free_cashflow, r._extracted_at AS info_updated_at, r.stale_fields
+        FROM marts.dim_companies d
+        LEFT JOIN raw.company_info r USING (ticker)
+    """).df() if _has_column(conn, "raw.company_info", "stale_fields") else conn.execute("""
         SELECT d.*, r.free_cashflow, r._extracted_at AS info_updated_at
         FROM marts.dim_companies d
         LEFT JOIN raw.company_info r USING (ticker)
@@ -450,6 +454,16 @@ def load_etl_exceptions() -> pd.DataFrame:
         return pd.DataFrame(columns=["ticker", "stage", "reason", "detail", "detected_at"])
 
 
+def _has_column(conn, table: str, col: str) -> bool:
+    schema, name = table.split(".")
+    try:
+        return bool(conn.execute("""SELECT COUNT(*) FROM information_schema.columns
+                                    WHERE table_schema = ? AND table_name = ? AND column_name = ?""",
+                                 [schema, name, col]).fetchone()[0])
+    except Exception:
+        return False
+
+
 @st.cache_data(ttl=600, show_spinner=False)
 def load_ticker_provenance(ticker: str) -> dict:
     """Per-ticker data confidence for the Stock Analysis page: payout evidence, fields kept from an earlier extraction,
@@ -499,7 +513,7 @@ _HEALTH_QUERIES = {
 @st.cache_data(ttl=600, show_spinner=False)
 def load_data_health() -> dict:
     """Frames for the 🩺 Data Health tab; a table an older warehouse does not have yet comes back empty."""
-    out = {}
+    out, failed = {}, []
     try:
         with get_db_connection(read_only=True) as conn:
             for key, sql in _HEALTH_QUERIES.items():
@@ -507,9 +521,13 @@ def load_data_health() -> dict:
                     out[key] = conn.execute(sql).df()
                 except Exception:
                     out[key] = pd.DataFrame()
+                    failed.append(key)
     except Exception as e:
         logger.warning(f"data health not loaded: {e}")
-    return {k: out.get(k, pd.DataFrame()) for k in _HEALTH_QUERIES}
+        failed = list(_HEALTH_QUERIES)
+    res = {k: out.get(k, pd.DataFrame()) for k in _HEALTH_QUERIES}
+    res["failed"] = failed          # audit F25: a query that failed is UNKNOWN, never "no findings"
+    return res
 
 
 def load_price_history() -> pd.DataFrame:

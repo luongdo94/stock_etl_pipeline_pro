@@ -57,7 +57,16 @@ RECON_DDL = """
         status VARCHAR, source VARCHAR, detail VARCHAR, checked_at TIMESTAMP);
     CREATE TABLE IF NOT EXISTS raw.sec_filings (
         ticker VARCHAR, cik BIGINT, period_end DATE, form VARCHAR, fp VARCHAR, filed DATE, _loaded_at TIMESTAMP);
+    CREATE TABLE IF NOT EXISTS raw.sec_cash_items (
+        ticker VARCHAR, period_end DATE, item VARCHAR, value_usd DOUBLE, tag VARCHAR, form VARCHAR, filed DATE,
+        _loaded_at TIMESTAMP);
 """
+# Cash-flow facts Yahoo often lacks, from the 10-K XBRL (US filers): item → tags in order of preference
+SEC_CASH_ITEMS = {
+    "stock_based_comp": ("ShareBasedCompensation", "AllocatedShareBasedCompensationExpense"),
+    "lease_principal_paid": ("FinanceLeasePrincipalPayments",),
+    "interest_paid_cfo": ("InterestPaidNet", "InterestPaid"),         # US GAAP: interest paid sits in operating CF
+}
 
 
 def ensure_tables(conn) -> None:
@@ -243,6 +252,56 @@ def facts_filings(facts: dict, tags=REVENUE_TAGS + NET_INCOME_TAGS) -> pd.DataFr
     return df.sort_values("filed").drop_duplicates(["period_end", "form"]).reset_index(drop=True)
 
 
+def facts_cash_items(facts: dict) -> pd.DataFrame:
+    """[period_end, item, value_usd, tag, form, filed] — annual (10-K, ~1-year duration) SBC, finance-lease principal and
+    interest paid, latest filing per period (restatements included)."""
+    gaap = (facts.get("facts") or {}).get("us-gaap") or {}
+    rows = []
+    for item, tags in SEC_CASH_ITEMS.items():
+        for tag in tags:
+            entries = [e for e in ((gaap.get(tag) or {}).get("units") or {}).get("USD", [])
+                       if e.get("form") in ANNUAL_FORMS and 350 <= _duration_days(e) <= 380]
+            if not entries:
+                continue
+            df = pd.DataFrame(entries).sort_values("filed").drop_duplicates("end", keep="last")
+            rows += [{"period_end": pd.to_datetime(r.end).date(), "item": item, "value_usd": abs(float(r.val)),
+                      "tag": tag, "form": r.form, "filed": pd.to_datetime(r.filed).date()} for r in df.itertuples()]
+            break                                            # first tag with data wins for this item
+    return pd.DataFrame(rows, columns=["period_end", "item", "value_usd", "tag", "form", "filed"])
+
+
+def apply_sec_supplements(conn) -> dict:
+    """Fill raw.hist_fcf deductions the provider left empty with the SEC XBRL figure of the same fiscal year (USD → EUR
+    at that year's statement rate), recording the source in *_source. Re-applied every run (a Yahoo reload rewrites the
+    row). Never overwrites a reported value. {item: rows filled}."""
+    out = {}
+    try:
+        from etl.load import ensure_hist_fcf
+        ensure_hist_fcf(conn)
+        ensure_tables(conn)
+        src_col = {"stock_based_comp": "sbc_source", "lease_principal_paid": "lease_source",
+                   "interest_paid_cfo": "interest_source"}
+        for item, col in src_col.items():
+            n0 = conn.execute(f"SELECT COUNT(*) FROM raw.hist_fcf WHERE {item} IS NOT NULL").fetchone()[0]
+            conn.execute(f"""
+                UPDATE raw.hist_fcf f SET {item} = s.value_usd * COALESCE(fx.rate, 1.0),
+                       {col} = 'SEC XBRL ' || s.tag || ' (' || s.form || ', filed ' || CAST(s.filed AS VARCHAR) || ')'
+                FROM raw.sec_cash_items s
+                LEFT JOIN (SELECT ticker, EXTRACT(YEAR FROM date) AS y, arg_max(fx_to_eur, date) AS rate
+                           FROM raw.historical_financials WHERE src_currency = 'USD' GROUP BY 1, 2) fx
+                       ON fx.ticker = s.ticker AND fx.y = EXTRACT(YEAR FROM s.period_end)
+                WHERE f.ticker = s.ticker AND f.year = EXTRACT(YEAR FROM s.period_end) AND s.item = '{item}'
+                  AND f.{item} IS NULL""")
+            filled = conn.execute(f"SELECT COUNT(*) FROM raw.hist_fcf WHERE {item} IS NOT NULL").fetchone()[0] - n0
+            if filled:
+                out[item] = int(filled)
+        if out:
+            logger.info("   🧩 SEC XBRL filled missing cash-flow deductions: " + ", ".join(f"{k} {v}" for k, v in out.items()))
+    except duckdb.Error as e:
+        logger.warning(f"   ⚠️ SEC supplements not applied: {e}")
+    return out
+
+
 def compare_statements(ticker: str, ours: pd.DataFrame, sec: dict, tolerance_pct: float) -> list:
     """ours: [date, revenue, net_income, src_currency, fx_to_eur]; sec: {'revenue': df, 'net_income': df}."""
     now = pd.Timestamp.now()
@@ -285,7 +344,7 @@ def reconcile_sec(conn, tickers, user_agent: str, tolerance_pct: float = 3.0, li
     get = get or requests.get
     cik_map = sec_cik_map(user_agent, get)
     targets = sec_targets(conn, tickers, cik_map, limit)
-    rows, filings = [], []
+    rows, filings, cash_items = [], [], []
     for t in targets:
         cik = cik_map[t.upper()]
         try:
@@ -308,11 +367,23 @@ def reconcile_sec(conn, tickers, user_agent: str, tolerance_pct: float = 3.0, li
                            "diff_pct": None, "status": "NOT_COVERED", "source": "SEC EDGAR",
                            "detail": f"no comparable {ccy} annual revenue / net income in the XBRL facts",
                            "checked_at": pd.Timestamp.now()}]
+        items = facts_cash_items(facts)
+        if not items.empty:
+            items.insert(0, "ticker", t)
+            cash_items.append(items)
         f = facts_filings(facts)
         if not f.empty:
             f.insert(0, "cik", cik)
             f.insert(0, "ticker", t)
             filings.append(f)
+    if cash_items:
+        cdf = pd.concat(cash_items, ignore_index=True)
+        cdf["_loaded_at"] = pd.Timestamp.now()
+        conn.register("ci_tmp", cdf)
+        conn.execute("DELETE FROM raw.sec_cash_items WHERE ticker IN (SELECT DISTINCT ticker FROM ci_tmp)")
+        conn.execute("""INSERT INTO raw.sec_cash_items SELECT ticker, period_end, item, value_usd, tag, form, filed,
+                        _loaded_at FROM ci_tmp""")
+        conn.unregister("ci_tmp")
     if filings:
         fdf = pd.concat(filings, ignore_index=True)
         fdf["_loaded_at"] = pd.Timestamp.now()

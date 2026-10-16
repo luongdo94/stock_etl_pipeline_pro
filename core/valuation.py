@@ -17,6 +17,7 @@ When the price implies growth beyond what the model can represent, or the result
 (margin of safety > 150%), the DCF is reported as uninformative instead of driving a decision.
 """
 from dataclasses import dataclass
+from datetime import date
 from typing import Iterable, Optional
 
 import numpy as np
@@ -25,14 +26,23 @@ import pandas as pd
 RISK_FREE = 0.04             # fallback when no live 10Y yield is available
 
 
+_CFG_CACHE: dict = {}
+
+
 def _valuation_config() -> dict:
-    """config/decision_rules.yaml → valuation section (DCF results are very sensitive to it)."""
+    """config/decision_rules.yaml → valuation section (DCF results are very sensitive to it). Parsed once per file
+    version (audit F28: it was re-read from disk for every helper call of every issuer); an edit is picked up at once
+    because the cache key is the file's modification time and size."""
     try:
         import yaml
         from pathlib import Path
-        cfg = yaml.safe_load(open(Path(__file__).resolve().parent.parent / "config" / "decision_rules.yaml",
-                                  encoding="utf-8")) or {}
-        return cfg.get("valuation", {}) or {}
+        p = Path(__file__).resolve().parent.parent / "config" / "decision_rules.yaml"
+        st = p.stat()
+        key = (st.st_mtime_ns, st.st_size)
+        if _CFG_CACHE.get("key") != key:
+            cfg = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+            _CFG_CACHE.update(key=key, cfg=cfg.get("valuation", {}) or {})
+        return dict(_CFG_CACHE["cfg"])
     except OSError:
         return {}
 
@@ -163,44 +173,98 @@ def revenue_cagr(annual_fin: Optional[pd.DataFrame], ticker: str, years: int = 3
 FINANCING_DEDUCTIONS = ("interest_paid_cff", "lease_principal_paid")
 
 
-def _after_sbc(rows: pd.DataFrame) -> pd.Series:
+def deduction_context(meta=None, ticker: Optional[str] = None) -> dict:
+    """What the deduction resolver may use besides the reported fields.
+      us_gaap  — a US-domiciled company with a US listing files a 10-K under US GAAP (foreign private issuers, the only
+                 SEC registrants allowed IFRS, file 20-F / 40-F): ASC 230 puts interest paid in OPERATING cash flow and
+                 ASC 842 puts operating-lease payments there too — both already inside FCF.
+      sbc_material — the sector is one where share-based pay is routinely large (software, semis, internet, biotech…):
+                 an unreported SBC there is never assumed away.
+    No meta → no context: only reported evidence counts (the strict R4-02 behaviour)."""
+    if meta is None:
+        return {}
+    get = meta.get if hasattr(meta, "get") else (lambda k, d=None: d)
+    t = str(ticker or get("ticker") or "")
+    country = str(get("country") or "").strip().lower()
+    sector = f"{get('sector') or ''} {get('industry') or ''}".lower()
+    keys = _valuation_config().get("sbc_material_sector_keywords") or SBC_MATERIAL_KEYWORDS
+    return {"us_gaap": country in ("united states", "usa", "us") and "." not in t,
+            "sbc_material": any(k in sector for k in keys), "sector": (get("sector") or "").strip() or "this sector",
+            "allow_assumed": _required("allow_assumed_fcfe_deductions")}
+
+
+SBC_MATERIAL_KEYWORDS = ("software", "saas", "semiconductor", "internet", "ecommerce", "e-commerce", "social", "biotech",
+                         "platform", "cyber", "cloud", "fintech", "gaming", "interactive", "it services")
+REIT_KEYWORDS = ("reit", "real estate")       # FCFE DCF not decision-grade for property owners (see valuation_inputs)
+ASSUMED = "ASSUMED"                 # not reported anywhere, assumed with a stated reason — disclosed on the Decision
+
+
+def resolve_deduction(r, item: str, ctx: dict, na: dict) -> tuple:
+    """(status, amount_eur, source) of one deduction in one fiscal year. Evidence order: reported cash-flow field →
+    SEC XBRL supplement (written into the field by the ETL, provenance in *_source) → accounting-standard rule →
+    estimate → stated assumption → UNKNOWN. The amount is what the FCFE subtracts (0 for NOT_APPLICABLE / ASSUMED /
+    UNKNOWN; UNKNOWN keeps the valuation from driving a trade)."""
+    v = _finite(r.get(item))
+    if v is not None:
+        src = r.get(f"{item.split('_')[0]}_source") if item != "stock_based_comp" else r.get("sbc_source")
+        return (CONFIRMED_ZERO if v == 0 else OBSERVED), abs(v), (str(src) if src and str(src) != "nan" else None)
+    if item == "stock_based_comp":
+        if item in na:
+            return NOT_APPLICABLE, 0.0, na[item]
+        if ctx.get("allow_assumed") and ctx and not ctx.get("sbc_material"):
+            return ASSUMED, 0.0, (f"stock-based compensation not reported (Yahoo, SEC) — assumed immaterial for "
+                                  f"{ctx.get('sector')}; FCF may be overstated by the unreported amount")
+        return UNKNOWN, 0.0, None
+    if item == "interest_paid_cff":
+        if _finite(r.get("interest_paid_cfo")) is not None:
+            src = r.get("interest_source")
+            return NOT_APPLICABLE, 0.0, (f"{src}: interest paid reported in operating cash flow"
+                                         if src and str(src) != "nan" else
+                                         "provider reports interest paid in operating cash flow (InterestPaidCFO)")
+        if ctx.get("us_gaap"):
+            return NOT_APPLICABLE, 0.0, ("US GAAP filer: ASC 230 classifies interest paid in operating cash flow, "
+                                        "already inside FCF")
+        deduct = _required("deduct_unclassified_interest")
+        sup = _finite(r.get("interest_paid_supplemental"))
+        if sup is not None and deduct:
+            return ESTIMATED, abs(sup), ("interest paid known only as a supplemental amount — deducted as if in "
+                                         "financing (conservative: double-counts it if it is already in operating CF)")
+        iexp = _finite(r.get("interest_expense_is"))
+        if iexp is not None and deduct:
+            return ESTIMATED, abs(iexp), ("interest paid not reported — income-statement interest expense deducted "
+                                          "(conservative: double-counts it if it is already in operating CF)")
+        if item in na:
+            return NOT_APPLICABLE, 0.0, na[item]
+        return UNKNOWN, 0.0, None
+    # lease principal
+    if ctx.get("us_gaap"):
+        # operating-lease cash is already in operating CF (ASC 842); only finance-lease principal is a financing claim.
+        # The balance-sheet estimate would deduct operating leases twice, so it is not used for US GAAP filers.
+        if item in na:
+            return NOT_APPLICABLE, 0.0, na[item]
+        if ctx.get("allow_assumed"):
+            return ASSUMED, 0.0, ("US GAAP filer: operating-lease payments are already in operating cash flow "
+                                  "(ASC 842); finance-lease principal not reported — assumed immaterial")
+        return UNKNOWN, 0.0, None
+    est = _finite(r.get("lease_principal_estimate"))
+    if est is not None:
+        return ESTIMATED, abs(est), str(r.get("lease_principal_estimate_source") or "balance-sheet lease liabilities")
+    if item in na:
+        return NOT_APPLICABLE, 0.0, na[item]
+    return UNKNOWN, 0.0, None
+
+
+def _after_sbc(rows: pd.DataFrame, ctx: Optional[dict] = None, ticker: Optional[str] = None) -> pd.Series:
     """Cash flow to equity: OCF − capex − stock-based compensation − interest paid in financing − lease principal.
     SBC is added back in operating cash flow although it is a real cost to owners (dilution). Interest classified in
     financing (IFRS option) and lease principal (IFRS 16) are real claims ahead of equity. A missing figure is left out
     of this REFERENCE number (fillna(0)); fcfe_deduction_status marks it UNKNOWN and the valuation is then not reliable
     for BUY/AVOID (R4-02) — the fill never reaches a decision as if it were a confirmed zero."""
     fcf = pd.to_numeric(rows["free_cash_flow"], errors="coerce")
-    if "stock_based_comp" in rows.columns:
-        fcf = fcf - pd.to_numeric(rows["stock_based_comp"], errors="coerce").fillna(0.0)
-    interest = _effective_interest(rows)
-    if interest is not None:
-        fcf = fcf - interest.abs().fillna(0.0)
-    lease = _effective_lease(rows)
-    if lease is not None:
-        fcf = fcf - lease.abs().fillna(0.0)
-    return fcf
-
-
-def _effective_interest(rows: pd.DataFrame) -> Optional[pd.Series]:
-    """Interest paid deducted per row: the financing-CF figure; none when the provider says it sits in operating CF
-    (InterestPaidCFO); the supplemental amount when the classification is unknown (conservative, switchable)."""
-    cff = pd.to_numeric(rows["interest_paid_cff"], errors="coerce") if "interest_paid_cff" in rows.columns else None
-    if "interest_paid_supplemental" not in rows.columns or not _required("deduct_unclassified_interest"):
-        return cff
-    sup = pd.to_numeric(rows["interest_paid_supplemental"], errors="coerce")
-    if "interest_paid_cfo" in rows.columns:
-        sup = sup.where(pd.to_numeric(rows["interest_paid_cfo"], errors="coerce").isna())
-    return sup if cff is None else cff.fillna(sup)
-
-
-def _effective_lease(rows: pd.DataFrame) -> Optional[pd.Series]:
-    """Lease principal per row: the cash-flow figure when reported, else the balance-sheet estimate (_with_estimates)."""
-    rep = pd.to_numeric(rows["lease_principal_paid"], errors="coerce") if "lease_principal_paid" in rows.columns else None
-    est = pd.to_numeric(rows["lease_principal_estimate"], errors="coerce") \
-        if "lease_principal_estimate" in rows.columns else None
-    if rep is None:
-        return est
-    return rep if est is None else rep.fillna(est)
+    na = _not_applicable_registry().get(str(ticker), {}) if ticker else {}
+    ctx = ctx or {}
+    ded = [sum(resolve_deduction(r, item, ctx, na)[1] for item in DEDUCTION_ITEMS) for _, r in rows.iterrows()]
+    return fcf - pd.Series(ded, index=rows.index, dtype=float)
 
 
 BASIS_YEARS = 3
@@ -215,7 +279,7 @@ DEDUCTION_ITEMS = ("stock_based_comp",) + FINANCING_DEDUCTIONS
 # A missing provider field without such evidence is UNKNOWN — never inferred to be zero, and never from the country.
 OBSERVED, CONFIRMED_ZERO, NOT_APPLICABLE, UNKNOWN = "OBSERVED", "CONFIRMED_ZERO", "NOT_APPLICABLE", "UNKNOWN"
 ESTIMATED = "ESTIMATED"
-KNOWN_STATUSES = (OBSERVED, CONFIRMED_ZERO, NOT_APPLICABLE, ESTIMATED)
+KNOWN_STATUSES = (OBSERVED, CONFIRMED_ZERO, NOT_APPLICABLE, ESTIMATED, "ASSUMED")
 
 
 def _with_estimates(rows: pd.DataFrame) -> pd.DataFrame:
@@ -270,38 +334,27 @@ def _not_applicable_registry() -> dict:
     return out
 
 
-def fcfe_deduction_status(hist_fcf: pd.DataFrame, ticker: str, years: int = BASIS_YEARS) -> dict:
+def fcfe_deduction_status(hist_fcf: pd.DataFrame, ticker: str, years: int = BASIS_YEARS,
+                          ctx: Optional[dict] = None) -> dict:
     """{item: {"status": ..., "by_year": {year: status}, "source": str|None}} for SBC, interest paid in financing and
-    lease principal, over the valuation basis years. An item is only as known as its worst year."""
+    lease principal, over the valuation basis years. An item is only as known as its worst year:
+    UNKNOWN > ASSUMED > ESTIMATED > OBSERVED / NOT_APPLICABLE. `ctx` (deduction_context) enables the accounting-
+    standard rules and the stated assumptions; without it only reported evidence counts."""
     rows = basis_rows(hist_fcf, ticker, years)
     na = _not_applicable_registry().get(str(ticker), {})
+    ctx = ctx or {}
     out = {}
     for item in DEDUCTION_ITEMS:
         by_year, sources = {}, set()
         for _, r in rows.iterrows():
-            y = int(r["year"])
-            v = _finite(r.get(item)) if item in rows.columns else None
-            if v is not None:
-                by_year[y] = CONFIRMED_ZERO if v == 0 else OBSERVED
-            elif item == "interest_paid_cff" and _finite(r.get("interest_paid_cfo")) is not None:
-                by_year[y] = NOT_APPLICABLE              # provider: interest paid is classified in operating CF
-                sources.add("provider reports interest paid in operating cash flow (InterestPaidCFO)")
-            elif item == "interest_paid_cff" and _finite(r.get("interest_paid_supplemental")) is not None \
-                    and _required("deduct_unclassified_interest"):
-                by_year[y] = ESTIMATED                   # amount known, classification not: deduct it (conservative)
-                sources.add("interest paid known only as a supplemental amount — deducted as if in financing "
-                            "(conservative: double-counts it if it is already in operating cash flow)")
-            elif item == "lease_principal_paid" and _finite(r.get("lease_principal_estimate")) is not None:
-                by_year[y] = ESTIMATED
-                sources.add(str(r.get("lease_principal_estimate_source") or "balance-sheet lease liabilities"))
-            elif item in na:
-                by_year[y] = NOT_APPLICABLE
-                sources.add(na[item])
-            else:
-                by_year[y] = UNKNOWN
+            status_y, _, src = resolve_deduction(r, item, ctx, na)
+            by_year[int(r["year"])] = status_y
+            if src and status_y != OBSERVED and status_y != CONFIRMED_ZERO or (src and str(src).startswith("SEC")):
+                sources.add(src)
         vals = set(by_year.values())
         status = UNKNOWN if (not by_year or UNKNOWN in vals) else (
-            NOT_APPLICABLE if vals == {NOT_APPLICABLE} else (ESTIMATED if ESTIMATED in vals else OBSERVED))
+            ASSUMED if ASSUMED in vals else (
+                NOT_APPLICABLE if vals == {NOT_APPLICABLE} else (ESTIMATED if ESTIMATED in vals else OBSERVED)))
         out[item] = {"status": status, "by_year": by_year,
                      "source": "; ".join(sorted(sources)) if sources else na.get(item)}
     return out
@@ -312,7 +365,7 @@ def _deduction_evidence_text(status: dict) -> str:
     names = {"stock_based_comp": "stock comp", "interest_paid_cff": "interest paid in financing",
              "lease_principal_paid": "lease principal"}
     parts = [f"{names[k]} {s['status'].replace('_', ' ').lower()}" + (f" ({s['source']})" if s.get("source") else "")
-             for k, s in status.items() if s["status"] in (ESTIMATED, NOT_APPLICABLE)]
+             for k, s in status.items() if s["status"] in (ESTIMATED, NOT_APPLICABLE, ASSUMED) or s.get("source")]
     return ("; " + "; ".join(parts)) if parts else ""
 
 
@@ -327,29 +380,33 @@ def refinancing_stress(hist_fcf: pd.DataFrame, ticker: str, fcfe) -> dict:
         return {"net_repayment": None, "share_of_fcfe": None, "years": 0}
     rep = pd.to_numeric(rows["debt_repaid"], errors="coerce")
     iss = pd.to_numeric(rows["debt_issued"], errors="coerce")
-    known = rep.notna() | iss.notna()
+    # Audit F32: a year with one leg unknown is UNKNOWN, not "that leg was zero" (issuance 0 + repayment unknown used
+    # to read as no refinancing need at all)
+    known = rep.notna() & iss.notna()
+    incomplete = int((rep.notna() ^ iss.notna()).sum())
     if not known.any():
-        return {"net_repayment": None, "share_of_fcfe": None, "years": 0}
-    net = (rep.fillna(0).abs() - iss.fillna(0).abs())[known]
+        return {"net_repayment": None, "share_of_fcfe": None, "years": 0, "incomplete_years": incomplete}
+    net = (rep.abs() - iss.abs())[known]
     med = float(net.median())
     f = _finite(fcfe)
     share = (max(med, 0.0) / f) if f and f > 0 else None
-    return {"net_repayment": med, "share_of_fcfe": share, "years": int(known.sum())}
+    return {"net_repayment": med, "share_of_fcfe": share, "years": int(known.sum()), "incomplete_years": incomplete}
 
 
-def fcfe_adjustments(hist_fcf: pd.DataFrame, ticker: str, years: int = BASIS_YEARS) -> list:
+def fcfe_adjustments(hist_fcf: pd.DataFrame, ticker: str, years: int = BASIS_YEARS, ctx: Optional[dict] = None) -> list:
     """Financing deductions applied in every basis year — reported (incl. zero) or estimated (empty = none)."""
-    st = fcfe_deduction_status(hist_fcf, ticker, years)
+    st = fcfe_deduction_status(hist_fcf, ticker, years, ctx)
     return [c for c in FINANCING_DEDUCTIONS if st[c]["by_year"]
             and all(s in (OBSERVED, CONFIRMED_ZERO, ESTIMATED) for s in st[c]["by_year"].values())]
 
 
-def normalized_statement_fcf(hist_fcf: pd.DataFrame, ticker: str, years: int = BASIS_YEARS) -> Optional[float]:
+def normalized_statement_fcf(hist_fcf: pd.DataFrame, ticker: str, years: int = BASIS_YEARS,
+                             ctx: Optional[dict] = None) -> Optional[float]:
     """Median of the basis years' statement FCF after the deductions that are reported (EUR) — damps spikes and cycles.
     A missing deduction is left out of the figure here; whether the figure may drive a trade is decided by
     fcfe_deduction_status (UNKNOWN → not reliable), never by this number."""
     rows = basis_rows(hist_fcf, ticker, years)
-    return _finite(_after_sbc(rows).median()) if not rows.empty else None
+    return _finite(_after_sbc(rows, ctx, ticker).median()) if not rows.empty else None
 
 
 def sbc_available(hist_fcf: pd.DataFrame, ticker: str, years: int = BASIS_YEARS) -> bool:
@@ -590,12 +647,14 @@ def residual_income_value(book_per_share, roe, discount_rate, growth, payout=DEF
     return float(value)
 
 
-def payout_ratio(meta, price) -> Optional[float]:
-    """(Dividends + net buybacks) / earnings from the provider's yields: net payout yield / earnings yield."""
-    eps, npy = _finite(meta.get("trailing_eps")), _finite(meta.get("net_payout_yield_pct"))
-    if eps is None or eps <= 0 or npy is None or not price:
+def payout_ratio(meta, price=None) -> Optional[float]:
+    """(Dividends + net buybacks) / earnings = net payout yield / earnings yield = net payout yield × P/E.
+    Both inputs are currency-free (audit F09: price is EUR while trailing EPS stays in the financial currency, so
+    price / EPS mixed currencies). No positive P/E (losses) → unknown."""
+    pe, npy = _finite(meta.get("pe_ratio")), _finite(meta.get("net_payout_yield_pct"))
+    if pe is None or pe <= 0 or npy is None:
         return None
-    return float(np.clip(npy / 100 * price / eps, 0.0, 1.0))
+    return float(np.clip(npy / 100 * pe, 0.0, 1.0))
 
 
 def pb_roe_peer_fit(companies: Optional[pd.DataFrame], ticker: str, min_peers: int = 8) -> Optional[dict]:
@@ -652,6 +711,18 @@ def capital_inputs_check(ticker: str, meta) -> tuple:
         return False, ("No sourced capital-adequacy / asset-quality inputs (CET1, NPLs; solvency ratio for insurers) — "
                        "the justified-P/B value is context only, not used for BUY/AVOID. Record them with source and "
                        "date in decision_rules.yaml → valuation.bank_capital_inputs.")
+    # Audit F10: the date is evidence too — it must parse, not lie in the future, and not be older than the latest
+    # annual / Pillar 3 cycle (bank_capital_max_age_days, default 400)
+    as_of = pd.to_datetime(str(entry.get("as_of")), errors="coerce")
+    max_age = int(cfg.get("bank_capital_max_age_days", 400))
+    today = pd.Timestamp(date.today())
+    if pd.isna(as_of):
+        return False, f"Capital inputs dated {entry.get('as_of')!r} — not a date; not used for BUY/AVOID."
+    if as_of > today:
+        return False, f"Capital inputs dated {as_of:%Y-%m-%d}, in the future — not used for BUY/AVOID."
+    if (today - as_of).days > max_age:
+        return False, (f"Capital inputs from {as_of:%Y-%m-%d} are {(today - as_of).days} days old (limit {max_age}) — "
+                       f"update them from the latest report; not used for BUY/AVOID.")
     insurer = "insur" in str(meta.get("sector") or "").lower() or "insur" in str(meta.get("industry") or "").lower()
     if insurer:
         sol = _finite(entry.get("solvency_ratio_pct"))
@@ -719,7 +790,8 @@ def _financial_inputs(meta, price: float, annual_fin, ticker: str, coe: float, t
                        f"to the credit or underwriting cycle."),
         "risk_free": ass["risk_free"], "cost_of_equity": coe, "terminal_growth": tg, "currency": ass["currency"],
         "rate_source": ass["source"], "scenarios": scen, "base": base, "bear": bear, "bull": bull,
-        "implied_growth": implied, "roe": roe, "roe_normalised": roe_norm, "book_per_share": bvps,
+        # audit F33: what the price implies here is a perpetual ROE (justified-P/B inverse), not a starting FCF growth
+        "implied_growth": None, "implied_roe": implied, "roe": roe, "roe_normalised": roe_norm, "book_per_share": bvps,
         "justified_pb": (roe - tg) / (coe - tg) if roe is not None and coe > tg else None,
         "sbc_adjusted": False, "fcfe_adjustments": [], "terminal_share": None, "growth_note": None, "irr": {},
         "expected_value": expected_value(scen), "probabilities": scenario_probabilities(),
@@ -772,13 +844,10 @@ def risk_free_from_macro(macro: dict) -> float:
 
 
 def holding_horizon() -> int:
+    """valuation.horizon_years — through the versioned config cache (PERF-05: it re-parsed the YAML once per issuer)."""
     try:
-        import yaml
-        from pathlib import Path
-        cfg = yaml.safe_load(open(Path(__file__).resolve().parent.parent / "config" / "decision_rules.yaml",
-                                  encoding="utf-8")) or {}
-        return int((cfg.get("valuation") or {}).get("horizon_years", 4))
-    except (OSError, TypeError, ValueError):
+        return int(_valuation_config().get("horizon_years", 4))
+    except (TypeError, ValueError):
         return 4
 
 
@@ -810,22 +879,23 @@ def valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, ma
         return _financial_inputs(meta, price, annual_fin, ticker, coe, tg, ass)
 
     # Cash-flow-statement FCF after stock-based compensation (EUR) first; Yahoo's levered FCF only as a fallback
-    statement_fcf = normalized_statement_fcf(hist_fcf, ticker)
+    dctx = deduction_context(meta, ticker)               # accounting-standard rules + disclosed assumptions
+    statement_fcf = normalized_statement_fcf(hist_fcf, ticker, ctx=dctx)
     sbc = sbc_available(hist_fcf, ticker)
     fcfe = statement_fcf if statement_fcf is not None else _finite(meta.get("free_cashflow"))
-    adj = fcfe_adjustments(hist_fcf, ticker)
+    adj = fcfe_adjustments(hist_fcf, ticker, ctx=dctx)
     fcf_source = (("cash-flow statement FCF (OCF − capex − stock-based comp" if sbc
                    else "cash-flow statement FCF (OCF − capex; stock comp not available")
                   + ("".join(f" − {a.replace('_', ' ')}" for a in adj))
                   + ("), median of last 3 years" if adj else
                      "; interest/lease payments in financing NOT deducted — overstated for IFRS filers), median of last 3 years")
-                  + _deduction_evidence_text(fcfe_deduction_status(hist_fcf, ticker))
+                  + _deduction_evidence_text(fcfe_deduction_status(hist_fcf, ticker, ctx=dctx))
                   if statement_fcf is not None else "Yahoo levered FCF")
     mcap = _finite(meta.get("market_cap"))
     shares = mcap / price if mcap and price else None
     hist_rows = _with_estimates(hist_fcf[hist_fcf["ticker"] == ticker].sort_values("year")).tail(5) \
         if hist_fcf is not None and not hist_fcf.empty else pd.DataFrame(columns=["year", "free_cash_flow"])
-    hist_cagr = cagr_by_year(hist_rows["year"], _after_sbc(hist_rows)) if not hist_rows.empty else None
+    hist_cagr = cagr_by_year(hist_rows["year"], _after_sbc(hist_rows, dctx, ticker)) if not hist_rows.empty else None
     growth, sources = anchor_growth(meta.get("revenue_growth"), meta.get("earnings_growth"),
                                     hist_cagr, revenue_cagr=revenue_cagr(annual_fin, ticker))
     valuable = bool(fcfe and fcfe > 0 and shares)
@@ -834,6 +904,14 @@ def valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, ma
     bull = scen["bull"].value_per_share if scen else None
     implied = reverse_dcf_growth(price, fcfe, shares, coe, tg) if valuable else None
     reliable, note = dcf_reliability(None, price, base, bull, implied)       # sector test already done by uses_book_model
+    _sect = f"{meta.get('sector') or ''} {meta.get('industry') or ''}".lower()
+    if reliable and any(k in _sect for k in REIT_KEYWORDS):
+        # CFO − capex leaves out property ACQUISITIONS (investing, funded by new equity / debt), so a REIT's "FCFE" is
+        # not what owners can take out — the DCF overstates value (Realty Income / VICI showed +130–140%). Context only
+        # until an FFO / AFFO / NAV model exists.
+        reliable, note = False, ("REIT: an FCFE DCF ignores property acquisitions funded by new equity and debt, so it "
+                                 "overstates distributable cash — value shown as context only (an AFFO / NAV model is "
+                                 "needed). Not used for BUY/AVOID.")
     rev_cagr = revenue_cagr(annual_fin, ticker)
     tv_share = terminal_value_share(fcfe, growth, coe, tg) if valuable else None
     growth_note = None
@@ -847,7 +925,7 @@ def valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, ma
     # but cannot drive BUY / AVOID. Switch: valuation.require_verified_fcfe_deductions in decision_rules.yaml.
     # R4-02: EVERY applicable deduction must be known for EVERY one of 3 consecutive fiscal years — one verified item
     # no longer lets an unknown one through, and the filer's country is not evidence of its cash-flow classification.
-    deduction_status = fcfe_deduction_status(hist_fcf, ticker)
+    deduction_status = fcfe_deduction_status(hist_fcf, ticker, ctx=dctx)
     if reliable and valuable and _required("require_verified_fcfe_deductions"):
         _unknown = [k for k, s in deduction_status.items() if s["status"] == UNKNOWN]
         if statement_fcf is None:
@@ -883,6 +961,7 @@ def valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, ma
         "bull": bull,
         "implied_growth": implied, "sbc_adjusted": sbc,
         "fcfe_adjustments": adj, "fcfe_deduction_status": {k: s["status"] for k, s in deduction_status.items()},
+        "fcfe_deduction_sources": {k: s.get("source") for k, s in deduction_status.items()},
         "terminal_share": tv_share, "growth_note": growth_note,
         "irr": _irrs(scen, fcfe, shares, price, tg),
         "expected_value": expected_value(scen) if scen else None, "probabilities": scenario_probabilities(),

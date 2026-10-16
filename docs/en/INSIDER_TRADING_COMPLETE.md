@@ -34,7 +34,7 @@ All insider trading features have been successfully integrated into the Honest Q
 - ✅ `docs/en/INSIDER_TRADING_GUIDE.md` - Comprehensive guide (88KB)
 - ✅ `docs/en/INSIDER_TRADING_SUMMARY.md` - Implementation summary
 - ✅ `INSIDER_TRADING_QUICK_REF.md` - Quick reference card
-- ✅ `view_insider_transactions.py` - CLI query tool
+- ✅ `scripts/tools/view_insider_transactions.py` - CLI query tool
 
 ---
 
@@ -57,13 +57,13 @@ All insider trading features have been successfully integrated into the Honest Q
 
 ```bash
 # View all transactions for NVDA (last 90 days)
-python3 view_insider_transactions.py --ticker NVDA
+python3 scripts/tools/view_insider_transactions.py --ticker NVDA
 
 # View only buys (last 30 days, min $100K)
-python3 view_insider_transactions.py --type Buy --days 30 --min-value 100
+python3 scripts/tools/view_insider_transactions.py --type Buy --days 30 --min-value 100
 
 # Export to CSV
-python3 view_insider_transactions.py --ticker AAPL --export aapl_insider.csv
+python3 scripts/tools/view_insider_transactions.py --ticker AAPL --export aapl_insider.csv
 ```
 
 ### Via SQL:
@@ -113,12 +113,12 @@ ORDER BY insider_net_shares_6m DESC;
 
 ### Manual Update:
 ```bash
-python3 load_insider_data.py
+python3 scripts/tools/load_insider_data.py
 ```
 
 ### Check Status:
 ```bash
-python3 quick_check_insider.py
+python3 scripts/tools/quick_check_insider.py
 ```
 
 ---
@@ -133,9 +133,9 @@ docs/en/INSIDER_TRADING_GUIDE.md        # Full documentation
 docs/en/INSIDER_TRADING_SUMMARY.md      # Implementation summary
 INSIDER_TRADING_QUICK_REF.md            # Quick reference
 INSIDER_TRADING_COMPLETE.md             # This file
-load_insider_data.py                    # Manual load script
-view_insider_transactions.py            # CLI query tool
-quick_check_insider.py                  # Status checker
+scripts/tools/load_insider_data.py                    # Manual load script
+scripts/tools/view_insider_transactions.py            # CLI query tool
+scripts/tools/quick_check_insider.py                  # Status checker
 test_insider_trading.py                 # Test script
 ```
 
@@ -224,13 +224,13 @@ show_insider_buys = st.checkbox("🟢 Only show stocks with insider buying")
 - **Quick Ref**: `INSIDER_TRADING_QUICK_REF.md`
 
 ### Tools:
-- **CLI Viewer**: `python3 view_insider_transactions.py --help`
-- **Status Check**: `python3 quick_check_insider.py`
-- **Manual Load**: `python3 load_insider_data.py`
+- **CLI Viewer**: `python3 scripts/tools/view_insider_transactions.py --help`
+- **Status Check**: `python3 scripts/tools/quick_check_insider.py`
+- **Manual Load**: `python3 scripts/tools/load_insider_data.py`
 
 ### Troubleshooting:
 1. Check Airflow DAG logs for extraction issues
-2. Verify database has insider tables: `python3 quick_check_insider.py`
+2. Verify database has insider tables: `python3 scripts/tools/quick_check_insider.py`
 3. Ensure transform has run: `python3 run.py --fast`
 
 ---

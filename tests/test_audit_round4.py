@@ -12,10 +12,18 @@ from core import valuation as v
 TODAY = date(2026, 10, 13)
 
 
+def _gated_rules():
+    """The evidence gate ON, whatever config/decision_rules.yaml currently says (the owner may switch it off)."""
+    rules = decision.load_rules()
+    rules["evidence"] = {"require_validated_evidence_for_buy": True}
+    return rules
+
+
 def _d(**kw):
     base = dict(price=100, base_value=150, bear_value=90, bull_value=200, stop_loss=92, currency="EUR",
                 quality_score=70, coverage_pct=90, market_cap_eur=30e9, track_record_ok=True, today=TODAY,
-                price_date=TODAY, fundamentals_date=TODAY, statement_date=date(2025, 12, 31), adv_eur=50e6)
+                price_date=TODAY, fundamentals_date=TODAY, statement_date=date(2025, 12, 31), adv_eur=50e6,
+                rules=_gated_rules())
     base.update(kw)
     return decision.build_decision(**base)
 
@@ -224,22 +232,50 @@ def _reliable(hist, **kw):
     return v.valuation_inputs(_co(**kw), 40.0, hist, "X", {})["reliable"]
 
 
-def test_partial_stock_comp_is_not_an_adjusted_cash_flow():
+@pytest.fixture
+def strict(monkeypatch):
+    """allow_assumed_fcfe_deductions off: only reported evidence and accounting-standard rules count."""
+    real = v._required
+    monkeypatch.setattr(v, "_required", lambda key, default=True: False if key == "allow_assumed_fcfe_deductions"
+                        else real(key, default))
+
+
+def test_partial_stock_comp_is_not_an_adjusted_cash_flow(strict):
     assert v.sbc_available(_hist(), "X")
     assert not v.sbc_available(_hist(sbc=(1.0, np.nan, 1.0)), "X")
     partial = v.valuation_inputs(_co(), 40.0, _hist(sbc=(1.0, np.nan, 1.0)), "X", {})
     assert _reliable(_hist()) and not partial["reliable"] and "unknown is not zero" in partial["note"]
 
 
-def test_every_deduction_must_be_known_not_just_one():
-    # R4-02: interest known for 3 years but lease principal unknown used to pass ("not adj")
-    assert not _reliable(_hist(lease=None))
-    assert not _reliable(_hist(interest=None))
-    assert not _reliable(_hist(lease=(5e7, np.nan, 5e7)))
+def test_every_deduction_must_be_known_not_just_one(strict):
+    # R4-02: interest known for 3 years but lease principal unknown used to pass ("not adj"). Non-US filer: IFRS lets
+    # interest sit in operating OR financing, so nothing settles a missing field
+    de = dict(country="Germany", currency="EUR")
+    assert not _reliable(_hist(lease=None), **de)
+    assert not _reliable(_hist(interest=None), **de)
+    assert not _reliable(_hist(lease=(5e7, np.nan, 5e7)), **de)
     assert v.fcfe_adjustments(_hist(interest=(1e8, np.nan, 1e8)), "X") == ["lease_principal_paid"]
-    # the filer's country is not evidence: a US company with no interest / lease fields is blocked too
-    assert not _reliable(_hist(interest=None, lease=None))
-    assert not _reliable(_hist(interest=None, lease=None), country="Germany", currency="EUR")
+    assert not _reliable(_hist(interest=None, lease=None), **de)
+    # US GAAP filer (2026-10-16, superseding R4-02's "country is not evidence"): a US-domiciled, US-listed company
+    # files under US GAAP by law, and ASC 230 puts interest paid in OPERATING cash flow — sourced evidence
+    st = v.fcfe_deduction_status(_hist(interest=None), "X", ctx=v.deduction_context(_co(), "X"))
+    assert st["interest_paid_cff"]["status"] == v.NOT_APPLICABLE and "ASC 230" in st["interest_paid_cff"]["source"]
+    # …but a missing finance-lease principal is not settled by any rule: blocked in strict mode
+    assert not _reliable(_hist(lease=None))
+
+
+def test_missing_items_may_be_assumed_only_with_a_written_assumption():
+    from core import decision
+    vin = v.valuation_inputs(_co(), 40.0, _hist(lease=None), "X", {})
+    assert vin["reliable"] and vin["fcfe_deduction_status"]["lease_principal_paid"] == "ASSUMED"
+    assert "ASC 842" in vin["fcfe_deduction_sources"]["lease_principal_paid"]
+    d = decision.decide(price=40.0, vin=vin, stop_loss=36.0, meta=_co(), scores={"quality": 70, "coverage": 90})
+    assert any(n.startswith("ASSUMED") and "lease principal = 0" in n for n in d.confidence_notes)
+    # SBC is never assumed away where it is routinely large
+    soft = v.valuation_inputs(_co(sector="Platform Software"), 40.0, _hist(sbc=None), "X", {})
+    assert not soft["reliable"] and soft["fcfe_deduction_status"]["stock_based_comp"] == "UNKNOWN"
+    hard = v.valuation_inputs(_co(), 40.0, _hist(sbc=None), "X", {})
+    assert hard["fcfe_deduction_status"]["stock_based_comp"] == "ASSUMED"
 
 
 def test_reported_zero_counts_as_known():
@@ -248,18 +284,19 @@ def test_reported_zero_counts_as_known():
     assert _reliable(_hist(interest=(0.0, 0.0, 0.0), lease=(0.0, 0.0, 0.0), sbc=(0.0, 0.0, 0.0)))
 
 
-def test_not_applicable_needs_an_issuer_entry_with_a_source(monkeypatch):
+def test_not_applicable_needs_an_issuer_entry_with_a_source(monkeypatch, strict):
     hist = _hist(interest=None)
-    assert not _reliable(hist)
+    de = dict(country="Germany", currency="EUR")
+    assert not _reliable(hist, **de)
     cfg = v._valuation_config()
     monkeypatch.setattr(v, "_valuation_config",
                         lambda: {**cfg, "fcfe_not_applicable": {"X": {"interest_paid_cff": ""}}})   # no source
-    assert not _reliable(hist)
+    assert not _reliable(hist, **de)
     monkeypatch.setattr(v, "_valuation_config",
                         lambda: {**cfg, "fcfe_not_applicable": {"X": {"interest_paid_cff": "10-K FY2025 p.52"}}})
     st = v.fcfe_deduction_status(hist, "X")["interest_paid_cff"]
     assert st["status"] == v.NOT_APPLICABLE and st["source"] == "10-K FY2025 p.52"
-    assert _reliable(hist)
+    assert _reliable(hist, **de)
 
 
 def test_three_distinct_consecutive_fiscal_years_are_required():

@@ -1,10 +1,10 @@
 # One-shot ETL container:   docker compose run --rm pipeline            (add `python run.py --full` to rebuild)
-# Schedule it with the host's scheduler (cron / Windows Task Scheduler: register_daily_etl.ps1) — there is no
+# Schedule it with the host's scheduler (cron / Windows Task Scheduler: scripts/windows/register_daily_etl.ps1) — there is no
 # Airflow service any more: its dags/ folder was never part of this repository.
 # Notifications and cloud sync read their settings from .env (SMTP_*, ETL_WEBHOOK_URL, SUPABASE_*).
 services:
   pipeline:
-    image: python:3.11-slim
+    image: python:3.13-slim          # same interpreter as CI and the dashboard image (audit F27)
     working_dir: /app
     volumes:
       - .:/app
@@ -16,5 +16,5 @@ services:
       - PYTHONPATH=/app
       - PYTHONIOENCODING=utf-8
     command: >
-      bash -c "pip install -r requirements.txt -q && python run.py"
+      bash -c "pip install -r requirements.lock -q && python run.py"
     restart: "no"

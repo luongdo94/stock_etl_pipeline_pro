@@ -222,7 +222,7 @@ def get_missing_tickers_for_table(conn: duckdb.DuckDBPyConnection, table_name: s
 # ❌ DEPRECATED: NON_QUARTERLY_SUFFIXES filter was based on incorrect assumption.
 # European and Asian stocks DO report quarterly data (verified: SAP.DE, AIR.PA, ASML.AS, VOD.L, 7203.T).
 # Keeping the constant for reference but NO LONGER USED in filtering logic.
-# See: docs/status/CRITICAL_QUARTERLY_DATA_GAP.md for full investigation.
+# See: docs/archive/status/CRITICAL_QUARTERLY_DATA_GAP.md for full investigation.
 NON_QUARTERLY_SUFFIXES = ('.PA', '.MI', '.AS', '.DE', '.MC', '.LS', '.SW', '.L', '.CO', '.HK', '.T')
 
 def get_smart_recovery_targets(conn: duckdb.DuckDBPyConnection, all_tickers: dict = None) -> dict:

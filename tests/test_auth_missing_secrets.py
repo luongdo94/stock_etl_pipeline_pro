@@ -2,7 +2,7 @@
 import pytest
 from streamlit.errors import StreamlitSecretNotFoundError
 
-import auth
+from services import auth
 
 
 @pytest.fixture

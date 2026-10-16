@@ -11,13 +11,16 @@ from typing import Optional
 import pandas as pd
 
 COLUMNS = ["traded_at", "ticker", "side", "qty", "price", "fees", "cash_after", "source", "note"]
-SIDES = ("BUY", "SELL")
+SIDES = ("BUY", "SELL", "ADJUST")   # ADJUST: position set by hand (opening balance / correction) — qty = shares after,
+                                    # price = unit cost basis after; no cash, no realised P&L (audit F20)
 
 
 def trade(ticker: str, side: str, qty: float, price: float, fees: float = 0.0, cash_after: Optional[float] = None,
           source: str = "manual", note: str = "", when: Optional[datetime] = None) -> dict:
     if side not in SIDES:
         raise ValueError(f"side must be one of {SIDES}")
+    if side != "ADJUST" and (float(qty) <= 0 or float(price) <= 0):
+        raise ValueError("a trade needs a positive quantity and price")
     return {"traded_at": (when or datetime.now()).isoformat(timespec="seconds"), "ticker": str(ticker), "side": side,
             "qty": float(qty), "price": float(price), "fees": float(fees), "cash_after": cash_after,
             "source": source, "note": note}
@@ -38,6 +41,22 @@ def trades_from_diff(old_shares: dict, new_shares: dict, prices: dict, cost_pct:
     return rows
 
 
+def adjustments_from_edit(old_shares: dict, old_costs: dict, new_shares: dict, new_costs: dict,
+                          cash_after: Optional[float] = None, note: str = "manual edit",
+                          when: Optional[datetime] = None) -> list:
+    """ADJUST events for every position whose share count OR unit cost basis was edited by hand. A correction is not a
+    trade: it books no price, no fee and no realised P&L, but the ledger's basis follows the holdings (audit F20)."""
+    rows = []
+    for t in sorted(set(old_shares) | set(new_shares)):
+        o_q, n_q = float(old_shares.get(t, 0.0) or 0.0), float(new_shares.get(t, 0.0) or 0.0)
+        o_c, n_c = float(old_costs.get(t, 0.0) or 0.0), float(new_costs.get(t, 0.0) or 0.0)
+        if abs(n_q - o_q) < 1e-9 and abs(n_c - o_c) < 1e-9:
+            continue
+        r = trade(t, "ADJUST", max(n_q, 0.0), max(n_c, 0.0), 0.0, cash_after, "edit", note, when)
+        rows.append(r)
+    return rows
+
+
 def realized_pnl(trades) -> pd.DataFrame:
     """[ticker, realized_eur, fees_eur, bought_qty, sold_qty, open_qty, avg_cost] — average-cost realised P&L, net of fees.
     A sell larger than the shares recorded in the ledger (positions opened before the ledger existed) is realised
@@ -52,6 +71,9 @@ def realized_pnl(trades) -> pd.DataFrame:
         qty = cost = realized = fees = bought = sold = unmatched = 0.0
         for r in g.itertuples():
             fees += float(r.fees or 0.0)
+            if r.side == "ADJUST":                      # position set by hand: new quantity and basis, no P&L
+                qty, cost = float(r.qty), float(r.qty) * float(r.price)
+                continue
             if r.side == "BUY":
                 cost += float(r.qty) * float(r.price)
                 qty += float(r.qty)

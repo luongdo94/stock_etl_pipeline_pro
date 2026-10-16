@@ -3,7 +3,7 @@
 #   docker run -p 8501:8501 -v ./warehouse:/app/warehouse -v ./.streamlit:/app/.streamlit:ro honest-quant
 # Remote (cloud) mode instead of a mounted warehouse: pass -e SUPABASE_REMOTE_MODE=true plus the
 # SUPABASE_* / S3_* variables listed in README.md.
-FROM python:3.11-slim
+FROM python:3.13-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -12,8 +12,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # Dependencies first so code edits don't invalidate the (large) dependency layer
-COPY requirements.txt .
-RUN pip install -r requirements.txt
+COPY requirements.lock .
+RUN pip install -r requirements.lock
 
 COPY . .
 

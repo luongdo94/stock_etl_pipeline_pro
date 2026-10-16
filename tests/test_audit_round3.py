@@ -110,6 +110,9 @@ def test_unknown_statement_period_blocks_buy():
     kw = dict(price=100, base_value=150, bear_value=90, bull_value=200, stop_loss=92, currency="EUR", quality_score=70,
               coverage_pct=90, market_cap_eur=30e9, track_record_ok=False, today=TODAY, price_date=TODAY,
               fundamentals_date=TODAY, adv_eur=50e6)
+    rules = decision.load_rules()
+    rules["evidence"] = {"require_validated_evidence_for_buy": True}       # the gate's behaviour, whatever the config
+    kw["rules"] = rules
     # R3-K1: without validated evidence the best a stock can be is a RESEARCH CANDIDATE (no size)
     assert decision.build_decision(**kw, statement_date=date(2025, 12, 31)).stance == "RESEARCH CANDIDATE"
     d = decision.build_decision(**kw, statement_date=None)

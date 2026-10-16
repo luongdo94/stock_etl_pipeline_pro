@@ -13,6 +13,7 @@ warehouse as marts.score_snapshots so the dashboard (and the Supabase parquet sy
 import hashlib
 import json
 import logging
+import time
 import uuid
 from pathlib import Path
 
@@ -224,22 +225,34 @@ def update_lifecycle(db_path: str = DB_PATH, track_db_path: str = TRACK_DB_PATH)
 
 
 def run_snapshot(db_path: str = DB_PATH, track_db_path: str = TRACK_DB_PATH) -> int:
+    spans, t0 = {}, time.perf_counter()               # PERF-01: where the snapshot's time goes, logged per step
+
+    def lap(name):
+        nonlocal t0
+        spans[name] = time.perf_counter() - t0
+        t0 = time.perf_counter()
+
     try:
         save_track_prices(db_path, track_db_path)  # first: the evidence for today's snapshot includes today's returns
     except Exception as e:                       # the outcome history must never break the ETL
         logger.warning(f"   ⚠️ track return history not updated: {e}")
+    lap("track prices")
     try:
         inactive = update_lifecycle(db_path, track_db_path)
     except Exception as e:
         logger.warning(f"   ⚠️ security lifecycle not updated: {e}")
         inactive = set()
+    lap("lifecycle")
     rows = build_snapshot(db_path, track_db_path)
+    lap("screener")
     if not rows.empty and inactive:
         # a stale quote is not a signal: inactive securities get no new snapshot rows
         rows = rows[~rows["ticker"].isin(inactive)]
     n = save_snapshot(rows, track_db_path, db_path)
+    lap("save")
     if n:
         logger.info(f"   📸 Score snapshot: {n} tickers as of {rows['as_of_date'].iloc[0]}")
+    logger.info("   ⏱  Snapshot: " + ", ".join(f"{k} {v:.1f}s" for k, v in spans.items()))
     return n
 
 
