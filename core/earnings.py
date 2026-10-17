@@ -11,8 +11,14 @@ Inputs: raw.earnings_events (announcement timestamp, EPS estimate / actual, surp
   * a universe-wide study: after beats / misses, did prices keep drifting (post-earnings-announcement drift)?
 
 Timing: Yahoo stamps announcements in US Eastern time. The stamp is converted to the listing's exchange time zone; a
-release at or after the local close (16:00 by default, per exchange in CLOSE_HOUR_BY_TZ) can only move the price the next session, earlier (or with no time, 00:00) the same
-session. The 2-day window [close before, close of the session after] absorbs the remaining uncertainty.
+release at or after the local close (16:00 by default, per exchange in CLOSE_HOUR_BY_TZ) can only move the price the next
+session, earlier the same session. A stamp without a time of day (local midnight, or UTC midnight outside the Americas —
+09:00 in Tokyo, 01:00/02:00 in Europe; measured: the next session moved more in 2 of 3 such Tokyo reports) is dated only:
+it is placed on the announcement date's session, its 1-day reaction is unknown (NaN) and the 2-day window
+[close before, close of the session after] carries the reaction.
+
+Surprises: Yahoo's surprise is (actual − estimate) / |estimate|; with an estimate near zero it is huge but real (−0.05 →
+−0.37). Such reports keep their beat / miss sign but are left out of average / median surprises (`small_base`).
 """
 from typing import Optional
 
@@ -28,10 +34,12 @@ SUFFIX_TZ = {
     "KQ": "Asia/Seoul", "TW": "Asia/Taipei", "AX": "Australia/Sydney", "NS": "Asia/Kolkata", "BO": "Asia/Kolkata",
     "SI": "Asia/Singapore", "TO": "America/Toronto", "V": "America/Toronto", "SA": "America/Sao_Paulo",
 }
-CLOSE_HOUR = 16                     # default local hour from which a release can only move the next session
-# Exchanges whose regular session ends at another hour (local time; half hours rounded down, because a release in the
-# last minutes of trading is rare and the 2-day window still catches it). Measured on real data: with a single 16:00 rule
-# Tokyo's 15:00 releases were assigned to the wrong session (the big move came a day later).
+CLOSE_HOUR = 16                     # default reaction cutoff (local hour) for a provider stamp
+# REACTION CUTOFF for Yahoo stamps — an assumption about the PROVIDER's stamps, not the exchanges' closing times: a stamp
+# at or after this local hour is taken to move the next session. Yahoo rounds release times to the hour (Tokyo: 09:00,
+# 15:00, 16:00), so a stamp is not the release minute. Tokyo has closed at 15:30 since 2024-11-05 (EXCHANGE_CLOSE), yet
+# Yahoo's 15:00 stamps after that date moved the next session more in 50 of 53 reports (EARNINGS_IMPROVEMENT_PLAN 7.1) —
+# measured on price moves, not on the companies' own release times, so it stays a documented heuristic.
 CLOSE_HOUR_BY_TZ = {"Asia/Tokyo": 15, "Asia/Shanghai": 15, "Asia/Seoul": 15, "Asia/Taipei": 13, "Asia/Kolkata": 15,
                     "Asia/Singapore": 17, "Europe/Berlin": 17, "Europe/Paris": 17, "Europe/Amsterdam": 17,
                     "Europe/Brussels": 17, "Europe/Rome": 17, "Europe/Madrid": 17, "Europe/Zurich": 17,
@@ -39,9 +47,102 @@ CLOSE_HOUR_BY_TZ = {"Asia/Tokyo": 15, "Asia/Shanghai": 15, "Asia/Seoul": 15, "As
                     "Europe/Vienna": 17, "Europe/Warsaw": 17}
 
 
-def close_hour(tz: str) -> int:
+# The regular session's closing time (local "HH:MM", effective from a date) — for labelling a stamp, not for the reaction
+# mapping above. Only exchanges whose close is known here; others are not labelled against a close.
+EXCHANGE_CLOSE = {"America/New_York": [("1900-01-01", "16:00")], "America/Toronto": [("1900-01-01", "16:00")],
+                  "Asia/Tokyo": [("1900-01-01", "15:00"), ("2024-11-05", "15:30")],
+                  "Europe/London": [("1900-01-01", "16:30")], "Europe/Berlin": [("1900-01-01", "17:30")],
+                  "Europe/Paris": [("1900-01-01", "17:30")], "Europe/Amsterdam": [("1900-01-01", "17:30")],
+                  "Europe/Zurich": [("1900-01-01", "17:30")], "Asia/Hong_Kong": [("1900-01-01", "16:00")],
+                  "Australia/Sydney": [("1900-01-01", "16:00")]}
+
+
+def reaction_cutoff_hour(tz: str) -> int:
+    """The provider-stamp heuristic above (not an exchange close)."""
     return CLOSE_HOUR_BY_TZ.get(tz, CLOSE_HOUR)
+
+
+close_hour = reaction_cutoff_hour      # former name
+
+
+def exchange_close(tz: str, day) -> "Optional[str]":
+    """Closing time ("HH:MM", local) of the exchange's regular session on `day`, or None when not known here."""
+    rules = EXCHANGE_CLOSE.get(tz)
+    if not rules:
+        return None
+    d = str(pd.Timestamp(day).date())
+    return [hm for since, hm in rules if since <= d][-1]
+
+
+def session_label(ts, tz: str) -> str:
+    """Where a stamp falls against the exchange's real session that day: before the open / during the session /
+    after the close / time not announced / time unknown vs the close (exchange close not known here)."""
+    if not time_known(ts, tz):
+        return "time not announced"
+    t = pd.Timestamp(ts)
+    local = (t.tz_localize("UTC") if t.tzinfo is None else t).tz_convert(tz)
+    close = exchange_close(tz, local.date())
+    hm = local.strftime("%H:%M")
+    if close is None:
+        return "after the close" if local.hour >= reaction_cutoff_hour(tz) else (
+            "before the open" if local.hour < 9 else "during the session")
+    return "after the close" if hm >= close else "before the open" if local.hour < 9 else "during the session"
+
+
 DRIFT_SESSIONS = 20
+SMALL_BASE_EPS = 0.05        # |EPS estimate| below this: the surprise ratio is not comparable
+SMALL_BASE_SURPRISE = 5.0    # |surprise| above 500 %: same (a near-zero base)
+
+
+def time_known(ts, tz: str) -> bool:
+    """False when the stamp carries a date only (see module doc)."""
+    if ts is None or pd.isna(ts):
+        return False
+    t = pd.Timestamp(ts)
+    t = t.tz_localize("UTC") if t.tzinfo is None else t.tz_convert("UTC")
+    local = t.tz_convert(tz)
+    if local.hour == 0 and local.minute == 0:
+        return False
+    return not (t.hour == 0 and t.minute == 0 and not tz.startswith("America/"))
+
+
+def small_base(eps_estimate, surprise) -> bool:
+    """True when the surprise ratio rests on a near-zero estimate (its sign is meaningful, its size is not)."""
+    try:
+        if pd.notna(eps_estimate) and abs(float(eps_estimate)) < SMALL_BASE_EPS:
+            return True
+        return pd.notna(surprise) and abs(float(surprise)) > SMALL_BASE_SURPRISE
+    except (TypeError, ValueError):
+        return False
+
+
+def fill_surprise(events: pd.DataFrame) -> pd.DataFrame:
+    """surprise_pct from the EPS pair where it is missing (older loads dropped |surprise| > 500 %) or where the stored
+    one has the other SIGN than the pair (beyond rounding: |pair surprise| > 0.5 %) — a beat / miss must agree with the
+    EPS shown; small rounding differences keep the provider's value. Adds `small_base`."""
+    e = events.copy()
+    est, act = pd.to_numeric(e["eps_estimate"], errors="coerce"), pd.to_numeric(e["eps_actual"], errors="coerce")
+    calc = (act - est) / est.abs()
+    calc = calc.where(est.abs() > 0)
+    stored = pd.to_numeric(e["surprise_pct"], errors="coerce")
+    conflict = stored.notna() & calc.notna() & (calc.abs() > 0.005) & (np.sign(stored) != np.sign(calc))
+    e["surprise_pct"] = stored.where(~conflict, calc).fillna(calc)
+    e["small_base"] = [small_base(a, b) for a, b in zip(est, e["surprise_pct"])]
+    return e
+
+
+def eps_revision(now, ago) -> dict:
+    """Change of an EPS consensus: always the absolute change; a percentage only on a positive, not tiny base (−1 →
+    −0.5 is a smaller expected loss, which (new / old − 1) reports as −50 %). `direction`: up / down / flat / None."""
+    try:
+        now, ago = float(now), float(ago)
+    except (TypeError, ValueError):
+        return {"abs": None, "pct": None, "direction": None}
+    if not (np.isfinite(now) and np.isfinite(ago)):
+        return {"abs": None, "pct": None, "direction": None}
+    d = now - ago
+    pct = (now / ago - 1) * 100 if ago >= SMALL_BASE_EPS else None
+    return {"abs": d, "pct": pct, "direction": "up" if d > 0 else "down" if d < 0 else "flat"}
 SURPRISE_BUCKETS = ((-np.inf, -0.02, "Miss (< −2%)"), (-0.02, 0.02, "In line (±2%)"),
                     (0.02, 0.10, "Beat (2–10%)"), (0.10, np.inf, "Big beat (> 10%)"))
 
@@ -58,8 +159,9 @@ def reaction_day(ts, sessions: pd.DatetimeIndex, tz: str) -> Optional[pd.Timesta
     t = pd.Timestamp(ts)
     t = t.tz_localize("UTC") if t.tzinfo is None else t
     local = t.tz_convert(tz)
-    day = pd.Timestamp(local.date())
-    after_close = local.hour >= close_hour(tz)
+    day = pd.Timestamp(local.date())           # a UTC-midnight stamp outside the Americas has the same local date
+    # dated only: the announcement date's session (module doc)
+    after_close = time_known(t, tz) and local.hour >= reaction_cutoff_hour(tz)
     pos = sessions.searchsorted(day, side="right" if after_close else "left")
     return sessions[pos] if pos < len(sessions) else None
 
@@ -82,8 +184,8 @@ def event_reactions(events: pd.DataFrame, close: pd.Series, tz: str, bench: Opti
     """Per reported event: reaction day, 1-day and 2-day returns, the 20-session drift after, each also net of `bench`.
 
     `close` is a price Series indexed by date; `bench` a cumulative index on (a superset of) the same dates."""
-    cols = ["earnings_ts", "reaction_day", "eps_estimate", "eps_actual", "surprise_pct", "ret_1d", "ret_2d", "drift_20d",
-            "abn_2d", "abn_drift_20d"]
+    cols = ["earnings_ts", "reaction_day", "eps_estimate", "eps_actual", "surprise_pct", "small_base", "time_known",
+            "ret_1d", "ret_2d", "drift_20d", "abn_2d", "abn_drift_20d"]
     if events is None or events.empty or close is None or close.dropna().empty:
         return pd.DataFrame(columns=cols)
     c = close.dropna().sort_index()
@@ -104,14 +206,17 @@ def event_reactions(events: pd.DataFrame, close: pd.Series, tz: str, bench: Opti
 
         def ret(a, z, s=c):
             return float(s.iloc[z] / s.iloc[a] - 1) if 0 <= a < len(s) and z < len(s) and s.iloc[a] else np.nan
-        r1, r2 = ret(i - 1, i), ret(i - 1, i + 1)
+        known = time_known(e["earnings_ts"], tz)
+        r1, r2 = (ret(i - 1, i) if known else np.nan), ret(i - 1, i + 1)
         drift = ret(i + 1, i + 1 + DRIFT_SESSIONS) if i + 1 + DRIFT_SESSIONS < len(c) else np.nan
         abn2 = abnd = np.nan
         if b is not None and b.notna().iloc[i - 1]:
             abn2 = r2 - ret(i - 1, i + 1, b) if not np.isnan(r2) else np.nan
             abnd = drift - ret(i + 1, i + 1 + DRIFT_SESSIONS, b) if not np.isnan(drift) else np.nan
         rows.append({"earnings_ts": e["earnings_ts"], "reaction_day": rd, "eps_estimate": e.get("eps_estimate"),
-                     "eps_actual": e.get("eps_actual"), "surprise_pct": e.get("surprise_pct"), "ret_1d": r1, "ret_2d": r2,
+                     "eps_actual": e.get("eps_actual"), "surprise_pct": e.get("surprise_pct"),
+                     "small_base": small_base(e.get("eps_estimate"), e.get("surprise_pct")), "time_known": known,
+                     "ret_1d": r1, "ret_2d": r2,
                      "drift_20d": drift, "abn_2d": abn2, "abn_drift_20d": abnd, "_pre": pre})
     out = pd.DataFrame(rows)
     return out.drop(columns="_pre").sort_values("reaction_day", ascending=False).reset_index(drop=True) if len(out) \
@@ -119,11 +224,17 @@ def event_reactions(events: pd.DataFrame, close: pd.Series, tz: str, bench: Opti
 
 
 def beat_summary(events: pd.DataFrame, last_n: int = 12) -> dict:
-    """Beat rate, average / median surprise and the current streak over the last `last_n` reported quarters."""
+    """Beat rate, average / median surprise and the current streak over the last `last_n` reported quarters. A
+    small-base report counts as a beat / miss by its sign but not in the average / median (`n_avg` reports)."""
     r = events.dropna(subset=["surprise_pct"]).sort_values("earnings_ts", ascending=False).head(last_n)
     if r.empty:
-        return {"n": 0, "beat_rate": None, "avg_surprise": None, "median_surprise": None, "streak": 0, "streak_kind": None}
+        return {"n": 0, "n_avg": 0, "beat_rate": None, "avg_surprise": None, "median_surprise": None, "streak": 0,
+                "streak_kind": None}
     s = r["surprise_pct"].to_numpy()
+    sb = (r["small_base"].fillna(False).astype(bool).to_numpy() if "small_base" in r.columns
+          else np.array([small_base(a, b) for a, b in zip(r["eps_estimate"], s)]) if "eps_estimate" in r.columns
+          else np.zeros(len(s), dtype=bool))
+    comparable = s[~sb]
     kind = "beat" if s[0] > 0 else ("miss" if s[0] < 0 else "in line")
     streak = 0
     for v in s:
@@ -131,8 +242,10 @@ def beat_summary(events: pd.DataFrame, last_n: int = 12) -> dict:
             streak += 1
         else:
             break
-    return {"n": int(len(s)), "beat_rate": float((s > 0).mean()), "avg_surprise": float(s.mean()),
-            "median_surprise": float(np.median(s)), "streak": streak, "streak_kind": kind}
+    return {"n": int(len(s)), "n_avg": int(len(comparable)), "beat_rate": float((s > 0).mean()),
+            "avg_surprise": float(comparable.mean()) if len(comparable) else None,
+            "median_surprise": float(np.median(comparable)) if len(comparable) else None,
+            "streak": streak, "streak_kind": kind}
 
 
 def expected_move(reactions: pd.DataFrame, last_n: int = 8) -> dict:
@@ -164,16 +277,17 @@ def surprise_bucket(s: float) -> Optional[str]:
 
 
 def pead_study(reactions: pd.DataFrame) -> pd.DataFrame:
-    """Universe study by surprise bucket: number of events, mean abnormal 2-day reaction, mean abnormal 20-session drift
-    after the reaction, its t-statistic and the share of positive drifts. Events of the same quarter move together, so the
-    t-statistic overstates certainty; read it as a screen, not proof."""
+    """Universe study by surprise bucket: number of events (`events`), those with a completed 20-session drift
+    (`events_drift`, the sample of the drift, its t-statistic and the share drifting up), mean abnormal 2-day reaction and
+    mean abnormal drift. Events of the same quarter move together, so the t-statistic overstates certainty; read it as a
+    screen, not proof. Small-base surprises are bucketed by sign (a big beat / a miss)."""
     r = reactions.dropna(subset=["surprise_pct"]).copy()
     r["bucket"] = r["surprise_pct"].map(surprise_bucket)
     rows = []
     for _, _, label in SURPRISE_BUCKETS:
         g = r[r["bucket"] == label]
         d = g["abn_drift_20d"].dropna()
-        rows.append({"bucket": label, "events": int(len(g)), "abn_reaction_2d": float(g["abn_2d"].mean()) if len(g) else np.nan,
+        rows.append({"bucket": label, "events": int(len(g)), "events_drift": int(len(d)), "abn_reaction_2d": float(g["abn_2d"].mean()) if len(g) else np.nan,
                      "abn_drift_20d": float(d.mean()) if len(d) else np.nan,
                      "t_stat": float(d.mean() / (d.std(ddof=1) / np.sqrt(len(d)))) if len(d) > 2 and d.std(ddof=1) > 0 else np.nan,
                      "share_drift_up": float((d > 0).mean()) if len(d) else np.nan})

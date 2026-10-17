@@ -353,7 +353,9 @@ REFERENCE_TABLES = ("raw.sec_filings", "raw.source_reconciliation", "raw.sec_cas
 # Audit F04: period-keyed history a full refresh must not lose (the provider only returns its current window)
 HISTORY_KEYS = {"raw.historical_financials": ("ticker", "date"), "raw.quarterly_financials": ("ticker", "date"),
                 "raw.hist_fcf": ("ticker", "year"), "raw.hist_fcf_quarterly": ("ticker", "year", "quarter"),
-                "raw.earnings_surprise": ("ticker", "quarter_date"), "raw.earnings_events": ("ticker", "earnings_ts")}
+                "raw.earnings_surprise": ("ticker", "quarter_date")}
+# raw.earnings_events is not key-copied: a moved / re-timed event has a new key, so the copy re-added the old stamp. A
+# full refresh seeds the shadow from production BEFORE the fetched events are merged (earnings_events.seed_from_production)
 
 
 def carry_forward_history(conn, prod_path: str, universe) -> dict:
@@ -565,6 +567,8 @@ def _run_pipeline_locked(lookback_days, force_full, fast_mode):
             audit.rows_processed += load_forward_estimates(conn, data["estimates"])
             audit.rows_processed += load_insider_summary(conn, data["insider_summary"])
             audit.rows_processed += load_insider_transactions(conn, data["insider_tx"])
+            if not is_incremental:
+                earnings_events.seed_from_production(conn, DB_PATH)
             audit.rows_processed += earnings_events.load_earnings_events(conn, data.get("earnings_events"))
             if rebased_full is not None:
                 replaced, skipped = replace_ticker_prices(conn, rebased_full, cfg["price_integrity"]["min_rebase_ratio"])

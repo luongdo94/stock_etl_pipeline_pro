@@ -21,17 +21,49 @@ LLM_MODEL = "command-r-plus-08-2024"          # same Cohere model as the rest of
 # ── warehouse ────────────────────────────────────────────────────────────────────────────────
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_earnings_events(generation=None) -> pd.DataFrame:
-    """All announcement events (empty frame until the first ETL run that collects them). `generation` = the loaded
-    snapshot version (cache key)."""
+    """All announcement events (empty frame until the first ETL run that collects them), with surprise_pct filled from
+    the EPS pair where an older load dropped it and the `small_base` flag (core.earnings.fill_surprise).
+    `generation` = the loaded snapshot version (cache key). A failed read is not "no events": the frame then carries
+    attrs["error"]."""
     try:
         with get_db_connection(read_only=True) as conn:
-            df = conn.execute("SELECT ticker, earnings_ts, eps_estimate, eps_actual, surprise_pct "
+            df = conn.execute("SELECT ticker, earnings_ts, eps_estimate, eps_actual, surprise_pct, _extracted_at "
                               "FROM raw.earnings_events ORDER BY ticker, earnings_ts").df()
         df["earnings_ts"] = pd.to_datetime(df["earnings_ts"], utc=True)
-        return df
+        return er.fill_surprise(df)
     except Exception as e:
         logger.info(f"earnings events unavailable: {e}")
-        return pd.DataFrame(columns=["ticker", "earnings_ts", "eps_estimate", "eps_actual", "surprise_pct"])
+        out = pd.DataFrame(columns=["ticker", "earnings_ts", "eps_estimate", "eps_actual", "surprise_pct",
+                                    "_extracted_at", "small_base"])
+        out.attrs["error"] = f"{type(e).__name__}: {e}"[:200]
+        return out
+
+
+RELEASE_MATCH_DAYS = 5      # an 8-K Item 2.02 is filed on the day of the release or within a few days
+
+
+def release_matches_event(filing_date, event_ts) -> bool:
+    """Whether an 8-K earnings release filed on `filing_date` belongs to the report stamped `event_ts` (the AI note
+    must not pair one quarter's press release with another quarter's figures)."""
+    if filing_date is None or event_ts is None or pd.isna(filing_date) or pd.isna(event_ts):
+        return False
+    try:
+        f = pd.Timestamp(filing_date).date()
+        e = pd.Timestamp(event_ts)
+        e = (e.tz_localize("UTC") if e.tzinfo is None else e).tz_convert("America/New_York").date()
+    except (TypeError, ValueError):
+        return False
+    return 0 <= (f - e).days <= RELEASE_MATCH_DAYS
+
+
+def note_key(ticker: str, event_ts, language: str, facts: str = "") -> str:
+    """Session key of an AI note: one report of one ticker, its facts, in one language, by one model / prompt (new
+    figures for the same report — a corrected EPS, a new beat rate — are a new note). The source text is fetched on
+    the click and named under the note; the 8-K filing-date check binds it to the report in time, not to a fiscal
+    period."""
+    import hashlib
+    h = hashlib.sha1(f"{LLM_MODEL}|{SUMMARY_PROMPT}|{facts}".encode()).hexdigest()[:10]
+    return f"er_note::{ticker}::{pd.Timestamp(event_ts).isoformat() if event_ts is not None else 'none'}::{language}::{h}"
 
 
 @st.cache_data(ttl=3600, show_spinner="Measuring price reactions to past reports...")

@@ -34,10 +34,34 @@ def _tile(title, value, sub="", border="#3498db", colour="#fff"):
 def _local(ts, ticker):
     t = pd.Timestamp(ts)
     local = (t.tz_localize("UTC") if t.tzinfo is None else t).tz_convert(er.exchange_tz(ticker))
-    if local.hour == 0 and local.minute == 0:
+    if not er.time_known(t, er.exchange_tz(ticker)):
         return local.strftime("%a %d %b %Y"), "time not announced"
-    return local.strftime("%a %d %b %Y %H:%M"), ("after the close" if local.hour >= er.close_hour(er.exchange_tz(ticker)) else
-                                                  "before the open" if local.hour < 9 else "during the session")
+    # labelled against the exchange's real close that day (Tokyo 15:30 since 2024-11-05); the reaction mapping uses the
+    # provider-stamp heuristic of core.earnings
+    return local.strftime("%a %d %b %Y %H:%M"), er.session_label(t, er.exchange_tz(ticker))
+
+
+def _calendar_events(cal, now, days, have) -> pd.DataFrame:
+    """Upcoming dates of raw.earnings_calendar for tickers without an upcoming event in raw.earnings_events, shaped like
+    events (date only: the calendar has no time of day). On the measured warehouse both sources agree where both have a
+    date; they differ in coverage."""
+    cols = ["ticker", "earnings_ts", "eps_estimate", "eps_actual", "surprise_pct", "source"]
+    if cal is None or getattr(cal, "empty", True) or not {"ticker", "earnings_date"} <= set(cal.columns):
+        return pd.DataFrame(columns=cols)
+    c = cal.copy()
+    # a calendar DATE has no time: midnight in the listing's own time zone (date-only for time_known / the labels). As a
+    # UTC midnight it showed a US date as the evening before, "after the close".
+    d = pd.to_datetime(c["earnings_date"], errors="coerce")
+    d = d.dt.tz_localize(None) if d.dt.tz is not None else d
+    c["earnings_ts"] = [pd.Timestamp(x.date()).tz_localize(er.exchange_tz(t)).tz_convert("UTC") if pd.notna(x) else pd.NaT
+                        for t, x in zip(c["ticker"], d)]
+    c["earnings_ts"] = pd.to_datetime(c["earnings_ts"], utc=True)
+    c = c[c["earnings_ts"].notna() & (d.dt.date >= now.date())
+          & (c["earnings_ts"] <= now + pd.Timedelta(days=days)) & ~c["ticker"].isin(have)]
+    c = c.sort_values("earnings_ts").drop_duplicates("ticker")
+    return pd.DataFrame({"ticker": c["ticker"], "earnings_ts": c["earnings_ts"],
+                         "eps_estimate": pd.to_numeric(c.get("eps_avg"), errors="coerce"), "eps_actual": float("nan"),
+                         "surprise_pct": float("nan"), "source": "Yahoo calendar"})
 
 
 def render(ctx):
@@ -46,10 +70,15 @@ def render(ctx):
     render_header("calendar", "Earnings reports (ER)", "Beat / miss history · price reactions · upcoming reports · AI note")
 
     events = svc.load_earnings_events(ctx.get("data_version"))
+    if events.attrs.get("error"):
+        st.error(f"The earnings events could not be read ({events.attrs['error']}) — this is not an empty calendar.")
+        return
     if events.empty:
         st.info("No earnings-announcement history in the warehouse yet. It is collected by the ETL (weekly); run "
                 "`python run.py` once and reload.")
         return
+    if "_extracted_at" in events.columns and events["_extracted_at"].notna().any():
+        st.caption(f"Events fetched from Yahoo on {pd.Timestamp(events['_extracted_at'].max()):%d %b %Y %H:%M}.")
     region_of = _region_map(companies)
     reactions = svc.universe_reactions(events, prices_full[["date", "ticker", "price_close", "daily_return_pct"]],
                                        region_of, rows_key=(ctx.get("data_version"), len(events), len(prices_full)))
@@ -64,7 +93,11 @@ def render(ctx):
         now = pd.Timestamp.now(tz="UTC")
         pending = events[events["eps_actual"].isna() & (events["earnings_ts"] >= now - pd.Timedelta(hours=12))
                          & (events["earnings_ts"] <= now + pd.Timedelta(days=days))]
-        pending = pending.sort_values("earnings_ts").drop_duplicates("ticker")
+        pending = pending.sort_values("earnings_ts").drop_duplicates("ticker").assign(source="Yahoo events")
+        # the earnings calendar (the Decision's earnings gate reads it) covers names the events table lacks
+        cal = _calendar_events(ctx.get("earnings_cal"), now, days, set(events.loc[
+            events["eps_actual"].isna() & (events["earnings_ts"] >= now - pd.Timedelta(hours=12)), "ticker"]))
+        pending = pd.concat([pending, cal], ignore_index=True).sort_values("earnings_ts") if not cal.empty else pending
         if pending.empty:
             st.info(f"No reports scheduled in the next {days} days for the tracked universe.")
         else:
@@ -77,26 +110,32 @@ def render(ctx):
                 b = er.beat_summary(hist, last_n=8)
                 rt = reactions[reactions["ticker"] == t] if not reactions.empty else pd.DataFrame()
                 mv = er.expected_move(rt) if not rt.empty else {"median_abs": None}
-                rev = None
+                rev = {"abs": None, "pct": None}
                 if {"eps_trend_cur_y", "eps_trend_cur_y_30d"} <= set(fe_i.columns) and t in fe_i.index:
-                    now_e, ago = fe_i.at[t, "eps_trend_cur_y"], fe_i.at[t, "eps_trend_cur_y_30d"]
-                    rev = (now_e / ago - 1) * 100 if pd.notna(now_e) and pd.notna(ago) and ago else None
+                    rev = er.eps_revision(fe_i.at[t, "eps_trend_cur_y"], fe_i.at[t, "eps_trend_cur_y_30d"])
                 rows.append({"Date": when, "Session": session, "Ticker": t, "Company": names.get(t, t),
-                             "EPS est.": e["eps_estimate"], "Revisions 30d (FY EPS)": rev,
-                             "Beat rate (8q)": None if b["beat_rate"] is None else b["beat_rate"] * 100,
+                             "EPS est.": e["eps_estimate"], "FY EPS change 30d": rev["abs"], "FY EPS change 30d %": rev["pct"],
+                             "Beat rate": None if b["beat_rate"] is None else b["beat_rate"] * 100,
+                             "Reports": b["n"],
                              "Typical move": None if mv["median_abs"] is None else mv["median_abs"] * 100,
-                             "Decision": verdict.get(t, "")})
+                             "Decision": verdict.get(t, ""), "Source": e.get("source", "Yahoo events")})
             up = pd.DataFrame(rows)
             st.dataframe(up, hide_index=True, width="stretch", column_config={
                 "EPS est.": st.column_config.NumberColumn(format="%.2f", help="Consensus EPS (reporting currency, Yahoo)"),
-                "Revisions 30d (FY EPS)": st.column_config.NumberColumn(format="%+.1f%%",
-                                                                       help="Change of the current-year EPS consensus over 30 days"),
-                "Beat rate (8q)": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.0f%%",
-                                                                 help="Share of the last 8 reports above the EPS consensus"),
+                "FY EPS change 30d": st.column_config.NumberColumn(
+                    format="%+.2f", help="Change of the current-year EPS consensus over 30 days (reporting currency). "
+                                         "From −1.00 to −0.50 is +0.50: a smaller expected loss."),
+                "FY EPS change 30d %": st.column_config.NumberColumn(
+                    format="%+.1f%%", help="Only on a positive base of at least 0.05 — a percentage of a loss or of a "
+                                           "near-zero estimate would read the wrong way"),
+                "Beat rate": st.column_config.ProgressColumn(min_value=0, max_value=100, format="%.0f%%",
+                                                            help="Share of the last reports (up to 8, see Reports) above "
+                                                                 "the EPS consensus"),
+                "Reports": st.column_config.NumberColumn(format="%d", help="Reports behind the beat rate (up to 8)"),
                 "Typical move": st.column_config.NumberColumn(format="±%.1f%%",
                                                              help="Median absolute 2-day price move on the last 8 reports"),
             })
-            st.caption("Typical move = median absolute 2-day reaction on the last 8 reports (history, not an options-implied "
+            st.caption("Typical move = median absolute 2-day reaction on up to the last 8 reports (history, not an options-implied "
                        "move). Beat rates are high across the market because companies guide analysts low; a beat on its own "
                        "says little.")
 
@@ -109,6 +148,10 @@ def render(ctx):
         hist = events[events["ticker"] == t]
         rt = reactions[reactions["ticker"] == t].sort_values("reaction_day", ascending=False) if not reactions.empty else pd.DataFrame()
         b, mv, nxt = er.beat_summary(hist), er.expected_move(rt) if not rt.empty else {"n": 0, "median_abs": None, "max_abs": None}, er.next_event(hist)
+        if nxt is None:                                   # the calendar may know a date the events table does not
+            _c = _calendar_events(ctx.get("earnings_cal"), pd.Timestamp.now(tz="UTC"), 365, set())
+            _c = _c[_c["ticker"] == t]
+            nxt = _c.iloc[0] if not _c.empty else None
 
         nxt_txt, nxt_sub = ("not scheduled", "")
         if nxt is not None:
@@ -116,7 +159,9 @@ def render(ctx):
             nxt_sub = f"{nxt_sub} · EPS est. {nxt['eps_estimate']:.2f}" if pd.notna(nxt["eps_estimate"]) else nxt_sub
         tiles = "".join([
             _tile("Next report", nxt_txt, nxt_sub, "#9b59b6"),
-            _tile(f"Beat rate ({b['n']}q)", _pct(b["beat_rate"], 0, False), f"avg surprise {_pct(b['avg_surprise'])}",
+            _tile(f"Beat rate ({b['n']}q)", _pct(b["beat_rate"], 0, False),
+                  f"avg surprise {_pct(b['avg_surprise'])}" + (f" ({b['n_avg']}q; {b['n'] - b['n_avg']} near-zero "
+                                                              "estimates excluded)" if b["n_avg"] < b["n"] else ""),
                   "#2ecc71" if (b["beat_rate"] or 0) >= 0.5 else "#e74c3c"),
             _tile("Current streak", f"{b['streak']} {b['streak_kind'] or ''}", "consecutive reports", "#f1c40f"),
             _tile(f"Typical move ({mv['n']} reports)", f"±{_pct(mv['median_abs'], 1, False)}" if mv["median_abs"] else "—",
@@ -134,15 +179,19 @@ def render(ctx):
             r = rt.head(16).iloc[::-1]
             x = pd.to_datetime(r["reaction_day"]).dt.strftime("%b %Y")
             fig = go.Figure()
-            fig.add_bar(x=x, y=r["surprise_pct"] * 100, name="EPS surprise %",
-                        marker_color=["#2ecc71" if v > 0 else "#e74c3c" for v in r["surprise_pct"].fillna(0)])
+            # a near-zero estimate gives a huge but real ratio: capped on the chart (the table has the EPS pair)
+            fig.add_bar(x=x, y=(r["surprise_pct"] * 100).clip(-100, 100), name="EPS surprise % (capped ±100)",
+                        marker_color=["#2ecc71" if v > 0 else "#e74c3c" for v in r["surprise_pct"].fillna(0)],
+                        marker_pattern_shape=["/" if sb else "" for sb in r.get("small_base", pd.Series(False, index=r.index))
+                                              .fillna(False)])
             fig.add_scatter(x=x, y=r["ret_2d"] * 100, name="2-day price reaction %", mode="lines+markers",
                             line=dict(color="#00e5ff", width=2), yaxis="y2")
             fig.update_layout(template="plotly_dark", height=380, margin=dict(t=10, l=10, r=10, b=10),
                               yaxis=dict(title="Surprise %"), yaxis2=dict(title="Reaction %", overlaying="y", side="right"),
                               legend=dict(orientation="h", y=1.1))
             st.plotly_chart(fig, width="stretch")
-            corr = rt[["surprise_pct", "ret_2d"]].dropna()
+            corr = rt.loc[~rt.get("small_base", pd.Series(False, index=rt.index)).fillna(False).astype(bool),
+                          ["surprise_pct", "ret_2d"]].dropna()
             if len(corr) >= 6:
                 st.caption(f"Over {len(corr)} reports the correlation between the EPS surprise and the 2-day reaction is "
                            f"{corr.corr(method='spearman').iloc[0, 1]:+.2f} (rank). Low values are common: guidance and revenue "
@@ -157,7 +206,9 @@ def render(ctx):
                 ("Surprise", "1-day", "2-day", "2-day vs market", "Next 20 sessions vs market")})
             st.caption("Prices are in EUR; 'vs market' subtracts the median move of the stock's region over the same days. "
                        "EPS figures are in the reporting currency. Revenue estimates are not available historically, so only "
-                       "the EPS surprise is shown.")
+                       "the EPS surprise is shown. A blank 1-day move: the report has a date but no time, so the session it "
+                       "hit first is unknown (the 2-day move covers both). Hatched bars: the estimate was near zero, so the "
+                       "surprise % is real but not comparable — counted as a beat / miss, left out of averages.")
 
         q = ctx.get("quarterly_fin", pd.DataFrame())
         if not q.empty and "revenue_growth_yoy_pct" in q.columns:
@@ -176,33 +227,44 @@ def render(ctx):
         if not svc.api_key():
             st.text_input("Cohere API key (kept only for this session)", type="password", key="cohere_api_key",
                           help="Or set COHERE_API_KEY in the environment.")
+        last = rt.iloc[0] if not rt.empty else None
+        facts = "\n".join(filter(None, [
+            f"- Latest report: {_local(last['earnings_ts'], t)[0]}; EPS {last['eps_actual']} vs consensus {last['eps_estimate']} "
+            f"(surprise {_pct(last['surprise_pct'])}); 2-day price reaction {_pct(last['ret_2d'])}." if last is not None else None,
+            f"- Beat rate over the last {b['n']} reports: {_pct(b['beat_rate'], 0, False)}." if b["n"] else None,
+            f"- Next report: {nxt_txt}." if nxt is not None else None]))
+        key = svc.note_key(t, last["earnings_ts"] if last is not None else None, lang, facts)
         if st.button("🧠 Summarise the latest report", key="er_ai"):
             company = names.get(t, t)
+            mismatch = None
             with st.spinner("Collecting the report text..."):
                 text, where, fdate = svc.sec_press_release(t, svc.sec_user_agent())
+                if text and last is not None and not svc.release_matches_event(fdate, last["earnings_ts"]):
+                    # the newest 8-K is another quarter than the newest report in our data: do not mix them
+                    mismatch = (f"The latest SEC earnings release (filed {fdate}) is not the report of "
+                                f"{_local(last['earnings_ts'], t)[0]} in our data — no note, so that one quarter's "
+                                "text is not summarised with another quarter's figures.")
+                    text = ""
                 if text:
                     source = f"SEC 8-K earnings press release filed {fdate}: {where}"
-                else:
+                elif mismatch is None:
                     heads = svc.earnings_headlines(company, t)
                     text = "\n".join(heads)
-                    source = f"recent news headlines ({len(heads)}); press release unavailable: {where}"
-            last = rt.iloc[0] if not rt.empty else None
-            facts = "\n".join(filter(None, [
-                f"- Latest report: {_local(last['earnings_ts'], t)[0]}; EPS {last['eps_actual']} vs consensus {last['eps_estimate']} "
-                f"(surprise {_pct(last['surprise_pct'])}); 2-day price reaction {_pct(last['ret_2d'])}." if last is not None else None,
-                f"- Beat rate over the last {b['n']} reports: {_pct(b['beat_rate'], 0, False)}." if b["n"] else None,
-                f"- Next report: {nxt_txt}." if nxt is not None else None]))
-            if not text.strip():
+                    source = (f"recent news headlines ({len(heads)}) — secondary source, not the company's release; "
+                              f"press release unavailable: {where}")
+            if mismatch:
+                st.warning(mismatch)
+            elif not text.strip():
                 st.warning(f"No source text found ({where}).")
             else:
                 try:
                     with st.spinner("Writing the note..."):
                         note = svc.summarise_earnings(svc.api_key(), company, t, facts or "- none", source, text, lang)
-                    st.session_state[f"er_note_{t}"] = (note, source)
+                    st.session_state[key] = (note, source)
                 except Exception as e:
                     st.error(f"AI summary unavailable: {e}")
-        if f"er_note_{t}" in st.session_state:
-            note, source = st.session_state[f"er_note_{t}"]
+        if key in st.session_state:                    # a note of this report, language and model only
+            note, source = st.session_state[key]
             st.markdown(note)
             st.caption(f"Source: {source}. Generated by an LLM from that text — check the original before relying on it.")
         if not svc.sec_user_agent():
@@ -220,6 +282,7 @@ def render(ctx):
             study = study.assign(abn_reaction_2d=study["abn_reaction_2d"] * 100, abn_drift_20d=study["abn_drift_20d"] * 100,
                                  share_drift_up=study["share_drift_up"] * 100)
             st.dataframe(study.rename(columns={"bucket": "EPS surprise", "events": "Reports",
+                                               "events_drift": "With 20 sessions after",
                                                "abn_reaction_2d": "2-day reaction vs market",
                                                "abn_drift_20d": "Next 20 sessions vs market", "t_stat": "t-stat",
                                                "share_drift_up": "Share drifting up"}),
@@ -228,6 +291,8 @@ def render(ctx):
                              "Next 20 sessions vs market": st.column_config.NumberColumn(format="%+.2f%%"),
                              "t-stat": st.column_config.NumberColumn(format="%.1f"),
                              "Share drifting up": st.column_config.NumberColumn(format="%.0f%%")})
+            st.caption("The drift, its t-stat and the share drifting up use the reports with 20 sessions after them; the "
+                       "2-day reaction uses all reports of the bucket.")
             st.caption("Post-earnings-announcement drift (PEAD) is the tendency of prices to keep moving in the direction of "
                        "the surprise for weeks; it is well documented historically but has weakened in large caps. Reports of "
                        "the same quarter move together, so the t-statistics overstate certainty — treat this as a screen, "
