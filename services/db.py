@@ -597,3 +597,31 @@ def load_insider_transactions(ticker=None, tx_type=None, min_value_usd=0.0, days
         LIMIT {int(limit)}"""
     with get_db_connection(read_only=True) as conn:
         return conn.execute(sql, params).df()
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def load_decision_snapshots() -> pd.DataFrame:
+    """The two newest daily score snapshots (one row per ticker and date) — the SIGNAL hub's "Decision changed" feed."""
+    try:
+        with get_db_connection(read_only=True) as conn:
+            return conn.execute("""
+                WITH d AS (SELECT DISTINCT as_of_date FROM marts.score_snapshots ORDER BY as_of_date DESC LIMIT 2)
+                SELECT as_of_date, ticker, decision, price_close, rules_version, score_version, inputs
+                FROM marts.score_snapshots WHERE as_of_date IN (SELECT as_of_date FROM d)
+                QUALIFY row_number() OVER (PARTITION BY as_of_date, ticker ORDER BY knowledge_at DESC) = 1""").df()
+    except Exception:
+        return pd.DataFrame(columns=["as_of_date", "ticker", "decision", "price_close", "rules_version",
+                                     "score_version", "inputs"])
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def load_discovery() -> pd.DataFrame:
+    """Names the ETL's TradingView screens added to the universe (raw.universe: source, first_seen, last_seen) — the
+    SIGNAL hub shows this snapshot instead of scanning TradingView live on every page load. Empty when the table is not
+    available (cloud snapshot without it)."""
+    try:
+        with get_db_connection(read_only=True) as conn:
+            return conn.execute("""SELECT ticker, name, sector, region, source, first_seen, last_seen FROM raw.universe
+                                   WHERE source LIKE 'TV_%' ORDER BY first_seen DESC, ticker""").df()
+    except Exception:
+        return pd.DataFrame(columns=["ticker", "name", "sector", "region", "source", "first_seen", "last_seen"])

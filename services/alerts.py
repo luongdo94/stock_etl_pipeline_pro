@@ -3,6 +3,7 @@ import streamlit as st
 
 from services import auth
 from services import local_store
+from services.user_store import forget_hub_cache
 
 _TABLE = "stock_alerts"
 
@@ -32,6 +33,7 @@ def load_alert_rules() -> list:
         return []
 
 
+@forget_hub_cache
 def add_alert_rule(ticker: str, metric: str, condition: str, threshold: float) -> None:
     if auth.local_dev_mode():
         return local_store.add_alert(ticker, metric, condition, threshold)
@@ -44,6 +46,7 @@ def add_alert_rule(ticker: str, metric: str, condition: str, threshold: float) -
     }).execute()
 
 
+@forget_hub_cache
 def delete_alert_rule(rule_id) -> None:
     if auth.local_dev_mode():
         return local_store.delete_alert(rule_id)

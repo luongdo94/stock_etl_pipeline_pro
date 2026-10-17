@@ -146,3 +146,28 @@ exactly.
 
 Tests: `tests/test_commit_review.py` (REV-F05 end-to-end with stated scale and heading, the fast-mode re-judging, the
 SEC re-derivation).
+
+---
+
+# SIGNAL hub — SIGNAL_HUB_REVIEW.md, phases 1 and 2 (2026-10-17)
+
+The review's source findings were all confirmed; measured on the warehouse (16 Oct): **291 alerts on 251 names**
+behind the badge, 20 shown in data order, 127 of them "52W PEAK", one BUY CANDIDATE tagged "EXIT / RISK", 16 of 17
+"QUALITY OVERSOLD" names rated HOLD, 69 names without a close on the newest date dropped from movers. The insider
+queries cost 0.01 s — the cost in SIG-01 was the live TradingView scan (SIG-02) and the per-card FX lookups.
+
+| Item | Change |
+|---|---|
+| SIG-01 hidden panels ran | `ui/signal_hub.py` is an `st.fragment`; a segmented control runs ONLY the selected panel (tests count the calls) |
+| SIG-02 live TradingView on page load | the Discovery panel reads the ETL snapshot (`raw.universe`, source / first seen); a live scan only on a button; a failed scan raises and shows "unavailable" (it was cached 6 h as "nothing found") |
+| SIG-03 personal alerts not used | the default panel and the badge: original stop hit, watchlist plan levels, your rules, earnings ≤ 7 days, a held / watched name whose Decision changed or reads AVOID, stale prices of holdings, budget breaches / unknown NAV (the assistant's portfolio tool, REV-03), unreadable portfolio / watchlist |
+| SIG-04 labels read as advice | observation labels (RSI OVERBOUGHT, HIGH-VOLUME DECLINE, WEAK + DOWNTREND, NEAR 52-WEEK HIGH, …) and the computed Decision as a chip on every row |
+| SIG-05 badge meaning | the badge counts the user's action / review items only; observations are one row per name, "showing X of Y" |
+| SIG-06 dates and coverage | movers from each ticker's OWN last two sessions (a closed market keeps its move); > 4 days behind = stale, no observations; a missing move is unknown, not 0; a 52-week high needs 252 sessions |
+| SIG-07 FX failure = 1 | `fx_rate()` returns None on failure; the hub shows native amounts then, one lookup per currency. `get_forex_rates` (other tabs) still falls back to 1 — not changed here |
+| New: Decision changes | day-over-day stance changes from the snapshots with their cause: rules / score version (one grouped line — all 143 changes of 16 Oct were a rules change), valuation input, price move, other data. A rules re-rating of a holding is info unless it is a downgrade |
+| Performance | movers / observations / latest bar computed once per data version inside the hub (app.py no longer hashes the 1 M-row price frame every rerun for them); user data cached per user id for 10 min, invalidated by every portfolio / watchlist / rule write, a failed read retried after 1 min |
+
+Found while testing: the warehouse mirror `marts.score_snapshots` has no `_snapshot_at` — the first loader query
+failed silently (an empty feed); fixed and covered by a test on the mirror's columns.
+Tests: `tests/test_signal_hub.py` (17).

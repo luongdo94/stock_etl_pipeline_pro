@@ -51,6 +51,12 @@ def _app(tab):
     at.session_state["user_id"] = "00000000-0000-0000-0000-000000000000"
     at.session_state["user_email"] = "smoke@test.local"
     at.session_state["active_tab"] = tab
+    # the SIGNAL hub's user data, as read from the (unreachable) store: no 3 × 2 s connection timeouts per tab here;
+    # the read path itself is tested in tests/test_signal_hub.py
+    import time
+    at.session_state["_sig_user"] = {"uid": "00000000-0000-0000-0000-000000000000", "at": time.monotonic(),
+                                     "ttl": 10 ** 6, "data": {"holdings": {}, "cash": 0.0, "stops": {}, "holdings_ok": True,
+                                                              "watchlist": None, "watchlist_ok": True, "rules": []}}
     return at
 
 

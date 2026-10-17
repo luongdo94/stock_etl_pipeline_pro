@@ -134,8 +134,6 @@ regime, regime_ui_color, _macro_regime = _regime["regime"], _regime["color"], _r
 
 market_quality_idx = mr.cap_weighted_quality(reco_df)
 
-movers_df, gainers, losers = mr.movers(prices_full)
-hot_alerts = st.cache_data(ttl=600)(mr.hot_alerts)(prices_full, reco_df, movers_df)
 
 # ── Header ──────────────────────────────────────────────────────────────────────────────────
 sidebar.render_macro_panel(_macro_placeholder, macro, fetch_fred_macro())
@@ -143,7 +141,9 @@ head_l, head_r = st.columns([5, 1])
 with head_l:
     header.render_title_bar(stock_count, market_quality_idx, regime, regime_ui_color)
 with head_r:
-    header.render_signal_hub(hot_alerts, _regime["advice"], macro, gainers, losers, earnings_cal, companies_full)
+    from ui import signal_hub  # noqa: E402 — fragment: a choice inside the hub reruns only the hub
+    signal_hub.render(m_df=m_df, prices_full=prices_full, companies_full=companies_full, reco_df=reco_df,
+                      earnings_cal=earnings_cal, advice=_regime["advice"], macro=macro)
 st.markdown("<div style='margin-bottom:16px;'></div>", unsafe_allow_html=True)
 st.markdown("---")
 

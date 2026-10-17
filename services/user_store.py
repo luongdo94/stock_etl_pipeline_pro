@@ -5,6 +5,21 @@ import streamlit as st
 from services import auth
 from services import local_store
 
+HUB_USER_CACHE = "_sig_user"       # ui/signal_hub.py caches this user's portfolio / watchlist / rules under this key
+
+
+def forget_hub_cache(fn):
+    """After any write (successful or not) the SIGNAL hub re-reads the user's data on its next run."""
+    import functools
+
+    @functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        finally:
+            st.session_state.pop(HUB_USER_CACHE, None)
+    return wrapper
+
 
 def load_watchlist():
     """The user's watchlist. A failed read returns an empty frame AND sets watchlist_load_failed, so save_watchlist —
@@ -74,6 +89,7 @@ def _replace_user_rows(supabase, table: str, user_id, records: list) -> None:
         raise UserDataSaveError(f"Save status unknown ({e}). Reload to check what is stored before editing again.") from e
 
 
+@forget_hub_cache
 def save_watchlist(df):
     if st.session_state.get("watchlist_load_failed"):
         raise UserDataSaveError("Not saved: the stored watchlist could not be read, so replacing it would lose it. "
@@ -223,6 +239,7 @@ def _load_portfolio_raw():
         return {}
 
 
+@forget_hub_cache
 def save_portfolio_checked(shares_dict, cost_dict, cash_eur=None, stops=None, targets=None) -> tuple:
     """(saved: bool, message). Holdings + cash + original stops in ONE replace. Only True means the store now holds
     exactly this portfolio; False covers "not saved" and "outcome unknown" (the message says which) — the caller
@@ -270,6 +287,7 @@ def save_portfolio_checked(shares_dict, cost_dict, cash_eur=None, stops=None, ta
     return True, "Saved to the cloud."
 
 
+@forget_hub_cache
 def save_portfolio_to_db(shares_dict, cost_dict, cash_eur=None, stops=None):
     """Backward-compatible wrapper: True when saved; otherwise shows why in the sidebar and returns False."""
     ok, msg = save_portfolio_checked(shares_dict, cost_dict, cash_eur, stops)
@@ -301,6 +319,7 @@ def load_trades() -> pd.DataFrame:
     return pd.DataFrame(rows, columns=COLUMNS)
 
 
+@forget_hub_cache
 def append_trades(rows: list) -> tuple:
     """(ok, message). Called AFTER the portfolio itself was saved: a failed ledger write never undoes a trade, it is
     reported so the user knows the history has a gap."""

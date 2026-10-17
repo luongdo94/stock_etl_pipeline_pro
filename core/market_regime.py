@@ -28,57 +28,87 @@ def horizon_start(horizon, min_date, max_date):
     return max(max_date - timedelta(days=365), min_date)
 
 
+STALE_DAYS = 4          # a ticker whose last close is this many calendar days behind the newest close is stale
+
+
 def movers(prices_full, top=5):
-    """Day-over-day % change on the last two dates → (movers_df, gainers, losers)."""
-    dates = np.sort(prices_full["date"].unique())
-    last = dates[-1]
-    prev = dates[-2] if len(dates) > 1 else last
-    stocks = prices_full[~prices_full["ticker"].isin(INDICES)]
-    m = stocks[stocks["date"] == last].merge(stocks[stocks["date"] == prev][["ticker", "price_close"]],
-                                             on="ticker", suffixes=("", "_prev"))
-    m["chg_24h"] = (m["price_close"] / m["price_close_prev"] - 1) * 100
-    return (m, m.sort_values("chg_24h", ascending=False).head(top),
-            m.sort_values("chg_24h", ascending=True).head(top))
+    """Change between each ticker's OWN last two sessions → (movers_df, gainers, losers). movers_df: ticker, price_close,
+    price_close_prev, chg_24h (%), last_date, prev_date, stale. A market closed on the newest date (holiday, other time
+    zone) still has its own last move; a ticker more than STALE_DAYS behind is stale and never a mover (review SIG-06:
+    the two newest dates of the whole universe dropped such tickers, and a missing move later read as 0)."""
+    stocks = prices_full[~prices_full["ticker"].isin(INDICES)][["date", "ticker", "price_close"]]
+    if stocks.empty:
+        empty = pd.DataFrame(columns=["ticker", "price_close", "price_close_prev", "chg_24h", "last_date", "prev_date",
+                                      "stale"])
+        return empty, empty, empty
+    last2 = stocks.sort_values(["ticker", "date"]).groupby("ticker").tail(2)
+    cur = last2.groupby("ticker").tail(1).set_index("ticker")
+    prev = last2.groupby("ticker").head(1).set_index("ticker")
+    m = pd.DataFrame({"price_close": cur["price_close"], "last_date": cur["date"],
+                      "price_close_prev": prev["price_close"], "prev_date": prev["date"]}).reset_index()
+    two = m["prev_date"] < m["last_date"]                       # a ticker with one session has no move
+    ok = two & (m["price_close_prev"] > 0)
+    m["chg_24h"] = np.where(ok, (m["price_close"] / m["price_close_prev"] - 1) * 100, np.nan)
+    newest = pd.to_datetime(m["last_date"]).max()
+    m["stale"] = (newest - pd.to_datetime(m["last_date"])).dt.days > STALE_DAYS
+    live = m[~m["stale"] & m["chg_24h"].notna()]
+    return (m, live.sort_values("chg_24h", ascending=False).head(top),
+            live.sort_values("chg_24h", ascending=True).head(top))
+
+
+# Observation labels (review SIG-04: "EXIT / RISK" from an RSI alone read as a sell instruction). They describe the
+# tape; the Decision is the only recommendation, and the hub shows it next to every observation.
+OBSERVATIONS = {
+    "HIGH-VOLUME ADVANCE": ("#3498db", "🔊"), "NEAR 52-WEEK HIGH": ("#f1c40f", "🏔️"),
+    "OVERSOLD QUALITY": ("#2ecc71", "💎"), "RSI OVERBOUGHT": ("#e67e22", "🌡️"),
+    "WEAK + DOWNTREND": ("#ffa500", "📉"), "HIGH-VOLUME DECLINE": ("#d32f2f", "🔻"),
+}
 
 
 def hot_alerts(prices_full, reco_df, movers_df):
-    """Rule-based alerts (volume spikes, 52w peaks, RSI extremes) on the latest bar per ticker."""
-    df_p = prices_full
+    """Rule-based technical OBSERVATIONS (volume, 52-week high, RSI extremes) on each ticker's latest bar.
+    Not signals to act on. Stale tickers produce none; a missing daily move is unknown, never 0; the 52-week high needs
+    252 sessions of history (one session no longer makes a "52-week peak")."""
+    df_p = prices_full[~prices_full["ticker"].isin(INDICES)]
     latest = df_p.sort_values("date").groupby("ticker").tail(1)
-    hi = (df_p.groupby("ticker")["price_close"].rolling(window=252, min_periods=1).max().reset_index()
-          .groupby("ticker").tail(1).rename(columns={"price_close": "high_52w"}))
-    vol = (df_p.groupby("ticker")["volume"].rolling(window=20, min_periods=1).mean().reset_index()
+    sessions = df_p.groupby("ticker")["date"].count().rename("sessions")
+    hi = (df_p.sort_values("date").groupby("ticker")["price_close"].rolling(window=252, min_periods=252).max()
+          .reset_index().groupby("ticker").tail(1).rename(columns={"price_close": "high_52w"}))
+    vol = (df_p.sort_values("date").groupby("ticker")["volume"].rolling(window=20, min_periods=20).mean().reset_index()
            .groupby("ticker").tail(1).rename(columns={"volume": "avg_vol_20d"}))
+    mv = movers_df[["ticker", "chg_24h", "stale", "last_date"]] if "stale" in movers_df.columns else \
+        movers_df[["ticker", "chg_24h"]].assign(stale=False, last_date=pd.NaT)
     a = (reco_df[["ticker", "company", "score", "ma_signal", "rsi"]]
          .merge(latest[["ticker", "price_close", "volume"]], on="ticker")
-         .merge(hi[["ticker", "high_52w"]], on="ticker")
-         .merge(vol[["ticker", "avg_vol_20d"]], on="ticker"))
-    a = a[~a["ticker"].isin(INDICES)].merge(movers_df[["ticker", "chg_24h"]], on="ticker", how="left")
-    a["chg_24h"] = a["chg_24h"].fillna(0)
+         .merge(hi[["ticker", "high_52w"]], on="ticker", how="left")
+         .merge(vol[["ticker", "avg_vol_20d"]], on="ticker", how="left")
+         .merge(sessions, left_on="ticker", right_index=True, how="left")
+         .merge(mv, on="ticker", how="left"))
+    a = a[~a["stale"].fillna(True).astype(bool)]
 
     found = []
     for _, r in a.iterrows():
-        base = {"ticker": r["ticker"], "name": r["company"]}
-        spike = r["avg_vol_20d"] > 0 and r["volume"] > 2 * r["avg_vol_20d"]
-        if spike and r["chg_24h"] > 0:
-            found.append({**base, "type": "BULLISH VOL", "color": "#3498db", "icon": "🔊",
-                          "desc": f"Vol Spike (+{((r['volume'] / r['avg_vol_20d']) - 1) * 100:.0f}%) | Price ↗"})
-        if r["price_close"] >= 0.98 * r["high_52w"]:
-            found.append({**base, "type": "52W PEAK", "color": "#f1c40f", "icon": "🏔️",
-                          "desc": f"Price: €{r['price_close']:.2f} (Near High)"})
-        if r["rsi"] < 35 and r["score"] >= ELITE:
-            # A screen hit, not a recommendation: only core.decision issues BUY (R3-E)
-            found.append({**base, "type": "QUALITY OVERSOLD", "color": "#2ecc71", "icon": "💎",
-                          "desc": f"RSI: {r['rsi']:.1f} | Score: {r['score']}"})
-        if r["rsi"] > 75:
-            found.append({**base, "type": "EXIT / RISK", "color": "#ff4b4b", "icon": "",
-                          "desc": f"Extreme Overbought (RSI: {r['rsi']:.1f})"})
+        base = {"ticker": r["ticker"], "name": r["company"],
+                "date": None if pd.isna(r.get("last_date")) else pd.Timestamp(r["last_date"]).date()}
+        chg = r["chg_24h"] if pd.notna(r["chg_24h"]) else None
+
+        def add(kind, desc):
+            colour, icon = OBSERVATIONS[kind]
+            found.append({**base, "type": kind, "color": colour, "icon": icon, "desc": desc})
+        spike = pd.notna(r["avg_vol_20d"]) and r["avg_vol_20d"] > 0 and r["volume"] > 2 * r["avg_vol_20d"]
+        if spike and chg is not None and chg > 0:
+            add("HIGH-VOLUME ADVANCE", f"volume {r['volume'] / r['avg_vol_20d'] - 1:+.0%} vs 20-day average, price {chg:+.1f}%")
+        if pd.notna(r["high_52w"]) and r["price_close"] >= 0.98 * r["high_52w"]:
+            add("NEAR 52-WEEK HIGH", f"close €{r['price_close']:.2f} within 2% of the 52-week high")
+        if pd.notna(r["rsi"]) and r["rsi"] < 35 and r["score"] >= ELITE:
+            # a screen hit, not a recommendation: only core.decision issues BUY (R3-E)
+            add("OVERSOLD QUALITY", f"RSI {r['rsi']:.1f} · Quality {r['score']}")
+        if pd.notna(r["rsi"]) and r["rsi"] > 75:
+            add("RSI OVERBOUGHT", f"RSI {r['rsi']:.1f} (above 75)")
         if r["score"] < WEAK and r["ma_signal"] in ("BEARISH", "STRONG BEAR"):
-            found.append({**base, "type": "BEARISH BLOW", "color": "#ffa500", "icon": "",
-                          "desc": "Weak Fundamentals + Bearish Trend"})
-        if spike and r["chg_24h"] < -3:
-            found.append({**base, "type": "PANIC DUMP", "color": "#d32f2f", "icon": "",
-                          "desc": "Heavy Selling | Vol Spike & Price ↘"})
+            add("WEAK + DOWNTREND", f"Quality {r['score']} · trend {str(r['ma_signal']).lower()}")
+        if spike and chg is not None and chg < -3:
+            add("HIGH-VOLUME DECLINE", f"volume {r['volume'] / r['avg_vol_20d'] - 1:+.0%} vs 20-day average, price {chg:+.1f}%")
     return found
 
 

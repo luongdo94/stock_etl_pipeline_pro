@@ -6,6 +6,30 @@ import yfinance as yf
 from services.db import get_db_connection
 
 
+@st.cache_data(ttl=1800, show_spinner=False)
+def fx_rate(source: str, target: str = "EUR"):
+    """source → target rate, or None when it could not be obtained (review SIG-07: a failed lookup is not parity).
+    GBp / GBX pence handled. Callers show the native amount and currency when None."""
+    _pence = source in ("GBp", "GBX", "GBx")
+    _src = "GBP" if _pence else str(source or "").upper()
+    if not _src:
+        return None
+    if _src == target.upper():
+        return 0.01 if _pence else 1.0
+    try:
+        import os
+        from contextlib import redirect_stderr, redirect_stdout
+        with open(os.devnull, "w") as devnull, redirect_stdout(devnull), redirect_stderr(devnull):
+            df = yf.download(f"{_src}{target}=X", period="5d", progress=False, threads=False)["Close"]
+        df = df.dropna()
+        if df.empty:
+            return None
+        rate = float(df.iloc[-1].item())
+        return rate * (0.01 if _pence else 1.0) if rate > 0 else None
+    except Exception:
+        return None
+
+
 @st.cache_data(ttl=1800, show_spinner="🌍 Fetching FX Rates...")
 def get_forex_rates(target="EUR", source="USD"):
     """Returns the rate to convert `source` currency → `target` currency.
@@ -266,9 +290,7 @@ def fetch_dividend_calendar(tickers_tuple: tuple, companies_df: "pd.DataFrame" =
 
 @st.cache_data(ttl=6 * 3600, show_spinner="Fetching TradingView discovery...")
 def discover_tv_tickers() -> dict:
-    """TradingView auto-discovery (5 screener presets), cached for 6 hours."""
+    """TradingView auto-discovery (5 screener presets), cached for 6 hours. A failure RAISES (it is not cached, and the
+    caller shows "unavailable" — it used to be cached for 6 h as {}, i.e. as "nothing discovered")."""
     from etl.extract import fetch_dynamic_tv_tickers, load_tickers_config
-    try:
-        return fetch_dynamic_tv_tickers(load_tickers_config())
-    except Exception:
-        return {}
+    return fetch_dynamic_tv_tickers(load_tickers_config())
