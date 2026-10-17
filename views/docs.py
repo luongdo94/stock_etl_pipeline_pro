@@ -116,3 +116,32 @@ def render(ctx):
         - **Smart Money** is a volume-flow heuristic on daily data (it cannot see who traded);
           calibrated to stay NEUTRAL on random data most of the time.
         """)
+
+    _methodology_qa()
+
+
+def _methodology_qa():
+    """Questions about the method, answered from the documentation and the rule files with citations (RAG)."""
+    from services import research
+    st.markdown("---")
+    st.markdown("### 💬 Ask the methodology")
+    st.caption("Answered by an LLM only from docs/ and config/*.yaml, each statement cited. For a single stock's "
+               "result use *Why this Decision?* in Stock Analysis.")
+    if not research.available():
+        st.info("Set COHERE_API_KEY to ask questions.")
+        return
+    with st.form("docs_rag"):
+        q = st.text_input("Question", placeholder="e.g. When is a valuation 'not reliable'? How is the stop set?")
+        go = st.form_submit_button("Ask")
+    if go and q.strip():
+        with st.spinner("Reading the documentation…"):
+            try:
+                hits = research.search_methodology(q.strip())
+                st.session_state["docs_rag_last"] = (q.strip(), research.answer(q.strip(), hits,
+                                                                                system=research.SYSTEM_METHOD), hits)
+            except Exception as e:
+                st.error(f"Request failed: {type(e).__name__}: {e}")
+    last = st.session_state.get("docs_rag_last")
+    if last:
+        from views.stock_analysis.research import _render_answer
+        _render_answer({"q": last[0], "res": last[1], "hits": last[2]})

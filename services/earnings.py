@@ -96,7 +96,7 @@ def sec_press_release(ticker: str, user_agent: str):
                 names = [i["name"] for i in _sec_get(f"{base}/index.json", user_agent).json()["directory"]["item"]]
                 ex = [n for n in names if re.search(r"ex[-_]?99", n, re.I) and n.lower().endswith((".htm", ".html", ".txt"))]
                 url = f"{base}/{(ex or [doc])[0]}"
-                return html_to_text(_sec_get(url, user_agent).text), url, fdate
+                return html_to_text(_sec_get(url, user_agent).text, limit=RELEASE_MAX_CHARS), url, fdate
         return None, "no 8-K earnings release (Item 2.02) among the recent filings", None
     except Exception as e:
         return None, f"SEC request failed: {type(e).__name__}", None
@@ -139,6 +139,15 @@ instead of guessing. Do not give a buy / sell recommendation. Use these markdown
 """
 
 
+RELEASE_MAX_CHARS = 400_000         # full press release text; the summary selects from it (core.retrieval.select_passages)
+SECTION_QUERIES = ["revenue net income earnings per share results compared with prior year quarter",
+                   "guidance outlook expects full year forecast raises lowers reaffirms",
+                   "driven by growth decline margin demand pricing segment volume",
+                   "risk headwind uncertainty impairment charge restructuring litigation tariff",
+                   "chief executive officer said commented pleased confident",
+                   "next quarter pipeline backlog orders investment plans"]
+
+
 def summarise_earnings(api_key: str, company: str, ticker: str, facts: str, source: str, text: str,
                        language: str = "English") -> str:
     """LLM note on the latest report (Cohere). Raises on a missing key or an API error."""
@@ -146,7 +155,11 @@ def summarise_earnings(api_key: str, company: str, ticker: str, facts: str, sour
         raise ValueError("COHERE_API_KEY is not set")
     import cohere
     co = cohere.ClientV2(api_key=api_key)
-    prompt = SUMMARY_PROMPT.format(company=company, ticker=ticker, facts=facts, source=source, text=text[:15000],
+    # the whole release is read; a long one is reduced to the passages that answer the note's sections (the tables
+    # and the outlook sit at the end and used to be cut off after 15,000 characters)
+    from core.retrieval import select_passages
+    text = select_passages(text, SECTION_QUERIES, budget=15000)
+    prompt = SUMMARY_PROMPT.format(company=company, ticker=ticker, facts=facts, source=source, text=text,
                                    language=language)
     resp = co.chat(model=LLM_MODEL, messages=[{"role": "user", "content": prompt}], max_tokens=1200)
     return resp.message.content[0].text

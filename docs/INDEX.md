@@ -10,6 +10,7 @@ Complete documentation for the Stock ETL Pipeline & Analytics Platform.
 
 #### **Algorithms & Analytics**
 - **[en/ALGORITHMS.md](./en/ALGORITHMS.md)** — Quantitative algorithms
+- **[en/DECISION_RULES.md](./en/DECISION_RULES.md)** — How a stance is reached: BUY gates, blocks, valuation reliability
   - Quality Score v4.1
   - FMI (Fundamental Momentum Index)
   - **Smart Money Detection v6.0** (Section 3) — NEW

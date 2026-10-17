@@ -7,11 +7,11 @@ import streamlit as st
 
 from ui.icons import render_header
 from views.stock_analysis import (analyst, context, diagnostics, fundamentals, header, ownership,
-                                      peers, performance, risk_hub, signal_matrix, technical,
+                                      peers, performance, research, risk_hub, signal_matrix, technical,
                                       watchlist_save)
 from ui.decision_panel import render_valuation_section
 
-SECTIONS = (header, signal_matrix, risk_hub, diagnostics, technical, fundamentals, analyst,
+SECTIONS = (header, signal_matrix, risk_hub, research, diagnostics, technical, fundamentals, analyst,
             ownership, peers, performance, watchlist_save)
 
 

@@ -258,6 +258,10 @@ def resolve_deduction(r, item: str, ctx: dict, na: dict) -> tuple:
         if item in na:
             return NOT_APPLICABLE, 0.0, na[item]
         if ctx.get("allow_assumed"):
+            noted = r.get("lease_source")                 # the 10-K's own words, when it says leases are immaterial
+            if noted and str(noted).startswith("immaterial per "):
+                return ASSUMED, 0.0, ("US GAAP filer: operating leases already in operating cash flow (ASC 842); "
+                                      f"finance leases stated as not material — {noted}")
             return ASSUMED, 0.0, ("US GAAP filer: operating-lease payments are already in operating cash flow "
                                   "(ASC 842); finance-lease principal not reported — assumed immaterial")
         return UNKNOWN, 0.0, None

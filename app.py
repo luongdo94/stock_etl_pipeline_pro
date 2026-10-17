@@ -215,5 +215,8 @@ ctx = dict(
     _vix_val=_vix_val, _dxy_pct=_dxy_pct, conf_score_global=conf_score_global, conf_reason_str=conf_reason_str,
     df_spy_global=df_spy_global, breadth_ts_global=breadth_ts_global, latest_breadth_global=latest_breadth_global,
 )
+# Floating research assistant: before the tab (a tab may st.stop()); fixed bottom-right, reruns on its own
+from ui import assistant as _assistant  # noqa: E402
+_assistant.render(ctx)
 importlib.import_module(f"views.{TABS[active_tab]}").render(ctx)
 st.sidebar.markdown("---")

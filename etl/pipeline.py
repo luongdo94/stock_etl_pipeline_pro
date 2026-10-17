@@ -598,6 +598,9 @@ def _run_pipeline_locked(lookback_days, force_full, fast_mode):
                     logger.info(f"   🧩 income-statement interest expense linked to {n_int} cash-flow year(s)")
             except Exception as e:
                 logger.warning(f"   ⚠️ data supplements skipped: {e}")
+            # STEP 3c — SEC filings as text: research passages + finance-lease principal read from the 10-K (after XBRL)
+            from etl.filings import run_step as filings_step
+            filings_step(conn, list(universe), cfg["filings"], fast_mode=fast_mode)
             try:
                 assign_available_dates(conn)
             except Exception as e:

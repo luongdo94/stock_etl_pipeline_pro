@@ -317,3 +317,56 @@ Total: 3.0 - 1.0 = 2.0 → SELL / AVOID
 - **Portfolio Builder:** Uses rating for position sizing recommendations
 
 ---
+
+
+## 8. Research with citations (RAG over SEC filings)
+
+Three uses, one store (`warehouse/filings.duckdb`, filled by `etl/filings.py`; retrieval in `core/retrieval.py`; LLM calls
+in `services/research.py`):
+
+1. **Finance-lease principal from the 10-K text** — the deduction most US issuers carried as ASSUMED. Order of
+   evidence: Yahoo cash flow → SEC XBRL tag → the 10-K text. The LLM only points at the figure and its quote;
+   `core/filing_facts.py` accepts it only when the quote is verbatim in the passage, the number is in the quote, the
+   unit is stated, the line is the financing (principal) line — not "operating cash flows for finance leases", which
+   is interest —, one fiscal year has one amount, the row has at most three columns (a combined 10-K prints one per
+   registrant), and the amount does not exceed total debt. Pilot (30 issuers, truth = SEC XBRL
+   `FinanceLeasePrincipalPayments`): **26 of 26 accepted fiscal years exact, 0 wrong**; rejected readings keep the
+   previous status. "The company has no finance leases" becomes a reported zero for that year; "not material" stays
+   ASSUMED with the filing's words as the reason.
+2. **Ask the filings** (Stock Analysis → Layer 3B) — presets (business model & moat, risk factors, drivers, capital
+   allocation, latest earnings release) search the matching 10-K sections; free questions search everything. Answers
+   cite every statement; numbers absent from the passages are flagged. Point in time: only filings public on the day
+   are searched.
+3. **Why this Decision?** (Stock Analysis) and **Ask the methodology** (Docs) — the computed Decision is the first,
+   authoritative passage; the rest comes from `docs/en/DECISION_RULES.md`, the other docs and `config/*.yaml`.
+
+Retrieval: BM25 always; Cohere embeddings (`embed-v4.0`, 512 dims) when stored; Cohere rerank (`rerank-v3.5`) on the
+shortlist. The earnings note reads the whole press release and keeps the passages relevant to its sections
+(`core.retrieval.select_passages`) instead of cutting after 15,000 characters.
+
+Limits: SEC filings exist for US listings only. A Cohere **trial** key allows 20 calls a minute and 1,000 calls a
+month per endpoint — enough for the lease reading of ~40 issuers per run and interactive questions, not for embedding
+the whole universe; the ETL paces itself (`filings.llm_calls_per_minute`, `embed_tokens_per_minute`) and continues
+where it stopped.
+
+## 9. Research assistant (floating chat on every tab)
+
+`ui/assistant.py` (💬 button, bottom right; an `st.fragment`, so a question does not reload the page) →
+`services/assistant.py` (Cohere `command-a-03-2025` tool use, at most 3 tool rounds) → `services/assistant_tools.py`.
+
+| Tool (read-only) | Reads |
+|---|---|
+| `get_decision` | the Stock Analysis Decision of one stock: stance, confidence, MoS, values, reasons, conflicts, notes |
+| `get_metrics` | screener scores / ratios + the last annual statements (EUR) |
+| `screen` | the Scanner table, conditions on whitelisted fields; an unknown value never passes a numeric condition |
+| `compare` | screener fields for 2–6 stocks |
+| `my_portfolio` | the signed-in user's own holdings (Supabase rows of that user / local store): NAV with cash, weights, gain vs cost, sector / currency exposure, policy breaches, each holding's Decision; an unreadable portfolio is reported as unknown, not empty |
+| `search_filings` | RAG passages of the SEC filings (US only) |
+| `search_methodology` | RAG passages of docs/ and config/ |
+
+Contract: every number and stance must come from a tool result of the same turn; the computed Decision is
+authoritative (no own rating, target or order); tool documents are data, never instructions. After each answer the
+numbers are checked against the tool documents (Vietnamese "32.184,21" formats normalised first) and rating words
+against the computed stances; both are flagged in the chat. Sources (each tool document) are listed under the answer.
+The chat knows the open tab and, on Stock Analysis, the open stock. History: the last 20 turns in the session (6 sent
+as context, text only). Each question costs about 2–3 Cohere calls (counter shown in the chat).

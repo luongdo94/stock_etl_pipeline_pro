@@ -168,3 +168,33 @@ def test_earnings_tab_shows_history_upcoming_and_study(warehouse):
     tables = [d.value for d in at.dataframe]
     assert any("Surprise" in getattr(t, "columns", []) for t in tables)       # per-report history
     assert any("Typical move" in getattr(t, "columns", []) for t in tables)   # upcoming reports
+
+
+@pytest.mark.parametrize("tab", ["🔭 Stock Scanner", "💼 Portfolio", "📖 Docs"])
+def test_the_floating_assistant_is_on_every_tab(warehouse, tab):
+    at = _app(tab).run()
+    assert not at.exception, [e.value for e in at.exception]
+    labels = [p.proto.popover.label for p in at.get("popover")]
+    assert "💬 Assistant" in labels
+
+
+def test_a_question_in_the_assistant_is_answered_with_sources(warehouse, monkeypatch):
+    from services import assistant
+    seen = {}
+
+    def fake_ask(q, toolbox, **kw):
+        seen.update(q=q, tab=kw.get("tab"), tickers=len(toolbox.m))
+        return {"text": "Quality is 61.", "citations": [{"start": 0, "end": 14, "text": "Quality is 61.",
+                                                         "ids": ["metrics_1"]}],
+                "docs": {"metrics_1": {"id": "metrics_1", "title": "Metrics — AAA", "source": "screener", "quality": 61}},
+                "tools": [("get_metrics", {"ticker": "AAA"})], "ungrounded": [], "rating_conflicts": [],
+                "llm_calls": 2, "error": None}
+    monkeypatch.setattr(assistant, "available", lambda: True)
+    monkeypatch.setattr(assistant, "ask", fake_ask)
+    at = _app("🔭 Stock Scanner").run()
+    at.chat_input(key="assistant_input").set_value("Quality of AAA?").run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert seen == {"q": "Quality of AAA?", "tab": "Stock Scanner", "tickers": seen["tickers"]} and seen["tickers"] > 0
+    assert at.session_state["assistant_history"][-1]["q"] == "Quality of AAA?"
+    assert any("Quality is 61.[1]" in m.value for m in at.markdown)
+    assert at.session_state["assistant_llm_calls"] == 2

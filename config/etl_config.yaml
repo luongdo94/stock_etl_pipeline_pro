@@ -67,6 +67,23 @@ reconcile:
   warn_mismatch_share: 0.05       # share of compared prices that disagree -> warning
   critical_mismatch_share: 0.25   # ... -> critical: Yahoo's prices are broken for a large part of the universe
 
+filings:                          # SEC filings as text for research (RAG) and finance-lease evidence (etl/filings.py)
+  enabled: true                   # needs SEC_USER_AGENT; embedding / lease reading also need COHERE_API_KEY
+  max_tickers_per_run: 40         # US issuers whose filing list is read per full run (lease targets first); fast runs: none
+  recheck_days: 7
+  annual_reports: 3               # 10-Ks kept per issuer (three fiscal years of lease evidence); full text only for the latest
+  earnings_releases: 4            # 8-K Item 2.02 press releases kept in full
+  embed: true
+  embed_model: embed-v4.0
+  embed_dimension: 512
+  embed_tokens_per_minute: 90000   # a Cohere TRIAL key allows 100k tokens/min and 1,000 calls/month per endpoint
+  rerank_model: rerank-v3.5
+  extract_leases: true            # read finance-lease principal out of the 10-K; accepted only with a verbatim quote
+  max_lease_readings_per_run: 40  # LLM calls per run (one per 10-K; the newest usually covers three years)
+  llm_calls_per_minute: 18        # trial key: 20 calls / minute
+  llm_model: command-r-plus-08-2024   # lease reading (validated in the pilot against SEC XBRL)
+  answer_model: command-a-03-2025     # cited research answers in the app
+
 swap:
   attempts: 60            # os.replace retries while a dashboard connection still holds the production file
   wait_seconds: 2.0
