@@ -76,16 +76,18 @@ def build(ctx, deep_ticker):
         st.stop()
     meta = _meta_df.iloc[0]
     df_deep = prices[prices["ticker"] == deep_ticker].sort_values("date")
-    if df_deep.empty:
-        st.warning(f"⚠️ No price history found for **{deep_ticker}**. Please run the pipeline first.", icon="⚠️")
-        st.stop()
     df_fin = annual_fin[annual_fin["ticker"] == deep_ticker].sort_values("year", ascending=False)
     # The Decision and every "current" figure use the LATEST close of the full history; `df_deep` follows the sidebar
     # horizon and is for the charts only. A Custom range ending in the past used to price the Decision at that date
     # with today's fundamentals — 125 of 842 stances then differed from the Scanner's and no BUY survived
     # (SIDEBAR_REFACTOR_REVIEW 3.1).
+    # A chart range with no bars of this ticker (a listing newer than the range end, a holiday) leaves the charts
+    # empty; it must not stop the page or the assistant's get_decision before the Decision is built.
     _df_levels = prices_full[prices_full["ticker"] == deep_ticker].sort_values("date")
-    df_now = _df_levels if not _df_levels.empty else df_deep
+    if _df_levels.empty:
+        st.warning(f"⚠️ No price history found for **{deep_ticker}**. Please run the pipeline first.", icon="⚠️")
+        st.stop()
+    df_now = _df_levels
 
     target_p = meta.get('target_mean_price', 0)
     cur_p = df_now['price_close'].iloc[-1]
@@ -201,5 +203,7 @@ def build(ctx, deep_ticker):
                     target_value=vin["base"] if usable else None,
                     extra={"decision": _d, "signal_conflict": signal_conflict,
                            # the charts may end earlier than the data the Decision uses — the page says so
-                           "chart_end": pd.to_datetime(df_deep["date"].iloc[-1]).date(),
+                           "chart_end": (pd.to_datetime(df_deep["date"].iloc[-1]).date() if not df_deep.empty
+                                         else pd.Timestamp(ctx.get("t_end", df_now["date"].iloc[-1])).date()),
+                           "chart_bars": int(len(df_deep)),
                            "latest_date": pd.to_datetime(df_now["date"].iloc[-1]).date()})

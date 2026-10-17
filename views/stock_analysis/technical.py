@@ -37,127 +37,133 @@ def render(dd, ctx):
     st.markdown("---")
     layer_banner(5, "Technical & charting intelligence", "#e74c3c")
 
-    # Main Technical Chart (Full Width)
+    # no bars in the sidebar range (e.g. a listing newer than its end): no chart, the Decision above is unaffected
+    fig_tech = None
+    if not df_deep.empty:
+        # Main Technical Chart (Full Width)
 
-    fig_tech = make_subplots(rows=2, cols=1, shared_xaxes=True, 
-                             vertical_spacing=0.05, 
-                             row_heights=[0.7, 0.3])
+        fig_tech = make_subplots(rows=2, cols=1, shared_xaxes=True, 
+                                 vertical_spacing=0.05, 
+                                 row_heights=[0.7, 0.3])
     
-    fig_tech.add_trace(go.Candlestick(
-        x=df_deep['date'],
-        open=df_deep['price_open'], high=df_deep['price_high'],
-        low=df_deep['price_low'], close=df_deep['price_close'],
-        name="Price",
-        increasing=dict(line=dict(color='#00e676', width=1), fillcolor='rgba(0,230,118,0.85)'),
-        decreasing=dict(line=dict(color='#ff5252', width=1), fillcolor='rgba(255,82,82,0.85)')
-    ), row=1, col=1)
-    
-    fig_tech.add_trace(go.Scatter(x=df_deep['date'], y=df_deep['ma_20'], name='MA20', line=dict(color='#FFB300', width=1.5)), row=1, col=1)
-    fig_tech.add_trace(go.Scatter(x=df_deep['date'], y=df_deep['ma_50'], name='MA50', line=dict(color='#40C4FF', width=1.5)), row=1, col=1)
-    # 🏆 EXPERT: MA200 (Long-term trend anchor)
-    if 'ma_200' in df_deep.columns:
-        fig_tech.add_trace(go.Scatter(x=df_deep['date'], y=df_deep['ma_200'], name='MA200', line=dict(color='#E040FB', width=2.5)), row=1, col=1)
-    
-    # Support/Resistance → Scatter traces (appear in legend, not as annotations).
-    # Each label says where the level comes from; ATR projections are grey and dotted so they
-    # are never mistaken for real support/resistance.
-    dates_range = df_deep['date'].tolist()
-    df_deep['rsi'] = df_deep['rsi'] if 'rsi' in df_deep.columns else _rsi_val  # RSI from get_tactical_metrics
-    _zw = _tm.get("zone_width", 0.0)
-    for _lvl, _val, _col, _w in (("S1", _s1, "#2ecc71", 1.2), ("R1", _r1, "#e74c3c", 1.2),
-                                  ("S2", _s2, "#27ae60", 1.6), ("R2", _r2, "#c0392b", 1.6),
-                                  ("S3", _s3, "#1b5e20", 2.4), ("R3", _r3, "#b71c1c", 2.4)):
-        _src = _kinds.get(_lvl.lower(), "")
-        _proj = _src.startswith("projected")
-        fig_tech.add_trace(go.Scatter(
-            x=[dates_range[0], dates_range[-1]], y=[_val, _val],
-            name=f"{_lvl} {'Support' if _lvl[0] == 'S' else 'Resistance'} €{_val:.2f} · {_src or 'zone'}",
-            mode='lines',
-            line=dict(color='rgba(160,160,160,0.6)' if _proj else _col, width=1 if _proj else _w,
-                      dash='dot' if _proj else ('dot' if _lvl.endswith('1') else 'dash')),
-            opacity=0.85), row=1, col=1)
-        # real S1/R1 zones are bands (±½ zone width), not single prices
-        if _lvl in ("S1", "R1") and not _proj and _zw > 0:
-            fig_tech.add_hrect(y0=_val * (1 - _zw / 2), y1=_val * (1 + _zw / 2), line_width=0,
-                               fillcolor=_col, opacity=0.08, row=1, col=1)
-    # 📈 AUTOMATED TRENDLINE (Linear Regression)
-    # Calculate best-fit line for the current price window
-    y_data = df_deep['price_close'].values
-    x_data = np.arange(len(y_data))
-    # Clean NaNs if any
-    mask = ~np.isnan(y_data)
-    if mask.any():
-        slope, intercept = np.polyfit(x_data[mask], y_data[mask], 1)
-        trendline_y = slope * x_data + intercept
-        fig_tech.add_trace(go.Scatter(
-            x=df_deep['date'], y=trendline_y,
-            name='Linear fit of closes (visible window)',
-            line=dict(color='rgba(255, 215, 0, 0.4)', width=2, dash='dash'),
-            hoverinfo='skip'
+        fig_tech.add_trace(go.Candlestick(
+            x=df_deep['date'],
+            open=df_deep['price_open'], high=df_deep['price_high'],
+            low=df_deep['price_low'], close=df_deep['price_close'],
+            name="Price",
+            increasing=dict(line=dict(color='#00e676', width=1), fillcolor='rgba(0,230,118,0.85)'),
+            decreasing=dict(line=dict(color='#ff5252', width=1), fillcolor='rgba(255,82,82,0.85)')
         ), row=1, col=1)
+    
+        fig_tech.add_trace(go.Scatter(x=df_deep['date'], y=df_deep['ma_20'], name='MA20', line=dict(color='#FFB300', width=1.5)), row=1, col=1)
+        fig_tech.add_trace(go.Scatter(x=df_deep['date'], y=df_deep['ma_50'], name='MA50', line=dict(color='#40C4FF', width=1.5)), row=1, col=1)
+        # 🏆 EXPERT: MA200 (Long-term trend anchor)
+        if 'ma_200' in df_deep.columns:
+            fig_tech.add_trace(go.Scatter(x=df_deep['date'], y=df_deep['ma_200'], name='MA200', line=dict(color='#E040FB', width=2.5)), row=1, col=1)
+    
+        # Support/Resistance → Scatter traces (appear in legend, not as annotations).
+        # Each label says where the level comes from; ATR projections are grey and dotted so they
+        # are never mistaken for real support/resistance.
+        dates_range = df_deep['date'].tolist()
+        df_deep['rsi'] = df_deep['rsi'] if 'rsi' in df_deep.columns else _rsi_val  # RSI from get_tactical_metrics
+        _zw = _tm.get("zone_width", 0.0)
+        for _lvl, _val, _col, _w in (("S1", _s1, "#2ecc71", 1.2), ("R1", _r1, "#e74c3c", 1.2),
+                                      ("S2", _s2, "#27ae60", 1.6), ("R2", _r2, "#c0392b", 1.6),
+                                      ("S3", _s3, "#1b5e20", 2.4), ("R3", _r3, "#b71c1c", 2.4)):
+            _src = _kinds.get(_lvl.lower(), "")
+            _proj = _src.startswith("projected")
+            fig_tech.add_trace(go.Scatter(
+                x=[dates_range[0], dates_range[-1]], y=[_val, _val],
+                name=f"{_lvl} {'Support' if _lvl[0] == 'S' else 'Resistance'} €{_val:.2f} · {_src or 'zone'}",
+                mode='lines',
+                line=dict(color='rgba(160,160,160,0.6)' if _proj else _col, width=1 if _proj else _w,
+                          dash='dot' if _proj else ('dot' if _lvl.endswith('1') else 'dash')),
+                opacity=0.85), row=1, col=1)
+            # real S1/R1 zones are bands (±½ zone width), not single prices
+            if _lvl in ("S1", "R1") and not _proj and _zw > 0:
+                fig_tech.add_hrect(y0=_val * (1 - _zw / 2), y1=_val * (1 + _zw / 2), line_width=0,
+                                   fillcolor=_col, opacity=0.08, row=1, col=1)
+        # 📈 AUTOMATED TRENDLINE (Linear Regression)
+        # Calculate best-fit line for the current price window
+        y_data = df_deep['price_close'].values
+        x_data = np.arange(len(y_data))
+        # Clean NaNs if any
+        mask = ~np.isnan(y_data)
+        if mask.any():
+            slope, intercept = np.polyfit(x_data[mask], y_data[mask], 1)
+            trendline_y = slope * x_data + intercept
+            fig_tech.add_trace(go.Scatter(
+                x=df_deep['date'], y=trendline_y,
+                name='Linear fit of closes (visible window)',
+                line=dict(color='rgba(255, 215, 0, 0.4)', width=2, dash='dash'),
+                hoverinfo='skip'
+            ), row=1, col=1)
 
-    # RSI with overbought/oversold level traces in legend
-    fig_tech.add_trace(go.Scatter(x=df_deep['date'], y=df_deep['rsi'], name='RSI (14)', line=dict(color='#9b59b6', width=2)), row=2, col=1)
-    fig_tech.add_trace(go.Scatter(
-        x=[dates_range[0], dates_range[-1]], y=[70, 70],
-        name='RSI Overbought (70)', mode='lines',
-        line=dict(color='rgba(231,76,60,0.5)', width=1, dash='dash'), showlegend=True
-    ), row=2, col=1)
-    fig_tech.add_trace(go.Scatter(
-        x=[dates_range[0], dates_range[-1]], y=[30, 30],
-        name='RSI Oversold (30)', mode='lines',
-        line=dict(color='rgba(46,204,113,0.5)', width=1, dash='dash'), showlegend=True
-    ), row=2, col=1)
+        # RSI with overbought/oversold level traces in legend
+        fig_tech.add_trace(go.Scatter(x=df_deep['date'], y=df_deep['rsi'], name='RSI (14)', line=dict(color='#9b59b6', width=2)), row=2, col=1)
+        fig_tech.add_trace(go.Scatter(
+            x=[dates_range[0], dates_range[-1]], y=[70, 70],
+            name='RSI Overbought (70)', mode='lines',
+            line=dict(color='rgba(231,76,60,0.5)', width=1, dash='dash'), showlegend=True
+        ), row=2, col=1)
+        fig_tech.add_trace(go.Scatter(
+            x=[dates_range[0], dates_range[-1]], y=[30, 30],
+            name='RSI Oversold (30)', mode='lines',
+            line=dict(color='rgba(46,204,113,0.5)', width=1, dash='dash'), showlegend=True
+        ), row=2, col=1)
 
-    fig_tech.update_layout(
-        title=dict(text=f"📈 {deep_ticker} — Technical Master Analysis", font=dict(size=20, color='#e8eaf6')),
-        height=740,
-        xaxis_rangeslider_visible=False,
-        hovermode="x unified",
-        # Custom premium dark background
-        paper_bgcolor='#0d0e14',
-        plot_bgcolor='#11121a',
-        font=dict(family="Inter, sans-serif", color="#b0bec5"),
-        # Grid styling (subtle)
-        xaxis=dict(
-            showgrid=True, gridcolor='rgba(255,255,255,0.05)',
-            zeroline=False, linecolor='rgba(255,255,255,0.1)'
-        ),
-        xaxis2=dict(
-            showgrid=True, gridcolor='rgba(255,255,255,0.05)',
-            zeroline=False
-        ),
-        yaxis=dict(
-            showgrid=True, gridcolor='rgba(255,255,255,0.06)',
-            zeroline=False, linecolor='rgba(255,255,255,0.1)',
-            tickprefix='€'
-        ),
-        yaxis2=dict(
-            showgrid=True, gridcolor='rgba(255,255,255,0.04)',
-            zeroline=False
-        ),
-        # Legend → outside right side
-        legend=dict(
-            orientation="v",
-            yanchor="top",
-            y=1.0,
-            xanchor="left",
-            x=1.01,
-            bgcolor="rgba(13,14,20,0.92)",
-            bordercolor="rgba(255,255,255,0.12)",
-            borderwidth=1,
-            font=dict(size=11, color='#cfd8dc'),
-            itemsizing="constant",
-            traceorder="normal"
-        ),
-        margin=dict(r=180, t=60, l=60, b=40)
-    )
-    fig_tech.update_yaxes(title_text="Price (€)", row=1, col=1)
-    fig_tech.update_yaxes(title_text="RSI", row=2, col=1, range=[0, 100])
+        fig_tech.update_layout(
+            title=dict(text=f"📈 {deep_ticker} — Technical Master Analysis", font=dict(size=20, color='#e8eaf6')),
+            height=740,
+            xaxis_rangeslider_visible=False,
+            hovermode="x unified",
+            # Custom premium dark background
+            paper_bgcolor='#0d0e14',
+            plot_bgcolor='#11121a',
+            font=dict(family="Inter, sans-serif", color="#b0bec5"),
+            # Grid styling (subtle)
+            xaxis=dict(
+                showgrid=True, gridcolor='rgba(255,255,255,0.05)',
+                zeroline=False, linecolor='rgba(255,255,255,0.1)'
+            ),
+            xaxis2=dict(
+                showgrid=True, gridcolor='rgba(255,255,255,0.05)',
+                zeroline=False
+            ),
+            yaxis=dict(
+                showgrid=True, gridcolor='rgba(255,255,255,0.06)',
+                zeroline=False, linecolor='rgba(255,255,255,0.1)',
+                tickprefix='€'
+            ),
+            yaxis2=dict(
+                showgrid=True, gridcolor='rgba(255,255,255,0.04)',
+                zeroline=False
+            ),
+            # Legend → outside right side
+            legend=dict(
+                orientation="v",
+                yanchor="top",
+                y=1.0,
+                xanchor="left",
+                x=1.01,
+                bgcolor="rgba(13,14,20,0.92)",
+                bordercolor="rgba(255,255,255,0.12)",
+                borderwidth=1,
+                font=dict(size=11, color='#cfd8dc'),
+                itemsizing="constant",
+                traceorder="normal"
+            ),
+            margin=dict(r=180, t=60, l=60, b=40)
+        )
+        fig_tech.update_yaxes(title_text="Price (€)", row=1, col=1)
+        fig_tech.update_yaxes(title_text="RSI", row=2, col=1, range=[0, 100])
     tech_tab_2, tech_tab_1 = st.tabs(["📈 Interactive TradingView", "📊 AI Technical Master"])
     
     with tech_tab_1:
-        st.plotly_chart(fig_tech, use_container_width=True)
+        if fig_tech is None:
+            st.info("No price bars in the sidebar chart range — widen the range to see the chart.")
+        else:
+            st.plotly_chart(fig_tech, use_container_width=True)
         
     with tech_tab_2:
         import streamlit.components.v1 as components

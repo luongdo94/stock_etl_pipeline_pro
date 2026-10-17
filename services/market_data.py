@@ -1,4 +1,6 @@
 """Live macro / FX / dividend data with warehouse fallbacks."""
+import math
+
 import pandas as pd
 import streamlit as st
 import yfinance as yf
@@ -53,9 +55,19 @@ def get_forex_rates(target="EUR", source="USD"):
         return 1.0
 
 
+def _finite(v):
+    """float, or None for a missing / NaN / inf value (a provider series of NaN is unknown, not a level)."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if math.isfinite(f) else None
+
+
 @st.cache_data(ttl=1799, show_spinner="Fetching Live Macro Data...")
-def fetch_macro_data():
-    """Fetches real-time SPY, DXY, US10Y and VIX from Yahoo Finance."""
+def fetch_macro_data(generation=None):
+    """Fetches real-time SPY, DXY, US10Y and VIX from Yahoo Finance. `generation` (the loaded snapshot version) keys
+    the cache because the fallback reads the warehouse: a new snapshot must not keep the old snapshot's 10Y."""
     import logging
     yf.set_tz_cache_location("/tmp/yfinance_tz") # Mute warnings in streamlit
     try:
@@ -94,11 +106,11 @@ def fetch_macro_data():
         }
         
         for name, ticker in mapping.items():
-            if ticker in closes.columns:
-                v_now = float(latest[ticker])
-                v_prev = float(prev[ticker])
-                chg = v_now - v_prev
-                pct = (chg / v_prev) * 100 if v_prev != 0 else 0
+            v_now = _finite(latest[ticker]) if ticker in closes.columns else None
+            v_prev = _finite(prev[ticker]) if ticker in closes.columns else None
+            if v_now is not None:
+                chg = v_now - v_prev if v_prev is not None else None
+                pct = chg / v_prev * 100 if chg is not None and v_prev else None
                 results[name] = {"val": v_now, "chg": chg, "pct": pct, "source": "Yahoo (live)"}
             else:
                 # not supplied: UNKNOWN, never a 0 that reads as a real level (SIDEBAR_REFACTOR_REVIEW, macro)
@@ -175,7 +187,7 @@ def _get_macro_fallback_from_db(conn=None) -> dict:
         from collections import defaultdict
         
         def _process(tkr_code, fallback_key):
-            prices = by_ticker.get(tkr_code, [])
+            prices = [v for v in (_finite(x) for x in by_ticker.get(tkr_code, [])) if v is not None]
             if prices:
                 v_now, v_prev = prices[0], (prices[1] if len(prices) > 1 else prices[0])
                 chg = v_now - v_prev
@@ -205,7 +217,7 @@ def _get_macro_fallback_from_db(conn=None) -> dict:
 
         by_ticker = defaultdict(list)
         for ticker, _date, close in rows:
-            by_ticker[ticker].append(float(close))
+            by_ticker[ticker].append(close)
 
         _process("SPY", "SPY")
         _process("^VIX", "VIX")

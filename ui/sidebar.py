@@ -14,8 +14,11 @@ import streamlit as st
 from core.market_regime import horizon_start
 
 HORIZONS = ["1D", "1W", "1M", "3M", "6M", "1Y", "YTD", "3Y", "5Y", "ALL", "Custom"]
-# the tabs whose content reads the range-filtered prices (an inventory of views/: ctx["prices"], spy_prices, t_start…)
-RANGE_TABS = {"🌐 Market Pulse", "🔬 Stock Analysis", "🎲 Risk Lab", "💼 Portfolio"}
+# the tabs whose content reads the range-filtered prices (an inventory of views/: ctx["prices"], spy_prices, t_start…).
+# Risk Lab fits and calibrates on the full history, so it has no range.
+RANGE_TABS = {"🌐 Market Pulse", "🔬 Stock Analysis", "💼 Portfolio"}
+# the applied choice, kept outside the widget keys: Streamlit drops a widget's state on a run that does not render it
+_SAVED_HORIZON, _SAVED_CUSTOM = "_range_horizon", "_range_custom"
 
 _CSS = """
 <style>
@@ -50,6 +53,8 @@ def render_data_status(fresh: dict, n_exceptions: int = 0):
     fresh_share = f" · {p['fresh_share']:.0%} current" if p["fresh_share"] is not None else ""
     fund = (f"Fundamentals: median {f['median_age_days']} d old" if f["median_age_days"] is not None
             else "Fundamentals: refresh date unknown")
+    if f.get("undated") and f["median_age_days"] is not None:
+        fund += f" ({f['undated']} of {f['companies']} undated)"
     if e["last_success_at"]:
         verb = "finished" if e["basis"] == "end" else "started"
         etl = f"Last good ETL {verb} {e['last_success_at']:%d %b %H:%M} ({e['age_hours']:.0f} h ago)"
@@ -68,8 +73,7 @@ def render_data_status(fresh: dict, n_exceptions: int = 0):
         res = check_for_new_data(st.session_state.get("_data_version"))
         st.session_state["_data_check"] = res
         if res["status"] == "updated":
-            st.session_state["_data_version"] = res["version"]
-            st.rerun()
+            st.rerun()      # the app records the version it actually loads (not the one found here)
     res = st.session_state.get("_data_check")
     if res:
         (st.sidebar.success if res["status"] == "updated" else
@@ -77,38 +81,55 @@ def render_data_status(fresh: dict, n_exceptions: int = 0):
 
 
 # ── PAGE CONTROLS ─────────────────────────────────────────────────────────────────────────────────────────────────
+def _clamp(d, min_date, max_date):
+    return min(max(d, min_date), max_date)
+
+
 def _range(horizon, min_date, max_date, rng=None):
+    """(start, end) with min_date <= start <= end <= max_date — a stored range outside the warehouse (older than its
+    first date, after an ETL changed the bounds) is clamped at both ends, an inverted one is put in order."""
     start, end = horizon_start(horizon, min_date, max_date), max_date
     if horizon == "Custom":
         if isinstance(rng, (list, tuple)) and len(rng) == 2:
-            start, end = rng
+            start, end = sorted(rng)
         elif isinstance(rng, (list, tuple)) and len(rng) == 1:
             start = rng[0]
-    start, end = max(start, min_date), min(end, max_date)
-    if start > end:
-        start = end
-    return start, end
+    start, end = _clamp(start, min_date, max_date), _clamp(end, min_date, max_date)
+    return min(start, end), end
 
 
 def render_horizon(min_date, max_date, active_tab=None):
     """Chart range → (horizon, start, end), clamped to the warehouse range. Shown only on the tabs that use it; on the
     others the last choice is kept and the sidebar says the page always uses the full history."""
     _label("This page")
+    ss = st.session_state
+    saved_h = ss.get(_SAVED_HORIZON) or "1Y"
+    saved_rng = ss.get(_SAVED_CUSTOM)
     if active_tab is not None and active_tab not in RANGE_TABS:
-        horizon = st.session_state.get("time_horizon_ctrl") or "1Y"
-        start, end = _range(horizon, min_date, max_date, st.session_state.get("custom_range"))
+        start, end = _range(saved_h, min_date, max_date, saved_rng)
         st.sidebar.caption("No date range on this page — it always uses the full history.")
-        return horizon, start, end
-    horizon = st.sidebar.selectbox("Chart range", HORIZONS, index=HORIZONS.index("1Y"), key="time_horizon_ctrl")
-    rng = None
+        return saved_h, start, end
+    if ss.get("time_horizon_ctrl") not in HORIZONS:          # dropped while hidden (or first run): restore
+        ss["time_horizon_ctrl"] = saved_h if saved_h in HORIZONS else "1Y"
+    horizon = st.sidebar.selectbox("Chart range", HORIZONS, key="time_horizon_ctrl")
+    ss[_SAVED_HORIZON] = horizon
+    rng = saved_rng
     if horizon == "Custom":
-        default_start = max(max_date - timedelta(days=365), min_date)     # clamped before the widget is built
-        with st.sidebar.form("sb_custom_range", border=False):
-            rng = st.date_input("Custom dates", value=(default_start, max_date), key="custom_range",
-                                min_value=min_date, max_value=max_date)
-            st.form_submit_button("Apply", width="stretch")
         if not (isinstance(rng, (list, tuple)) and len(rng) == 2):
-            st.sidebar.caption("Pick a start and an end date.")
+            rng = (max(max_date - timedelta(days=365), min_date), max_date)
+        # the widget only accepts dates inside the bounds: clamp what is restored before the widget is built
+        restored = tuple(_clamp(d, min_date, max_date) for d in _range("Custom", min_date, max_date, rng))
+        cur = ss.get("custom_range")
+        if not (isinstance(cur, (list, tuple)) and cur and all(min_date <= d <= max_date for d in cur)):
+            ss["custom_range"] = restored
+        with st.sidebar.form("sb_custom_range", border=False):
+            picked = st.date_input("Custom dates", key="custom_range", min_value=min_date, max_value=max_date)
+            st.form_submit_button("Apply", width="stretch")
+        if isinstance(picked, (list, tuple)) and len(picked) == 2:
+            ss[_SAVED_CUSTOM] = rng = tuple(picked)               # applied: kept across tabs and presets
+        else:
+            st.sidebar.caption("Pick a start and an end date — the last full range stays applied.")
+            rng = restored
     start, end = _range(horizon, min_date, max_date, rng)
     st.sidebar.caption(f"{start:%d %b %Y} → {end:%d %b %Y} · changes the charts, returns and risk windows of this "
                        "page; the Decision always uses the latest close.")

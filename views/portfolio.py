@@ -89,7 +89,10 @@ def render(ctx):
     st.write("Craft your portfolio by selecting tickers and entering your holdings below. High-density quantitative analysis will follow.")
 
     # 1. LOCAL TICKER SELECTION
-    all_available_tickers = sorted(prices["ticker"].unique().tolist())
+    # holdings, trade prices and NAV use the latest close of the full history; the sidebar range only changes the
+    # performance / risk windows below (a range ending in the past used to value the portfolio at that date)
+    _now_px = prices_full[~prices_full["ticker"].isin(ctx.get("indices_list", []))]
+    all_available_tickers = sorted(_now_px["ticker"].unique().tolist())
     indices = ["^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"]
     stock_tickers = [t for t in all_available_tickers if t not in indices]
     
@@ -223,8 +226,8 @@ def render(ctx):
             mt_shares = st.number_input("Shares", min_value=0.0001, value=1.0, step=1.0, key="mt_shares_input")
             
             # Every trade has a cash leg: buys pay from cash (or a declared deposit), sells credit cash
-            _last_px = float(prices[prices["ticker"] == mt_ticker]["price_close"].iloc[-1]) \
-                if mt_ticker and (prices["ticker"] == mt_ticker).any() else 1.0
+            _last_px = float(_now_px[_now_px["ticker"] == mt_ticker]["price_close"].iloc[-1]) \
+                if mt_ticker and (_now_px["ticker"] == mt_ticker).any() else 1.0
             mt_price = st.number_input("Purchase Price" if "Buy" in mt_type else "Sale Price", min_value=0.0001,
                                        value=_last_px, step=0.01, key=f"mt_price_input_{mt_type}_{mt_ticker}")
             mt_from_cash = True
@@ -261,7 +264,8 @@ def render(ctx):
     p_tickers = st.session_state.portfolio_tickers
 
     if p_tickers:
-        latest_prices = prices[prices["ticker"].isin(p_tickers)].groupby("ticker")["price_close"].last().to_dict()
+        latest_prices = (_now_px[_now_px["ticker"].isin(p_tickers)].sort_values("date")
+                         .groupby("ticker")["price_close"].last().to_dict())
         
         _cur_version = st.session_state.get('_portfolio_version', 0)
         
@@ -310,7 +314,11 @@ def render(ctx):
                     "Cost Basis (€)": st.session_state.portfolio_cost.get(t, latest_prices.get(t, 0))
                 })
             st.session_state.portfolio_df = pd.DataFrame(init_data)
-        
+        # the grid is kept across reruns; its prices follow the loaded snapshot's latest close on every run
+        _pdf = st.session_state.portfolio_df
+        if "Ticker" in _pdf.columns and "Price (€)" in _pdf.columns:
+            _pdf["Price (€)"] = _pdf["Ticker"].map(latest_prices).fillna(_pdf["Price (€)"])
+
         # 2. BULK DATA EDITOR
         render_header("layers", "Capital Allocation Grid", level="#####")
         

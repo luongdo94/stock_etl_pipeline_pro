@@ -75,7 +75,8 @@ def _cached_manifest():
 
 def _refresh_manifest(client, bucket, force: bool = False):
     """Current manifest: cached if younger than the TTL (unless `force`), otherwise re-fetched (falls back to the
-    cached copy)."""
+    cached copy — except when `force`d: an explicit check that could not reach the bucket returns None, because the
+    cached copy says nothing about whether a newer snapshot was published)."""
     import json
     import time
     fresh = _MANIFEST_PATH.exists() and (time.time() - _MANIFEST_PATH.stat().st_mtime) < _MANIFEST_TTL_MINUTES * 60
@@ -87,7 +88,7 @@ def _refresh_manifest(client, bucket, force: bool = False):
         _MANIFEST_PATH.write_bytes(data)
         return json.loads(data)
     except Exception:
-        return _cached_manifest()          # no manifest published yet (legacy layout) or offline
+        return None if force else _cached_manifest()   # no manifest published yet (legacy layout) or offline
 
 
 def _remote_tables() -> dict:
@@ -290,10 +291,25 @@ def get_db_connection(read_only=False):
 
 
 @st.cache_data(ttl=600, show_spinner="📉 Loading Institutional Data Warehouse...")
-def load_data():
-    """Load all required data, normalize currencies, and pre-compute técnicos inside cache."""
+def load_snapshot(version=None) -> tuple:
+    """(frames, version of the snapshot they were read from). `version` (data_version() at the call) keys the cache,
+    so a new warehouse file / published manifest is loaded on the next run instead of after the TTL; the returned
+    version is measured on the open connection, i.e. it is the snapshot actually read, not the current source."""
     with get_db_connection(read_only=True) as conn:
-        return read_warehouse(conn)
+        try:
+            loaded = data_version()[0]
+        except Exception:
+            loaded = None
+        return read_warehouse(conn), loaded
+
+
+def load_data():
+    """All dashboard frames of the current snapshot (see load_snapshot)."""
+    try:
+        version = data_version()[0]
+    except Exception:
+        version = None
+    return load_snapshot(version)[0]
 
 
 def read_warehouse(conn):
@@ -381,8 +397,8 @@ def read_warehouse(conn):
     etl_audit_f = pd.DataFrame()
     try:
         etl_audit_f = conn.execute("""
-            SELECT status, start_time, rows_processed FROM marts.etl_audit
-            WHERE status <> 'STARTED' ORDER BY start_time DESC LIMIT 1""").df()
+            SELECT start_time, end_time, status, rows_processed FROM marts.etl_audit
+            WHERE status <> 'STARTED' ORDER BY start_time DESC LIMIT 60""").df()
     except duckdb.Error:
         pass
     if etl_audit_f.empty:
@@ -390,8 +406,8 @@ def read_warehouse(conn):
             audit_db = str(Path(ROOT) / "warehouse" / "etl_audit.duckdb")
             with duckdb.connect(audit_db, read_only=True) as a_conn:
                 etl_audit_f = a_conn.execute("""
-                    SELECT status, start_time, rows_processed FROM etl.audit_log
-                    ORDER BY start_time DESC LIMIT 1""").df()
+                    SELECT start_time, end_time, status, rows_processed FROM etl.audit_log
+                    WHERE status <> 'STARTED' ORDER BY start_time DESC LIMIT 60""").df()
         except duckdb.Error:
             etl_audit_f = pd.DataFrame()
 
@@ -498,7 +514,8 @@ def load_ticker_provenance(ticker: str) -> dict:
 _HEALTH_QUERIES = {
     "runs": """SELECT start_time, end_time, status, mode, rows_processed, error_message FROM marts.etl_audit
                WHERE status <> 'STARTED' ORDER BY start_time DESC LIMIT 60""",
-    "dq": "SELECT check_name, violations, status, is_critical, _checked_at FROM marts.dq_warnings",
+    # the timestamp column is checked_at or _checked_at depending on which ETL step created the table: not selected
+    "dq": "SELECT * FROM marts.dq_warnings",
     "exceptions": "SELECT ticker, stage, reason, detail, detected_at FROM marts.etl_exceptions",
     "reconciliation": """SELECT ticker, check_name, period, ours, theirs, diff_pct, status, source, detail, checked_at
                          FROM raw.source_reconciliation""",
@@ -631,18 +648,22 @@ def load_discovery(generation=None) -> pd.DataFrame:
 
 @st.cache_data(ttl=600, show_spinner=False)
 def load_recorded_decision(ticker: str, as_of, generation=None) -> dict:
-    """The Decision the daily snapshot RECORDED for `ticker` on or before `as_of` — point in time as it was known then,
-    not recomputed with today's fundamentals. {"as_of_date", "decision", "price_close", "first_snapshot"}; empty values
-    when no snapshot exists on or before that date (snapshots start with the first ETL run that wrote them)."""
-    out = {"as_of_date": None, "decision": None, "price_close": None, "first_snapshot": None}
+    """The Decision the daily snapshot had RECORDED for `ticker` by the end of `as_of` — point in time as it was known
+    then, not recomputed with today's fundamentals. A snapshot is known from its knowledge_at (when the ETL wrote it,
+    warehouse-local time); one for `as_of` written the next morning was not known on `as_of`. Rows without a
+    knowledge_at cannot be placed in time and are not used. {"as_of_date", "decision", "price_close", "knowledge_at",
+    "first_snapshot"}; empty values when nothing had been recorded by then."""
+    out = {"as_of_date": None, "decision": None, "price_close": None, "knowledge_at": None, "first_snapshot": None}
     try:
+        cutoff = pd.Timestamp(as_of).normalize() + pd.Timedelta(days=1)          # end of that day
         with get_db_connection(read_only=True) as conn:
-            out["first_snapshot"] = conn.execute("SELECT min(as_of_date) FROM marts.score_snapshots").fetchone()[0]
-            row = conn.execute("""SELECT as_of_date, decision, price_close FROM marts.score_snapshots
-                                  WHERE ticker = ? AND as_of_date <= ? ORDER BY as_of_date DESC, knowledge_at DESC
-                                  LIMIT 1""", [ticker, as_of]).fetchone()
+            out["first_snapshot"] = conn.execute("SELECT min(knowledge_at) FROM marts.score_snapshots").fetchone()[0]
+            row = conn.execute("""SELECT as_of_date, decision, price_close, knowledge_at FROM marts.score_snapshots
+                                  WHERE ticker = ? AND as_of_date <= ? AND knowledge_at < ?
+                                  ORDER BY knowledge_at DESC, as_of_date DESC LIMIT 1""",
+                               [ticker, pd.Timestamp(as_of).date(), cutoff.to_pydatetime()]).fetchone()
         if row:
-            out.update(as_of_date=row[0], decision=row[1], price_close=row[2])
+            out.update(as_of_date=row[0], decision=row[1], price_close=row[2], knowledge_at=row[3])
     except Exception:
         pass
     return out
@@ -665,21 +686,28 @@ def data_version(force_check: bool = False) -> tuple:
             return None, "warehouse file not readable"
     info = _supabase_bucket()
     if info is None:
+        if force_check:                       # a cached copy cannot confirm there is nothing newer
+            return None, "storage not reachable"
         m = _cached_manifest()
         return (m or {}).get("version"), "offline — cached manifest"
     if force_check:
         m = _refresh_manifest(*info, force=True)
-        return (m or {}).get("version"), "published manifest (checked now)"
+        if not m:
+            return None, "the published manifest could not be downloaded"
+        return m.get("version"), "published manifest (checked now)"
     return (_cached_manifest() or {}).get("version"), "published manifest (cached)"
 
 
 def clear_snapshot_caches() -> None:
     """Clear the caches that hold data of the current snapshot — not every cache of the app (st.cache_data.clear()
-    also emptied FX, macro and FRED caches, shared by every user of the server)."""
-    from services import screener
-    for fn in (load_data, load_track_record, load_etl_exceptions, load_ticker_provenance, load_data_health,
+    also emptied FX and FRED caches, shared by every user of the server). Macro is cleared because its fallback is the
+    warehouse's last close; earnings events / reactions are read from the snapshot. Most of these are also keyed by
+    the loaded version, so a session on the new snapshot never reads an old entry."""
+    from services import earnings, market_data, screener
+    for fn in (load_snapshot, load_track_record, load_etl_exceptions, load_ticker_provenance, load_data_health,
                _evidence_cached, load_decision_snapshots, load_discovery, load_recorded_decision,
-               screener.get_master_screener_data):
+               screener.get_master_screener_data, market_data.fetch_macro_data, earnings.load_earnings_events,
+               earnings.universe_reactions):
         try:
             fn.clear()
         except Exception:
@@ -699,5 +727,5 @@ def check_for_new_data(loaded_version) -> dict:
                                                                            "the stored data."}
     if loaded_version is not None and version == loaded_version:
         return {"status": "latest", "version": version, "message": f"Already the latest data ({how})."}
-    clear_snapshot_caches()
-    return {"status": "updated", "version": version, "message": f"New data loaded ({how})."}
+    clear_snapshot_caches()          # the rerun loads `version`; the app then records the version it actually read
+    return {"status": "updated", "version": version, "message": f"Newer data found ({how}) — reloading."}

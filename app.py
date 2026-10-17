@@ -27,7 +27,7 @@ except ImportError:
 from services import auth
 from core import market_regime as mr
 from etl.utils import clean_upside_pct
-from services.db import DB_PATH, load_data, track_record_ok
+from services.db import DB_PATH, data_version, load_snapshot, track_record_ok
 from services.market_data import fetch_fred_macro, fetch_macro_data
 from services.screener import get_master_screener_data
 from ui import header, sidebar
@@ -57,14 +57,22 @@ if auth.local_dev_mode() and not os.path.exists(DB_PATH):
     st.info("There is no local data yet. If the pipeline is running (`python run.py --no-sync`), wait for it to finish "
             "(about an hour for the full universe), then reload this page.")
     st.stop()
+# The cache is keyed by the current snapshot version (a new warehouse file / manifest loads on the next run) and
+# returns the version the frames were READ from — that, not the current source, is what this session has loaded.
+try:
+    _source_version = data_version()[0]
+except Exception:
+    _source_version = None
+_frames, _loaded_version = load_snapshot(_source_version)
+st.session_state["_data_version"] = _loaded_version       # "Check for new data" compares with this
 (prices_full, companies_full, monthly_full, annual_fin, quarterly_fin, earnings_cal, dq_warnings,
  hist_fcf_full, hist_fcf_q_full, etl_audit, total_universe_size, earnings_surprise_full,
- tv_sector_rotation, forward_estimates_full) = load_data()
+ tv_sector_rotation, forward_estimates_full) = _frames
 if prices_full.empty:
     st.error("The warehouse has no prices yet — run `python run.py` to load data.")
     st.stop()
 
-macro = fetch_macro_data() or {}
+macro = fetch_macro_data(_loaded_version) or {}     # its fallback is the snapshot's last close
 # Same live 10Y yield as the Decision Summary → the screener's Decision column and the panel agree
 _track_ok = track_record_ok(prices_full, rows_key=len(prices_full))
 m_df = get_master_screener_data(companies_full, prices_full, quarterly_fin, annual_fin, hist_fcf_full,
@@ -84,12 +92,7 @@ def format_ticker(ticker):
 
 # ── Sidebar (SIDEBAR_REFACTOR_REVIEW): data status, this page's controls, macro, account ─────
 from core.freshness import data_freshness  # noqa: E402
-from services.db import data_version, load_etl_exceptions  # noqa: E402
-if "_data_version" not in st.session_state:          # the snapshot this session loaded ("Check for new data")
-    try:
-        st.session_state["_data_version"] = data_version()[0]
-    except Exception:
-        st.session_state["_data_version"] = None
+from services.db import load_etl_exceptions  # noqa: E402
 if prices_full["ticker"].nunique() < 50 and (
         os.environ.get("SUPABASE_REMOTE_MODE", "false").lower() == "true" or not os.path.exists(DB_PATH)):
     st.toast("⚠️ The loaded data looks incomplete — use “Check for new data” in the sidebar.")
@@ -109,7 +112,8 @@ in_window = (prices_full["date"] >= t_start) & (prices_full["date"] <= t_end)
 spy_prices = prices_full[in_window & (prices_full["ticker"] == "SPY")]
 prices = prices_full[in_window & ~prices_full["ticker"].isin(indices_list)]
 companies = companies_full[~companies_full["ticker"].isin(indices_list)]
-current_universe = sorted(prices["ticker"].unique().tolist()) or [t for t in all_tickers if t not in indices_list]
+# every stock with data — a ticker without bars in the chart range keeps its Decision (only its charts are empty)
+current_universe = [t for t in all_tickers if t not in indices_list]
 stock_count = prices_full[~prices_full["ticker"].isin(indices_list)]["ticker"].nunique()
 
 # ── One Quality score everywhere: the screener's (core/scoring.py). Indices / benchmarks are not scored. ──
@@ -211,7 +215,7 @@ ctx = dict(
     prices_full=prices_full, companies_full=companies_full, annual_fin=annual_fin, quarterly_fin=quarterly_fin,
     earnings_cal=earnings_cal, earnings_surprise_full=earnings_surprise_full, hist_fcf_full=hist_fcf_full,
     hist_fcf_q_full=hist_fcf_q_full, tv_sector_rotation=tv_sector_rotation, all_tickers=all_tickers,
-    forward_estimates_full=forward_estimates_full,
+    forward_estimates_full=forward_estimates_full, data_version=_loaded_version,
     # horizon window
     prices=prices, spy_prices=spy_prices, companies=companies, selected_horizon=selected_horizon,
     t_start=t_start, t_end=t_end, current_universe=current_universe, indices_list=indices_list,

@@ -13,6 +13,12 @@ from services.ai import get_finbert_pipeline, get_unified_verdict
 from ui.icons import SVG_ICONS, render_header
 
 
+def _known(v):
+    """A macro value for the LLM prompt: the number, or "N/A" when missing / NaN (0 is a real value)."""
+    from core.market_regime import _finite
+    f = _finite(v)
+    return "N/A" if f is None else f
+
 
 def render(dd, ctx):
     _dxy_pct = ctx["_dxy_pct"]
@@ -145,8 +151,9 @@ def render(dd, ctx):
                         # "current" = the latest bar of the full history, not the sidebar chart's end
                         "ma_20_current": _latest("ma_20"),
                         "ma_50_current": _latest("ma_50"),
-                        "vix_current":   ((macro or {}).get("VIX") or {}).get("val") or "N/A",   # unknown ≠ 0
-                        "spy_trend":     ((macro or {}).get("SPY") or {}).get("pct") or "N/A",
+                        # unknown → "N/A", a real 0 (flat SPY) stays 0
+                        "vix_current":   _known(((macro or {}).get("VIX") or {}).get("val")),
+                        "spy_trend":     _known(((macro or {}).get("SPY") or {}).get("pct")),
                         # --- Enrichments ---
                         "forward_pe":           float(meta.get("forward_pe") or 0) or "N/A",
                         "debt_ebitda":          _debt_ebitda_for_llm,

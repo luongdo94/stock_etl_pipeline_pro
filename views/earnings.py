@@ -45,14 +45,14 @@ def render(ctx):
     m_df, fe = ctx["m_df"], ctx.get("forward_estimates_full", pd.DataFrame())
     render_header("calendar", "Earnings reports (ER)", "Beat / miss history · price reactions · upcoming reports · AI note")
 
-    events = svc.load_earnings_events()
+    events = svc.load_earnings_events(ctx.get("data_version"))
     if events.empty:
         st.info("No earnings-announcement history in the warehouse yet. It is collected by the ETL (weekly); run "
                 "`python run.py` once and reload.")
         return
     region_of = _region_map(companies)
     reactions = svc.universe_reactions(events, prices_full[["date", "ticker", "price_close", "daily_return_pct"]],
-                                       region_of, rows_key=(len(events), len(prices_full)))
+                                       region_of, rows_key=(ctx.get("data_version"), len(events), len(prices_full)))
     names = companies.set_index("ticker")["company"].to_dict()
     verdict = m_df.set_index("Ticker")["Verdict"].to_dict() if "Verdict" in m_df.columns else {}
 

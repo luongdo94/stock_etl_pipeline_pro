@@ -135,11 +135,22 @@ REGIME_TO_SCORING = {"STRONG BULLISH": "RISK_ON", "BULLISH": "RISK_ON",
                      "NEUTRAL / SIDEWAYS": "NEUTRAL", "BEARISH / CAUTION": "RISK_OFF"}
 
 
+def _finite(v):
+    """float, or None when missing / NaN / inf — a provider series of NaN is unknown, never a level."""
+    try:
+        f = float(v)
+    except (TypeError, ValueError):
+        return None
+    return f if np.isfinite(f) else None
+
+
 def market_confidence(spy, breadth_pct, vix, dxy_5d_move, tnx_chg):
     """0-100 score: SPY trend 25 + SPY 5d momentum 10 + breadth 30 + VIX 10 + macro 10 (max 85).
 
-    `spy` is SPY's price history sorted by date (may be empty).
+    `spy` is SPY's price history sorted by date (may be empty). An unknown input (None / NaN) scores the middle of its
+    range and is named in the reasons — a transparent imputation, not evidence that the market is neutral.
     """
+    vix, dxy_5d_move, tnx_chg, breadth_pct = (_finite(v) for v in (vix, dxy_5d_move, tnx_chg, breadth_pct))
     score, reasons = 0, []
     if not spy.empty:
         last = spy.iloc[-1]
@@ -151,19 +162,25 @@ def market_confidence(spy, breadth_pct, vix, dxy_5d_move, tnx_chg):
             reasons.append("SPY below one MA")
         else:
             reasons.append("SPY below MA50 & MA200")
+        ret5 = None
         if len(spy) >= 6:
-            ret5 = (float(spy["price_close"].iloc[-1]) / float(spy["price_close"].iloc[-6]) - 1) * 100
+            ret5 = _finite((float(spy["price_close"].iloc[-1]) / float(spy["price_close"].iloc[-6]) - 1) * 100)
+        if ret5 is not None:
             score += int(round(float(np.interp(ret5, [-3, -1, 0, 1.5, 3], [0, 2, 5, 8, 10]))))
             if ret5 < -1:
                 reasons.append(f"SPY 5d return {ret5:+.1f}%")
         else:
             score += 5
     # Gradient (no cliff at 50%): 25% = panic (0), 50% = neutral (15), 75%+ = healthy (30)
-    score += int(round(float(np.interp(breadth_pct, [25, 40, 50, 60, 75], [0, 10, 15, 22, 30]))))
-    if breadth_pct < 40:
-        reasons.append(f"Breadth Panic ({breadth_pct:.0f}%)")
-    elif breadth_pct < 55:
-        reasons.append(f"Weak Breadth ({breadth_pct:.0f}%)")
+    if breadth_pct is None:
+        score += 15
+        reasons.append("Breadth unknown")
+    else:
+        score += int(round(float(np.interp(breadth_pct, [25, 40, 50, 60, 75], [0, 10, 15, 22, 30]))))
+        if breadth_pct < 40:
+            reasons.append(f"Breadth Panic ({breadth_pct:.0f}%)")
+        elif breadth_pct < 55:
+            reasons.append(f"Weak Breadth ({breadth_pct:.0f}%)")
     # An unknown input scores the middle of its range and is named — it is not read as calm (VIX 0) or flat (DXY 0)
     if vix is None:
         score += 5
@@ -174,9 +191,17 @@ def market_confidence(spy, breadth_pct, vix, dxy_5d_move, tnx_chg):
             reasons.append(f"VIX Risk-Off ({vix:.0f})")
         elif vix > 20:
             reasons.append(f"VIX Elevated ({vix:.0f})")
-    if dxy_5d_move is None or tnx_chg is None:
+    if dxy_5d_move is None and tnx_chg is None:
         score += 5
         reasons.append("Macro inputs unknown (DXY / 10Y)")
+    elif dxy_5d_move is None or tnx_chg is None:
+        # one side known: a known headwind still counts; the unknown side is named
+        headwind = (dxy_5d_move is not None and dxy_5d_move >= 1.5) or (tnx_chg is not None and tnx_chg >= 0.12)
+        score += 2 if headwind else 5
+        reasons.append("DXY unknown" if dxy_5d_move is None else "10Y change unknown")
+        if headwind:
+            reasons.append(f"Macro Headwind (DXY 5d:{dxy_5d_move:+.1f}%)" if dxy_5d_move is not None
+                           else f"Macro Headwind (10Y {tnx_chg:+.2f})")
     elif dxy_5d_move < 0.8 and tnx_chg < 0.08:
         score += 10
     elif dxy_5d_move < 1.5 and tnx_chg < 0.12:
@@ -193,6 +218,7 @@ def regime_from_score(score, tnx_chg=0.0, dxy_pct=0.0, vix=20.0):
         if score >= cut:
             break
     scoring = REGIME_TO_SCORING[label]
+    tnx_chg, dxy_pct, vix = _finite(tnx_chg), _finite(dxy_pct), _finite(vix)
     if None not in (tnx_chg, dxy_pct, vix) and tnx_chg > 0.05 and dxy_pct > 0.1 and vix < 25:  # yields + USD up
         scoring = "INFLATION_SHOCK"
     return {"regime": label, "color": colour, "advice": advice, "scoring_regime": scoring}
@@ -202,8 +228,10 @@ def dxy_5d_move(prices_full, fallback_pct):
     """Cumulative 5-day % move of DX-Y.NYB; falls back to the live daily % when missing."""
     d = prices_full[prices_full["ticker"] == "DX-Y.NYB"].sort_values("date").tail(6)
     if len(d) >= 2:
-        return (float(d["price_close"].iloc[-1]) / float(d["price_close"].iloc[0]) - 1) * 100
-    return fallback_pct
+        move = _finite((float(d["price_close"].iloc[-1]) / float(d["price_close"].iloc[0]) - 1) * 100)
+        if move is not None:
+            return move
+    return _finite(fallback_pct)
 
 
 def cap_weighted_quality(reco_df):

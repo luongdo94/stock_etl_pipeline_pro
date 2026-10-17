@@ -257,4 +257,76 @@ def test_the_recorded_decision_is_read_point_in_time(monkeypatch):
     assert db.load_recorded_decision("A", date(2026, 10, 14))["decision"] == "HOLD / WATCH"     # the one known then
     assert db.load_recorded_decision("A", date(2026, 10, 16))["decision"] == "BUY CANDIDATE"
     none = db.load_recorded_decision("A", date(2026, 1, 1))
-    assert none["decision"] is None and none["first_snapshot"] == date(2026, 10, 13)
+    assert none["decision"] is None and none["first_snapshot"].date() == date(2026, 10, 13)
+
+
+def test_a_chart_range_without_bars_keeps_the_decision_and_the_assistant(warehouse, monkeypatch):
+    """SIDEBAR review F05: a range with no bar of the ticker (here a Saturday; also a listing newer than the range end)
+    stopped the page and the assistant's get_decision before the Decision was built."""
+    from datetime import timedelta
+    from views.stock_analysis import context
+    seen = {}
+    real = context.build
+
+    def spy(ctx, ticker):
+        dd = real(ctx, ticker)
+        seen.update(dd=dd, ctx=ctx)
+        return dd
+    monkeypatch.setattr(context, "build", spy)
+    at = _app("🔬 Stock Analysis")
+    at.session_state["deep_ticker_selector"] = "AAPL"
+    at.session_state["time_horizon_ctrl"] = "Custom"
+    at.run()
+    latest = pd.to_datetime(seen["ctx"]["prices_full"]["date"]).max().date()
+    sat = next(latest - timedelta(days=k) for k in range(1, 8) if (latest - timedelta(days=k)).weekday() == 5)
+    at.session_state["custom_range"] = (sat, sat)
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    dd, ctx = seen["dd"], seen["ctx"]
+    assert dd.df_deep.empty and dd.extra["chart_bars"] == 0
+    assert dd.extra["decision"].stance == ctx["m_df"].set_index("Ticker").at["AAPL", "Decision"]
+    assert "AAPL" in ctx["current_universe"]
+    assert any("No price bars in the sidebar chart range" in i.value for i in at.info)
+
+
+def test_the_portfolio_is_valued_at_the_latest_close_whatever_the_range(warehouse):
+    """Codex note on 5325df3: Market Value / NAV used the range-filtered prices (a past range end = old prices)."""
+    from datetime import timedelta
+    at = _app("💼 Portfolio")
+    at.session_state["portfolio_db_synced"] = True
+    at.session_state["portfolio_tickers"] = ["AAPL"]
+    at.session_state["portfolio_shares"] = {"AAPL": 2.0}
+    at.session_state["portfolio_cost"] = {"AAPL": 100.0}
+    at.session_state["time_horizon_ctrl"] = "Custom"
+    at.run()
+    from services.db import load_data
+    p = load_data()[0]
+    p = p[p["ticker"] == "AAPL"].sort_values("date")
+    last_day = p["date"].iloc[-1].date()
+    at.session_state["custom_range"] = (last_day - timedelta(days=200), last_day - timedelta(days=90))
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    shown = at.session_state["portfolio_df"].set_index("Ticker").at["AAPL", "Price (€)"]
+    assert shown == pytest.approx(p["price_close"].iloc[-1])
+    assert shown != pytest.approx(p[p["date"].dt.date <= last_day - timedelta(days=90)]["price_close"].iloc[-1])
+
+
+def test_a_snapshot_written_the_next_morning_was_not_known_that_day(monkeypatch):
+    """SIDEBAR review F02: as known then = written by the end of that day (knowledge_at), not just as_of <= day."""
+    import contextlib
+    import duckdb
+    from datetime import date
+    from services import db
+    conn = duckdb.connect()
+    conn.execute("CREATE SCHEMA marts")
+    conn.execute("CREATE TABLE marts.score_snapshots (as_of_date DATE, ticker VARCHAR, decision VARCHAR, "
+                 "price_close DOUBLE, knowledge_at TIMESTAMP)")
+    conn.execute("""INSERT INTO marts.score_snapshots VALUES ('2026-10-15', 'A', 'HOLD / WATCH', 9, '2026-10-15 22:00'),
+                    ('2026-10-16', 'A', 'BUY CANDIDATE', 10, '2026-10-17 09:00'),
+                    ('2026-10-14', 'A', 'AVOID', 8, NULL)""")
+    monkeypatch.setattr(db, "get_db_connection", lambda read_only=True: contextlib.nullcontext(conn))
+    db.load_recorded_decision.clear()
+    on_16 = db.load_recorded_decision("A", date(2026, 10, 16))
+    assert on_16["decision"] == "HOLD / WATCH" and on_16["knowledge_at"].hour == 22      # the 17 Oct row is later
+    assert db.load_recorded_decision("A", date(2026, 10, 17))["decision"] == "BUY CANDIDATE"
+    assert db.load_recorded_decision("A", date(2026, 10, 14))["decision"] is None          # NULL time: not placed

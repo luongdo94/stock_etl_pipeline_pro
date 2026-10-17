@@ -179,6 +179,8 @@ def counters(monkeypatch):
     monkeypatch.setattr(market_data, "discover_tv_tickers", count("tv", {}))
     monkeypatch.setattr(db, "insider_tickers", count("insider", []))
     monkeypatch.setattr(market_data, "fx_rate", count("fx", 1.0))
+    # the app-level macro fetch converts SPY with fx_rate (keyed by the loaded snapshot); the panel is what is measured
+    monkeypatch.setattr(market_data, "fetch_macro_data", lambda generation=None: {})
     return calls
 
 

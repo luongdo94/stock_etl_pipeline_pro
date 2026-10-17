@@ -20,8 +20,9 @@ LLM_MODEL = "command-r-plus-08-2024"          # same Cohere model as the rest of
 
 # ── warehouse ────────────────────────────────────────────────────────────────────────────────
 @st.cache_data(ttl=3600, show_spinner=False)
-def load_earnings_events() -> pd.DataFrame:
-    """All announcement events (empty frame until the first ETL run that collects them)."""
+def load_earnings_events(generation=None) -> pd.DataFrame:
+    """All announcement events (empty frame until the first ETL run that collects them). `generation` = the loaded
+    snapshot version (cache key)."""
     try:
         with get_db_connection(read_only=True) as conn:
             df = conn.execute("SELECT ticker, earnings_ts, eps_estimate, eps_actual, surprise_pct "
@@ -36,7 +37,8 @@ def load_earnings_events() -> pd.DataFrame:
 @st.cache_data(ttl=3600, show_spinner="Measuring price reactions to past reports...")
 def universe_reactions(_events: pd.DataFrame, _prices: pd.DataFrame, region_of: dict, rows_key=None) -> pd.DataFrame:
     """Reactions of every reported event in the universe, net of the stock's regional market.
-    `region_of` is hashed into the cache key; `rows_key` stands in for the two DataFrames."""
+    `region_of` is hashed into the cache key; `rows_key` stands in for the two DataFrames — it must include the
+    snapshot version (a corrected EPS or close keeps the row counts)."""
     if _events.empty or _prices.empty:
         return pd.DataFrame()
     bench = er.region_benchmark(_prices, region_of)
