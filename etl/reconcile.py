@@ -282,15 +282,19 @@ def apply_sec_supplements(conn) -> dict:
         src_col = {"stock_based_comp": "sbc_source", "lease_principal_paid": "lease_source",
                    "interest_paid_cfo": "interest_source"}
         for item, col in src_col.items():
+            # SEC-derived values are re-derived from raw.sec_cash_items on every run, so a figure written under an
+            # older rule (the USD = EUR fallback, review REV-08) does not survive; provider values are untouched
+            conn.execute(f"UPDATE raw.hist_fcf SET {item} = NULL, {col} = NULL WHERE {col} LIKE 'SEC XBRL %'")
             n0 = conn.execute(f"SELECT COUNT(*) FROM raw.hist_fcf WHERE {item} IS NOT NULL").fetchone()[0]
             conn.execute(f"""
-                UPDATE raw.hist_fcf f SET {item} = s.value_usd * COALESCE(fx.rate, 1.0),
+                UPDATE raw.hist_fcf f SET {item} = s.value_usd * fx.rate,
                        {col} = 'SEC XBRL ' || s.tag || ' (' || s.form || ', filed ' || CAST(s.filed AS VARCHAR) || ')'
                 FROM raw.sec_cash_items s
-                LEFT JOIN (SELECT ticker, EXTRACT(YEAR FROM date) AS y, arg_max(fx_to_eur, date) AS rate
-                           FROM raw.historical_financials WHERE src_currency = 'USD' GROUP BY 1, 2) fx
-                       ON fx.ticker = s.ticker AND fx.y = EXTRACT(YEAR FROM s.period_end)
+                JOIN (SELECT ticker, EXTRACT(YEAR FROM date) AS y, arg_max(fx_to_eur, date) AS rate
+                      FROM raw.historical_financials WHERE src_currency = 'USD' GROUP BY 1, 2) fx
+                  ON fx.ticker = s.ticker AND fx.y = EXTRACT(YEAR FROM s.period_end)
                 WHERE f.ticker = s.ticker AND f.year = EXTRACT(YEAR FROM s.period_end) AND s.item = '{item}'
+                  AND isfinite(fx.rate) AND fx.rate > 0     -- a missing USD→EUR rate is not 1 (review REV-08)
                   AND f.{item} IS NULL""")
             filled = conn.execute(f"SELECT COUNT(*) FROM raw.hist_fcf WHERE {item} IS NOT NULL").fetchone()[0] - n0
             if filled:

@@ -25,6 +25,16 @@ _SUGGEST = {
 }
 
 
+def _own_session() -> None:
+    """The history belongs to the signed-in user: when the identity changes (another sign-in in this browser session)
+    every assistant key is dropped before anything is shown or sent to the model (review REV-01)."""
+    uid = st.session_state.get("user_id")
+    if st.session_state.get("assistant_owner") != uid:
+        for k in [k for k in st.session_state.keys() if str(k).startswith("assistant_")]:
+            del st.session_state[k]
+        st.session_state["assistant_owner"] = uid
+
+
 def _tab_name() -> str:
     tab = str(st.session_state.get("active_tab") or "")
     return tab.split(" ", 1)[1] if " " in tab else tab
@@ -37,17 +47,18 @@ def _toolbox(ctx) -> ToolBox:
     m_df = ctx["m_df"]
     last = dict(zip(m_df["Ticker"], m_df["Price"])) if {"Ticker", "Price"} <= set(m_df.columns) else {}
 
+    built = {}            # within ONE question only: the Decision depends on the horizon, macro, rules, earnings
+                          # calendar and Track Record of this run — a session cache served stale ones (review REV-02)
+
     def deep_decision(t):
         known = set(ctx["companies_full"]["ticker"]) & set(ctx["prices_full"]["ticker"])
         if t not in known:
             raise KeyError(t)
-        from views.stock_analysis import context
-        key = f"assistant_dd_{t}_{len(ctx['prices_full'])}_{ctx['prices_full']['date'].max()}"   # per data version
-        if key not in st.session_state:                    # one Stock Analysis build per ticker and data version
+        if t not in built:
+            from views.stock_analysis import context
             dd = context.build(ctx, t)
-            st.session_state[key] = (dd.extra.get("decision"), dd.vin, dd.scores,
-                                     pd.to_datetime(dd.df_deep["date"].iloc[-1]).date())
-        return st.session_state[key]
+            built[t] = (dd.extra.get("decision"), dd.vin, dd.scores, pd.to_datetime(dd.df_deep["date"].iloc[-1]).date())
+        return built[t]
 
     def portfolio():
         holdings, cash, stops = read_portfolio_snapshot()      # the signed-in user's rows only
@@ -110,6 +121,7 @@ def render(ctx):
             if not assistant.available():
                 st.info("Set COHERE_API_KEY in .env to use the assistant.")
                 return
+            _own_session()
             hist = st.session_state.setdefault(_HISTORY_KEY, [])
             c1, c2 = st.columns([3, 1])
             if c2.button("Clear", key="assistant_clear", width="stretch"):

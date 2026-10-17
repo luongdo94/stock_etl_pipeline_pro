@@ -319,10 +319,12 @@ def render_user_profile(cm=None):
 
     if st.sidebar.button("🚪 Logout", use_container_width=True):
         cm.delete(_COOKIE_NAME, key="del_login_cookie")
+        # Everything the session holds belongs to this user (assistant history with portfolio documents, portfolio and
+        # watchlist state, research answers): none of it may survive into the next sign-in (review REV-01).
+        for k in list(st.session_state.keys()):
+            del st.session_state[k]
         st.session_state["authenticated"] = False
         st.session_state["user_id"] = None
         st.session_state["user_email"] = None
-        if "cm_pass" in st.session_state:
-            del st.session_state["cm_pass"]
         time.sleep(0.5)
         st.rerun()

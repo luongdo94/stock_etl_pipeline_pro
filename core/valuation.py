@@ -222,7 +222,11 @@ def resolve_deduction(r, item: str, ctx: dict, na: dict) -> tuple:
     v = _finite(r.get(item))
     if v is not None:
         src = r.get(f"{item.split('_')[0]}_source") if item != "stock_based_comp" else r.get("sbc_source")
-        return (CONFIRMED_ZERO if v == 0 else OBSERVED), abs(v), (str(src) if src and str(src) != "nan" else None)
+        src = str(src) if src and str(src) != "nan" else None
+        if src and "year by column convention" in src:
+            # the 10-K figure is real, but its year was inferred from the filing's column convention (review REV-F01)
+            return ESTIMATED, abs(v), src
+        return (CONFIRMED_ZERO if v == 0 else OBSERVED), abs(v), src
     if item == "stock_based_comp":
         if item in na:
             return NOT_APPLICABLE, 0.0, na[item]
@@ -258,10 +262,14 @@ def resolve_deduction(r, item: str, ctx: dict, na: dict) -> tuple:
         if item in na:
             return NOT_APPLICABLE, 0.0, na[item]
         if ctx.get("allow_assumed"):
-            noted = r.get("lease_source")                 # the 10-K's own words, when it says leases are immaterial
+            noted = r.get("lease_source")                 # the 10-K's own words, when it supports the assumption
             if noted and str(noted).startswith("immaterial per "):
                 return ASSUMED, 0.0, ("US GAAP filer: operating leases already in operating cash flow (ASC 842); "
                                       f"finance leases stated as not material — {noted}")
+            if noted and str(noted).startswith("no finance leases at period end per "):
+                # absence at year-end is not a reported zero for the year (review REV-06) — still an assumption
+                return ASSUMED, 0.0, ("US GAAP filer: operating leases already in operating cash flow (ASC 842); "
+                                      f"no finance leases at the period end — {noted}")
             return ASSUMED, 0.0, ("US GAAP filer: operating-lease payments are already in operating cash flow "
                                   "(ASC 842); finance-lease principal not reported — assumed immaterial")
         return UNKNOWN, 0.0, None

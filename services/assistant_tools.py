@@ -280,9 +280,10 @@ class ToolBox:
             return [{**doc, "holdings": [], "cash_eur": _num(cash), "note": "no holdings saved"}]
         rows, mv_total, unpriced = [], 0.0, []
         for t, h in holdings.items():
-            px = self.last_prices.get(t)
-            if px is None:
-                unpriced.append(t)
+            px = _num(self.last_prices.get(t), 6)
+            if px is None or px <= 0:                          # missing, NaN, inf or non-positive: not a price
+                if float(h.get("shares") or 0) != 0:
+                    unpriced.append(t)
                 continue
             mv = float(h.get("shares", 0)) * float(px)
             cost = float(h.get("cost", 0)) * float(h.get("shares", 0))
@@ -292,11 +293,19 @@ class ToolBox:
                          "gain_vs_cost_pct": (mv / cost - 1) * 100 if cost > 0 else None,
                          "decision": r.get("Decision"), "verdict": r.get("Verdict"), "sector": r.get("Sector")})
         nav = mv_total + float(cash or 0)
+        rows.sort(key=lambda r: -r["market_value_eur"])
+        if unpriced:
+            # review REV-03: without a price for every position the NAV — and every share of it — is unknown; only the
+            # priced part is reported, as such, and no portfolio-wide exposure or breach is claimed
+            doc.update({"nav_eur": None, "nav_status": f"unknown: no valid price for {', '.join(unpriced)}",
+                        "priced_holdings_value_eur": mv_total, "cash_eur": cash, "holdings": rows,
+                        "unpriced_holdings": unpriced,
+                        "policy_check": "not possible while holdings are unpriced"})
+            return [_clean(doc)]
         for r in rows:
             r["weight_pct_of_nav"] = r["market_value_eur"] / nav * 100 if nav > 0 else None
-        rows.sort(key=lambda r: -(r["weight_pct_of_nav"] or 0))
         doc.update({"nav_eur": nav, "cash_eur": cash, "cash_pct_of_nav": (float(cash or 0) / nav * 100) if nav > 0 else None,
-                    "holdings": rows, "unpriced_holdings": unpriced})
+                    "holdings": rows, "unpriced_holdings": []})
         if self.policy is not None and nav > 0:
             from core.portfolio_policy import check, describe, exposures
             meta = {}

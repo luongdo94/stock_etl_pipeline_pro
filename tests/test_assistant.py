@@ -65,13 +65,13 @@ def test_compare_and_metrics_read_the_screener_and_statements():
 
 def test_portfolio_weights_are_of_nav_with_cash_and_policy_checked():
     from core.portfolio_policy import load_policy
-    b = _box(portfolio_reader=lambda: ({"AAA": {"shares": 60, "cost": 80.0}, "BBB": {"shares": 20, "cost": 60.0},
-                                        "ZZZ": {"shares": 5, "cost": 1.0}}, 1000.0, {}),
+    b = _box(portfolio_reader=lambda: ({"AAA": {"shares": 60, "cost": 80.0}, "BBB": {"shares": 20, "cost": 60.0}},
+                                       1000.0, {}),
              policy=load_policy())
     d = b.run("my_portfolio", {})[0]
     assert d["nav_eur"] == 6000 + 1000 + 1000                              # 60×100 + 20×50 + cash
     w = {h["ticker"]: h["weight_pct_of_nav"] for h in d["holdings"]}
-    assert w == {"AAA": 75.0, "BBB": 12.5} and d["unpriced_holdings"] == ["ZZZ"]
+    assert w == {"AAA": 75.0, "BBB": 12.5} and d["unpriced_holdings"] == []
     assert d["holdings"][0]["gain_vs_cost_pct"] == 25.0 and d["holdings"][0]["decision"] == "BUY CANDIDATE"
     assert d["sector_exposure_pct"]["Technology"] == 87.5
     assert any("sector Technology" in x for x in d["policy_breaches"])     # 87.5% > 30% sector cap

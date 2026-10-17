@@ -329,10 +329,16 @@ in `services/research.py`):
    `core/filing_facts.py` accepts it only when the quote is verbatim in the passage, the number is in the quote, the
    unit is stated, the line is the financing (principal) line — not "operating cash flows for finance leases", which
    is interest —, one fiscal year has one amount, the row has at most three columns (a combined 10-K prints one per
-   registrant), and the amount does not exceed total debt. Pilot (30 issuers, truth = SEC XBRL
-   `FinanceLeasePrincipalPayments`): **26 of 26 accepted fiscal years exact, 0 wrong**; rejected readings keep the
-   previous status. "The company has no finance leases" becomes a reported zero for that year; "not material" stays
-   ASSUMED with the filing's words as the reason.
+   registrant), the amount does not exceed total debt, the unit is the one the passage (else its heading, else the
+   filing) states, and the fiscal year is the one printed above the figure's column — from the nearest heading, or
+   the filing's own three-year column convention when the heading is passages away (Alphabet prints 2023 2024 2025,
+   most filers 2025 2024 2023). Pilot (30 issuers, truth = SEC XBRL `FinanceLeasePrincipalPayments`), after the
+   commit reviews: **30 of 30 facts used (ticker × fiscal year) exact, 0 wrong** — from 31 accepted readings (filing × year; TDG 2024 read from two filings, both exact); a printed figure confirms only its exact value (a year tied only by the filing's column convention is valued as ESTIMATED); rejected readings keep the previous status. Readings carry the validator version and the model's JSON, so a rule change re-judges them without new LLM calls.
+   "No finance leases during the years presented" becomes a reported zero; "none as of year-end" or "not material"
+   stay ASSUMED with the filing's words as the reason (a year-end balance says nothing about the year's payments).
+   The newest 10-K is read first; older ones while any of the three basis years (ending at the newest 10-K's
+   fiscal year) is still missing; each filing once per validator version. Without a valid USD→EUR
+   rate for the year nothing is written.
 2. **Ask the filings** (Stock Analysis → Layer 3B) — presets (business model & moat, risk factors, drivers, capital
    allocation, latest earnings release) search the matching 10-K sections; free questions search everything. Answers
    cite every statement; numbers absent from the passages are flagged. Point in time: only filings public on the day

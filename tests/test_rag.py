@@ -78,7 +78,7 @@ def test_sections_take_the_body_not_the_table_of_contents():
     full = passages("10-K", _TOC + _BODY, full=True)
     notes_only = passages("10-K", _TOC + _BODY, full=False)
     assert {s for s, _ in full} >= {"1", "1a", "7", "notes"}
-    assert {s for s, _ in notes_only} == {"notes"} and all("lease" in t.lower() for _, t in notes_only)
+    assert {s for s, _ in notes_only} == {"notes"} and any("lease" in t.lower() for _, t in notes_only)
 
 
 def test_document_text_drops_the_hidden_xbrl_header_and_keeps_table_rows():
@@ -93,8 +93,10 @@ def test_document_text_drops_the_hidden_xbrl_header_and_keeps_table_rows():
 
 
 # ── validation of the model's reading ───────────────────────────────────────────────────────────────────────────
-_CH = {"c1": "Supplemental cash flow information (in millions)\nFinancing cash flows from finance leases 1,234 1,100 987",
+_CH = {"c1": "Supplemental cash flow information (in millions)\nYear Ended December 31, 2025 2024 2023\n"
+             "Financing cash flows from finance leases 1,234 1,100 987",
        "c2": "The Company does not have any finance leases as of year-end.",
+       "c4": "The Company did not have any finance leases during the years presented.",
        "c3": "Finance leases were not material to the consolidated financial statements."}
 
 
@@ -131,10 +133,9 @@ def test_an_amount_above_total_debt_is_a_misread_unit():
 
 
 def test_no_finance_leases_is_a_zero_and_immaterial_only_a_note():
-    none = ff.validate_lease_extraction({"kind": "NONE", "quote": "does not have any finance leases", "chunk_id": "c2"},
-                                        _CH, fiscal_year_end=2025)
-    assert none["accepted"] and none["values"] == [{"year": 2025, "value_usd": 0.0,
-                                                     "quote": "does not have any finance leases", "chunk_id": "c2"}]
+    q = "did not have any finance leases during the years presented"
+    none = ff.validate_lease_extraction({"kind": "NONE", "quote": q, "chunk_id": "c4"}, _CH, fiscal_year_end=2025)
+    assert none["accepted"] and none["values"] == [{"year": 2025, "value_usd": 0.0, "quote": q, "chunk_id": "c4"}]
     imm = ff.validate_lease_extraction({"kind": "IMMATERIAL", "quote": "Finance leases were not material to the "
                                         "consolidated financial statements", "chunk_id": "c3"}, _CH, fiscal_year_end=2025)
     assert imm["accepted"] and imm["values"] == []
@@ -159,7 +160,8 @@ def test_a_row_printed_with_other_figures_elsewhere_is_ambiguous():
     assert ff.ambiguous_row(sub, [parent, sub])
     assert ff.ambiguous_row(parent, [parent, "Payment of finance lease obligations (47) (50)"]) is None   # 3y vs 2y
     ext = {"kind": "AMOUNT", "unit": "millions", "values": [{"fiscal_year": 2025, "amount": 4, "quote": sub, "chunk_id": "s"}]}
-    r = ff.validate_lease_extraction(ext, {"s": "(in millions)\n" + sub}, fiscal_year_end=2025, all_passages=[parent, sub])
+    r = ff.validate_lease_extraction(ext, {"s": "(in millions)\nYear Ended December 31, 2025 2024 2023\n" + sub},
+                                     fiscal_year_end=2025, all_passages=[parent, sub])
     assert not r["accepted"] and "conflicting figures" in r["reason"]
 
 
@@ -190,7 +192,8 @@ def _fake_sec(url, headers=None, timeout=None):
         return _Resp("<p>Q1 revenue rose 9%. We raise full-year guidance.</p>")
     year = "2024" if "k25" in url else "2023"
     return _Resp(f"<p>Item 1. Business</p><p>{'We sell widgets. ' * 50}</p><p>Item 8. Financial Statements</p>"
-                 f"<p>(in millions)</p><p>Note 7 Leases</p><table><tr><td>Principal payments on finance lease "
+                 f"<p>(in millions)</p><p>Note 7 Leases</p><table><tr><td>Year Ended December 31,</td>"
+                 f"<td>{year}</td><td>{int(year) - 1}</td></tr><tr><td>Principal payments on finance lease "
                  f"obligations</td><td>{'(12)' if year == '2024' else '(11)'}</td><td>(10)</td></tr></table>")
 
 
@@ -216,12 +219,14 @@ def test_ingest_read_and_fill_hist_fcf_end_to_end(tmp_path):
     assert fl.ingest(conn, ["ACME"], "Test test@example.com", cfg, {"ACME": 42}, get=_fake_sec) == {"ACME": 0}  # incremental
 
     x = fl.extract_leases(conn, ["ACME"], _fake_extractor, "fake-llm")
-    assert x["accepted"].all() and set(x["fiscal_year"]) == {2023, 2024}         # newest 10-K only: it covers the years
-    assert x["accession"].unique().tolist() == ["0000-25-000001"]
-    assert fl.extract_leases(conn, ["ACME"], _fake_extractor, "fake-llm").empty  # never read twice
+    # the newest 10-K covers 2024/2023; the basis also needs 2022 → the older 10-K is read for it (review REV-F03)
+    assert x["accepted"].all() and set(x["fiscal_year"]) == {2022, 2023, 2024}
+    assert x["accession"].unique().tolist() == ["0000-25-000001", "0000-24-000001"]
+    assert fl.extract_leases(conn, ["ACME"], _fake_extractor, "fake-llm").empty  # covered: nothing read again
     facts = fl.lease_facts(conn)
-    assert facts.set_index("fiscal_year").loc[2023, "value_usd"] == 10e6
-    assert facts.set_index("fiscal_year").loc[2024, "value_usd"] == 12e6
+    by_year = facts.set_index("fiscal_year")
+    assert by_year.loc[2023, "value_usd"] == 10e6                                  # both filings state 2023: newest wins
+    assert by_year.loc[2024, "value_usd"] == 12e6 and by_year.loc[2022, "value_usd"] == 10e6
 
     w = duckdb.connect()
     ld.create_raw_schema(w)

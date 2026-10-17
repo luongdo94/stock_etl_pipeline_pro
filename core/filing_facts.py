@@ -3,23 +3,30 @@
 The model only POINTS at evidence; this module decides whether the evidence holds. A figure is accepted only when
   - its quote occurs verbatim (whitespace / case aside) in the passage it cites,
   - the number itself occurs in that quote,
-  - the unit (thousands / millions / billions) is stated in the passage or the two passages before it,
-  - the fiscal years line up with the filing's own period (newest column = the 10-K's fiscal year),
+  - the unit is the one the passage states (or, when the passage states none, the one the filing uses); a unit
+    contradicting the passage is rejected (review REV-04: "units" on a table "in millions" was accepted),
+  - the fiscal year is the one printed above the figure's COLUMN (table heading) or next to it in a sentence
+    (review REV-05: a swapped column passed while only "the number is somewhere in the quote" was checked),
   - and the amount is plausible (non-negative, not above total debt when that is known).
 Anything else is rejected with the reason, and the deduction keeps its previous status (ASSUMED / UNKNOWN).
 """
 import re
+from decimal import Decimal, InvalidOperation
 from typing import Optional
 
+VALIDATOR_VERSION = 4        # bump on any rule change: stored readings of other versions are re-validated / re-read
 KINDS = ("AMOUNT", "NONE", "IMMATERIAL", "NOT_FOUND")
 UNIT_SCALE = {"units": 1.0, "thousands": 1e3, "millions": 1e6, "billions": 1e9}
 _UNIT_EVIDENCE = {
     "thousands": r"in\s+thousands|\(\s*thousands|\$\s*000s?|000s\s+omitted|thousands\s+of\s+(?:u\.?s\.?\s+)?dollars",
     "millions": r"in\s+millions|\(\s*millions|millions\s+of\s+(?:u\.?s\.?\s+)?dollars|\$\s*m\b",
     "billions": r"in\s+billions|\(\s*billions|billions\s+of\s+(?:u\.?s\.?\s+)?dollars",
-    "units": r".",
 }
+SCALES = ("thousands", "millions", "billions")
+MIN_UNITS_USD = 100_000      # a 10-K table "in units" printing less than this is far more likely a missed scale
 # "no finance leases" / "does not have any finance leases" — absent. "no MATERIAL finance leases" is IMMATERIAL instead.
+# Absence ON A DATE ("as of year-end", "at December 31") says nothing about the principal paid DURING the year (review
+# REV-06: a lease repaid in the year leaves none at year-end) — only absence over the period is a reported zero.
 _NO_FINANCE_LEASE = re.compile(r"\b(?:no|(?:do|does|did)\s+not\s+have(?:\s+any)?|not\s+have(?:\s+any)?)\s+"
                                r"finance\s+leases?\b", re.I)
 # The principal row: financing activities / principal / repayment wording. Under ASC 842 "operating cash flows for
@@ -28,6 +35,29 @@ FINANCING_ROW = re.compile(r"financ\w*\s+(?:cash\s+(?:out|in)?flows?|activities)
                            r"finance\s+lease|finance\s+lease\s+(?:obligations?|liabilit\w+)\s+(?:paid|payments?|repaid)",
                            re.I)
 NOT_PRINCIPAL = re.compile(r"operating\s+cash\s+flows?|\binterest\b|right[- ]of[- ]use|lease\s+cost|amortization", re.I)
+_WHOLE_PERIOD = re.compile(r"during\s+(?:the\s+|fiscal\s+)?(?:years?|periods?|20\d\d)|for\s+(?:all\s+|any\s+|each\s+)?"
+                           r"(?:of\s+)?the\s+(?:years?|periods?)|in\s+any\s+of\s+the\s+(?:years?|periods?)|"
+                           r"throughout|at\s+any\s+time", re.I)
+_AT_A_DATE = re.compile(r"\bas\s+of\b|\bat\s+(?:the\s+)?(?:fiscal\s+)?(?:year|period)[- ]end|\bat\s+(?:december|"
+                        r"january|february|march|april|may|june|july|august|september|october|november)\b|"
+                        r"\bat\s+(?:the\s+)?end\s+of\b", re.I)
+
+
+def absent_all_period(quote: str) -> bool:
+    """True only when ONE clause denies finance leases over the whole period ("did not have any finance leases during
+    the years presented") — not limited to a date, and the quote reports no amount. Review REV-F02: "no finance leases
+    as of year-end; principal payments during the year were $30 million" matched both patterns in different clauses."""
+    q = norm(quote)
+    undated = re.sub(r"\b(?:january|february|march|april|may|june|july|august|september|october|november|december)"
+                     r"\s+\d{1,2}\b", " ", q)               # "December 31, 2025" is a date, not an amount
+    if any(not _YEAR.fullmatch(m.group(0)) and float(m.group(0).replace(",", "")) > 0 for m in _FIG.finditer(undated)):
+        return False                                       # an amount in the quote contradicts "zero"
+    for clause in re.split(r"[;:]|(?<=[a-z0-9)])\.\s", q):
+        if _NO_FINANCE_LEASE.search(clause) and _WHOLE_PERIOD.search(clause) and not _AT_A_DATE.search(clause):
+            return True
+    return False
+
+
 _IMMATERIAL = re.compile(r"finance\s+leases?[^.]{0,160}?(?:not|im)\s*material|"
                          r"(?:not|im)\s*material[^.]{0,160}?finance\s+leases?", re.I)
 
@@ -45,23 +75,163 @@ def quote_in(quote: str, passage: str, min_len: int = 15) -> bool:
     return len(q) >= min_len and q in norm(passage)
 
 
-def number_forms(x: float) -> set:
-    """Spellings of an amount as a filing table prints it: 1234, 1,234, 1,234.0, 1,234.5 …"""
-    out = set()
-    for d in (0, 1, 2):
-        s = f"{abs(x):,.{d}f}"
-        out |= {s, s.replace(",", "")}
-    return out
+def exact(x) -> Optional[Decimal]:
+    """The exact value of an amount or a printed figure: '1,234.50' → 1234.5, 1.4 → 1.4. Thousands separators and
+    trailing zeros are spelling; a different digit is a different number (None when it is not a number)."""
+    try:
+        d = Decimal(str(x).replace(",", "").strip()) if isinstance(x, str) else Decimal(repr(abs(float(x))))
+    except (InvalidOperation, TypeError, ValueError):
+        return None
+    return abs(d) if d.is_finite() else None
+
+
+def same_number(token: str, amount) -> bool:
+    """True only when the printed figure IS the amount — never by rounding (review REV-F05: the old spelling set of
+    1.4 contained '1', so a printed 1 confirmed 1.4 billion — and 0.6 billion)."""
+    a, t = exact(amount), exact(token)
+    return a is not None and t is not None and a == t
 
 
 def number_in(x: float, quote: str) -> bool:
-    nums = set(re.findall(r"\d[\d,]*(?:\.\d+)?", str(quote or "")))
-    return bool(nums & number_forms(float(x)))
+    return any(same_number(tok, x) for tok in _FIG.findall(str(quote or "")))
+
+
+def stated_units(text: str) -> set:
+    """Scales a text states ('in millions' …)."""
+    t = norm(text)
+    return {u for u in SCALES if re.search(_UNIT_EVIDENCE[u], t)}
+
+
+def last_stated_unit(text: str) -> Optional[str]:
+    """The scale stated LAST in a text (the one closest to what follows it)."""
+    t, best = norm(text), (None, -1)
+    for u in SCALES:
+        for m in re.finditer(_UNIT_EVIDENCE[u], t):
+            if m.start() > best[1]:
+                best = (u, m.start())
+    return best[0]
+
+
+def unit_problem(unit: str, passage: str, context: list) -> Optional[str]:
+    """None when `unit` is the scale the evidence states, nearest first: the passage itself (it must state ONE
+    scale), else the text right before it (its last stated scale), else the filing's usual scale; 'units' only when
+    none states a scale. Otherwise the reason."""
+    here = stated_units(passage)
+    if len(here) > 1:
+        return f"the passage states several units ({', '.join(sorted(here))})"
+    if here:
+        (u,) = here
+        return None if unit == u else f"unit '{unit}' contradicts the passage ('in {u}')"
+    for c in context or []:
+        u = last_stated_unit(c)
+        if u:
+            return None if unit == u else f"unit '{unit}' contradicts the table heading ('in {u}')"
+    return None if unit == "units" else f"unit '{unit}' not stated near the table"
 
 
 def unit_evidenced(unit: str, passages: list) -> bool:
-    pat = _UNIT_EVIDENCE.get(unit)
-    return bool(pat) and any(re.search(pat, norm(p)) for p in passages)
+    return unit_problem(unit, passages[0] if passages else "", list(passages[1:])) is None
+
+
+_YEAR = re.compile(r"\b(19[89]\d|20\d\d)\b")
+
+
+def column_years(passage: str, quote: str, before: str = "") -> list:
+    """Fiscal-year labels of the table columns above the quoted row, in column order ([] when no heading is found):
+    the nearest line before the row that names two or more years. `before` — the filing text preceding the passage
+    (a statement's heading is often in the previous passage)."""
+    text = (str(before) + "\n" if before else "") + str(passage or "")
+    pos = norm(text).find(norm(quote)[:40])
+    lines = text.split("\n")
+    if pos < 0:
+        return []
+    # line index of the row (norm() keeps the line structure close enough: count newlines up to the match)
+    acc, row_i = 0, len(lines) - 1
+    for i, line in enumerate(lines):
+        acc += len(norm(line)) + 1
+        if acc > pos:
+            row_i = i
+            break
+    window = lines[:row_i + 1]              # the nearest heading anywhere above (review REV-F01: a 40-line window
+                                            # missed a table's own heading and let the filing convention decide)
+    for k in range(len(window) - 1, -1, -1):
+        ys = [int(y) for y in _YEAR.findall(window[k])]
+        if len(ys) >= 2 and len(set(ys)) == len(ys):
+            return ys
+        # a heading printed one date per line ("May 31, 2026 / May 25, 2025 / May 26, 2024" — pilot DRI)
+        if len(ys) == 1 and len(window[k]) <= 40:
+            run = [ys[0]]
+            j = k - 1
+            while j >= 0 and len(window[j]) <= 40 and len(_YEAR.findall(window[j])) == 1:
+                run.insert(0, int(_YEAR.findall(window[j])[0]))
+                j -= 1
+            if len(run) >= 2 and len(set(run)) == len(run) and _monotonic(run):
+                return run
+    return []
+
+
+def _monotonic(ys: list) -> bool:
+    return all(a > b for a, b in zip(ys, ys[1:])) or all(a < b for a, b in zip(ys, ys[1:]))
+
+
+def document_columns(texts: list, fiscal_year_end: Optional[int] = None, agree: float = 0.85) -> Optional[tuple]:
+    """(order, newest label) of the filing's statement headings — ('desc', 2025) when (almost) every three-year heading
+    reads 2025 2024 2023, ('asc', 2025) for 2023 2024 2025 (pilot: Alphabet). Only headings of exactly three
+    consecutive years count, none after the filing's fiscal year (debt-maturity schedules 2026 … 2030 are not period
+    columns). None unless at least 3 headings agree `agree` on both. A 10-K keeps one column convention; it ties a
+    figure to a year when its own statement heading is passages away (pilot: EME, ON, DRI)."""
+    from collections import Counter
+    orders, newest = Counter(), Counter()
+    for t in texts:
+        for line in str(t).split("\n"):
+            ys = [int(y) for y in _YEAR.findall(line)]
+            if (len(ys) == 3 and _monotonic(ys) and max(ys) - min(ys) == 2
+                    and (fiscal_year_end is None or max(ys) <= fiscal_year_end)):
+                orders["desc" if ys[0] > ys[1] else "asc"] += 1
+                newest[max(ys)] += 1
+    n = sum(orders.values())
+    if n < 3:
+        return None
+    (o, k), (y, m) = orders.most_common(1)[0], newest.most_common(1)[0]
+    return (o, y) if k / n >= agree and m / n >= agree else None
+
+
+def year_evidenced(label: int, amount: float, quote: str, passage: str, before: str = "",
+                   doc_columns: Optional[tuple] = None) -> tuple:
+    """(reason or None, basis). The figure's fiscal-year label is evidenced by the column heading above a table row
+    (the figure's position in its run of cells = the label's position in the heading) — basis 'heading'; by the year
+    written next to the figure in a sentence — 'sentence'; or, for a THREE-column row with no heading in the text at
+    all, by the filing's own three-year column convention — 'convention', which is an inference, recorded as such and
+    used as an ESTIMATE, never as an observed figure (review REV-F01)."""
+    q = _FOOTNOTE.sub(" ", norm(quote))
+    label_txt, _ = _split_row(q)
+    rest = q[len(label_txt):] if q.startswith(label_txt) else q
+    # cells of the row: figures AND empty-cell dashes ('$ — $ — $ 55,228' is the third column — pilot FRT)
+    all_cells = [m.group(0) for m in _CELL.finditer(rest)]
+    cells = [c for c in all_cells if not _YEAR.fullmatch(c)]          # "In fiscal 2025, … $15": 2025 is not a cell
+    heads_here = column_years(passage, quote, before)
+    if heads_here and len(all_cells) == len(heads_here) != len(cells):
+        cells = all_cells                                               # a row whose amounts look like years (2,000)
+    hits = [i for i, c in enumerate(cells) if same_number(c, amount)]
+    if not hits:
+        return f"{amount:g} not in its quote", None
+    heads, basis = heads_here, "heading"
+    if not heads and doc_columns and len(cells) == 3:
+        # no heading anywhere in the text: the filing's convention (its three-year headings agree) — an inference
+        order, newest = doc_columns
+        heads, basis = [newest, newest - 1, newest - 2], "convention"
+        heads = heads if order == "desc" else heads[::-1]
+    if len(cells) >= 2:                                     # a table row: the column decides the year
+        if not heads:
+            return "no year heading found above the table row", None
+        if len(heads) != len(cells):
+            return f"the heading names {len(heads)} years for {len(cells)} columns", None
+        if not any(heads[i] == label for i in hits):
+            cols = ", ".join(str(heads[i]) for i in hits)
+            return f"{amount:g} sits in the {cols} column, not {label}", None
+        return None, basis
+    # one figure: a sentence must name the year itself
+    return (None, "sentence") if str(label) in q else (f"the quote does not name fiscal {label}", None)
 
 
 def assign_years(labels: list, fiscal_year_end: int, fye_month: int = 12) -> dict:
@@ -78,9 +248,11 @@ def assign_years(labels: list, fiscal_year_end: int, fye_month: int = 12) -> dic
 
 def validate_lease_extraction(ext: dict, chunks: dict, *, fiscal_year_end: int, total_debt_usd: Optional[float] = None,
                               prior_chunks: Optional[dict] = None, fye_month: int = 12,
-                              all_passages: Optional[list] = None) -> dict:
+                              all_passages: Optional[list] = None, before: Optional[dict] = None,
+                              doc_columns: Optional[tuple] = None) -> dict:
     """ext — the model's JSON: {"kind", "unit", "values": [{"fiscal_year", "amount", "quote", "chunk_id"}],
-    "quote", "chunk_id"}. chunks — {chunk_id: text} it was shown; prior_chunks — {chunk_id: [two preceding texts]}.
+    "quote", "chunk_id"}. chunks — {chunk_id: text} it was shown; before — {chunk_id: the filing text right before
+    that passage} (table headings, units); prior_chunks — {chunk_id: [further context, e.g. the filing's usual unit]}.
 
     Returns {"accepted": bool, "kind", "values": [{"year", "value_usd", "quote", "chunk_id"}], "quote", "reason"}."""
     kind = str((ext or {}).get("kind") or "NOT_FOUND").upper()
@@ -99,6 +271,11 @@ def validate_lease_extraction(ext: dict, chunks: dict, *, fiscal_year_end: int, 
         pat = _NO_FINANCE_LEASE if kind == "NONE" else _IMMATERIAL
         if not pat.search(norm(q)):
             out["reason"] = f"quote does not say finance leases are {'absent' if kind == 'NONE' else 'immaterial'}"
+            return out
+        if kind == "NONE" and not absent_all_period(q):
+            # absent at a date only: kept as a stated reason for the assumption, never as a reported zero
+            out.update(accepted=True, kind="NONE_AT_PERIOD_END", quote=q, chunk_id=cid, values=[],
+                       reason="absence stated at the period end, not for the year — not a reported zero")
             return out
         out.update(accepted=True, quote=q, chunk_id=cid,
                    values=[{"year": fiscal_year_end, "value_usd": 0.0, "quote": q, "chunk_id": cid}] if kind == "NONE" else [])
@@ -146,17 +323,27 @@ def validate_lease_extraction(ext: dict, chunks: dict, *, fiscal_year_end: int, 
         if run > 3:
             problems.append(f"FY{v.get('fiscal_year')}: the row prints {run} columns (several registrants?)")
             continue
-        if not unit_evidenced(unit, [chunks[cid]] + list((prior_chunks or {}).get(cid, []))):
-            problems.append(f"unit '{unit}' not stated near the table")
+        why = unit_problem(unit, chunks[cid], [(before or {}).get(cid, "")] + list((prior_chunks or {}).get(cid, [])))
+        if why:
+            problems.append(f"FY{v.get('fiscal_year')}: {why}")
+            continue
+        why, basis = year_evidenced(int(v["fiscal_year"]), amount, q, chunks[cid], (before or {}).get(cid, ""),
+                                    doc_columns)
+        if why:
+            problems.append(f"FY{v.get('fiscal_year')}: {why}")
             continue
         usd = amount * UNIT_SCALE[unit]
+        if unit == "units" and 0 < usd < MIN_UNITS_USD:
+            problems.append(f"FY{v.get('fiscal_year')}: {usd:,.0f} USD in units is implausibly small for a 10-K table "
+                            "(scale not stated?)")
+            continue
         if total_debt_usd and total_debt_usd > 0 and usd > total_debt_usd:
             problems.append(f"FY{v.get('fiscal_year')}: {usd:,.0f} exceeds total debt (unit misread?)")
             continue
         if year > fiscal_year_end or year < fiscal_year_end - 2:
             problems.append(f"FY{v.get('fiscal_year')} outside the filing's three years")
             continue
-        accepted.append({"year": year, "value_usd": usd, "quote": q, "chunk_id": cid})
+        accepted.append({"year": year, "value_usd": usd, "quote": q, "chunk_id": cid, "basis": basis})
     if not accepted:
         out["reason"] = "; ".join(problems) or "nothing usable"
         return out
@@ -169,7 +356,9 @@ def validate_lease_extraction(ext: dict, chunks: dict, *, fiscal_year_end: int, 
 
 
 _LABEL = re.compile(r"\s*([^\d($\-–—]+)(.*)", re.S)
-_FIG = re.compile(r"\d[\d,]*(?:\.\d+)?")
+# a figure: "1,234,567.8" or "1234.5" — never a trailing comma ("2025," is a year, not a cell)
+_FIG = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?")
+_CELL = re.compile(r"\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?|(?<![\w])[-–—](?![\w])")
 
 
 def _split_row(line: str) -> tuple:
@@ -195,9 +384,8 @@ def descriptor(quote: str, amount: float) -> tuple:
     flows from finance leases were $12 million' → the clause right before the figure and 1. A footnote mark '(1)'
     after a label is not a column. ('', 0) when the amount is not in the quote."""
     q = _FOOTNOTE.sub(" ", str(quote or ""))
-    forms = number_forms(amount)
     figs = list(_FIG.finditer(q))
-    hit = next((m for m in figs if m.group(0) in forms), None)
+    hit = next((m for m in figs if same_number(m.group(0), amount)), None)
     if hit is None:
         return "", 0
     # run of consecutive figures (only symbols / spaces between them) that contains the hit

@@ -21,6 +21,7 @@ filing's own words as the reason.
 CLI:  python -m etl.filings --tickers AAPL MSFT [--leases] [--no-embed]
 """
 import argparse
+import json
 import logging
 import re
 import time
@@ -69,6 +70,10 @@ def ensure_schema(conn) -> None:
     conn.execute("""CREATE TABLE IF NOT EXISTS lease_extractions (ticker VARCHAR, accession VARCHAR, kind VARCHAR,
                     accepted BOOLEAN, fiscal_year INTEGER, value_usd DOUBLE, quote VARCHAR, chunk_id VARCHAR,
                     unit VARCHAR, reason VARCHAR, model VARCHAR, extracted_at TIMESTAMP)""")
+    # review REV-F04: which validator judged a reading, how its year was tied (heading / sentence / convention) and
+    # the model's own JSON + the passages it was shown, so a new validator can re-judge it without another LLM call
+    for col, typ in (("validator_version", "INTEGER"), ("basis", "VARCHAR"), ("raw_json", "VARCHAR")):
+        conn.execute(f"ALTER TABLE lease_extractions ADD COLUMN IF NOT EXISTS {col} {typ}")
 
 
 # ── SEC access ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -114,10 +119,12 @@ def document_text(html: str) -> str:
     except Exception:
         text = re.sub(r"<[^>]+>", "\n", html)
     text = text.replace("\xa0", " ").replace("&nbsp;", " ").replace("&#160;", " ")
+    text = re.sub(r"[​‌‍⁠﻿]", "", text)    # zero-width spacers between table cells (ECHO)
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r" *\n[ \n]*", "\n", text)
-    # a table row printed one cell per line ("Finance leases\n(12)\n(10)") back onto one line
-    text = re.sub(r"\n(?=[(\-$)\d][\d,.)%\s]*\n)", " ", text)
+    # a table row printed one cell per line ("Finance leases\n(12)\n—\n(10)") back onto one line — figures, empty-cell
+    # dashes and year headings alike, so column positions and headings survive
+    text = re.sub(r"\n(?=[(\-$)\d—–][\d,.()%$ \t—–\-]*\n)", " ", text + "\n")
     return text.strip()
 
 
@@ -161,7 +168,14 @@ def passages(form: str, text: str, full: bool) -> list:
     if full:
         for k in FULL_SECTIONS:
             out += [(k, c) for c in chunk_text(secs.get(k, ""))]
-    out += [("notes", c) for c in chunk_text(secs.get("rest", "")) if NOTES_KEYWORDS.search(c)]
+    # notes passages on leases / SBC / interest, each with the passage before it: a statement's year heading and
+    # unit are often there (review REV-05 — a column can only be tied to a year through its heading)
+    rest = chunk_text(secs.get("rest", ""))
+    keep = set()
+    for i, c in enumerate(rest):
+        if NOTES_KEYWORDS.search(c):
+            keep.update({i - 1, i} if i else {i})
+    out += [("notes", rest[i]) for i in sorted(keep)]
     return out
 
 
@@ -298,34 +312,104 @@ def lease_targets(wconn, years: int = 3) -> list:
         return []
 
 
+LEASE_COLUMNS = ["ticker", "accession", "kind", "accepted", "fiscal_year", "value_usd", "quote", "chunk_id", "unit",
+                 "reason", "model", "extracted_at", "validator_version", "basis", "raw_json"]
+
+
+def _judge(conn, t: str, acc: str, pend, hint, ext: dict, shown: list, model: str, total_debt_usd: Optional[dict],
+           stamp) -> tuple:
+    """(rows for lease_extractions, validation result) of one model reading of one 10-K."""
+    from core.filing_facts import VALIDATOR_VERSION, document_columns, validate_lease_extraction
+    every = conn.execute("SELECT chunk_id, text, section, seq FROM chunks WHERE accession = ? ORDER BY seq", [acc]).df()
+    texts = dict(zip(every["chunk_id"], every["text"]))
+    chunks = {c: texts[c] for c in shown if c in texts}
+    res = validate_lease_extraction(ext, chunks, fiscal_year_end=pend.year, fye_month=pend.month,
+                                    total_debt_usd=(total_debt_usd or {}).get(t),
+                                    prior_chunks={c: [f"in {hint}"] for c in chunks} if hint else None,
+                                    all_passages=every["text"].tolist(), before=_preceding(every, chunks),
+                                    doc_columns=document_columns(every["text"].tolist(), pend.year))
+    unit = (ext or {}).get("unit")
+    raw = json.dumps({"ext": ext, "shown": list(shown)}, default=str)
+    if res["values"]:
+        rows = [[t, acc, res["kind"], res["accepted"], v["year"], v["value_usd"], v["quote"], v["chunk_id"], unit,
+                 res["reason"], model, stamp, VALIDATOR_VERSION, v.get("basis"), raw] for v in res["values"]]
+    else:
+        rows = [[t, acc, res["kind"], res["accepted"], pend.year if res["accepted"] else None, None,
+                 res.get("quote") or (ext or {}).get("quote"), res.get("chunk_id") or (ext or {}).get("chunk_id"), unit,
+                 res["reason"], model, stamp, VALIDATOR_VERSION, None, raw]]
+    return rows, res
+
+
+def _insert(conn, rows: list) -> pd.DataFrame:
+    df = pd.DataFrame(rows, columns=LEASE_COLUMNS)
+    if not df.empty:
+        conn.register("_lx", df)
+        conn.execute(f"INSERT INTO lease_extractions ({', '.join(LEASE_COLUMNS)}) SELECT {', '.join(LEASE_COLUMNS)} FROM _lx")
+        conn.unregister("_lx")
+    return df
+
+
+def refresh_readings(conn, total_debt_usd: Optional[dict] = None) -> dict:
+    """Readings judged by another validator version (review REV-F04): re-judged from their stored model JSON by the
+    current rules; readings without it are dropped, so their filing is read again. {'revalidated', 'dropped'}."""
+    from core.filing_facts import VALIDATOR_VERSION
+    old = conn.execute("""SELECT x.accession, any_value(x.ticker), any_value(x.raw_json), any_value(x.model),
+                                 any_value(f.period_end), any_value(f.unit_hint)
+                          FROM lease_extractions x LEFT JOIN filings f USING (accession)
+                          WHERE x.validator_version IS DISTINCT FROM ? GROUP BY 1""", [VALIDATOR_VERSION]).fetchall()
+    out = {"revalidated": 0, "dropped": 0}
+    for acc, t, raw, model, pend, hint in old:
+        conn.execute("DELETE FROM lease_extractions WHERE accession = ? AND validator_version IS DISTINCT FROM ?",
+                     [acc, VALIDATOR_VERSION])
+        if not raw or pend is None:
+            out["dropped"] += 1
+            continue
+        payload = json.loads(raw)
+        rows, _ = _judge(conn, t, acc, pend, hint, payload.get("ext") or {}, payload.get("shown") or [], model,
+                         total_debt_usd, datetime.now())
+        _insert(conn, rows)
+        out["revalidated"] += 1
+    return out
+
+
 def extract_leases(conn, tickers: list, extractor: Callable, model: str, total_debt_usd: Optional[dict] = None,
                    retrieve_k: int = 6, max_calls: int = 10**6, calls_per_minute: float = 18,
                    sleep: Callable = time.sleep) -> pd.DataFrame:
-    """Read the finance-lease principal out of every stored 10-K of `tickers` not read before. `extractor(ticker,
-    passages) -> dict` is the LLM call (services.research.lease_extractor); core.filing_facts validates it."""
-    from core.filing_facts import validate_lease_extraction
+    """Read the finance-lease principal out of the stored 10-Ks of `tickers` until the three basis years (ending at the
+    newest 10-K's fiscal year) are covered. `extractor(ticker, passages) -> dict` is the LLM call
+    (services.research.lease_extractor); core.filing_facts validates it. Each filing is read at most once per
+    validator version; older readings are re-judged first (refresh_readings)."""
+    from core.filing_facts import VALIDATOR_VERSION
     from core.retrieval import retrieve
-    done = {r[0] for r in conn.execute("SELECT DISTINCT accession FROM lease_extractions").fetchall()}
-    covered = {r[0] for r in conn.execute("SELECT DISTINCT ticker FROM lease_extractions WHERE accepted AND kind = 'AMOUNT'"
-                                          ).fetchall()}
+    refresh_readings(conn, total_debt_usd)
+    done = {r[0] for r in conn.execute("SELECT DISTINCT accession FROM lease_extractions WHERE validator_version = ?",
+                                       [VALIDATOR_VERSION]).fetchall()}
     rows, calls = [], 0
     for t in tickers:
-        # newest 10-K first: its table prints three fiscal years, so one LLM call usually covers the whole basis; an
-        # older 10-K is read only while no amount has been accepted for the issuer (a NONE covers one year only)
-        for acc, pend, hint in conn.execute("SELECT accession, period_end, unit_hint FROM filings WHERE ticker = ? AND "
-                                            "form = '10-K' ORDER BY filed DESC", [t]).fetchall():
-            if t in covered or calls >= max_calls:
+        filings = conn.execute("SELECT accession, period_end, unit_hint FROM filings WHERE ticker = ? AND form = '10-K' "
+                               "AND period_end IS NOT NULL ORDER BY filed DESC", [t]).fetchall()
+        if not filings:
+            continue
+        # Coverage per fiscal YEAR (review REV-F03; per ticker, then per filing, stopped too early): newest 10-K first,
+        # an older one only while a basis year is still missing; restated figures of newer filings win in lease_facts.
+        newest = filings[0][1].year
+        needed = {newest, newest - 1, newest - 2}
+        covered = {int(r[0]) for r in conn.execute(
+            "SELECT DISTINCT fiscal_year FROM lease_extractions WHERE ticker = ? AND accepted AND validator_version = ? "
+            "AND kind IN ('AMOUNT', 'NONE') AND fiscal_year IS NOT NULL", [t, VALIDATOR_VERSION]).fetchall()}
+        for acc, pend, hint in filings:
+            if calls >= max_calls or needed <= covered:
                 break
-            if acc in done or pend is None:
+            if acc in done:
                 continue
-            every = conn.execute("SELECT chunk_id, text, section, seq FROM chunks WHERE accession = ?", [acc]).df()
-            ch = every[every["section"] == "notes"]
-            if ch.empty:
-                ch = every
-            top = retrieve(ch, LEASE_QUERY, k=retrieve_k)
+            ch = conn.execute("SELECT chunk_id, text, section, seq FROM chunks WHERE accession = ? ORDER BY seq",
+                              [acc]).df()
+            notes = ch[ch["section"] == "notes"]
+            top = retrieve(notes if not notes.empty else ch, LEASE_QUERY, k=retrieve_k)
             stamp = datetime.now()
             if top.empty:
-                rows.append([t, acc, "NOT_FOUND", False, None, None, None, None, None, "no lease passages", model, stamp])
+                rows.append([t, acc, "NOT_FOUND", False, None, None, None, None, None, "no lease passages", model, stamp,
+                             VALIDATOR_VERSION, None, None])
                 continue
             calls += 1
             ext, err = _paced_call(lambda: extractor(t, top[["chunk_id", "text"]].to_dict("records")),
@@ -333,29 +417,22 @@ def extract_leases(conn, tickers: list, extractor: Callable, model: str, total_d
             if err is not None:
                 logger.warning(f"   ⚠️ {t} {acc}: lease extraction failed ({type(err).__name__}) — retried next run")
                 continue
-            chunks = dict(zip(top["chunk_id"], top["text"]))
-            res = validate_lease_extraction(ext, chunks, fiscal_year_end=pend.year, fye_month=pend.month,
-                                            total_debt_usd=(total_debt_usd or {}).get(t),
-                                            prior_chunks={c: [f"in {hint}"] for c in chunks} if hint else None,
-                                            all_passages=every["text"].tolist())
-            unit = (ext or {}).get("unit")
-            if res["accepted"] and res["kind"] == "AMOUNT":
-                covered.add(t)
-            if res["values"]:
-                for v in res["values"]:
-                    rows.append([t, acc, res["kind"], res["accepted"], v["year"], v["value_usd"], v["quote"],
-                                 v["chunk_id"], unit, res["reason"], model, stamp])
-            else:
-                rows.append([t, acc, res["kind"], res["accepted"], pend.year if res["accepted"] else None, None,
-                             res.get("quote") or (ext or {}).get("quote"), res.get("chunk_id") or (ext or {}).get("chunk_id"),
-                             unit, res["reason"], model, stamp])
-    df = pd.DataFrame(rows, columns=["ticker", "accession", "kind", "accepted", "fiscal_year", "value_usd", "quote",
-                                     "chunk_id", "unit", "reason", "model", "extracted_at"])
-    if not df.empty:
-        conn.register("_lx", df)
-        conn.execute("INSERT INTO lease_extractions SELECT * FROM _lx")
-        conn.unregister("_lx")
-    return df
+            new, res = _judge(conn, t, acc, pend, hint, ext, top["chunk_id"].tolist(), model, total_debt_usd, stamp)
+            rows += new
+            if res["accepted"]:
+                covered |= {v["year"] for v in res["values"]}
+    return _insert(conn, rows)
+
+
+def _preceding(every: pd.DataFrame, chunk_ids) -> dict:
+    """{chunk_id: the stored passage right before it in the same section} — the statement heading / unit context."""
+    out = {}
+    by_seq = every.set_index("seq")
+    for r in every[every["chunk_id"].isin(list(chunk_ids))].itertuples():
+        prev = r.seq - 1
+        if prev in by_seq.index and by_seq.at[prev, "section"] == r.section:
+            out[r.chunk_id] = by_seq.at[prev, "text"]
+    return out
 
 
 _LAST_CALL = [0.0]
@@ -380,16 +457,19 @@ def _paced_call(fn: Callable, calls_per_minute: float, sleep: Callable = time.sl
 
 
 def lease_facts(conn) -> pd.DataFrame:
-    """Accepted readings, one per ticker / fiscal year — from the most recent 10-K that states it (restated figures
-    win). [ticker, fiscal_year, kind, value_usd, source, filed]."""
+    """Accepted readings of the CURRENT validator (review REV-F04), one per ticker / fiscal year — from the most recent
+    10-K that states it (restated figures win). A year tied by the filing's column convention says so in the source
+    (it is used as an estimate). [ticker, fiscal_year, kind, value_usd, source, filed]."""
+    from core.filing_facts import VALIDATOR_VERSION
     return conn.execute("""
         SELECT x.ticker, x.fiscal_year, x.kind, x.value_usd,
-               '10-K text (' || f.accession || ', filed ' || CAST(f.filed AS VARCHAR) || '): "' ||
+               '10-K text (' || f.accession || ', filed ' || CAST(f.filed AS VARCHAR)
+               || CASE WHEN x.basis = 'convention' THEN '; year by column convention' ELSE '' END || '): "' ||
                substr(x.quote, 1, 220) || '"' AS source, f.filed
         FROM lease_extractions x JOIN filings f USING (accession)
-        WHERE x.accepted AND x.fiscal_year IS NOT NULL
+        WHERE x.accepted AND x.fiscal_year IS NOT NULL AND x.validator_version = ?
         QUALIFY row_number() OVER (PARTITION BY x.ticker, x.fiscal_year ORDER BY f.filed DESC, x.extracted_at DESC) = 1
-    """).df()
+    """, [VALIDATOR_VERSION]).df()
 
 
 def apply_filing_facts(wconn, facts: pd.DataFrame) -> dict:
@@ -397,26 +477,36 @@ def apply_filing_facts(wconn, facts: pd.DataFrame) -> dict:
     Yahoo and SEC XBRL. AMOUNT / NONE give a figure; IMMATERIAL only replaces the assumption's wording (lease_source).
     Never overwrites a value. {'filled': n, 'immaterial_noted': n}."""
     out = {"filled": 0, "immaterial_noted": 0}
-    if facts is None or facts.empty:
-        return out
     from etl.load import ensure_hist_fcf
     ensure_hist_fcf(wconn)
+    # Text-derived values are re-derived from the CURRENT readings on every run (review REV-F04): what an older
+    # validator wrote is removed first. Values from Yahoo or SEC XBRL carry other sources and are never touched.
+    wconn.execute("""UPDATE raw.hist_fcf SET lease_principal_paid = NULL, lease_source = NULL
+                     WHERE lease_source LIKE '10-K text (%'""")
+    wconn.execute("""UPDATE raw.hist_fcf SET lease_source = NULL WHERE lease_principal_paid IS NULL
+                     AND (lease_source LIKE 'immaterial per 10-K text (%'
+                          OR lease_source LIKE 'no finance leases at period end per 10-K text (%')""")
+    if facts is None or facts.empty:
+        return out
     wconn.register("_ff", facts)
     try:
         n0 = wconn.execute("SELECT COUNT(*) FROM raw.hist_fcf WHERE lease_principal_paid IS NOT NULL").fetchone()[0]
         wconn.execute("""
-            UPDATE raw.hist_fcf f SET lease_principal_paid = s.value_usd * COALESCE(fx.rate, 1.0), lease_source = s.source
+            UPDATE raw.hist_fcf f SET lease_principal_paid = s.value_usd * fx.rate, lease_source = s.source
             FROM _ff s
-            LEFT JOIN (SELECT ticker, EXTRACT(YEAR FROM date) AS y, arg_max(fx_to_eur, date) AS rate
-                       FROM raw.historical_financials WHERE src_currency = 'USD' GROUP BY 1, 2) fx
-                   ON fx.ticker = s.ticker AND fx.y = s.fiscal_year
+            JOIN (SELECT ticker, EXTRACT(YEAR FROM date) AS y, arg_max(fx_to_eur, date) AS rate
+                  FROM raw.historical_financials WHERE src_currency = 'USD' GROUP BY 1, 2) fx
+              ON fx.ticker = s.ticker AND fx.y = s.fiscal_year
             WHERE f.ticker = s.ticker AND f.year = s.fiscal_year AND s.kind IN ('AMOUNT', 'NONE')
+              AND isfinite(fx.rate) AND fx.rate > 0           -- review REV-08: a missing rate is not USD = EUR
               AND f.lease_principal_paid IS NULL""")
         out["filled"] = wconn.execute("SELECT COUNT(*) FROM raw.hist_fcf WHERE lease_principal_paid IS NOT NULL"
                                       ).fetchone()[0] - n0
         out["immaterial_noted"] = wconn.execute("""
-            UPDATE raw.hist_fcf f SET lease_source = 'immaterial per ' || s.source
-            FROM _ff s WHERE f.ticker = s.ticker AND f.year = s.fiscal_year AND s.kind = 'IMMATERIAL'
+            UPDATE raw.hist_fcf f SET lease_source = CASE s.kind WHEN 'IMMATERIAL' THEN 'immaterial per '
+                                                          ELSE 'no finance leases at period end per ' END || s.source
+            FROM _ff s WHERE f.ticker = s.ticker AND f.year = s.fiscal_year
+              AND s.kind IN ('IMMATERIAL', 'NONE_AT_PERIOD_END')
               AND f.lease_principal_paid IS NULL""").fetchone()[0]
     finally:
         wconn.unregister("_ff")
@@ -452,6 +542,11 @@ def run_step(wconn, universe: list, cfg: dict, fast_mode: bool = False, db_path:
                                        calls_per_minute=cfg.get("llm_calls_per_minute", 18))
                     summary["lease_readings"] = len(x)
                     summary["lease_accepted"] = int(x["accepted"].sum()) if not x.empty else 0
+            # every mode, fast included: readings of an older validator are re-judged from their stored JSON (no LLM)
+            # before anything is applied (review follow-up: fast runs used to skip the re-judging)
+            refreshed = refresh_readings(conn, _total_debt_usd(wconn))
+            if any(refreshed.values()):
+                summary.update({f"readings_{k}": v for k, v in refreshed.items()})
             summary.update(apply_filing_facts(wconn, lease_facts(conn)))
     except Exception as e:
         logger.warning(f"   ⚠️ filings step skipped: {type(e).__name__}: {e}")
