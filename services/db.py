@@ -73,12 +73,13 @@ def _cached_manifest():
         return None
 
 
-def _refresh_manifest(client, bucket):
-    """Current manifest: cached if younger than the TTL, otherwise re-fetched (falls back to the cached copy)."""
+def _refresh_manifest(client, bucket, force: bool = False):
+    """Current manifest: cached if younger than the TTL (unless `force`), otherwise re-fetched (falls back to the
+    cached copy)."""
     import json
     import time
     fresh = _MANIFEST_PATH.exists() and (time.time() - _MANIFEST_PATH.stat().st_mtime) < _MANIFEST_TTL_MINUTES * 60
-    if fresh:
+    if fresh and not force:
         return _cached_manifest()
     try:
         data = client.storage.from_(bucket).download("manifest.json")
@@ -626,3 +627,77 @@ def load_discovery(generation=None) -> pd.DataFrame:
                                    WHERE source LIKE 'TV_%' ORDER BY first_seen DESC, ticker""").df()
     except Exception:
         return pd.DataFrame(columns=["ticker", "name", "sector", "region", "source", "first_seen", "last_seen"])
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def load_recorded_decision(ticker: str, as_of, generation=None) -> dict:
+    """The Decision the daily snapshot RECORDED for `ticker` on or before `as_of` — point in time as it was known then,
+    not recomputed with today's fundamentals. {"as_of_date", "decision", "price_close", "first_snapshot"}; empty values
+    when no snapshot exists on or before that date (snapshots start with the first ETL run that wrote them)."""
+    out = {"as_of_date": None, "decision": None, "price_close": None, "first_snapshot": None}
+    try:
+        with get_db_connection(read_only=True) as conn:
+            out["first_snapshot"] = conn.execute("SELECT min(as_of_date) FROM marts.score_snapshots").fetchone()[0]
+            row = conn.execute("""SELECT as_of_date, decision, price_close FROM marts.score_snapshots
+                                  WHERE ticker = ? AND as_of_date <= ? ORDER BY as_of_date DESC, knowledge_at DESC
+                                  LIMIT 1""", [ticker, as_of]).fetchone()
+        if row:
+            out.update(as_of_date=row[0], decision=row[1], price_close=row[2])
+    except Exception:
+        pass
+    return out
+
+
+
+# ── "Check for new data" (sidebar) — SIDEBAR_REFACTOR_REVIEW 3.2 ──────────────────────────────────────────────────
+def _is_remote() -> bool:
+    return os.environ.get("SUPABASE_REMOTE_MODE", "false").lower() == "true" or not os.path.exists(DB_PATH)
+
+
+def data_version(force_check: bool = False) -> tuple:
+    """(version or None, how it was obtained). Local: the warehouse file's modification time (the ETL swaps the file).
+    Remote: the published manifest's version — re-fetched now when `force_check` (the 5-minute manifest TTL is for
+    page loads, not for an explicit check)."""
+    if not _is_remote():
+        try:
+            return f"local:{os.stat(DB_PATH).st_mtime_ns}", "local warehouse file"
+        except OSError:
+            return None, "warehouse file not readable"
+    info = _supabase_bucket()
+    if info is None:
+        m = _cached_manifest()
+        return (m or {}).get("version"), "offline — cached manifest"
+    if force_check:
+        m = _refresh_manifest(*info, force=True)
+        return (m or {}).get("version"), "published manifest (checked now)"
+    return (_cached_manifest() or {}).get("version"), "published manifest (cached)"
+
+
+def clear_snapshot_caches() -> None:
+    """Clear the caches that hold data of the current snapshot — not every cache of the app (st.cache_data.clear()
+    also emptied FX, macro and FRED caches, shared by every user of the server)."""
+    from services import screener
+    for fn in (load_data, load_track_record, load_etl_exceptions, load_ticker_provenance, load_data_health,
+               _evidence_cached, load_decision_snapshots, load_discovery, load_recorded_decision,
+               screener.get_master_screener_data):
+        try:
+            fn.clear()
+        except Exception:
+            pass
+
+
+def check_for_new_data(loaded_version) -> dict:
+    """{"status": "updated" | "latest" | "unknown", "version", "message"} — clears the snapshot caches only when a
+    newer snapshot exists. Clearing caches is not an ETL run: it never fetches new data from the providers."""
+    try:
+        version, how = data_version(force_check=True)
+    except Exception as e:
+        return {"status": "unknown", "version": loaded_version,
+                "message": f"Could not check ({type(e).__name__}) — still using the stored data."}
+    if version is None:
+        return {"status": "unknown", "version": loaded_version, "message": f"Could not check ({how}) — still using "
+                                                                           "the stored data."}
+    if loaded_version is not None and version == loaded_version:
+        return {"status": "latest", "version": version, "message": f"Already the latest data ({how})."}
+    clear_snapshot_caches()
+    return {"status": "updated", "version": version, "message": f"New data loaded ({how})."}

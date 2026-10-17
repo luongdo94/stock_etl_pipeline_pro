@@ -57,7 +57,7 @@ def _toolbox(ctx) -> ToolBox:
         if t not in built:
             from views.stock_analysis import context
             dd = context.build(ctx, t)
-            built[t] = (dd.extra.get("decision"), dd.vin, dd.scores, pd.to_datetime(dd.df_deep["date"].iloc[-1]).date())
+            built[t] = (dd.extra.get("decision"), dd.vin, dd.scores, dd.extra.get("latest_date"))
         return built[t]
 
     def portfolio():

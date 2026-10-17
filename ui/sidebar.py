@@ -1,167 +1,142 @@
-"""Sidebar: time horizon, ETL / data-quality pulse and the macro panel."""
+"""Sidebar (SIDEBAR_REFACTOR_REVIEW): data status first, then the controls of the current page, macro (collapsed),
+account last.
+
+- DATA — how fresh the data in use is (core.freshness: newest close, share of fresh closes, fundamentals age, last
+  successful ETL run, data quality; UNKNOWN when not known) and "Check for new data" (a newer snapshot is loaded and
+  only the snapshot caches are cleared; it never runs the ETL). Per-ticker details are in 🩺 Data Health.
+- PAGE CONTROLS — the chart range, shown only on the tabs that use it; it never changes a Decision.
+- MACRO — rates and economy with their source; an unknown value is N/A, never 0.
+"""
 from datetime import timedelta
 
-import pandas as pd
 import streamlit as st
 
 from core.market_regime import horizon_start
 
 HORIZONS = ["1D", "1W", "1M", "3M", "6M", "1Y", "YTD", "3Y", "5Y", "ALL", "Custom"]
+# the tabs whose content reads the range-filtered prices (an inventory of views/: ctx["prices"], spy_prices, t_start…)
+RANGE_TABS = {"🌐 Market Pulse", "🔬 Stock Analysis", "🎲 Risk Lab", "💼 Portfolio"}
 
 _CSS = """
 <style>
 [data-testid="stSidebar"] { background: #0a0e1a; }
-.sb-section-label { font-family: 'Courier New', monospace; font-size: 0.55rem; letter-spacing: 0.1em;
-    color: #445566; text-transform: uppercase; margin: 8px 0 4px 0; border-bottom: 1px solid #1a2233;
-    padding-bottom: 2px; }
+.sb-section-label { font-size: 0.72rem; letter-spacing: 0.08em; color: #8fa3b8; text-transform: uppercase;
+    margin: 12px 0 6px 0; border-bottom: 1px solid #1f2a3d; padding-bottom: 3px; font-weight: 700; }
+.sb-card { padding: 8px 10px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08);
+    border-radius: 6px; margin-bottom: 6px; font-size: 0.8rem; color: #dde4ee; line-height: 1.45; }
+.sb-muted { color: #9aabbd; font-size: 0.74rem; }
 .sb-macro-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 8px;
-    border-radius: 4px; margin-bottom: 2px; background: rgba(255,255,255,0.025);
-    border: 1px solid rgba(255,255,255,0.05); font-family: 'Courier New', monospace; }
-.sb-macro-label { font-size: 0.65rem; color: #667788; }
-.sb-macro-val   { font-size: 0.8rem; font-weight: 700; color: #dde4ee; }
-.sb-macro-delta { font-size: 0.65rem; font-weight: 700; }
-.sb-regime-badge { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 0.65rem;
-    font-weight: 700; letter-spacing: 0.08em; font-family: 'Courier New', monospace; margin-top: 6px; }
+    border-radius: 4px; margin-bottom: 3px; background: rgba(255,255,255,0.025);
+    border: 1px solid rgba(255,255,255,0.05); font-size: 0.8rem; color: #dde4ee; }
+.sb-macro-label { color: #9aabbd; font-size: 0.74rem; }
 </style>
 """
+_LEVEL = {"OK": ("#2ecc71", "Up to date"), "WARN": ("#f1c40f", "Check"), "STALE": ("#e74c3c", "Stale"),
+          "UNKNOWN": ("#8899aa", "Unknown")}
 
 
 def _label(text):
     st.sidebar.markdown(f"<div class='sb-section-label'>{text}</div>", unsafe_allow_html=True)
 
 
-def render_horizon(min_date, max_date):
-    """Horizon selector → (horizon, start_date, end_date), clamped to the warehouse range."""
+# ── DATA ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+def render_data_status(fresh: dict, n_exceptions: int = 0):
+    """The freshness summary and the 'Check for new data' button."""
     st.sidebar.markdown(_CSS, unsafe_allow_html=True)
-    _label("Temporal Control")
-    horizon = st.sidebar.segmented_control("Horizon", options=HORIZONS, selection_mode="single", default="1Y",
-                                           label_visibility="collapsed", key="time_horizon_ctrl") or "1Y"
+    _label("Data")
+    colour, word = _LEVEL.get(fresh.get("level"), _LEVEL["UNKNOWN"])
+    p, f, e, dq = fresh["prices"], fresh["fundamentals"], fresh["etl"], fresh["dq"]
+    px = (f"Prices to <b>{p['as_of']:%d %b %Y}</b> ({p['age_days']} d)" if p["as_of"] else "Prices: <b>unknown</b>")
+    fresh_share = f" · {p['fresh_share']:.0%} current" if p["fresh_share"] is not None else ""
+    fund = (f"Fundamentals: median {f['median_age_days']} d old" if f["median_age_days"] is not None
+            else "Fundamentals: refresh date unknown")
+    if e["last_success_at"]:
+        verb = "finished" if e["basis"] == "end" else "started"
+        etl = f"Last good ETL {verb} {e['last_success_at']:%d %b %H:%M} ({e['age_hours']:.0f} h ago)"
+    else:
+        etl = "Last good ETL: unknown"
+    dq_txt = {"CLEAN": "checks clean", "WARN": f"{dq['warnings']} check warning(s)",
+              "CRIT": f"{dq['critical']} critical check(s)", "UNKNOWN": "checks unavailable"}[dq["state"]]
+    exc = f"<br><span class='sb-muted'>{n_exceptions} ticker exception(s) — 🩺 Data Health</span>" if n_exceptions else ""
+    st.sidebar.markdown(
+        f"<div class='sb-card'><span style='color:{colour};font-weight:700;'>● {word}</span><br>{px}{fresh_share}<br>"
+        f"<span class='sb-muted'>{fund}<br>{etl}<br>Data quality: {dq_txt}</span>{exc}</div>", unsafe_allow_html=True)
+    if st.sidebar.button("🔄 Check for new data", width="stretch", key="sb_check_data",
+                         help="Looks for a newer warehouse snapshot and reloads only what depends on it. It does not "
+                              "run the ETL or fetch new data from the providers."):
+        from services.db import check_for_new_data
+        res = check_for_new_data(st.session_state.get("_data_version"))
+        st.session_state["_data_check"] = res
+        if res["status"] == "updated":
+            st.session_state["_data_version"] = res["version"]
+            st.rerun()
+    res = st.session_state.get("_data_check")
+    if res:
+        (st.sidebar.success if res["status"] == "updated" else
+         st.sidebar.info if res["status"] == "latest" else st.sidebar.warning)(res["message"])
+
+
+# ── PAGE CONTROLS ─────────────────────────────────────────────────────────────────────────────────────────────────
+def _range(horizon, min_date, max_date, rng=None):
     start, end = horizon_start(horizon, min_date, max_date), max_date
     if horizon == "Custom":
-        with st.sidebar.expander("Custom Range", expanded=True):
-            rng = st.date_input("Pick Dates", value=(max_date - timedelta(days=365), max_date),
-                                min_value=min_date, max_value=max_date)
-        if isinstance(rng, (list, tuple)):
-            start, end = (rng[0], rng[1]) if len(rng) == 2 else (rng[0], max_date)
-        else:
-            start = rng
+        if isinstance(rng, (list, tuple)) and len(rng) == 2:
+            start, end = rng
+        elif isinstance(rng, (list, tuple)) and len(rng) == 1:
+            start = rng[0]
     start, end = max(start, min_date), min(end, max_date)
-    st.sidebar.caption(f"Range: {start:%b %d, %Y}  →  {end:%b %d, %Y}")
+    if start > end:
+        start = end
+    return start, end
+
+
+def render_horizon(min_date, max_date, active_tab=None):
+    """Chart range → (horizon, start, end), clamped to the warehouse range. Shown only on the tabs that use it; on the
+    others the last choice is kept and the sidebar says the page always uses the full history."""
+    _label("This page")
+    if active_tab is not None and active_tab not in RANGE_TABS:
+        horizon = st.session_state.get("time_horizon_ctrl") or "1Y"
+        start, end = _range(horizon, min_date, max_date, st.session_state.get("custom_range"))
+        st.sidebar.caption("No date range on this page — it always uses the full history.")
+        return horizon, start, end
+    horizon = st.sidebar.selectbox("Chart range", HORIZONS, index=HORIZONS.index("1Y"), key="time_horizon_ctrl")
+    rng = None
+    if horizon == "Custom":
+        default_start = max(max_date - timedelta(days=365), min_date)     # clamped before the widget is built
+        with st.sidebar.form("sb_custom_range", border=False):
+            rng = st.date_input("Custom dates", value=(default_start, max_date), key="custom_range",
+                                min_value=min_date, max_value=max_date)
+            st.form_submit_button("Apply", width="stretch")
+        if not (isinstance(rng, (list, tuple)) and len(rng) == 2):
+            st.sidebar.caption("Pick a start and an end date.")
+    start, end = _range(horizon, min_date, max_date, rng)
+    st.sidebar.caption(f"{start:%d %b %Y} → {end:%d %b %Y} · changes the charts, returns and risk windows of this "
+                       "page; the Decision always uses the latest close.")
     return horizon, start, end
 
 
-def render_pulse(etl_audit, dq_warnings):
-    """Last ETL run status and the count of violated data-quality checks."""
-    if etl_audit.empty:
-        return
-    last = etl_audit.iloc[0]
-    _label("Infrastructure Engine")
-    h_color = "#2ecc71" if last["status"] == "SUCCESS" else "#e74c3c"
+# ── MACRO ─────────────────────────────────────────────────────────────────────────────────────────────────────────
+def _num(d, k):
     try:
-        ls_time = pd.to_datetime(last["start_time"]).strftime("%b %d, %H:%M")
+        v = float((d or {}).get(k, {}).get("val"))
+        return v if v == v else None
     except (TypeError, ValueError):
-        ls_time = "N/A"
-    violated = dq_warnings[dq_warnings["violations"] > 0] if not dq_warnings.empty else dq_warnings
-    crit = int(violated["is_critical"].sum()) if not violated.empty else 0
-    warn = len(violated) - crit if not violated.empty else 0
-    dq_color = "#2ecc71" if crit == warn == 0 else ("#e74c3c" if crit else "#f1c40f")
-    dq_text = "CLEAN" if crit == warn == 0 else (f"{crit} CRIT" if crit else f"{warn} WARN")
-    if dq_warnings.empty:          # every run writes one row per check: no rows = checks unavailable, not clean (F25)
-        dq_color, dq_text = "#8899aa", "UNKNOWN"
-    st.sidebar.markdown(f"""
-<div style='padding:8px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:6px; margin-bottom:6px;'>
-<div style='display:flex; align-items:center; gap:8px;'>
-<div style='width:8px; height:8px; border-radius:50%; background:{h_color}; box-shadow:0 0 8px {h_color};'></div>
-<div style='flex-grow:1;'>
-<div style='font-size:0.7rem; color:#e8eaf6; font-weight:700; line-height:1;'>{last['status']}</div>
-<div style='font-size:0.55rem; color:#8899aa; margin-top:1px;'>Sync: {ls_time}</div>
-</div>
-<div style='text-align:right;'>
-<div style='font-size:0.6rem; color:{dq_color}; font-weight:700; line-height:1;'>{dq_text}</div>
-<div style='font-size:0.45rem; color:#667788; text-transform:uppercase; letter-spacing:0.04em;'>Integrity</div>
-</div>
-</div>
-</div>""".strip(), unsafe_allow_html=True)
-    # Per-ticker exceptions of the last run: the share-based release gates pass with a few broken tickers, so they
-    # are listed here instead of only in the log (ETL review 2026-10-14)
-    try:
-        from services.db import load_etl_exceptions
-        exc = load_etl_exceptions()
-    except Exception:
-        exc = None
-    if exc is not None and not exc.empty:
-        with st.sidebar.expander(f"⚠️ {exc['ticker'].nunique()} ticker exceptions (last ETL)", expanded=False):
-            for stage, g in exc.groupby("stage"):
-                st.markdown(f"**{stage}** ({g['ticker'].nunique()})")
-                st.caption("; ".join(f"{r.ticker}: {r.reason}" + (f" — {r.detail}" if r.detail else "")
-                                     for r in g.head(25).itertuples()))
+        return None
 
 
-def _delta(pct, invert=False):
-    good, bad = "#2ecc71", "#e74c3c"
-    color = (bad if pct >= 0 else good) if invert else (good if pct >= 0 else bad)
-    return f"<span class='sb-macro-delta' style='color:{color}'>{'+' if pct >= 0 else ''}{pct:.2f}%</span>"
-
-
-def render_macro_panel(placeholder, macro, fred):
-    """Rates, curve and FRED fundamentals into the placeholder reserved at the top of the sidebar."""
-    if not macro:
-        return
-    # Audit F26: an observation the source did not supply is N/A, not a green 0
-    def _num(d, k):
-        try:
-            v = float((d or {}).get(k, {}).get("val"))
-            return v if v == v else None
-        except (TypeError, ValueError):
-            return None
-
-    def _fmt(v, f):
-        return "N/A" if v is None else format(v, f) + "%"
-    tnx_v, irx_v = _num(macro, "US10Y"), _num(macro, "US2Y")
-    tnx_p = (macro.get("US10Y") or {}).get("pct") or 0
-    spread = tnx_v - irx_v if tnx_v is not None and irx_v is not None else None
+def render_macro_panel(macro, fred):
+    """Rates and economy, collapsed; N/A when a value is unknown; values are context, not signals."""
     fred = fred or {}
+    tnx, irx = _num(macro, "US10Y"), _num(macro, "US2Y")
+    spread = tnx - irx if tnx is not None and irx is not None else None
     cpi, un, ff = _num(fred, "CPI"), _num(fred, "UNRATE"), _num(fred, "FEDFUNDS")
-    month = str(fred.get("CPI", {}).get("date") or "")[:7] or "N/A"
-    _sp_col = "#8899aa" if spread is None else ("#2ecc71" if spread > 0 else "#e74c3c")
-    _cpi_col, _cpi_ic = ("#8899aa", "") if cpi is None else (("#e74c3c", "⚠️") if cpi > 2.5 else ("#2ecc71", "✅"))
-    _un_col, _un_ic = ("#8899aa", "") if un is None else (("#e74c3c", "⚠️") if un > 4.5 else ("#2ecc71", "✅"))
-    placeholder.markdown(f"""
-    <div class='sb-section-label'>Economic Fundamentals</div>
-    <div style='display:flex; gap:6px; margin-bottom:6px;'>
-        <div class='sb-macro-row' style='flex:1; margin-bottom:0;'>
-            <div class='sb-macro-label' style='font-size:0.55rem;'>US10Y</div>
-            <div style='display:flex; justify-content:space-between; align-items:center;'>
-                <span class='sb-macro-val' style='font-size:0.7rem;'>{_fmt(tnx_v, ".2f")}</span>
-                {_delta(tnx_p, invert=True)}
-            </div>
-        </div>
-        <div class='sb-macro-row' style='flex:1; margin-bottom:0;'>
-            <div class='sb-macro-label' style='font-size:0.55rem;' title='10-year yield minus 13-week T-bill (^TNX − ^IRX)'>10Y–3M</div>
-            <div style='display:flex; justify-content:space-between; align-items:center;'>
-                <span class='sb-macro-val' style='font-size:0.7rem; color:{_sp_col}'>{_fmt(spread, ".2f")}</span>
-            </div>
-        </div>
-    </div>
-    <div class='sb-macro-row' style='display:block; border-left: 2px solid #3498db; padding: 3px 8px;'>
-        <div style='display:flex; justify-content:space-between; align-items:center;'>
-            <span class='sb-macro-label' style='color:#3498db; font-size:0.6rem;'>CPI YOY</span>
-            <span class='sb-macro-val' style='font-size:0.75rem;'>{_fmt(cpi, ".2f")}</span>
-            <span style='color:{_cpi_col}; font-size:0.55rem; font-weight:700;'>{_cpi_ic}</span>
-        </div>
-        <div style='font-size:0.5rem; color:#8899aa; text-align:right; margin-top:1px; text-transform:uppercase;'>Last: {month}</div>
-    </div>
-    <div class='sb-macro-row' style='display:block; border-left: 2px solid #9b59b6; padding: 3px 8px;'>
-        <div style='display:flex; justify-content:space-between; align-items:center;'>
-            <span class='sb-macro-label' style='color:#9b59b6; font-size:0.6rem;'>UNEMPLOY</span>
-            <span class='sb-macro-val' style='font-size:0.75rem;'>{_fmt(un, ".1f")}</span>
-            <span style='color:{_un_col}; font-size:0.55rem; font-weight:700;'>{_un_ic}</span>
-        </div>
-    </div>
-    <div class='sb-macro-row' style='display:block; padding: 3px 8px;'>
-        <div style='display:flex; justify-content:space-between; align-items:center;'>
-            <span class='sb-macro-label' style='font-size:0.6rem;'>FED FUNDS</span>
-            <span class='sb-macro-val' style='font-size:0.75rem;'>{_fmt(ff, ".2f")}</span>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    fmt = lambda v, f: "N/A" if v is None else format(v, f) + "%"  # noqa: E731
+    month = str(fred.get("CPI", {}).get("date") or "")[:7] or "n/a"
+    src = (macro or {}).get("US10Y", {}).get("source") or ("unavailable" if not macro else "Yahoo")
+    with st.sidebar.expander("Macro — US rates & economy", expanded=False):
+        rows = [("US 10Y yield", fmt(tnx, ".2f")), ("10Y – 3M spread", fmt(spread, ".2f")),
+                ("CPI YoY", fmt(cpi, ".2f")), ("Unemployment", fmt(un, ".1f")), ("Fed Funds", fmt(ff, ".2f"))]
+        st.markdown("".join(f"<div class='sb-macro-row'><span class='sb-macro-label'>{k}</span><b>{v}</b></div>"
+                            for k, v in rows), unsafe_allow_html=True)
+        st.caption(f"Rates: {src} (the 10Y also prices the DCF). Economy: FRED, latest {month}. "
+                   "3M = 13-week T-bill (^IRX). Context only — not a signal.")

@@ -204,3 +204,57 @@ def test_a_question_in_the_assistant_is_answered_with_sources(warehouse, monkeyp
     assert at.session_state["assistant_history"][-1]["q"] == "Quality of AAA?"
     assert any("Quality is 61.[1]" in m.value for m in at.markdown)
     assert at.session_state["assistant_llm_calls"] == 2
+
+
+@pytest.mark.parametrize("past_end", [False, True])
+def test_the_sidebar_range_never_changes_the_decision(warehouse, monkeypatch, past_end):
+    """SIDEBAR_REFACTOR_REVIEW 3.1: a Custom range ending in the past priced the Decision at that date with today's
+    fundamentals (125 of 842 stances differed from the Scanner on the real warehouse, every BUY was lost).
+    The range is for the charts; the Decision, its price and price date are the Scanner's."""
+    from datetime import timedelta
+    from views.stock_analysis import context
+    seen = {}
+    real = context.build
+
+    def spy(ctx, ticker):
+        dd = real(ctx, ticker)
+        seen.update(dd=dd, ctx=ctx)
+        return dd
+    monkeypatch.setattr(context, "build", spy)
+    at = _app("🔬 Stock Analysis")
+    at.session_state["deep_ticker_selector"] = "AAPL"
+    if past_end:
+        at.session_state["time_horizon_ctrl"] = "Custom"
+        at.run()
+        latest = pd.to_datetime(seen["ctx"]["prices_full"]["date"]).max().date()
+        at.session_state["custom_range"] = (latest - timedelta(days=200), latest - timedelta(days=60))
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    dd, ctx = seen["dd"], seen["ctx"]
+    full = ctx["prices_full"][ctx["prices_full"]["ticker"] == "AAPL"].sort_values("date")
+    assert dd.cur_p == full["price_close"].iloc[-1] and dd.extra["latest_date"] == full["date"].iloc[-1].date()
+    m = ctx["m_df"].set_index("Ticker")
+    assert dd.extra["decision"].stance == m.at["AAPL", "Decision"]               # the Scanner's Decision
+    stop, scan_stop = dd.thesis_stop, m.at["AAPL", "_thesis_stop"]
+    assert (stop is None and pd.isna(scan_stop)) or stop == pytest.approx(scan_stop)   # None here = NaN there
+    note = [i.value for i in at.info if "The charts end on" in i.value]
+    assert (dd.extra["chart_end"] < dd.extra["latest_date"]) is past_end and bool(note) is past_end
+
+
+def test_the_recorded_decision_is_read_point_in_time(monkeypatch):
+    import contextlib
+    import duckdb
+    from datetime import date
+    from services import db
+    conn = duckdb.connect()
+    conn.execute("CREATE SCHEMA marts")
+    conn.execute("CREATE TABLE marts.score_snapshots (as_of_date DATE, ticker VARCHAR, decision VARCHAR, "
+                 "price_close DOUBLE, knowledge_at TIMESTAMP)")
+    conn.execute("""INSERT INTO marts.score_snapshots VALUES ('2026-10-13', 'A', 'HOLD / WATCH', 10, '2026-10-13 22:00'),
+                    ('2026-10-15', 'A', 'BUY CANDIDATE', 9, '2026-10-15 22:00')""")
+    monkeypatch.setattr(db, "get_db_connection", lambda read_only=True: contextlib.nullcontext(conn))
+    db.load_recorded_decision.clear()
+    assert db.load_recorded_decision("A", date(2026, 10, 14))["decision"] == "HOLD / WATCH"     # the one known then
+    assert db.load_recorded_decision("A", date(2026, 10, 16))["decision"] == "BUY CANDIDATE"
+    none = db.load_recorded_decision("A", date(2026, 1, 1))
+    assert none["decision"] is None and none["first_snapshot"] == date(2026, 10, 13)

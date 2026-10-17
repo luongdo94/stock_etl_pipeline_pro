@@ -44,7 +44,7 @@ def _yf_close_frame(columns, rows):
 class TestMacroDataFetching:
     """Test macro data fetching and fallback."""
 
-    @patch('services.market_data.get_forex_rates', return_value=0.9)
+    @patch('services.market_data.fx_rate', return_value=0.9)
     @patch('services.market_data.yf.download')
     def test_fetch_macro_data_success(self, mock_download, _fx):
         tickers = ["SPY", "DX-Y.NYB", "^TNX", "^IRX", "^VIX", "CL=F", "GC=F"]
@@ -58,6 +58,18 @@ class TestMacroDataFetching:
         assert result["VIX"]["val"] == 16 and result["VIX"]["pct"] == pytest.approx(100 / 15)
         assert result["SPY"]["val"] == pytest.approx(505 * 0.9)   # USD → EUR
         assert result["US10Y"]["chg"] == pytest.approx(0.1)
+
+    @patch('services.market_data.fx_rate', return_value=None)
+    @patch('services.market_data.yf.download')
+    def test_spy_in_eur_is_unknown_without_a_rate_and_a_missing_series_is_unknown(self, mock_download, _fx):
+        tickers = ["SPY", "DX-Y.NYB", "^TNX", "^VIX", "CL=F", "GC=F"]             # ^IRX not returned
+        mock_download.return_value = _yf_close_frame(tickers, [[500, 104, 4.5, 15, 80, 2300],
+                                                               [505, 105, 4.6, 16, 81, 2310]])
+        from services.market_data import fetch_macro_data
+        fetch_macro_data.clear()
+        result = fetch_macro_data()
+        assert result["SPY"]["val"] is None                       # not the USD level shown as EUR
+        assert result["US2Y"]["val"] is None and result["US2Y"]["source"] == "unavailable"   # not a 0 yield
 
 
 class TestCurrencyNormalization:

@@ -99,15 +99,15 @@ def fetch_macro_data():
                 v_prev = float(prev[ticker])
                 chg = v_now - v_prev
                 pct = (chg / v_prev) * 100 if v_prev != 0 else 0
-                results[name] = {"val": v_now, "chg": chg, "pct": pct}
+                results[name] = {"val": v_now, "chg": chg, "pct": pct, "source": "Yahoo (live)"}
             else:
-                results[name] = {"val": 0, "chg": 0, "pct": 0}
-        # Apply Forex transformation selectively to SPY (USD -> EUR)
-        usdeur_rate = get_forex_rates(target="EUR")
-        results["SPY"]["val"] *= usdeur_rate
-        # The change value in the UI also needs normalization to match the current price
-        # Though pct change is unaffected by constant multiplier
-        results["SPY"]["chg"] *= usdeur_rate
+                # not supplied: UNKNOWN, never a 0 that reads as a real level (SIDEBAR_REFACTOR_REVIEW, macro)
+                results[name] = {"val": None, "chg": None, "pct": None, "source": "unavailable"}
+        # SPY in EUR; an unknown USD→EUR rate leaves SPY unknown rather than at the USD level
+        usdeur_rate = fx_rate("USD")
+        for k in ("val", "chg"):
+            v = results["SPY"].get(k)
+            results["SPY"][k] = None if v is None or usdeur_rate is None else v * usdeur_rate
 
         return results
     except Exception as e:
@@ -164,15 +164,9 @@ def _get_macro_fallback_from_db(conn=None) -> dict:
     Fallback for fetch_macro_data when Yahoo Finance is unavailable (e.g. Cloud deploy).
     Reads the two most-recent closes for all macro tickers from the provided connection.
     """
-    defaults = {
-        "SPY":   {"val": 0.0, "chg": 0.0, "pct": 0.0},
-        "DXY":   {"val": 0.0, "chg": 0.0, "pct": 0.0},
-        "US10Y": {"val": 0.0, "chg": 0.0, "pct": 0.0},
-        "VIX":   {"val": 0.0, "chg": 0.0, "pct": 0.0},
-        "US2Y":  {"val": 0.0, "chg": 0.0, "pct": 0.0},
-        "Oil":   {"val": 0.0, "chg": 0.0, "pct": 0.0},
-        "Gold":  {"val": 0.0, "chg": 0.0, "pct": 0.0},
-    }
+    # a series the warehouse does not hold stays UNKNOWN (None), never 0
+    defaults = {k: {"val": None, "chg": None, "pct": None, "source": "unavailable"}
+                for k in ("SPY", "DXY", "US10Y", "VIX", "US2Y", "Oil", "Gold")}
     
     if conn is None:
         return defaults
@@ -186,9 +180,10 @@ def _get_macro_fallback_from_db(conn=None) -> dict:
                 v_now, v_prev = prices[0], (prices[1] if len(prices) > 1 else prices[0])
                 chg = v_now - v_prev
                 defaults[fallback_key] = {
-                    "val": v_now, 
-                    "chg": chg, 
-                    "pct": (chg / v_prev * 100) if v_prev != 0 else 0.0
+                    "val": v_now,
+                    "chg": chg,
+                    "pct": (chg / v_prev * 100) if v_prev != 0 else None,
+                    "source": "warehouse (last stored close)",
                 }
 
         # First, try to fetch with 'close' column (standard Raw table)

@@ -132,10 +132,31 @@ def _exceptions(exc: pd.DataFrame, unavailable: bool = False):
     st.dataframe(view.sort_values(["stage", "ticker"]), hide_index=True, width="stretch")
 
 
+def _freshness(ctx, h):
+    """The same freshness answer as the sidebar (core.freshness), with the run END times this tab has."""
+    from core.freshness import data_freshness
+    f = data_freshness(ctx.get("prices_full"), ctx.get("companies_full"), h.get("runs"), h.get("dq"))
+    p, fu, e, dq = f["prices"], f["fundamentals"], f["etl"], f["dq"]
+    st.markdown(f"##### Freshness — **{f['level']}**")
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Newest close", f"{p['as_of']:%d %b %Y}" if p["as_of"] else "unknown",
+              f"{p['age_days']} days old" if p["age_days"] is not None else None, delta_color="off")
+    c2.metric("Stocks with a current close", f"{p['fresh_share']:.0%}" if p["fresh_share"] is not None else "unknown",
+              f"{p['stale']} stale" if p["stale"] else None, delta_color="off")
+    c3.metric("Fundamentals age (median)", f"{fu['median_age_days']} d" if fu["median_age_days"] is not None else "unknown",
+              f"oldest {fu['oldest_age_days']} d" if fu["oldest_age_days"] is not None else None, delta_color="off")
+    c4.metric("Last good ETL", f"{e['last_success_at']:%d %b %H:%M}" if e["last_success_at"] else "unknown",
+              f"{e['age_hours']:.0f} h ago ({e['basis']})" if e["age_hours"] is not None else None, delta_color="off")
+    if f["notes"]:
+        st.caption("Notes: " + " · ".join(f["notes"]) + f" · data quality: {dq['state']}")
+
+
 def render(ctx):
     """Render the 🩺 Data Health tab. ctx is the context dict built in app.py."""
     render_header("activity", "Data Health — Can Today's Numbers Be Trusted?")
     h = load_data_health()
+    _freshness(ctx, h)
+    st.markdown("---")
     _runs(h["runs"])
     st.markdown("---")
     left, right = st.columns(2)

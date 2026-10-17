@@ -178,21 +178,25 @@ def test_f24_offline_tests_cannot_open_sockets():
 
 def test_f25_no_dq_rows_is_unknown_not_clean(monkeypatch):
     import ui.sidebar as sb
+    from core.freshness import data_freshness
+    audit = pd.DataFrame([{"status": "SUCCESS", "start_time": pd.Timestamp("2026-10-15"), "rows_processed": 1}])
+    fresh = data_freshness(None, None, audit, pd.DataFrame())
+    assert fresh["dq"]["state"] == "UNKNOWN" and "data-quality checks unavailable" in fresh["notes"]
     shown = []
     monkeypatch.setattr(sb.st.sidebar, "markdown", lambda html, **k: shown.append(html))
-    monkeypatch.setattr(sb, "_label", lambda *a, **k: None)
-    audit = pd.DataFrame([{"status": "SUCCESS", "start_time": pd.Timestamp("2026-10-15"), "rows_processed": 1}])
-    sb.render_pulse(audit, pd.DataFrame())
-    assert "UNKNOWN" in shown[0] and "CLEAN" not in shown[0]
+    monkeypatch.setattr(sb.st.sidebar, "button", lambda *a, **k: False)
+    sb.render_data_status(fresh)
+    card = next(h for h in shown if "<div class='sb-card'>" in h)
+    assert "checks unavailable" in card and "clean" not in card.lower()
 
 
-def test_f26_missing_macro_is_not_a_green_zero():
+def test_f26_missing_macro_is_not_a_green_zero(monkeypatch):
+    import contextlib
     import ui.sidebar as sb
-
-    class P:
-        html = ""
-
-        def markdown(self, html, **k):
-            P.html = html
-    sb.render_macro_panel(P(), {"US10Y": {"val": 4.3, "pct": 0.1}}, {})
-    assert "CPI YOY" in P.html and "N/A" in P.html and "0.00%" not in P.html
+    shown = []
+    monkeypatch.setattr(sb.st.sidebar, "expander", lambda *a, **k: contextlib.nullcontext())
+    monkeypatch.setattr(sb.st, "markdown", lambda html, **k: shown.append(html))
+    monkeypatch.setattr(sb.st, "caption", lambda *a, **k: None)
+    sb.render_macro_panel({"US10Y": {"val": 4.3, "pct": 0.1}, "US2Y": {"val": None}}, {})
+    html = shown[0]
+    assert "CPI YoY" in html and "N/A" in html and "0.00%" not in html and "4.30%" in html

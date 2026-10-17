@@ -26,7 +26,7 @@ def render(dd, ctx):
 
     render_decision_panel(
         ticker=dd.ticker, meta=meta, price=float(dd.cur_p),
-        price_date=pd.to_datetime(dd.df_deep["date"].iloc[-1]).date(),
+        price_date=dd.extra["latest_date"],               # the latest close, not the chart's end
         stop_loss=dd.stop_loss, vin=dd.vin, relval=dd.relval,
         missing=dd.scores["missing"], scores=dd.scores,
         next_earnings=dd.next_earnings, quality=dd.ai_score,

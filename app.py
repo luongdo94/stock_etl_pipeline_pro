@@ -82,21 +82,25 @@ def format_ticker(ticker):
     return f"{ticker}: {name}" if name else ticker
 
 
-# ── Sidebar: macro panel (filled later, pinned on top), horizon, ETL pulse ──────────────────
-_macro_placeholder = st.sidebar.empty()
+# ── Sidebar (SIDEBAR_REFACTOR_REVIEW): data status, this page's controls, macro, account ─────
+from core.freshness import data_freshness  # noqa: E402
+from services.db import data_version, load_etl_exceptions  # noqa: E402
+if "_data_version" not in st.session_state:          # the snapshot this session loaded ("Check for new data")
+    try:
+        st.session_state["_data_version"] = data_version()[0]
+    except Exception:
+        st.session_state["_data_version"] = None
 if prices_full["ticker"].nunique() < 50 and (
         os.environ.get("SUPABASE_REMOTE_MODE", "false").lower() == "true" or not os.path.exists(DB_PATH)):
-    st.toast("⚠️ Warning: Data load seems incomplete. You might need to manually clear cache.")
-st.sidebar.markdown("---")
+    st.toast("⚠️ The loaded data looks incomplete — use “Check for new data” in the sidebar.")
+try:
+    _n_exc = int(load_etl_exceptions()["ticker"].nunique())
+except Exception:
+    _n_exc = 0
+sidebar.render_data_status(data_freshness(prices_full, companies_full, etl_audit, dq_warnings), _n_exc)
+_active = st.session_state.get("active_tab")
 selected_horizon, start_date, end_date = sidebar.render_horizon(prices_full["date"].min().date(),
-                                                                prices_full["date"].max().date())
-sidebar.render_pulse(etl_audit, dq_warnings)
-if st.sidebar.button("🔄 Refresh Data", width="stretch", type="secondary", help="Clear cache & reload from warehouse"):
-    st.cache_data.clear()
-    st.toast("🚀 Refreshing Intelligence...", icon="✅")
-    st.rerun()
-st.sidebar.markdown("---")
-auth.render_user_profile(cm)
+                                                                prices_full["date"].max().date(), _active)
 
 # ── Horizon-filtered views (display only — levels, scores and backtests use the full history) ─
 t_start, t_end = pd.Timestamp(start_date), pd.Timestamp(end_date)
@@ -120,9 +124,10 @@ reco_df["score"] = reco_df["ticker"].map(m_df.set_index("Ticker")["Quality"].to_
 reco_df["score"] = reco_df["score"].fillna(0).astype(int)
 
 # ── Market context: breadth, confidence score, regime ───────────────────────────────────────
-_vix_val = macro.get("VIX", {}).get("val", 20)
-_dxy_pct = macro.get("DXY", {}).get("pct", 0)
-_tnx_chg = macro.get("US10Y", {}).get("chg", 0)
+# None = unknown (the source did not supply it): the regime gauge scores it neutral and says so
+_vix_val = (macro.get("VIX") or {}).get("val")
+_dxy_pct = (macro.get("DXY") or {}).get("pct")
+_tnx_chg = (macro.get("US10Y") or {}).get("chg")
 df_spy_global = prices_full[prices_full["ticker"] == "SPY"].sort_values("date")
 breadth_ts_global = mr.breadth_series(prices_full)
 latest_breadth_global = breadth_ts_global.iloc[-1]["breadth_pct"] if not breadth_ts_global.empty else 0
@@ -136,7 +141,9 @@ market_quality_idx = mr.cap_weighted_quality(reco_df)
 
 
 # ── Header ──────────────────────────────────────────────────────────────────────────────────
-sidebar.render_macro_panel(_macro_placeholder, macro, fetch_fred_macro())
+sidebar.render_macro_panel(macro, fetch_fred_macro())
+st.sidebar.markdown("---")
+auth.render_user_profile(cm)                         # account last
 head_l, head_r = st.columns([5, 1])
 with head_l:
     header.render_title_bar(stock_count, market_quality_idx, regime, regime_ui_color)

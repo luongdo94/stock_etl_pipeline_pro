@@ -26,7 +26,11 @@ def render(dd, ctx):
     ai_score = dd.ai_score
     cur_p = dd.cur_p
     deep_ticker = dd.ticker
-    df_deep = dd.df_deep
+    _full = ctx["prices_full"][ctx["prices_full"]["ticker"] == dd.ticker].sort_values("date")
+
+    def _latest(col):
+        v = _full[col].dropna() if col in _full.columns else _full.iloc[0:0]
+        return round(float(v.iloc[-1]), 2) if len(v) else "N/A"
     earnings_surprise_full = ctx["earnings_surprise_full"]
     macro = ctx["macro"]
     meta = dd.meta
@@ -138,10 +142,11 @@ def render(dd, ctx):
                         "resistance_r1": round(_r1, 2),
                         "resistance_r2": round(_r2, 2),
                         "stop_loss_technical": round(_stop_loss, 2),
-                        "ma_20_current": round(float(df_deep["ma_20"].iloc[-1]), 2) if "ma_20" in df_deep.columns and not df_deep["ma_20"].isna().all() else "N/A",
-                        "ma_50_current": round(float(df_deep["ma_50"].iloc[-1]), 2) if "ma_50" in df_deep.columns and not df_deep["ma_50"].isna().all() else "N/A",
-                        "vix_current":   (macro or {}).get("VIX", {}).get("val", "N/A"),
-                        "spy_trend":     (macro or {}).get("SPY", {}).get("pct", 0),
+                        # "current" = the latest bar of the full history, not the sidebar chart's end
+                        "ma_20_current": _latest("ma_20"),
+                        "ma_50_current": _latest("ma_50"),
+                        "vix_current":   ((macro or {}).get("VIX") or {}).get("val") or "N/A",   # unknown ≠ 0
+                        "spy_trend":     ((macro or {}).get("SPY") or {}).get("pct") or "N/A",
                         # --- Enrichments ---
                         "forward_pe":           float(meta.get("forward_pe") or 0) or "N/A",
                         "debt_ebitda":          _debt_ebitda_for_llm,

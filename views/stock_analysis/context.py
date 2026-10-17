@@ -80,20 +80,26 @@ def build(ctx, deep_ticker):
         st.warning(f"⚠️ No price history found for **{deep_ticker}**. Please run the pipeline first.", icon="⚠️")
         st.stop()
     df_fin = annual_fin[annual_fin["ticker"] == deep_ticker].sort_values("year", ascending=False)
+    # The Decision and every "current" figure use the LATEST close of the full history; `df_deep` follows the sidebar
+    # horizon and is for the charts only. A Custom range ending in the past used to price the Decision at that date
+    # with today's fundamentals — 125 of 842 stances then differed from the Scanner's and no BUY survived
+    # (SIDEBAR_REFACTOR_REVIEW 3.1).
+    _df_levels = prices_full[prices_full["ticker"] == deep_ticker].sort_values("date")
+    df_now = _df_levels if not _df_levels.empty else df_deep
 
     target_p = meta.get('target_mean_price', 0)
-    cur_p = df_deep['price_close'].iloc[-1]
+    cur_p = df_now['price_close'].iloc[-1]
     upside = ((target_p / cur_p) - 1) * 100 if (target_p and cur_p) else 0
     # Stale target detection: target > 3x current price → analyst target is outdated
     if abs(upside) > 100 and cur_p > 0 and abs(target_p / cur_p) > 3:
         upside = 0  # Treat as stale (reverse split, crash, FX mismatch)
     upside = max(-100, min(100, upside))
 
-    z_score = df_deep['price_z_score'].iloc[-1] if 'price_z_score' in df_deep.columns else 0
+    z_score = df_now['price_z_score'].iloc[-1] if 'price_z_score' in df_now.columns else 0
     if pd.isna(z_score): z_score = 0
 
     # --- Enrich meta with latest technicals for the scoring engine ---
-    latest_tech = df_deep.iloc[-1]
+    latest_tech = df_now.iloc[-1]
     meta_enriched = meta.to_dict()
     for col in ['pe_ratio', 'peg_ratio', 'price_to_book', 'roe', 'fcf_margin', 'dividend_yield_pct']:
         val = meta_enriched.get(col)
@@ -137,7 +143,6 @@ def build(ctx, deep_ticker):
 
     # Levels and the 52-week range always use the FULL price history — `df_deep` follows the
     # sidebar horizon (1M → "52-week high" was the 1-month high) and is only used for display.
-    _df_levels = prices_full[prices_full["ticker"] == deep_ticker].sort_values("date")
     tm = get_tactical_metrics(_df_levels, cur_p, analyst_target=target_p)
     ma_sig = str(latest_tech.get("ma_signal", meta.get("ma_signal", "NEUTRAL")))
 
@@ -161,7 +166,7 @@ def build(ctx, deep_ticker):
     from core.decision import BUY, decide, load_rules, with_conflict
     _d = decide(price=float(cur_p), vin=vin, stop_loss=tm["stop_loss"], meta=meta,
                 scores=scores,                      # true quality (None = unknown → no BUY)
-                price_date=pd.to_datetime(df_deep["date"].iloc[-1]).date(), next_earnings=next_er,
+                price_date=pd.to_datetime(df_now["date"].iloc[-1]).date(), next_earnings=next_er,
                 track_record_ok=bool(ctx.get("track_record_ok", False)), rules=load_rules())
     usable = bool(vin["base"] and vin["reliable"])
 
@@ -194,4 +199,7 @@ def build(ctx, deep_ticker):
                     next_earnings=next_er, sm=sm, rating=rating, act_str=act_str, act_color=act_color,
                     act_desc=act_desc, decision_rr=_d.reward_risk, thesis_stop=_d.stop,
                     target_value=vin["base"] if usable else None,
-                    extra={"decision": _d, "signal_conflict": signal_conflict})
+                    extra={"decision": _d, "signal_conflict": signal_conflict,
+                           # the charts may end earlier than the data the Decision uses — the page says so
+                           "chart_end": pd.to_datetime(df_deep["date"].iloc[-1]).date(),
+                           "latest_date": pd.to_datetime(df_now["date"].iloc[-1]).date()})

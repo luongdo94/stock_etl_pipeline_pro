@@ -164,12 +164,20 @@ def market_confidence(spy, breadth_pct, vix, dxy_5d_move, tnx_chg):
         reasons.append(f"Breadth Panic ({breadth_pct:.0f}%)")
     elif breadth_pct < 55:
         reasons.append(f"Weak Breadth ({breadth_pct:.0f}%)")
-    score += int(round(float(np.interp(vix, [15, 20, 25, 30, 40], [10, 8, 4, 1, 0]))))
-    if vix > 25:
-        reasons.append(f"VIX Risk-Off ({vix:.0f})")
-    elif vix > 20:
-        reasons.append(f"VIX Elevated ({vix:.0f})")
-    if dxy_5d_move < 0.8 and tnx_chg < 0.08:
+    # An unknown input scores the middle of its range and is named — it is not read as calm (VIX 0) or flat (DXY 0)
+    if vix is None:
+        score += 5
+        reasons.append("VIX unknown")
+    else:
+        score += int(round(float(np.interp(vix, [15, 20, 25, 30, 40], [10, 8, 4, 1, 0]))))
+        if vix > 25:
+            reasons.append(f"VIX Risk-Off ({vix:.0f})")
+        elif vix > 20:
+            reasons.append(f"VIX Elevated ({vix:.0f})")
+    if dxy_5d_move is None or tnx_chg is None:
+        score += 5
+        reasons.append("Macro inputs unknown (DXY / 10Y)")
+    elif dxy_5d_move < 0.8 and tnx_chg < 0.08:
         score += 10
     elif dxy_5d_move < 1.5 and tnx_chg < 0.12:
         score += 5
@@ -185,7 +193,7 @@ def regime_from_score(score, tnx_chg=0.0, dxy_pct=0.0, vix=20.0):
         if score >= cut:
             break
     scoring = REGIME_TO_SCORING[label]
-    if tnx_chg > 0.05 and dxy_pct > 0.1 and vix < 25:  # yields and USD rising together
+    if None not in (tnx_chg, dxy_pct, vix) and tnx_chg > 0.05 and dxy_pct > 0.1 and vix < 25:  # yields + USD up
         scoring = "INFLATION_SHOCK"
     return {"regime": label, "color": colour, "advice": advice, "scoring_regime": scoring}
 
