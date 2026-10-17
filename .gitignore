@@ -59,3 +59,9 @@ warehouse/etl.lock
 warehouse/*.wal
 warehouse/provider_no_data.json
 warehouse/sec_company_tickers.json
+
+# Documentation stays local: GitHub carries README.md only
+docs/
+audit/
+*.md
+!README.md

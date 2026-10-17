@@ -23,8 +23,18 @@ _SEV = {"action": ("#e74c3c", "ACT"), "review": ("#f39c12", "REVIEW"), "info": (
 _DIR = {"up": "#2ecc71", "down": "#e74c3c"}
 
 
-def _version(prices_full) -> tuple:
-    return len(prices_full), str(prices_full["date"].max()) if not prices_full.empty else ""
+def _version(prices_full, reco_df=None) -> tuple:
+    """Generation of the hub's market inputs: shape, newest date and a checksum of closes / volumes (a weekly rebase
+    rewrites history with the same shape and last date — review SIG-R02) plus a hash of the reco columns the
+    observations read. O(rows) numeric sums, no hashing of the frame."""
+    if prices_full.empty:
+        return 0, "", 0.0, 0.0, 0
+    reco = 0
+    if reco_df is not None and not reco_df.empty:
+        cols = [c for c in ("ticker", "score", "rsi", "ma_signal") if c in reco_df.columns]
+        reco = int(pd.util.hash_pandas_object(reco_df[cols], index=False).sum())
+    return (len(prices_full), str(prices_full["date"].max()), float(prices_full["price_close"].sum()),
+            float(prices_full["volume"].sum()) if "volume" in prices_full.columns else 0.0, reco)
 
 
 @st.cache_data(ttl=3600, show_spinner=False)
@@ -38,37 +48,26 @@ def _market(_prices_full, _reco_df, version: tuple) -> dict:
 
 
 def _user_data() -> dict:
-    """The signed-in user's portfolio, watchlist and alert rules — cached per user id for a minute; a failed read is
-    recorded as such (unknown, not empty). Never shared across users (the cache key IS the user id)."""
-    from services.user_store import load_watchlist, read_portfolio_snapshot
-    from services.alerts import load_alert_rules
-    from services.user_store import HUB_USER_CACHE
+    """The signed-in user's portfolio, watchlist and alert rules — cached per user id (10 min, 1 min after a failed
+    read). Each source carries the outcome of ITS read (unknown is not empty, review SIG-R01 / R05). Never shared
+    across users: a cache hit needs the same user id."""
+    from services.alerts import load_alert_rules_status
+    from services.user_store import HUB_USER_CACHE, read_portfolio_status, read_watchlist_status
     uid = st.session_state.get("user_id")
     hit = st.session_state.get(HUB_USER_CACHE)
     if hit and hit["uid"] == uid and time.monotonic() - hit["at"] < hit["ttl"]:
         return hit["data"]
     data = {"holdings": {}, "cash": 0.0, "stops": {}, "holdings_ok": True, "watchlist": None, "watchlist_ok": True,
-            "rules": []}
+            "rules": [], "rules_ok": True}
     if uid:
-        flag_p = st.session_state.get("portfolio_load_failed")
+        data["holdings"], data["cash"], data["stops"], data["holdings_ok"] = read_portfolio_status()
+        data["watchlist"], data["watchlist_ok"] = read_watchlist_status()
         try:
-            data["holdings"], data["cash"], data["stops"] = read_portfolio_snapshot()
-            data["holdings_ok"] = not st.session_state.get("portfolio_load_failed")
+            data["rules"], err = load_alert_rules_status()
+            data["rules_ok"] = err is None
         except Exception:
-            data["holdings_ok"] = False
-        st.session_state["portfolio_load_failed"] = flag_p
-        flag_w = st.session_state.get("watchlist_load_failed")   # the Watchlist page's save guard stays its own
-        try:
-            data["watchlist"] = load_watchlist()
-            data["watchlist_ok"] = not st.session_state.get("watchlist_load_failed")
-        except Exception:
-            data["watchlist_ok"] = False
-        st.session_state["watchlist_load_failed"] = flag_w
-        try:
-            data["rules"] = load_alert_rules()
-        except Exception:
-            data["rules"] = []
-    ok = data["holdings_ok"] and data["watchlist_ok"]
+            data["rules"], data["rules_ok"] = [], False
+    ok = data["holdings_ok"] and data["watchlist_ok"] and data["rules_ok"]
     st.session_state[HUB_USER_CACHE] = {"uid": uid, "at": time.monotonic(), "data": data,
                                         "ttl": _USER_TTL_S if ok else _RETRY_TTL_S}
     return data
@@ -94,7 +93,7 @@ def build_items(hub) -> list:
     from services.assistant_tools import ToolBox
     from services.db import load_decision_snapshots
     m_df, mk, user = hub["m_df"], hub["market"], hub["user"]
-    changes = feed.decision_changes(load_decision_snapshots())
+    changes = feed.decision_changes(load_decision_snapshots(hub.get("generation")))
     hub["changes"] = changes
     doc = None
     if user["holdings"]:
@@ -106,7 +105,8 @@ def build_items(hub) -> list:
                       portfolio_reader=lambda: (user["holdings"], user["cash"], user["stops"])).run("my_portfolio", {})[0]
     return feed.personal_items(decisions=_decisions(m_df), latest=mk["latest"], holdings=user["holdings"],
                                holdings_ok=user["holdings_ok"], stops=user["stops"], watchlist=user["watchlist"],
-                               watchlist_ok=user["watchlist_ok"], rules=user["rules"], earnings_cal=hub["earnings_cal"],
+                               watchlist_ok=user["watchlist_ok"], rules=user["rules"],
+                               rules_ok=user.get("rules_ok", True), earnings_cal=hub["earnings_cal"],
                                intrinsic=_intrinsic(m_df), changes=changes, stale=mk["stale"], portfolio_doc=doc)
 
 
@@ -123,12 +123,17 @@ def _chip(decision) -> str:
 def render(*, m_df, prices_full, companies_full, reco_df, earnings_cal, advice, macro):
     """The SIGNAL button and its panels (call inside the header column)."""
     hub = {"m_df": m_df, "companies_full": companies_full, "earnings_cal": earnings_cal, "prices_full": prices_full,
-           "market": _market(prices_full, reco_df, _version(prices_full)), "user": _user_data()}
+           "market": _market(prices_full, reco_df, _version(prices_full, reco_df)), "user": _user_data(),
+           "generation": _version(prices_full)[:2]}
     items = build_items(hub)
     n = feed.badge_count(items)
-    with st.popover(f"SIGNAL · {n}" if n else "SIGNAL", width="stretch",
-                    help="What needs your review (portfolio, watchlist, your rules) and what changed in the computed "
-                         "Decisions. Observations and events — not recommendations; the Decision is the only one."):
+    pop = st.popover(f"SIGNAL · {n}" if n else "SIGNAL", width="stretch", key="sig_popover", on_change="rerun",
+                     help="What needs your review (portfolio, watchlist, your rules) and what changed in the computed "
+                          "Decisions. Observations and events — not recommendations; the Decision is the only one.")
+    with pop:
+        if not pop.open:
+            # closed: only the badge above was computed — no panel, no detail query, no FX (review SIG-R03)
+            return
         panel = st.segmented_control("Panel", PANELS, default=PANELS[0], key="sig_panel",
                                      label_visibility="collapsed") or PANELS[0]
         if panel == PANELS[0]:
@@ -140,7 +145,7 @@ def render(*, m_df, prices_full, companies_full, reco_df, earnings_cal, advice, 
         elif panel == PANELS[3]:
             _earnings_panel(earnings_cal, companies_full, _decisions(m_df))
         elif panel == PANELS[4]:
-            _discovery_panel(companies_full)
+            _discovery_panel(companies_full, hub["generation"])
         else:
             _insider_panel()
 
@@ -152,7 +157,7 @@ def _needs_review(items, hub):
         return
     held, wl = len(user["holdings"] or {}), len((user["watchlist"] if user["watchlist"] is not None else []))
     st.caption(f"Your scope: {held} holding(s), {wl} watchlist idea(s), {len(user['rules'] or [])} rule(s). "
-               "Most urgent first.")
+               "Most urgent first; the badge counts ACT and REVIEW items, INFO is shown but not counted.")
     if not items:
         st.success("Nothing needs your review right now.")
         return
@@ -178,8 +183,8 @@ def _decision_changes(hub):
     only_mine = st.toggle("Only my names", value=False, key="sig_dc_mine")
     rows = [c for c in ch["changes"] if not only_mine or c["ticker"] in mine]
     st.caption(f"{ch['previous']} → {ch['as_of']}: {len(ch['changes'])} stance change(s).")
-    data = [c for c in rows if c["cause"] != "rules"]
-    rule = [c for c in rows if c["cause"] == "rules"]
+    data = [c for c in rows if c["cause"] != "rules"]           # incl. "rules+data": never hidden as methodology
+    rule = [c for c in rows if c["cause"] == "rules"]            # the version changed and nothing else visibly did
     if not data and not rule:
         st.success("No stance changed.")
     for c in data:
@@ -188,8 +193,8 @@ def _decision_changes(hub):
                     unsafe_allow_html=True)
     if rule:
         up = sum(c["direction"] == "up" for c in rule)
-        with st.expander(f"Rules / score version changed — {len(rule)} stance(s) re-rated ({up} up, {len(rule) - up} "
-                         "down). A methodology change, not news about the companies."):
+        with st.expander(f"Rules / score version changed, nothing else visible — {len(rule)} stance(s) re-rated "
+                         f"({up} up, {len(rule) - up} down). A methodology change, not news about the companies."):
             st.dataframe(pd.DataFrame([{"Ticker": c["ticker"], "From": c["from"], "To": c["to"]} for c in rule]),
                          hide_index=True, width="stretch")
 
@@ -248,9 +253,9 @@ def _earnings_panel(earnings_cal, companies_full, dec):
                     f"{money(r['rev_avg'], 1e9, 'B')}</span>", unsafe_allow_html=True)
 
 
-def _discovery_panel(companies_full):
+def _discovery_panel(companies_full, generation=None):
     from services.db import load_discovery
-    disc = load_discovery()
+    disc = load_discovery(generation)
     st.caption("Names the ETL's TradingView screens added to the universe (snapshot of the last ETL run; first seen = "
                "the date a screen first returned it).")
     if disc.empty:
@@ -270,6 +275,9 @@ def _discovery_panel(companies_full):
             st.error(f"TradingView unavailable ({type(e).__name__}) — the snapshot above is the latest result.")
             return
         in_db = set(companies_full["ticker"]) if not companies_full.empty else set()
+        failed = getattr(tv, "failed", [])
+        if failed:
+            st.warning(f"Partial scan — no answer from: {', '.join(failed)}. The names below are incomplete.")
         st.caption(f"Live scan at {pd.Timestamp.now():%H:%M} (cached 6 h): {len(tv)} name(s).")
         st.dataframe(pd.DataFrame([{"Ticker": t, "Company": m.get("name"), "Sector": m.get("sector"),
                                     "Screen": m.get("discovery_source"), "In universe": t in in_db}

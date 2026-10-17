@@ -600,8 +600,9 @@ def load_insider_transactions(ticker=None, tx_type=None, min_value_usd=0.0, days
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def load_decision_snapshots() -> pd.DataFrame:
-    """The two newest daily score snapshots (one row per ticker and date) — the SIGNAL hub's "Decision changed" feed."""
+def load_decision_snapshots(generation=None) -> pd.DataFrame:
+    """The two newest daily score snapshots (one row per ticker and date) — the SIGNAL hub's "Decision changed" feed.
+    `generation` (the price data's shape / newest date) re-reads them as soon as a new ETL run is loaded."""
     try:
         with get_db_connection(read_only=True) as conn:
             return conn.execute("""
@@ -615,7 +616,7 @@ def load_decision_snapshots() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=600, show_spinner=False)
-def load_discovery() -> pd.DataFrame:
+def load_discovery(generation=None) -> pd.DataFrame:
     """Names the ETL's TradingView screens added to the universe (raw.universe: source, first_seen, last_seen) — the
     SIGNAL hub shows this snapshot instead of scanning TradingView live on every page load. Empty when the table is not
     available (cloud snapshot without it)."""

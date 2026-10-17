@@ -191,7 +191,17 @@ def tv_to_yahoo_symbol(raw_ticker: str, suffix: str):
     return sym if _YAHOO_SYMBOL.match(sym) else None
 
 
+class Discovery(dict):
+    """{yahoo ticker: meta} of a TradingView scan, plus `failed`: the presets that did not answer (a partial scan)."""
+
+    def __init__(self, *args, failed=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.failed = list(failed or [])
+
+
 def fetch_dynamic_tv_tickers(base_tickers=None):
+    """TradingView screens → Discovery. Raises when EVERY preset failed (a failed scan is not "nothing found" — review
+    SIG-R04); a partial scan lists its failed presets in `.failed`. ETL callers keep the previous universe on error."""
     if base_tickers is None:
         base_tickers = {}
     
@@ -291,6 +301,7 @@ def fetch_dynamic_tv_tickers(base_tickers=None):
             seen_names.add(clean_name)
         
     url = "https://scanner.tradingview.com/global/scan"
+    failed = []
     
     for preset_name, preset_data in tv_presets.items():
         payload = {
@@ -305,7 +316,10 @@ def fetch_dynamic_tv_tickers(base_tickers=None):
         
         try:
             r = requests.post(url, json=payload, timeout=10)
+            r.raise_for_status()                              # 429 / 5xx is a failure, not an empty screen
             data = r.json()
+            if not isinstance(data, dict) or "data" not in data:
+                raise ValueError("response without a 'data' field")
             for d in (data.get('data') or []):
                 tv_symbol = d['s']
                 parts = tv_symbol.split(':')
@@ -349,10 +363,14 @@ def fetch_dynamic_tv_tickers(base_tickers=None):
                     "discovery_source": f"TV_{preset_name.upper()}"
                 }
         except Exception as e:
+            failed.append(f"{preset_name} ({type(e).__name__})")
             logger.warning(f"⚠️ Failed to fetch TV tickers for {preset_name}: {e}")
-            
-    logger.info(f"🔮 TV Auto-Discovery found {len(dynamic_tickers)} unique dynamic tickers globally.")
-    return dynamic_tickers
+
+    if len(failed) == len(tv_presets):
+        raise RuntimeError("TradingView discovery failed for every preset: " + ", ".join(failed))
+    logger.info(f"🔮 TV Auto-Discovery found {len(dynamic_tickers)} unique dynamic tickers globally"
+                + (f" (failed: {', '.join(failed)})" if failed else "") + ".")
+    return Discovery(dynamic_tickers, failed=failed)
 
 def get_combined_tickers():
     base_tickers = load_tickers_config()

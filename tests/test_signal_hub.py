@@ -152,10 +152,10 @@ def test_user_data_is_cached_per_user_and_forgotten_after_a_write(monkeypatch):
     monkeypatch.setattr(hub.st, "session_state", state)
     monkeypatch.setattr(user_store.st, "session_state", state)
     reads = []
-    monkeypatch.setattr(user_store, "read_portfolio_snapshot",
-                        lambda: reads.append(state["user_id"]) or ({f"{state['user_id']}_X": {"shares": 1}}, 0.0, {}))
-    monkeypatch.setattr(user_store, "load_watchlist", lambda: pd.DataFrame(columns=["Ticker"]))
-    monkeypatch.setattr("services.alerts.load_alert_rules", lambda: [])
+    monkeypatch.setattr(user_store, "read_portfolio_status",
+                        lambda: reads.append(state["user_id"]) or ({f"{state['user_id']}_X": {"shares": 1}}, 0.0, {}, True))
+    monkeypatch.setattr(user_store, "read_watchlist_status", lambda: (pd.DataFrame(columns=["Ticker"]), True))
+    monkeypatch.setattr("services.alerts.load_alert_rules_status", lambda: ([], None))
     assert list(hub._user_data()["holdings"]) == ["A_X"]
     assert list(hub._user_data()["holdings"]) == ["A_X"] and reads == ["A"]          # cached
     state["user_id"] = "B"
@@ -204,6 +204,7 @@ def test_the_default_panel_runs_no_discovery_insider_or_fx(warehouse, counters):
 def test_only_the_selected_panel_runs(warehouse, counters, panel, expect):
     at = _hub_app()
     at.session_state["sig_panel"] = panel
+    at.session_state["sig_popover"] = True
     at.run()
     assert not at.exception, [e.value for e in at.exception]
     assert counters == expect
@@ -246,3 +247,185 @@ def test_a_rules_re_rating_is_info_unless_a_holding_is_downgraded():
                                 changes=ch)
     sev = {i["ticker"]: i["severity"] for i in items}
     assert sev == {"UP": "info", "DOWN": "review"} and feed.badge_count(items) == 1
+
+
+
+# ── Codex review of dd75138 (SIG-R01 … SIG-R09) ─────────────────────────────────────────────────────────────────
+class _State(dict):
+    __getattr__ = dict.get
+
+
+def _failing_store(monkeypatch, tables=("stock_portfolio", "stock_watchlist", "stock_alerts")):
+    """Supabase whose given tables time out (the real readers run)."""
+    from services import auth
+
+    class _Q:
+        def __init__(self, name):
+            self.name = name
+
+        def __getattr__(self, _):
+            return lambda *a, **k: self
+
+        def execute(self):
+            if self.name in tables:
+                raise TimeoutError(f"{self.name} timeout")
+            return type("R", (), {"data": []})()
+
+    class _Client:
+        def table(self, name):
+            return _Q(name)
+    monkeypatch.setattr(auth, "local_dev_mode", lambda: False)
+    monkeypatch.setattr(auth, "get_supabase_client", lambda: _Client())
+
+
+@pytest.mark.parametrize("old_flag", [None, False, True])
+def test_sigr01_a_failed_portfolio_read_is_unreadable_whatever_the_old_flag(monkeypatch, old_flag):
+    import streamlit as st
+    from services.user_store import HUB_USER_CACHE
+    from ui import signal_hub as hub
+    state = _State(user_id="A", authenticated=True, portfolio_load_failed=old_flag)
+    monkeypatch.setattr(st, "session_state", state)
+    monkeypatch.setattr(st.sidebar, "error", lambda *a, **k: None)
+    _failing_store(monkeypatch, tables=("stock_portfolio",))
+    d = hub._user_data()
+    assert d["holdings_ok"] is False and state[HUB_USER_CACHE]["ttl"] == hub._RETRY_TTL_S
+    assert state["portfolio_load_failed"] is old_flag                          # the Portfolio page's guard is kept
+    items = feed.personal_items(decisions={}, latest=_latest(), holdings=d["holdings"], holdings_ok=d["holdings_ok"])
+    assert [i["kind"] for i in items] == ["PORTFOLIO UNREADABLE"]
+    _failing_store(monkeypatch, tables=())                                    # the store recovers
+    state.pop(HUB_USER_CACHE)
+    assert hub._user_data()["holdings_ok"] is True                           # an old True flag does not stick
+
+
+def test_sigr05_failed_rules_are_unreadable_and_retried(monkeypatch):
+    import streamlit as st
+    from services.user_store import HUB_USER_CACHE
+    from ui import signal_hub as hub
+    state = _State(user_id="A", authenticated=True)
+    monkeypatch.setattr(st, "session_state", state)
+    _failing_store(monkeypatch, tables=("stock_alerts",))
+    d = hub._user_data()
+    assert d["holdings_ok"] and d["watchlist_ok"] and d["rules_ok"] is False
+    assert state[HUB_USER_CACHE]["ttl"] == hub._RETRY_TTL_S
+    items = feed.personal_items(decisions={}, latest=_latest(), holdings={}, rules=[], rules_ok=d["rules_ok"])
+    assert [i["kind"] for i in items] == ["RULES UNREADABLE"] and feed.badge_count(items) == 1
+
+
+def test_sigr02_the_market_generation_follows_content_not_only_shape():
+    from ui import signal_hub as hub
+    p = _prices()
+    reco = pd.DataFrame({"ticker": ["US"], "score": [80], "rsi": [80.0], "ma_signal": ["BULLISH"]})
+    v = hub._version(p, reco)
+    rebased = p.assign(price_close=p["price_close"] * 0.99)                  # same rows, same last date
+    assert hub._version(rebased, reco) != v
+    assert hub._version(p, reco.assign(rsi=[50.0])) != v                     # a reco change alone
+    assert hub._version(p.copy(), reco.copy()) == v                          # same content: cache hit
+
+
+@pytest.mark.smoke
+def test_sigr03_a_closed_hub_runs_no_panel_even_with_a_panel_selected(warehouse, counters):
+    at = _hub_app()
+    at.session_state["sig_panel"] = "👥 Insider"
+    at.run()                                                                  # closed
+    assert not at.exception, [e.value for e in at.exception]
+    assert counters["insider"] == 0 and counters["fx"] == 0
+    at.session_state["sig_popover"] = True
+    at.run()                                                                  # opened
+    assert counters["insider"] == 1
+
+
+@pytest.mark.parametrize("outcome", ["timeout", "http500", "nodata"])
+def test_sigr04_a_scan_where_every_preset_failed_raises(monkeypatch, outcome):
+    import requests
+    from etl import extract
+
+    class _R:
+        status_code = 500 if outcome == "http500" else 200
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise requests.HTTPError("500")
+
+        def json(self):
+            return {"error": "x"} if outcome == "nodata" else {"data": []}
+
+    def post(*a, **k):
+        if outcome == "timeout":
+            raise requests.Timeout("tv")
+        return _R()
+    monkeypatch.setattr(requests, "post", post)
+    with pytest.raises(RuntimeError, match="every preset"):
+        extract.fetch_dynamic_tv_tickers({})
+
+
+def test_sigr04_a_partial_scan_names_its_failed_presets(monkeypatch):
+    import requests
+    from etl import extract
+    n = {"i": 0}
+
+    class _R:
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"data": []}
+
+    def post(*a, **k):
+        n["i"] += 1
+        if n["i"] == 1:
+            raise requests.Timeout("tv")
+        return _R()
+    monkeypatch.setattr(requests, "post", post)
+    out = extract.fetch_dynamic_tv_tickers({})
+    assert out == {} and len(out.failed) == 1 and "Timeout" in out.failed[0]
+
+
+def test_sigr06_every_visible_difference_is_listed_and_a_rules_change_hides_none():
+    old = _snap("2026-10-15", [("A", "BUY CANDIDATE", 100, "r1", {"base": 150, "reliable": True}),
+                               ("B", "HOLD / WATCH", 10, "r1", {"base": 15, "reliable": True})])
+    new = _snap("2026-10-16", [("A", "AVOID / TRIM", 200, "r2", {"base": 150, "reliable": True}),
+                               ("B", "BUY CANDIDATE", 10, "r1", {"base": 15, "reliable": True})])
+    out = feed.decision_changes(pd.concat([old, new]))
+    by = {c["ticker"]: c for c in out["changes"]}
+    assert by["A"]["cause"] == "rules+data" and by["A"]["causes"] == ["rules", "price"]
+    assert "possible causes" in by["A"]["detail"] and "price +100.0%" in by["A"]["detail"]
+    assert by["B"]["cause"] == "unknown" and "no difference visible" in by["B"]["detail"]
+    items = feed.personal_items(decisions={"A": "AVOID / TRIM"}, latest=_latest(), holdings={"A": {"shares": 1}},
+                                changes=out)
+    dc = next(i for i in items if i["kind"] == "DECISION CHANGED")
+    assert dc["severity"] == "action"                                       # not hidden as a methodology change
+
+
+def test_sigr07_independent_rules_and_breaches_are_all_kept():
+    latest = pd.DataFrame({"price_close": [90.0], "volume": [1.0], "rsi": [20.0], "daily_return_pct": [0.0]},
+                          index=pd.Index(["A"], name="ticker"))
+    rules = [{"id": 1, "ticker": "A", "metric": "Price", "condition": "below", "threshold": 100},
+             {"id": 2, "ticker": "A", "metric": "RSI", "condition": "below", "threshold": 30}]
+    items = feed.personal_items(decisions={}, latest=latest, holdings={"A": {"shares": 1}}, rules=rules + rules[:1],
+                                portfolio_doc={"policy_breaches": ["sector Tech 80% > 30%", "currency USD 90% > 50%"]})
+    assert sum(i["kind"] == "YOUR RULE" for i in items) == 2                 # the repeated rule 1 still once
+    assert sum(i["kind"] == "BUDGET BREACH" for i in items) == 2
+
+
+def test_sigr08_a_trigger_on_a_stale_close_says_so_and_is_not_an_action():
+    latest = pd.DataFrame({"date": [pd.Timestamp("2026-10-09")], "price_close": [90.0], "volume": [1.0],
+                           "rsi": [50.0], "daily_return_pct": [0.0]}, index=pd.Index(["IDEA"], name="ticker"))
+    wl = pd.DataFrame({"Ticker": ["IDEA"], "Status": ["ACTIVE"], "Invalidation Level": [95.0], "Entry Target": [None],
+                       "Take Profit": [None]})
+    items = feed.personal_items(decisions={}, latest=latest, holdings={}, watchlist=wl, stale={"IDEA"})
+    trig = next(i for i in items if i["kind"] == "THESIS INVALIDATED")
+    assert trig["severity"] == "review" and "2026-10-09" in trig["message"] and trig["data_as_of"] == date(2026, 10, 9)
+    assert any(i["kind"] == "STALE PRICE" and i["scope"] == "watchlist" for i in items)
+    fresh = feed.personal_items(decisions={}, latest=latest, holdings={}, watchlist=wl)
+    assert next(i for i in fresh if i["kind"] == "THESIS INVALIDATED")["severity"] == "action"
+
+
+def test_sigr09_the_chip_is_todays_decision_and_a_held_avoid_is_never_hidden():
+    ch = {"as_of": date(2026, 10, 16), "changes": [{"ticker": "A", "from": "HOLD / WATCH", "to": "BUY CANDIDATE",
+                                                     "direction": "up", "cause": "rules", "causes": ["rules"],
+                                                     "detail": "possible causes: rules / score version changed"}]}
+    items = feed.personal_items(decisions={"A": "AVOID / TRIM"}, latest=_latest(), holdings={"A": {"shares": 1}},
+                                changes=ch)
+    dc = next(i for i in items if i["kind"] == "DECISION CHANGED")
+    assert dc["decision"] == "AVOID / TRIM" and "today's Decision: AVOID / TRIM" in dc["message"]
+    assert any(i["kind"] == "HELD · AVOID" for i in items) and feed.badge_count(items) == 1

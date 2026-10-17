@@ -279,7 +279,7 @@ def test_the_decision_explanation_starts_from_the_computed_decision():
     doc = research.decision_document("ACME", d, {"model": "dcf", "reliable": True, "base": 50.0}, {"quality": 61})
     hits = research.search_methodology("why reward risk below threshold", doc, use_api=False)
     assert hits["chunk_id"].iloc[0] == "decision" and "reward/risk 1.4 below 2.0" in hits["text"].iloc[0]
-    assert len(hits) > 1 and hits["chunk_id"].iloc[1].startswith(("docs/", "config/"))
+    assert len(hits) > 1 and hits["chunk_id"].iloc[1].startswith(("decision_rules#", "docs/", "config/"))
 
 
 def test_the_lease_reader_parses_json_even_inside_prose():
@@ -329,10 +329,9 @@ def test_two_amounts_for_one_year_are_rejected():
 
 
 def test_the_decision_rules_reference_matches_the_configured_thresholds():
-    """docs/en/DECISION_RULES.md is what the methodology Q&A cites — it must state the thresholds actually in use."""
-    from pathlib import Path
+    """core/decision_reference.py is what the methodology Q&A cites — it must state the thresholds actually in use."""
     from core.decision import load_rules
-    doc = (Path(__file__).resolve().parent.parent / "docs" / "en" / "DECISION_RULES.md").read_text(encoding="utf-8")
+    from core.decision_reference import DECISION_RULES as doc
     r = load_rules()
     expect = {"required_margin_of_safety": f"MoS ≥ {r['valuation']['required_margin_of_safety']:.0%}",
               "min_reward_risk": f"reward/risk ≥ {r['risk']['min_reward_risk']:.1f}",
@@ -346,5 +345,5 @@ def test_the_decision_rules_reference_matches_the_configured_thresholds():
               "momentum_conflict_below": f"below {r['scores']['momentum_conflict_below']:g}",
               "earnings_blackout_days": f"within {r['risk']['earnings_blackout_days']} days"}
     missing = {k: v for k, v in expect.items() if v not in doc}
-    assert not missing, f"DECISION_RULES.md is out of date: {missing}"
+    assert not missing, f"core/decision_reference.py is out of date: {missing}"
     assert ("true" if r["evidence"]["require_validated_evidence_for_buy"] else "false") in doc.split("currently")[1][:12]

@@ -233,14 +233,16 @@ def search_filings(ticker: str, question: str, *, as_of=None, k: int = 8, cfg: O
     return retrieve(df, question, k=k, query_vec=qv, as_of=as_of, rerank=rr)
 
 
-_METHOD_FILES = ("docs/en/DECISION_RULES.md", "docs/en/ALGORITHMS.md", "docs/en/DATA_QUALITY.md", "docs/en/AI_INTELLIGENCE.md",
+_METHOD_FILES = ("docs/en/ALGORITHMS.md", "docs/en/DATA_QUALITY.md", "docs/en/AI_INTELLIGENCE.md",
                  "docs/ARCHITECTURE.md", "config/decision_rules.yaml", "config/scoring_rules.yaml")
 
 
 def methodology_passages(root: Path = ROOT) -> pd.DataFrame:
     """The documentation and the rule files as passages ([chunk_id, text, title])."""
-    rows = []
-    for rel in _METHOD_FILES:
+    from core.decision_reference import DECISION_RULES
+    rows = [{"chunk_id": f"decision_rules#{i}", "text": c, "title": "Decision rules (core/decision_reference.py)"}
+            for i, c in enumerate(chunk_text(DECISION_RULES, size=1200, overlap=150))]
+    for rel in _METHOD_FILES:                  # local documentation, when present (it is not in the repository)
         p = root / rel
         if not p.exists():
             continue

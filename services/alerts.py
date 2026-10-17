@@ -14,23 +14,29 @@ def _user_id():
     return st.session_state.get("user_id")
 
 
-def load_alert_rules() -> list:
+def load_alert_rules_status() -> tuple:
+    """(rules, error message or None). A failed read is not "no rules" (review SIG-R05)."""
     if auth.local_dev_mode():
         try:
-            return local_store.load_alerts()
+            return local_store.load_alerts(), None
         except local_store.LocalStoreError as e:
-            st.caption(f"⚠️ Alert rules unavailable: {e}")
-            return []
+            return [], f"Alert rules unavailable: {e}"
     uid = _user_id()
     if not uid:
-        return []
+        return [], None
     try:
         resp = auth.get_supabase_client().table(_TABLE).select("*").eq("user_id", uid) \
             .order("created_at").execute()
-        return resp.data or []
+        return resp.data or [], None
     except Exception as e:
-        st.caption(f"⚠️ Alert rules unavailable ({e}). Create the table with sql/supabase/stock_alerts.sql.")
-        return []
+        return [], f"Alert rules unavailable ({e}). Create the table with sql/supabase/stock_alerts.sql."
+
+
+def load_alert_rules() -> list:
+    rules, err = load_alert_rules_status()
+    if err:
+        st.caption(f"⚠️ {err}")
+    return rules
 
 
 @forget_hub_cache

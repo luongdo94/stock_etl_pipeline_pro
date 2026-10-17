@@ -35,10 +35,21 @@ def _valuation(inputs) -> dict:
         return {}
 
 
+def _inputs(raw) -> dict:
+    try:
+        return json.loads(raw) if isinstance(raw, str) else (raw or {})
+    except (TypeError, ValueError):
+        return {}
+
+
 def decision_changes(snaps: pd.DataFrame) -> dict:
     """snaps: the two newest snapshot dates [as_of_date, ticker, decision, price_close, rules_version, score_version,
-    inputs]. → {"as_of", "previous", "rules_changed", "rule_changes": n, "changes": [...]} — changes sorted with the
-    data-driven ones first. Each change: ticker, from, to, direction (up = toward BUY), cause, price_chg_pct, detail."""
+    inputs]. → {"as_of", "previous", "rules_changed", "rule_changes": n, "changes": [...]}.
+
+    Each change lists EVERY difference the snapshots show — rules / score version, valuation (base, reliable), price,
+    flags / scores — as POSSIBLE causes (review SIG-R06: a single cause picked by priority hid a price move that came
+    with a rules change, and claimed causes it had not checked). `cause` is "rules" only when the version changed and
+    nothing else did (a pure methodology re-rating, grouped in the hub); "unknown" when no difference is visible."""
     out = {"as_of": None, "previous": None, "rules_changed": False, "rule_changes": 0, "changes": []}
     if snaps is None or snaps.empty:
         return out
@@ -47,37 +58,43 @@ def decision_changes(snaps: pd.DataFrame) -> dict:
         out["as_of"] = days[-1] if days else None
         return out
     d0, d1 = days[-2], days[-1]
-    s = snaps.assign(_d=pd.to_datetime(snaps["as_of_date"]).dt.date)
-    a, b = s[s["_d"] == d0].set_index("ticker"), s[s["_d"] == d1].set_index("ticker")
+    s_ = snaps.assign(_d=pd.to_datetime(snaps["as_of_date"]).dt.date)
+    a, b = s_[s_["_d"] == d0].set_index("ticker"), s_[s_["_d"] == d1].set_index("ticker")
     out.update(as_of=d1, previous=d0)
     for t in b.index.intersection(a.index):
         old, new = a.loc[t], b.loc[t]
         if old["decision"] == new["decision"]:
             continue
-        rules = (old.get("rules_version") != new.get("rules_version")) or (old.get("score_version") != new.get("score_version"))
+        i0, i1 = _inputs(old.get("inputs")), _inputs(new.get("inputs"))
+        v0, v1 = i0.get("valuation") or {}, i1.get("valuation") or {}
+        diffs = []
+        if (old.get("rules_version") != new.get("rules_version")) or (old.get("score_version") != new.get("score_version")):
+            diffs.append(("rules", "rules / score version changed"))
+        if v0.get("reliable") != v1.get("reliable"):
+            diffs.append(("valuation", "valuation became " + ("reliable" if v1.get("reliable") else "not reliable")))
+        elif _moved(v0.get("base"), v1.get("base"), 0.01):
+            diffs.append(("valuation", f"base value {_fmt(v0.get('base'))} → {_fmt(v1.get('base'))}"))
         try:
             px = (float(new["price_close"]) / float(old["price_close"]) - 1) * 100
         except (TypeError, ValueError, ZeroDivisionError):
             px = None
-        v0, v1 = _valuation(old.get("inputs")), _valuation(new.get("inputs"))
-        val_changed = (v0.get("reliable") != v1.get("reliable")) or _moved(v0.get("base"), v1.get("base"), 0.01)
-        if rules:
-            cause, detail = "rules", "rules / score version changed"
-        elif val_changed:
-            cause = "valuation"
-            detail = ("valuation became " + ("reliable" if v1.get("reliable") else "not reliable")
-                      if v0.get("reliable") != v1.get("reliable") else
-                      f"base value {_fmt(v0.get('base'))} → {_fmt(v1.get('base'))}")
-        elif px is not None and abs(px) >= 0.5:
-            cause, detail = "price", f"price {px:+.1f}%"
-        else:
-            cause, detail = "data", "scores / flags changed"
+        if px is not None and abs(px) >= 0.05:
+            diffs.append(("price", f"price {px:+.1f}%"))
+        if (i0.get("flags") or "") != (i1.get("flags") or ""):
+            diffs.append(("data", "flags changed"))
+        if (i0.get("components") or {}) != (i1.get("components") or {}) or (i0.get("missing") or "") != (i1.get("missing") or ""):
+            diffs.append(("data", "score inputs changed"))
+        kinds = [k for k, _ in diffs]
+        cause = ("rules" if kinds == ["rules"] else "unknown" if not kinds else
+                 "rules+data" if "rules" in kinds else kinds[0])
         up = STANCE_RANK.get(new["decision"], 3) < STANCE_RANK.get(old["decision"], 3)
         out["changes"].append({"ticker": t, "from": old["decision"], "to": new["decision"],
-                               "direction": "up" if up else "down", "cause": cause, "price_chg_pct": px,
-                               "detail": detail})
+                               "direction": "up" if up else "down", "cause": cause, "causes": kinds,
+                               "price_chg_pct": px,
+                               "detail": "possible causes: " + "; ".join(d for _, d in diffs) if diffs
+                               else "no difference visible in the snapshot inputs"})
     out["rule_changes"] = sum(c["cause"] == "rules" for c in out["changes"])
-    out["rules_changed"] = out["rule_changes"] > 0
+    out["rules_changed"] = any("rules" in c["causes"] for c in out["changes"])
     out["changes"].sort(key=lambda c: (c["cause"] == "rules", c["direction"] != "up", c["ticker"]))
     return out
 
@@ -97,14 +114,16 @@ def _fmt(x) -> str:
         return "n/a"
 
 
-def _item(ticker, kind, severity, message, scope, decision=None, source="", data_as_of=None) -> dict:
-    return {"id": f"{scope}:{kind}:{ticker}", "ticker": ticker, "kind": kind, "severity": severity, "message": message,
-            "scope": scope, "decision": decision, "source": source, "data_as_of": data_as_of}
+def _item(ticker, kind, severity, message, scope, decision=None, source="", data_as_of=None, key="") -> dict:
+    """`key` tells apart independent items of one kind on one ticker (two rules, two budget breaches — review
+    SIG-R07); a repeated identical item is still deduplicated."""
+    return {"id": f"{scope}:{kind}:{ticker}:{key}", "ticker": ticker, "kind": kind, "severity": severity,
+            "message": message, "scope": scope, "decision": decision, "source": source, "data_as_of": data_as_of}
 
 
 def personal_items(*, decisions: dict, latest: pd.DataFrame, holdings: Optional[dict], holdings_ok: bool = True,
                    stops: Optional[dict] = None, watchlist: Optional[pd.DataFrame] = None, watchlist_ok: bool = True,
-                   rules: Optional[list] = None, earnings_cal: Optional[pd.DataFrame] = None,
+                   rules: Optional[list] = None, rules_ok: bool = True, earnings_cal: Optional[pd.DataFrame] = None,
                    intrinsic: Optional[dict] = None, changes: Optional[dict] = None, stale: Optional[set] = None,
                    portfolio_doc: Optional[dict] = None, today: Optional[date] = None, earnings_days: int = 7) -> list:
     """Everything that needs this user's review, most urgent first, one item per (scope, kind, ticker).
@@ -115,6 +134,19 @@ def personal_items(*, decisions: dict, latest: pd.DataFrame, holdings: Optional[
     wl = watchlist if watchlist is not None else pd.DataFrame(columns=["Ticker"])
     watched = [t for t in wl.get("Ticker", pd.Series(dtype=str)).dropna().astype(str) if t not in held]
     as_of = (changes or {}).get("as_of")
+    stale = stale or set()
+
+    def bar_date(t):
+        if "date" in getattr(latest, "columns", []) and t in latest.index:
+            d = latest.at[t, "date"]
+            return None if pd.isna(d) else pd.Timestamp(d).date()
+        return None
+
+    def on_price(t, sev, msg):
+        """A trigger evaluated on a stale close says so and is at most "review" (review SIG-R08)."""
+        if t in stale:
+            return ("review" if sev == "action" else sev), f"[price of {bar_date(t) or 'unknown date'} — stale] {msg}"
+        return sev, msg
     items = []
     if not holdings_ok:
         items.append(_item("—", "PORTFOLIO UNREADABLE", "review", "Your portfolio could not be read — its alerts below are "
@@ -122,18 +154,25 @@ def personal_items(*, decisions: dict, latest: pd.DataFrame, holdings: Optional[
     if not watchlist_ok:
         items.append(_item("—", "WATCHLIST UNREADABLE", "review", "Your watchlist could not be read — its alerts are "
                            "incomplete.", "watchlist", source="watchlist store"))
+    if not rules_ok:
+        items.append(_item("—", "RULES UNREADABLE", "review", "Your alert rules could not be read — rule alerts are "
+                           "missing (unknown, not none).", "portfolio", source="alert rules store"))
     for a in al.position_stop_triggers(stops or {}, latest):
-        if a["ticker"] in held:
-            items.append(_item(a["ticker"], "STOP HIT", "action", a["message"], "portfolio", decisions.get(a["ticker"]),
-                               "original stop (Portfolio)"))
+        t = a["ticker"]
+        if t in held:
+            sev, msg = on_price(t, "action", a["message"])
+            items.append(_item(t, "STOP HIT", sev, msg, "portfolio", decisions.get(t), "original stop (Portfolio)",
+                               bar_date(t)))
     for a in al.watchlist_triggers(wl, latest, intrinsic or {}):
-        sev = "action" if a["kind"] == "THESIS INVALIDATED" else "review"
-        items.append(_item(a["ticker"], a["kind"], sev, a["message"], "watchlist", decisions.get(a["ticker"]),
-                           "watchlist plan levels"))
+        t = a["ticker"]
+        sev, msg = on_price(t, "action" if a["kind"] == "THESIS INVALIDATED" else "review", a["message"])
+        items.append(_item(t, a["kind"], sev, msg, "watchlist", decisions.get(t), "watchlist plan levels", bar_date(t)))
     for a in al.evaluate_rules(rules or [], latest):
-        scope = "portfolio" if a["ticker"] in held else "watchlist"
-        items.append(_item(a["ticker"], "YOUR RULE", "review", a["message"], scope, decisions.get(a["ticker"]),
-                           "your alert rule"))
+        t, r = a["ticker"], a.get("rule") or {}
+        scope = "portfolio" if t in held else "watchlist"
+        sev, msg = on_price(t, "review", a["message"])
+        items.append(_item(t, "YOUR RULE", sev, msg, scope, decisions.get(t), "your alert rule", bar_date(t),
+                           key=str(r.get("id") or f"{r.get('metric')}|{r.get('condition')}|{r.get('threshold')}")))
     for scope, names in (("portfolio", held), ("watchlist", watched)):
         for a in al.earnings_soon(earnings_cal, names, today=today, days=earnings_days):
             items.append(_item(a["ticker"], "EARNINGS SOON", "review", a["message"], scope, decisions.get(a["ticker"]),
@@ -145,26 +184,32 @@ def personal_items(*, decisions: dict, latest: pd.DataFrame, holdings: Optional[
             if c:
                 worse_for_holder = scope == "portfolio" and c["direction"] == "down"
                 if c["cause"] == "rules":
-                    # a methodology change, not news about the company: shown, counted only when a holding is downgraded
-                    sev, why = ("review" if worse_for_holder else "info"), "rules / score version changed"
+                    # a pure methodology change, not news about the company: counted only when a holding is downgraded
+                    sev = "review" if worse_for_holder else "info"
                 else:
-                    sev, why = ("action" if worse_for_holder else "review"), c["detail"]
-                items.append(_item(t, "DECISION CHANGED", sev, f"{t}: {c['from']} → {c['to']} ({why})", scope, c["to"],
-                                   "daily score snapshot", as_of))
-            elif scope == "portfolio" and decisions.get(t) == "AVOID / TRIM":
+                    sev = "action" if worse_for_holder else "review"
+                now = decisions.get(t)
+                note = "" if now in (None, c["to"]) else f" — today's Decision: {now}"
+                # the chip is TODAY's Decision; the snapshot change is history and says so (review SIG-R09)
+                items.append(_item(t, "DECISION CHANGED", sev,
+                                   f"{t}: {c['from']} → {c['to']} in the snapshot of {as_of} ({c['detail']}){note}",
+                                   scope, now, "daily score snapshot", as_of))
+            if scope == "portfolio" and decisions.get(t) == "AVOID / TRIM":
                 items.append(_item(t, "HELD · AVOID", "review", f"{t} is held and the computed Decision reads AVOID / "
                                    "TRIM (price above the bull-case value).", scope, decisions.get(t), "Decision"))
-    for t in held:
-        if t in (stale or set()):
-            items.append(_item(t, "STALE PRICE", "review", f"{t}: no recent close — its value, stop and weight use an "
-                               "old price.", "portfolio", decisions.get(t), "prices"))
+    for scope, names in (("portfolio", held), ("watchlist", watched)):
+        for t in names:
+            if t in stale:
+                items.append(_item(t, "STALE PRICE", "review", f"{t}: last close {bar_date(t) or 'unknown'} — its "
+                                   "alerts, value and weight use an old price.", scope, decisions.get(t), "prices",
+                                   bar_date(t)))
     doc = portfolio_doc or {}
     if doc.get("nav_status"):
         items.append(_item("—", "NAV UNKNOWN", "review", f"Portfolio NAV {doc['nav_status']} — weights and budgets "
                            "cannot be checked.", "portfolio", source="portfolio"))
     for b in doc.get("policy_breaches") or []:
         items.append(_item("—", "BUDGET BREACH", "review", f"Portfolio budget exceeded: {b}.", "portfolio",
-                           source="decision_rules.yaml → portfolio"))
+                           source="decision_rules.yaml → portfolio", key=str(b)))
     seen, out = set(), []
     for it in items:
         if it["id"] not in seen:

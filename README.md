@@ -2,7 +2,7 @@
 
 **A professional-grade, institutional-level stock analytics, diagnostic, and backtesting engine.**
 
-Honest Quant is a research and screening tool: Quality / Value / Momentum scores, an FCFE DCF (justified P/B for financials) and one rule-based Decision per stock. It does not forecast prices with deep learning (those models were tested, failed a walk-forward test and were removed). An independent audit of the methodology and the fixes applied is in `audit/`. Designed for advanced traders and portfolio managers, the platform transforms raw market data into institutional-grade, actionable execution plans.
+Honest Quant is a research and screening tool: Quality / Value / Momentum scores, an FCFE DCF (justified P/B for financials) and one rule-based Decision per stock. It does not forecast prices with deep learning (those models were tested, failed a walk-forward test and were removed). Designed for advanced traders and portfolio managers, the platform transforms raw market data into institutional-grade, actionable execution plans.
 
 ---
 
@@ -291,8 +291,6 @@ stock_etl_pipeline/
 │   └── tools/             # one-off CLIs: insider data, TradingView discovery, ML walk-forward study
 ├── sql/supabase/          # tables / functions to create once in Supabase (user rows, alerts, trade ledger)
 ├── infra/terraform/       # cloud storage for the published warehouse snapshots
-├── docs/                  # guides (en / vi / de), data dictionary, setup/; archive/ = historical status notes
-├── audit/                 # reports/ (independent audits), reviews/ (review inputs), fixes/ (what was fixed), repro/
 ├── warehouse/             # local DuckDB files (git-ignored)
 │
 ├── requirements.txt       # direct dependencies · requirements.lock = exact tested versions (CI, Docker)
@@ -722,10 +720,8 @@ print(f"Latest data: {latest[0]}, Tickers: {latest[1]}")
 
 ### Getting Help
 
-1. **Check Documentation**
-   - API Reference: `docs/en/API.md`
-   - Architecture: `docs/en/ETL_ARCHITECTURE.md`
-   - Testing Guide: `docs/en/TESTING.md`
+1. **Methodology** — the app's 📖 Docs tab (and its *Ask the methodology* box); the BUY gates and valuation
+   reliability rules are in `core/decision_reference.py`, the thresholds in `config/decision_rules.yaml`.
 
 2. **Review Test Files**
    - Examples: `tests/test_*.py`

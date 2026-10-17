@@ -200,6 +200,35 @@ def read_portfolio_snapshot() -> tuple:
         st.session_state["portfolio_load_failed"] = flag
 
 
+def read_portfolio_status() -> tuple:
+    """(holdings, cash EUR, original stops, ok) — `ok` is the outcome of THIS read (review SIG-R01: the snapshot helper
+    restores the page's flag, so the flag after it says nothing about this read). The Portfolio page's flag is kept."""
+    flag = st.session_state.get("portfolio_load_failed")
+    st.session_state["portfolio_load_failed"] = False
+    try:
+        raw = _load_portfolio_raw()
+        ok = not st.session_state.get("portfolio_load_failed")
+    except Exception:
+        raw, ok = {}, False
+    finally:
+        st.session_state["portfolio_load_failed"] = flag
+    holdings, cash, stops = split_reserved(raw)
+    return holdings, cash, stops, ok
+
+
+def read_watchlist_status() -> tuple:
+    """(watchlist frame, ok) of THIS read; the Watchlist page's save guard flag is kept."""
+    flag = st.session_state.get("watchlist_load_failed")
+    try:
+        df = load_watchlist()
+        ok = not st.session_state.get("watchlist_load_failed")
+    except Exception:
+        df, ok = None, False
+    finally:
+        st.session_state["watchlist_load_failed"] = flag
+    return df, ok
+
+
 def load_portfolio_from_db():
     """Holdings only (cash excluded) — for callers that value positions, e.g. candidate_impact."""
     return split_cash(_load_portfolio_raw())[0]
