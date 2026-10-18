@@ -3268,3 +3268,32 @@ sector_overrides:
   MCK: Healthcare Distribution
   CAH: Healthcare Distribution
   HSIC: Healthcare Distribution
+  300502.SZ: Networking          # optical modules, not a producer of materials
+
+# One sector name per kind of business (applied to every ticker, configured or discovered, after the overrides above).
+# The name decides the peer group and the scoring treatment (config/scoring_rules.yaml sector_groups), so the targets are
+# names that group already lists: financial -> Capital Markets, leveraged_ok -> Telecom / Regulated Utilities,
+# cyclical -> Oil & Gas / Basic Materials.
+sector_aliases:
+  Financials: Capital Markets
+  Financial Services: Capital Markets
+  Finance: Capital Markets
+  Retail Trade: Retail
+  Consumer Retail: Retail
+  Communications: Telecom
+  Utilities: Regulated Utilities
+  Technology: Electronic Technology
+  Technology Services: Platform Software
+  Social Media: Platform Software
+  Industrial Services: Construction & Engineering
+  Health Technology: Biotech
+  Digital Advertising: Media & Entertainment
+  Consumer Services: Media & Entertainment
+  Distribution Services: Media & Entertainment
+  Process Industries: Food & Beverage
+  Consumer Non-Durables: Food & Beverage
+  Producer Manufacturing: Basic Materials
+  Design Software: SaaS
+  Non-Energy Minerals: Basic Materials
+  Energy Minerals: Oil & Gas
+  Data Storage: Enterprise Hardware

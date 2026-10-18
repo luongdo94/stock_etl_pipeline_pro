@@ -176,6 +176,19 @@ def load_sector_overrides() -> dict:
         return {}
 
 
+def load_sector_aliases() -> dict:
+    """{old sector name: canonical name} from tickers.yaml `sector_aliases:` - one name per kind of business, applied to
+    configured AND discovered tickers (a screen invents its own labels)."""
+    config_path = Path(__file__).parent.parent / "config" / "tickers.yaml"
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            raw = (yaml.safe_load(f) or {}).get("sector_aliases") or {}
+        return {str(k): str(v) for k, v in raw.items() if v and str(k) != str(v)}
+    except Exception as e:
+        logger.warning(f"⚠️ sector_aliases not read: {e}")
+        return {}
+
+
 # --- TRADINGVIEW AUTO-DISCOVERY ---
 _YAHOO_SYMBOL = __import__("re").compile(r"^[A-Z0-9][A-Z0-9\-&]*(\.[A-Z]{1,3})?$")
 

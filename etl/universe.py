@@ -56,12 +56,14 @@ def _seed_legacy(conn, base: dict, today: date) -> None:
 
 def resolve_universe(conn: duckdb.DuckDBPyConnection, base: Optional[dict] = None,
                      fetch: Optional[Callable] = None, retention_days: int = 30,
-                     today: Optional[date] = None, delisted=None, sector_overrides: Optional[dict] = None) -> dict:
+                     today: Optional[date] = None, delisted=None, sector_overrides: Optional[dict] = None,
+                     sector_aliases: Optional[dict] = None) -> dict:
     """Return {ticker: meta} for this run and record it in raw.universe.
 
     source = CONFIG (tickers.yaml) / TV_* (discovered) / REMOVED (no longer in tickers.yaml: expires like a discovered
     ticker) / DELISTED (tickers.yaml `delisted:` — never fetched, never garbage-collected, history kept)."""
-    from etl.extract import fetch_dynamic_tv_tickers, load_sector_overrides, load_tickers_config
+    from etl.extract import (fetch_dynamic_tv_tickers, load_sector_aliases, load_sector_overrides,
+                             load_tickers_config)
 
     today = today or date.today()
     base = load_tickers_config() if base is None else base
@@ -118,20 +120,36 @@ def resolve_universe(conn: duckdb.DuckDBPyConnection, base: Optional[dict] = Non
         universe[ticker] = {**meta, **universe.get(ticker, {}), "name": meta.get("name"),
                             "sector": meta.get("sector"), "region": meta.get("region")}
     overrides = sector_overrides if sector_overrides is not None else load_sector_overrides()
+    aliases = sector_aliases if sector_aliases is not None else load_sector_aliases()
     for ticker, sector in overrides.items():
         if ticker in universe:
             universe[ticker]["sector"] = sector
             conn.execute("UPDATE raw.universe SET sector = ? WHERE ticker = ?", [sector, ticker])
+    for ticker, meta in universe.items():                  # one name per kind of business (after the per-ticker overrides)
+        if meta.get("sector") in aliases:
+            meta["sector"] = aliases[meta["sector"]]
+    for old, new in aliases.items():
+        conn.execute("UPDATE raw.universe SET sector = ? WHERE sector = ?", [new, old])
     logger.info(f"   🌐 Universe: {len(base)} configured + {len(universe) - len(base)} discovered = {len(universe)} tickers")
     return universe
 
 
-def sync_company_sectors(conn: duckdb.DuckDBPyConnection, overrides: Optional[dict] = None) -> int:
+def sync_company_sectors(conn: duckdb.DuckDBPyConnection, overrides: Optional[dict] = None,
+                         aliases: Optional[dict] = None) -> int:
     """Write the sector corrections into raw.company_info too (an incremental run does not reload it). Returns the
     number of rows changed."""
-    from etl.extract import load_sector_overrides
+    from etl.extract import load_sector_aliases, load_sector_overrides
     overrides = load_sector_overrides() if overrides is None else overrides
+    aliases = load_sector_aliases() if aliases is None else aliases
     changed = 0
+    for old, new in aliases.items():
+        try:
+            n = conn.execute("SELECT COUNT(*) FROM raw.company_info WHERE sector = ?", [old]).fetchone()[0]
+            if n:
+                conn.execute("UPDATE raw.company_info SET sector = ? WHERE sector = ?", [new, old])
+                changed += n
+        except duckdb.Error:
+            return changed
     for ticker, sector in overrides.items():
         try:
             n = conn.execute("SELECT COUNT(*) FROM raw.company_info WHERE ticker = ? AND sector IS DISTINCT FROM ?",

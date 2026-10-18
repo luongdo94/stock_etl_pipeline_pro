@@ -178,3 +178,39 @@ def test_sector_overrides_in_the_config_name_real_sectors_and_move_banks_to_the_
     financial = set(groups["financial"])
     assert all(ov[t].lower() in financial for t in ("3328.HK", "NU", "SDF.AX", "LMND"))
     assert all(ov[t].lower() not in financial for t in ("GPN", "FIS", "JKHY", "CPAY", "XYZ"))
+
+
+def test_sector_aliases_rename_every_ticker_and_company_info():
+    import duckdb
+    from etl import universe as uni
+    conn = duckdb.connect(":memory:")
+    base = {"AAA": {"name": "A", "sector": "Financials", "region": "US"}}
+    got = uni.resolve_universe(conn, base=base, fetch=lambda b: {"BBB": {"name": "B", "sector": "Retail Trade",
+                                                                         "region": "UK", "discovery_source": "TV"}},
+                               sector_overrides={"BBB": "Communications"},
+                               sector_aliases={"Financials": "Capital Markets", "Communications": "Telecom"})
+    assert got["AAA"]["sector"] == "Capital Markets" and got["BBB"]["sector"] == "Telecom"   # override first, then alias
+    assert dict(conn.execute("SELECT ticker, sector FROM raw.universe").fetchall()) == {"AAA": "Capital Markets", "BBB": "Telecom"}
+    conn.execute("CREATE TABLE raw.company_info (ticker VARCHAR, sector VARCHAR)")
+    conn.execute("INSERT INTO raw.company_info VALUES ('AAA','Financials'), ('CCC','Utilities'), ('DDD','Banks')")
+    assert uni.sync_company_sectors(conn, {}, {"Financials": "Capital Markets", "Utilities": "Regulated Utilities"}) == 2
+    assert dict(conn.execute("SELECT ticker, sector FROM raw.company_info").fetchall()) == {
+        "AAA": "Capital Markets", "CCC": "Regulated Utilities", "DDD": "Banks"}
+
+
+def test_sector_aliases_keep_or_add_the_scoring_treatment_never_lose_it():
+    import yaml
+    from pathlib import Path
+    root = Path(__file__).resolve().parent.parent
+    cfg = yaml.safe_load((root / "config" / "tickers.yaml").read_text(encoding="utf-8"))
+    groups = yaml.safe_load((root / "config" / "scoring_rules.yaml").read_text(encoding="utf-8"))["sector_groups"]
+    al, sectors = cfg["sector_aliases"], {m["sector"] for m in cfg["tickers"].values()} | set(cfg["sector_overrides"].values())
+    assert not set(al) & set(al.values())                                # no chains: a target is never itself renamed
+    assert set(al.values()) <= sectors | {"Platform Software", "Electronic Technology", "Capital Markets"}   # (+ names only discovered tickers carry)
+    low = lambda s: s.lower()                                            # noqa: E731
+    for old, new in al.items():
+        for name, members in groups.items():
+            if low(old) in members:
+                assert low(new) in members, f"{old} -> {new} would lose the '{name}' treatment"
+    # the two deliberate gains: telecoms get the relaxed leverage bands, energy/mining names the cyclical normalisation
+    assert low(al["Communications"]) in groups["leveraged_ok"] and low(al["Energy Minerals"]) in groups["cyclical"]
