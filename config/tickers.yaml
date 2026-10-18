@@ -963,6 +963,25 @@ tickers:
     name: US 10-Year Treasury Yield
     sector: Benchmark
     region: US
+  # Market-context series (not investable, sector Benchmark → excluded from the screener and the equity jobs): the regime
+  # reads the dollar move, the macro panel the 3-month bill, oil and gold. Stored with the snapshot, so a page needs no
+  # provider request for them (services.market_data.stored_macro).
+  DX-Y.NYB:
+    name: US Dollar Index
+    sector: Benchmark
+    region: US
+  ^IRX:
+    name: US 13-Week Treasury Bill Yield
+    sector: Benchmark
+    region: US
+  CL=F:
+    name: Crude Oil WTI Futures
+    sector: Benchmark
+    region: US
+  GC=F:
+    name: Gold Futures
+    sector: Benchmark
+    region: US
   ABBV:
     name: AbbVie
     sector: Pharma

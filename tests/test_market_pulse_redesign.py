@@ -79,3 +79,91 @@ def test_the_header_and_the_page_show_the_same_regime(warehouse):
     html = " ".join(m.value for m in at.markdown)
     label = next(r for _, r, _, _ in mr.REGIMES if r in html)
     assert html.count(label) >= 2                           # header chip and the answer block, one result
+
+
+# ── what is left of the Overview plan ────────────────────────────────────────────────────────────────────────────────
+def _items():
+    return [{"id": "a", "ticker": "AAPL", "kind": "stop", "severity": "action", "message": "Price crossed your stop",
+             "scope": "portfolio", "decision": None, "source": "x", "data_as_of": None},
+            {"id": "b", "ticker": "—", "kind": "store", "severity": "info", "message": "FYI", "scope": "market",
+             "decision": None, "source": "x", "data_as_of": None}]
+
+
+@pytest.mark.smoke
+def test_the_page_shows_the_first_items_of_signal_not_a_second_feed(warehouse, monkeypatch):
+    from ui import signal_hub
+    monkeypatch.setattr(signal_hub, "build_items", lambda hub: _items())
+    at = _app("🌐 Market Pulse")
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    html = " ".join(m.value for m in at.markdown)
+    assert "For you:" in html and "1 item(s) need review" in html                   # the badge number: ACT + REVIEW only
+    assert "Price crossed your stop" in html and "<b>ACT</b>" in html and "FYI" in html
+    assert at.session_state["_sig_preview"]["n"] == 1 and at.session_state["_sig_preview"]["total"] == 2
+
+
+@pytest.mark.smoke
+def test_an_empty_review_is_said_and_an_unreadable_store_is_not_an_empty_review(warehouse, monkeypatch):
+    at = _app("🌐 Market Pulse")
+    at.run()
+    assert any("Nothing in your holdings or watchlist needs your review" in s.value for s in at.success)
+    st_user = at.session_state["_sig_user"]
+    st_user["data"] = {**st_user["data"], "holdings_ok": False}                       # the store could not be read
+    at.run()
+    assert not any("Nothing in your holdings" in s.value for s in at.success)
+    assert any("could not be read" in w.value for w in at.warning)
+
+
+@pytest.mark.smoke
+def test_a_preview_of_another_user_or_snapshot_is_not_shown(warehouse):
+    at = _app("🌐 Market Pulse")
+    at.run()
+    at.session_state["_sig_preview"] = {**at.session_state["_sig_preview"], "uid": "someone-else", "n": 9, "top": []}
+    from views import market_pulse
+    # the next run publishes a fresh preview for this user first: the stale one never reaches the page
+    at.run()
+    assert at.session_state["_sig_preview"]["uid"] == at.session_state["user_id"]
+
+
+def test_the_four_market_context_series_are_in_the_universe_config_and_out_of_the_stock_universe():
+    import yaml
+    cfg = yaml.safe_load(open(os.path.join(os.path.dirname(__file__), "..", "config", "tickers.yaml"), encoding="utf-8"))
+    ctx_series = ("DX-Y.NYB", "^IRX", "CL=F", "GC=F")
+    for t in ctx_series:
+        assert cfg["tickers"][t]["sector"] == "Benchmark"
+        assert t in mr.INDICES
+    from etl.extract import get_equity_tickers
+    assert not set(ctx_series) & set(get_equity_tickers(cfg["tickers"]))             # no company data / earnings requests
+    from services.market_data import _MACRO_TICKERS
+    from etl.supabase_manager import MACRO_TICKERS
+    assert {t for t, _ in _MACRO_TICKERS} == set(MACRO_TICKERS)                      # what is stored = what is published = read
+
+
+def test_a_snapshot_a_reader_holds_is_not_pruned_until_it_lets_go(tmp_path, monkeypatch):
+    import json
+    from services import db
+    cache = tmp_path / "parquet"
+    for i, v in enumerate(("v1", "v2", "v3", "v4"), start=1):
+        (cache / v).mkdir(parents=True)
+        (cache / v / "t.parquet").write_bytes(b"x")
+        os.utime(cache / v, (1_000_000 + i, 1_000_000 + i))
+    m = {"version": "v4", "prefix": "snapshots/v4", "tables": {"marts.dim_companies": ["t.parquet"]}}
+    (cache / "manifest.json").write_text(json.dumps(m), encoding="utf-8")
+    monkeypatch.setattr(db, "_CACHE_DIR", cache)
+    monkeypatch.setattr(db, "_MANIFEST_PATH", cache / "manifest.json")
+
+    class _Client:
+        storage = property(lambda self: self)
+
+        def from_(self, b):
+            return self
+
+        def download(self, name):
+            return json.dumps(m).encode()
+    monkeypatch.setattr(db, "_supabase_bucket", lambda: (_Client(), "bucket"))
+    with db._lease("v1"):                                      # a query still running on the oldest snapshot
+        assert db._ensure_local_cache()
+        assert sorted(d.name for d in cache.iterdir() if d.is_dir()) == ["v1", "v3", "v4"]      # v2 pruned, v1 held
+    assert db._ensure_local_cache()
+    assert sorted(d.name for d in cache.iterdir() if d.is_dir()) == ["v3", "v4"]               # released → pruned next time
+    assert db._leased() == set()

@@ -141,9 +141,34 @@ def _answer(ctx):
     cols = st.columns(len(_NEXT_STEPS))
     for col, (label, tab, tip) in zip(cols, _NEXT_STEPS):
         col.button(label, key=f"mp_go_{tab}", help=tip, width="stretch", on_click=_go, args=(tab,))
+    _your_review()
     st.caption("Context for your research, not an instruction: the regime does not change any stock's Decision. The charts "
                f"below follow the sidebar range ({ctx['t_start']:%d %b %Y} → {ctx['t_end']:%d %b %Y}); the regime above "
                "always uses the latest data.")
+
+
+def _your_review():
+    """The first lines of what SIGNAL has for you (same items, same badge) — or that it has not been loaded for you."""
+    from services.db import _expected
+    prev = st.session_state.get("_sig_preview")
+    if not st.session_state.get("user_id"):
+        st.caption("Sign in to see what needs your review (holdings, watchlist, your rules).")
+        return
+    if not prev or prev.get("uid") != st.session_state.get("user_id") or prev.get("version") != _expected():
+        st.caption("Your review is not loaded yet — open SIGNAL (top right).")
+        return
+    if not prev["readable"]:
+        st.warning("Your portfolio or watchlist could not be read, so SIGNAL cannot say what needs your review.", icon="⚠️")
+        return
+    if not prev["top"]:
+        st.success("Nothing in your holdings or watchlist needs your review right now (SIGNAL).")
+        return
+    tag = {"action": "ACT", "review": "REVIEW", "info": "INFO"}
+    lines = "".join(f"<li><b>{tag.get(i['severity'], i['severity'].upper())}</b> · "
+                    f"{'' if i['ticker'] == '—' else i['ticker'] + ' · '}{i['message']}</li>" for i in prev["top"])
+    more = f" — {prev['total'] - len(prev['top'])} more in SIGNAL" if prev["total"] > len(prev["top"]) else ""
+    st.markdown(f"<div style='font-size:0.82rem; margin:2px 0 6px 0;'><b>For you:</b> {prev['n']} item(s) need review"
+                f"{more}<ul style='margin:2px 0 0 16px; padding:0;'>{lines}</ul></div>", unsafe_allow_html=True)
 
 
 def render(ctx):

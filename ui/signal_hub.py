@@ -123,6 +123,20 @@ def _chip(decision) -> str:
             f"font-size:0.72rem;'>{decision}</span>")
 
 
+PREVIEW_KEY, PREVIEW_ITEMS = "_sig_preview", 3
+
+
+def _publish_preview(items, n, hub):
+    """What the Market Pulse answer block shows of this hub: the same items and badge number SIGNAL computed (not a second
+    feed), with who they belong to and what they were built on, so the page can say "not loaded" instead of "0"."""
+    from services.db import _expected
+    user = hub["user"]
+    st.session_state[PREVIEW_KEY] = {
+        "uid": st.session_state.get("user_id"), "version": _expected(), "n": n, "total": len(items),
+        "top": [{k: it[k] for k in ("severity", "ticker", "kind", "message")} for it in items[:PREVIEW_ITEMS]],
+        "readable": bool(user.get("holdings_ok", True)) and bool(user.get("watchlist_ok", True))}
+
+
 @st.fragment
 def render(*, m_df, prices_full, companies_full, reco_df, earnings_cal, advice, macro):
     """The SIGNAL button and its panels (call inside the header column)."""
@@ -131,6 +145,7 @@ def render(*, m_df, prices_full, companies_full, reco_df, earnings_cal, advice, 
            "generation": _version(prices_full)[:2]}
     items = build_items(hub)
     n = feed.badge_count(items)
+    _publish_preview(items, n, hub)
     pop = st.popover(f"SIGNAL · {n}" if n else "SIGNAL", width="stretch", key="sig_popover", on_change="rerun",
                      help="What needs your review (portfolio, watchlist, your rules) and what changed in the computed "
                           "Decisions. Observations and events — not recommendations; the Decision is the only one.")

@@ -38,6 +38,8 @@ _MANIFEST_PATH = _CACHE_DIR / "manifest.json"
 # reruns the app, which reloads everything from the new one — so a fragment of an old context, a second session or a
 # cache entry of an older run never mixes two snapshots into one answer.
 _PIN = threading.local()        # per thread: .version / .manifest of the connection opened last, .loading
+_LEASES: dict = {}              # {version: readers of that snapshot's files in this process}
+_LEASE_LOCK = threading.Lock()
 _RERUN_LOG: list = []           # fallback when there is no session; a session keeps its own (see _rerun_log)
 RERUN_BUDGET, RERUN_WINDOW = 5, 30.0    # at most this many snapshot reruns per session within this many seconds
 EXPECTED_KEY = "_data_version"
@@ -64,6 +66,37 @@ def loading_snapshot():
         yield
     finally:
         _PIN.loading = False
+
+
+def _lease_add(version):
+    """A reader that works on the files of snapshot `version` holds a lease for as long as its connection lives: the prune
+    of superseded snapshots (_ensure_local_cache) keeps a leased directory however many snapshots arrived meanwhile.
+    In-process only — another process (a second server) is covered by the keep-the-previous-snapshot rule alone."""
+    if version is not None:
+        with _LEASE_LOCK:
+            _LEASES[version] = _LEASES.get(version, 0) + 1
+
+
+def _lease_drop(version):
+    if version is not None:
+        with _LEASE_LOCK:
+            _LEASES[version] = _LEASES.get(version, 1) - 1
+            if _LEASES[version] <= 0:
+                del _LEASES[version]
+
+
+@contextlib.contextmanager
+def _lease(version):
+    _lease_add(version)
+    try:
+        yield
+    finally:
+        _lease_drop(version)
+
+
+def _leased() -> set:
+    with _LEASE_LOCK:
+        return set(_LEASES)
 
 
 def _rerun_log() -> list:
@@ -272,8 +305,10 @@ def _ensure_local_cache() -> bool:
         # must not lose its files to another session's refresh
         others = sorted((d for d in _CACHE_DIR.iterdir() if d.is_dir() and d.name != manifest["version"]),
                         key=lambda d: d.stat().st_mtime, reverse=True)
+        leased = _leased()
         for old in others[1:]:
-            shutil.rmtree(old, ignore_errors=True)
+            if old.name not in leased:                # a snapshot a reader holds stays until the next prune after it ends
+                shutil.rmtree(old, ignore_errors=True)
     return not errors
 
 
@@ -320,9 +355,12 @@ def get_db_connection(read_only=False):
         # try/except: catching errors raised by the caller's `with` body and then
         # yielding a second time made contextlib raise "generator didn't stop after throw()".
         conn = None
+        leased = None
         if cache_ready:
             # Fast path: read from local .cache/ — near-instant DuckDB queries
             try:
+                leased = _PIN.version
+                _lease_add(leased)                        # held from before the views are built until the connection ends
                 conn = duckdb.connect(":memory:")
                 conn.execute("CREATE SCHEMA IF NOT EXISTS marts; CREATE SCHEMA IF NOT EXISTS raw;")
                 for table, local_paths in _local_tables(manifest).items():
@@ -338,12 +376,15 @@ def get_db_connection(read_only=False):
                 if conn is not None:
                     conn.close()
                 conn = None
+                _lease_drop(leased)
+                leased = None
 
         if conn is not None:
             try:
                 yield conn
             finally:
                 conn.close()
+                _lease_drop(leased)
             return
 
         # Slow fallback: read directly from S3 when local cache is unavailable

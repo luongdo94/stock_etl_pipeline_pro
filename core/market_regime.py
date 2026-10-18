@@ -10,7 +10,9 @@ import pandas as pd
 
 from core.rating import QUALITY_TIERS
 
-INDICES = ["^VIX", "SPY", "^GSPC", "^DJI", "^IXIC", "^TNX"]   # ^TNX: the 10Y yield, for rate sensitivities only
+# non-investable series, kept out of the stock universe: ^TNX is the 10Y yield (rate sensitivities); DX-Y.NYB, ^IRX, CL=F
+# and GC=F are market-context inputs (dollar, 3-month bill, oil, gold)
+INDICES = ["^VIX", "SPY", "^GSPC", "^DJI", "^IXIC", "^TNX", "DX-Y.NYB", "^IRX", "CL=F", "GC=F"]
 BREADTH_EXCLUDE = INDICES + ["^TNX", "^IRX"]
 
 ELITE, WEAK = QUALITY_TIERS[0][0], QUALITY_TIERS[-1][0]    # Quality tier cut-offs (core/rating.py)

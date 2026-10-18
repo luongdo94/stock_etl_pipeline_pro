@@ -49,7 +49,7 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
     # Quality / Value / Momentum for the whole universe at once (percentiles need the peer group)
     _scores = score_universe(_companies_df, _annual_fin, _prices_df, hist_fcf=_hist_fcf, estimates=_estimates)
     # Exclude non-investable instruments: indices & volatility measures
-    _non_equities = {"^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"}
+    _non_equities = {"^VIX", "SPY", "^GSPC", "^DJI", "^IXIC", "^TNX", "DX-Y.NYB", "^IRX", "CL=F", "GC=F"}
     _non_equity_sectors = {"Benchmark", "Volatility"}
     screener_rows = []
 

@@ -45,7 +45,8 @@ def validate_config(cfg: dict) -> list:
     changes = cfg.get("symbol_changes") or {}
     delisted = cfg.get("delisted") or {}
     for t, meta in tickers.items():
-        if not (_YAHOO_SYMBOL.match(str(t)) or str(t).startswith("^") or str(t).endswith("=X")):
+        # indices (^…), currency pairs (…=X) and futures (CL=F, GC=F) are Yahoo symbols too
+        if not (_YAHOO_SYMBOL.match(str(t)) or str(t).startswith("^") or str(t).endswith(("=X", "=F"))):
             problems.append(f"{t}: not a Yahoo symbol")
         missing = [k for k in REQUIRED if not (meta or {}).get(k)]
         if missing:
