@@ -61,7 +61,12 @@ def main(argv=None) -> int:
 
     if args.only_sync:
         from etl.supabase_manager import sync_to_supabase
-        return 0 if sync_to_supabase() else 2
+        t0 = time.time()
+        if sync_to_supabase():
+            return 0
+        report_outcome(False, "The Supabase publication failed — the cloud dashboard still shows the previous snapshot.",
+                       time.time() - t0)
+        return 2
 
     from etl.load import AUDIT_DB_PATH
     from etl.pipeline import run_pipeline

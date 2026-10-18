@@ -1,6 +1,6 @@
 """Stock ETL — Airflow DAG.
 
-One job: `python run.py --fast` every day at 07:30 German time (Europe/Berlin, daylight saving included), Monday to
+Two tasks, `python run.py --fast --no-sync` then `python run.py --only-sync`, every day at 07:30 German time (Europe/Berlin, daylight saving included), Monday to
 Saturday (Saturday picks up Friday's close). run.py already does everything else — lock against overlap, extraction,
 data-quality gates, atomic swap, score snapshot, Supabase publication — and sends its own e-mail (SMTP_* /
 ALERT_EMAIL_TO / ETL_NOTIFY_SUCCESS in .env, see etl/notify.py). Airflow only schedules, retries once and shows the log,
@@ -17,7 +17,7 @@ from airflow.operators.bash import BashOperator
 PROJECT = "/opt/project"
 PYTHON = "/opt/airflow/etl-venv/bin/python"          # built from requirements.lock, apart from Airflow's own packages
 
-default_args = {"owner": "stock-etl", "retries": 1, "retry_delay": timedelta(minutes=10)}
+default_args = {"owner": "stock-etl", "retries": 1, "retry_delay": timedelta(minutes=10)}   # the ETL; sync sets its own
 
 
 @dag(
@@ -31,13 +31,26 @@ default_args = {"owner": "stock-etl", "retries": 1, "retry_delay": timedelta(min
     tags=["stock", "etl"],
 )
 def stock_etl_fast():
-    BashOperator(
-        task_id="run_pipeline_fast",
-        bash_command=f"cd {PROJECT} && {PYTHON} run.py --fast",
-        env={"PYTHONIOENCODING": "utf-8", "PYTHONPATH": PROJECT},
+    env = {"PYTHONIOENCODING": "utf-8", "PYTHONPATH": PROJECT}
+    # Two tasks, so a cloud outage retries only the publication and never re-runs a finished extraction:
+    # run.py --no-sync leaves the validated warehouse in place; run.py --only-sync publishes it.
+    etl = BashOperator(
+        task_id="run_etl",
+        bash_command=f"cd {PROJECT} && {PYTHON} run.py --fast --no-sync",
+        env=env,
         append_env=True,                      # keep PATH and the variables compose passes in from .env
         execution_timeout=timedelta(hours=3),
     )
+    sync = BashOperator(
+        task_id="publish_to_supabase",
+        bash_command=f"cd {PROJECT} && {PYTHON} run.py --only-sync",
+        env=env,
+        append_env=True,
+        retries=3,
+        retry_delay=timedelta(minutes=20),
+        execution_timeout=timedelta(minutes=30),
+    )
+    etl >> sync
 
 
 stock_etl_fast()

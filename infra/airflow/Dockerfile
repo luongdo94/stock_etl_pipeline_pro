@@ -8,3 +8,6 @@ RUN pip install --no-cache-dir uv
 COPY --chown=airflow:root requirements.lock /tmp/requirements.lock
 RUN uv venv --python 3.13 /opt/airflow/etl-venv \
     && uv pip install --python /opt/airflow/etl-venv/bin/python -r /tmp/requirements.lock
+
+# the named volume inherits this directory (and its owner), so SQLite can create its file there
+RUN mkdir -p /opt/airflow/state
