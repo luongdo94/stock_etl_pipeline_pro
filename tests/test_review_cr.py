@@ -145,3 +145,36 @@ def test_snapshot_job_uses_the_same_stored_us10y_as_the_dashboard(tmp_path, monk
     monkeypatch.setattr(md, "_get_macro_fallback_from_db", lambda conn: {"US10Y": {"val": 5.1}})
     snapshot.build_snapshot(db)
     assert seen["macro"]["US10Y"]["val"] == 5.1
+
+
+def test_sector_overrides_reach_the_universe_and_company_info():
+    import duckdb
+    from etl import universe as uni
+    conn = duckdb.connect(":memory:")
+    base = {"COR": {"name": "Cencora", "sector": "Managed Care", "region": "US"}}
+    got = uni.resolve_universe(conn, base=base, fetch=lambda b: {"3328.HK": {"name": "BoCom", "sector": "Finance",
+                                                                             "region": "HK", "discovery_source": "TV"}},
+                               sector_overrides={"COR": "Healthcare Distribution", "3328.HK": "Banks", "ZZZ": "Banks"})
+    assert got["COR"]["sector"] == "Healthcare Distribution" and got["3328.HK"]["sector"] == "Banks" and "ZZZ" not in got
+    assert dict(conn.execute("SELECT ticker, sector FROM raw.universe").fetchall())["3328.HK"] == "Banks"
+    assert uni.sync_company_sectors(conn, {"COR": "X"}) == 0                    # no company_info yet: nothing to do
+    conn.execute("CREATE TABLE raw.company_info (ticker VARCHAR, sector VARCHAR)")
+    conn.execute("INSERT INTO raw.company_info VALUES ('COR', 'Managed Care'), ('KO', 'Food & Beverage')")
+    assert uni.sync_company_sectors(conn, {"COR": "Healthcare Distribution", "KO": "Food & Beverage"}) == 1
+    assert dict(conn.execute("SELECT ticker, sector FROM raw.company_info").fetchall()) == {
+        "COR": "Healthcare Distribution", "KO": "Food & Beverage"}
+
+
+def test_sector_overrides_in_the_config_name_real_sectors_and_move_banks_to_the_financial_table():
+    import yaml
+    from pathlib import Path
+    cfg = yaml.safe_load((Path(__file__).resolve().parent.parent / "config" / "tickers.yaml").read_text(encoding="utf-8"))
+    sectors = {m["sector"] for m in cfg["tickers"].values()}
+    ov = cfg["sector_overrides"]
+    unknown = {s for s in ov.values() if s not in sectors}
+    assert unknown == {"Healthcare Distribution"}                  # the only sector this review creates
+    groups = yaml.safe_load((Path(__file__).resolve().parent.parent / "config" / "scoring_rules.yaml").read_text(
+        encoding="utf-8"))["sector_groups"]
+    financial = set(groups["financial"])
+    assert all(ov[t].lower() in financial for t in ("3328.HK", "NU", "SDF.AX", "LMND"))
+    assert all(ov[t].lower() not in financial for t in ("GPN", "FIS", "JKHY", "CPAY", "XYZ"))

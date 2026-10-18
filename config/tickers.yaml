@@ -3221,3 +3221,50 @@ symbol_changes:
 delisted:
   CTRA: {name: Coterra, date: 2026-10-15, reason: "no longer quoted by Yahoo — merger / delisting, outcome to verify"}
   AWE.L: {name: AlphaWave IP Group, date: 2026-10-15, reason: "no longer quoted by Yahoo — takeover / delisting, outcome to verify"}
+
+# Sector corrections. They win over the sector above and over the one a discovery screen assigned. The sector name decides
+# the peer group when an industry has fewer than 5 stocks (config/scoring_rules.yaml peers.min_size) AND the scoring
+# treatment (sector_groups: banks / insurers on ROE, capex-heavy, cyclical ...). Reviewed 2026-10-19.
+sector_overrides:
+  # banks and insurers labelled "Finance" / "Fintech" were scored on the standard table (free cash flow, net debt/EBITDA)
+  3328.HK: Banks
+  601328.SS: Banks
+  601988.SS: Banks
+  5876.TW: Banks
+  VPB.VN: Banks
+  2884.TW: Banks
+  2892.TW: Banks
+  NU: Banks
+  SDF.AX: Insurance
+  BBSE3.SA: Insurance
+  LMND: Insurance
+  HG: Insurance
+  # payments / fintech software labelled "Financial Services" / "Financials" were scored as banks (ROE, no leverage test)
+  GPN: Fintech
+  JKHY: Fintech
+  FIS: Fintech
+  CPAY: Fintech
+  XYZ: Fintech
+  # industry groups below 5 stocks fall back to the sector: put them next to their true peers
+  RXO: Transportation
+  DGE.L: Food & Beverage
+  TWE.AX: Food & Beverage
+  HSY: Food & Beverage
+  2914.T: Food & Beverage
+  VEEV: SaaS
+  RL: Consumer Luxury
+  TPR: Consumer Luxury
+  ADS.DE: Retail
+  AD.AS: Retail
+  CVNA: Ecommerce
+  POOL: Business Services
+  3293.TWO: Media & Entertainment
+  HEI.DE: Basic Materials
+  OKLO: Nuclear & Clean Utilities
+  6505.TW: Oil & Gas
+  8848.T: Real Estate
+  # four medical distributors were compared with health insurers and hospitals (their own industry has 4 < 5 stocks)
+  COR: Healthcare Distribution
+  MCK: Healthcare Distribution
+  CAH: Healthcare Distribution
+  HSIC: Healthcare Distribution

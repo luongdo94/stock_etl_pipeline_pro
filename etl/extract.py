@@ -163,6 +163,19 @@ def load_tickers_config():
         logger.warning(f"⚠️ Failed to load tickers config: {e}. Using empty config.")
         return {}
 
+def load_sector_overrides() -> dict:
+    """{ticker: sector} corrections from tickers.yaml `sector_overrides:` - they win over the configured sector and over
+    the sector a discovery screen assigned (the scores treat banks / insurers / cyclicals by sector name)."""
+    config_path = Path(__file__).parent.parent / "config" / "tickers.yaml"
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            raw = (yaml.safe_load(f) or {}).get("sector_overrides") or {}
+        return {str(k): str(v) for k, v in raw.items() if v}
+    except Exception as e:
+        logger.warning(f"⚠️ sector_overrides not read: {e}")
+        return {}
+
+
 # --- TRADINGVIEW AUTO-DISCOVERY ---
 _YAHOO_SYMBOL = __import__("re").compile(r"^[A-Z0-9][A-Z0-9\-&]*(\.[A-Z]{1,3})?$")
 

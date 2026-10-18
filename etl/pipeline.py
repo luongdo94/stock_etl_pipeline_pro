@@ -16,7 +16,7 @@ from etl.load      import get_connection, create_raw_schema, \
                           perform_atomic_swap, promote_pending_swap, DB_PATH, SHADOW_DB_PATH, AUDIT_DB_PATH, _WAREHOUSE_DIR
 from etl.runlock   import AlreadyRunning, RunLock
 from etl.transform import run_transforms
-from etl.universe  import resolve_universe
+from etl.universe  import resolve_universe, sync_company_sectors
 from etl.utils     import get_last_price_dates, needs_full_refresh, needs_earnings_refresh, needs_fundamentals_refresh, needs_metadata_refresh, get_smart_recovery_targets, needs_insider_refresh
 from etl.insider_trading import extract_insider_summary, extract_insider_transactions
 from etl import earnings_events
@@ -557,6 +557,7 @@ def _run_pipeline_locked(lookback_days, force_full, fast_mode):
             if not prices_df.empty:
                 audit.rows_processed += load_stock_prices(conn, prices_df, mode="upsert")
             audit.rows_processed += load_company_info(conn, data["company"])
+            sync_company_sectors(conn)
             audit.rows_processed += load_historical_financials(conn, data["financials"])
             audit.rows_processed += load_quarterly_financials(conn, data["quarterly"])
             audit.rows_processed += load_cashflows(conn, data["cashflow"])
