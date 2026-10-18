@@ -19,13 +19,7 @@ _STANCE_COLORS = {dec.BUY: "#2ecc71", dec.RESEARCH: "#3498db", dec.HOLD: "#f1c40
 _CONF_COLORS = {"HIGH": "#2ecc71", "MEDIUM": "#f1c40f", "LOW": "#e74c3c"}
 
 
-def _sticky(widget, label, default, key, **kw):
-    """A widget whose value survives the runs in which it is not drawn (another group of the page is open): Streamlit
-    drops the state of an undrawn widget, so the last value is remembered in a plain key and passed back as `value`."""
-    mem = f"_kept::{key}"
-    v = widget(label, value=st.session_state.get(mem, default), key=key, **kw)
-    st.session_state[mem] = v
-    return v
+from ui.sticky import sticky as _sticky  # noqa: E402,F401  (a widget that survives the runs in which it is not drawn)
 
 
 def _cached_evidence(snapshots: pd.DataFrame, prices: pd.DataFrame) -> dict:
@@ -154,9 +148,16 @@ def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, re
                 st.markdown(f"- {n}")
     _hv = holdings_loader() if holdings_loader else None     # lazy: Supabase call → ({ticker: EUR}, cash EUR)
     holdings_value, cash_eur = (_hv if isinstance(_hv, tuple) else (_hv, 0.0)) if _hv is not None else (None, 0.0)
-    _held = bool(holdings_value) and float((holdings_value or {}).get(ticker, 0) or 0) > 0
+    # a value of None is a holding without a price: held, of unknown worth — it makes NAV, weights and fit unknown
+    _unpriced = sorted(t for t, v in (holdings_value or {}).items() if v is None)
+    _held = bool(holdings_value) and ticker in holdings_value and (holdings_value[ticker] is None
+                                                                    or float(holdings_value[ticker]) > 0)
     if holdings_value is not None:
         st.markdown(f"**For your portfolio:** {dec.holding_action(d.stance, _held)}")    # holdings-aware (P1/5)
+    if _unpriced:
+        st.caption(f"Portfolio fit and the NAV-based size cap are not shown: no price for {', '.join(_unpriced)} in the "
+                   "warehouse, so the portfolio cannot be valued.")
+        holdings_value = None
     if d.position["size_pct"]:
         cap = f" (capped by {d.position['binding']})" if d.position["capped"] else ""
         st.caption(f"Size = {dec.load_rules()['risk']['account_risk_pct']}% portfolio risk ÷ "

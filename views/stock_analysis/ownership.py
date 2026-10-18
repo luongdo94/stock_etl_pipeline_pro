@@ -27,35 +27,34 @@ def render(dd, ctx):
 
     col_own1, col_own2 = st.columns([1, 1])
     with col_own1:
+        both = inst_own is not None and insider_own is not None
         if inst_own is None and insider_own is None:
             st.info("Ownership is not reported for this listing.")
-        else:
-            known = {"Institutions": inst_own, "Insiders": insider_own}
-            labels = [k for k, v in known.items() if v is not None]
-            values = [known[k] for k in labels]
-            colors = ['#00d2ff', '#3a7bd5'][:0] + [c for k, c in zip(known, ['#00d2ff', '#3a7bd5']) if known[k] is not None]
-            if inst_own is not None and insider_own is not None:          # the remainder is only known when both are
-                labels.append("Public/other")
-                values.append(max(0.0, 1.0 - inst_own - insider_own))
-                colors.append('rgba(255,255,255,0.05)')
-            fig_own = go.Figure(data=[go.Pie(labels=labels, values=values, hole=.65)])
-            fig_own.update_traces(hoverinfo='label+percent', textinfo='none', marker=dict(colors=colors, line=dict(color='#0d0e14', width=2)))
+        elif both and inst_own + insider_own <= 1.0:
+            # a pie only when the parts and the remainder add up to the whole: it shows shares of 100 %
+            values = [inst_own, insider_own, max(0.0, 1.0 - inst_own - insider_own)]
+            fig_own = go.Figure(data=[go.Pie(labels=["Institutions", "Insiders", "Public/other"], values=values, hole=.65)])
+            fig_own.update_traces(hoverinfo='label+percent', textinfo='none',
+                                  marker=dict(colors=['#00d2ff', '#3a7bd5', 'rgba(255,255,255,0.05)'],
+                                              line=dict(color='#0d0e14', width=2)))
             fig_own.update_layout(
                 title=dict(text="Corporate Ownership Structure", font=dict(size=18)),
-                template="plotly_dark",
-                height=300,
-                margin=dict(l=20, r=20, t=50, b=20),
-                showlegend=True,
-                legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5)
-            )
-            centre = (f"{(inst_own + insider_own) * 100:.1f}%<br><b>Inst. + insiders</b>"
-                      if inst_own is not None and insider_own is not None else "<b>partly<br>reported</b>")
-            fig_own.add_annotation(text=centre, x=0.5, y=0.5, font_size=18, showarrow=False)
+                template="plotly_dark", height=300, margin=dict(l=20, r=20, t=50, b=20), showlegend=True,
+                legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5))
+            fig_own.add_annotation(text=f"{(inst_own + insider_own) * 100:.1f}%<br><b>Inst. + insiders</b>",
+                                   x=0.5, y=0.5, font_size=18, showarrow=False)
             st.plotly_chart(fig_own, use_container_width=True)
-            if inst_own is None or insider_own is None:
-                st.caption("Institutions: " + ("n/a" if inst_own is None else f"{inst_own:.1%}")
-                           + " · Insiders: " + ("n/a" if insider_own is None else f"{insider_own:.1%}")
-                           + " — one source is not reported, so no remainder is shown.")
+        else:
+            # one part is not reported, or the parts exceed 100 % (institutional holdings overlap / are reported at
+            # different dates): the numbers as they are, no pie that would re-scale them to a whole
+            st.markdown("**Corporate ownership**")
+            st.metric("Institutions", "N/A" if inst_own is None else f"{inst_own:.1%}")
+            st.metric("Insiders", "N/A" if insider_own is None else f"{insider_own:.1%}")
+            if both:
+                st.caption("Institutions + insiders add up to more than 100 % as reported (holdings are reported at "
+                           "different dates and can overlap) — shown as reported, not as shares of a whole.")
+            else:
+                st.caption("One source is not reported, so no total and no remainder are shown.")
 
     with col_own2:
         if short_pct is None:

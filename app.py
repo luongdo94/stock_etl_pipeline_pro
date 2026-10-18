@@ -134,10 +134,10 @@ _dxy_pct = (macro.get("DXY") or {}).get("pct")
 _tnx_chg = (macro.get("US10Y") or {}).get("chg")
 df_spy_global = prices_full[prices_full["ticker"] == "SPY"].sort_values("date")
 breadth_ts_global = mr.breadth_series(prices_full)
-latest_breadth_global = breadth_ts_global.iloc[-1]["breadth_pct"] if not breadth_ts_global.empty else 0
+latest_breadth_global = breadth_ts_global.iloc[-1]["breadth_pct"] if not breadth_ts_global.empty else None   # None = unknown, not 0 %
 conf_score_global, _reasons = mr.market_confidence(df_spy_global, latest_breadth_global, _vix_val,
                                                     mr.dxy_5d_move(prices_full, _dxy_pct), _tnx_chg)
-conf_reason_str = "All indicators bullish." if conf_score_global >= 90 else ", ".join(_reasons)
+conf_reason_str = ", ".join(_reasons) if _reasons else "No warning among the inputs."
 _regime = mr.regime_from_score(conf_score_global, _tnx_chg, _dxy_pct, _vix_val)
 regime, regime_ui_color, _macro_regime = _regime["regime"], _regime["color"], _regime["scoring_regime"]
 
@@ -224,6 +224,7 @@ ctx = dict(
     m_df=m_df, reco_df=reco_df, track_record_ok=_track_ok, _action_map=_action_map, format_ticker=format_ticker,
     # market context
     macro=macro, regime=regime, regime_ui_color=regime_ui_color, _macro_regime=_macro_regime,
+    regime_advice=_regime["advice"],
     _vix_val=_vix_val, _dxy_pct=_dxy_pct, conf_score_global=conf_score_global, conf_reason_str=conf_reason_str,
     df_spy_global=df_spy_global, breadth_ts_global=breadth_ts_global, latest_breadth_global=latest_breadth_global,
 )

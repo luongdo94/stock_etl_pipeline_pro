@@ -201,27 +201,151 @@ def test_ownership_and_short_interest_unknown_are_not_zero():
     assert not at.get("plotly_chart")                                                 # no gauge painted green at 0 %
 
 
-def test_ownership_with_one_source_missing_shows_no_invented_remainder_and_zero_stays_zero():
+def test_r13_ownership_with_one_source_missing_has_no_pie_that_rescales_it_to_100_percent():
     at = _run_ownership({"inst_ownership": 0.6, "insider_ownership": None, "short_percent_of_float": 0.0, "short_ratio": 0.0})
     assert not at.exception, [e.value for e in at.exception]
-    assert any("one source is not reported" in c.value for c in at.caption)
+    assert any("One source is not reported" in c.value for c in at.caption)
+    assert [m.value for m in at.metric] == ["60.0%", "N/A"]                          # the numbers as reported
     html = " ".join(m.value for m in at.markdown)
     assert "0.0 days" in html                                                         # a reported 0 is a value
-    assert len(at.get("plotly_chart")) == 2                                           # the pie (partial) and the gauge at 0
+    assert len(at.get("plotly_chart")) == 1                                           # only the short gauge (at 0 %)
 
 
-def test_a_sandbox_assumption_survives_visiting_another_group(warehouse):
+def test_r13_ownership_parts_above_100_percent_are_shown_as_reported_not_as_a_pie():
+    at = _run_ownership({"inst_ownership": 0.95, "insider_ownership": 0.2, "short_percent_of_float": 0.02, "short_ratio": 1.0})
+    assert not at.exception, [e.value for e in at.exception]
+    assert [m.value for m in at.metric] == ["95.0%", "20.0%"]
+    assert any("more than 100 %" in c.value for c in at.caption)
+    full = _run_ownership({"inst_ownership": 0.6, "insider_ownership": 0.1, "short_percent_of_float": 0.02, "short_ratio": 1.0})
+    assert len(full.get("plotly_chart")) == 2 and not full.metric                     # a real whole: the pie and the gauge
+
+
+# ── review of the redesign (COMMIT_REVIEW_88fbf9b_HEAD) ──────────────────────────────────────────────────────────
+def _inject_estimates(monkeypatch, row):
+    """Give AAPL a forward-estimates row in the loaded snapshot (the synthetic warehouse has none)."""
+    from views.stock_analysis import context
+    real = context.build
+
+    def spy(ctx, ticker):
+        ctx["forward_estimates_full"] = pd.DataFrame([{"ticker": "AAPL", **row}])
+        return real(ctx, ticker)
+    monkeypatch.setattr(context, "build", spy)
+
+
+def _analyst_html(row, monkeypatch, rate):
+    import re
+    import views.stock_analysis.analyst as an
+    with monkeypatch.context() as m:                       # undone after each page, so two pages in one test do not stack
+        m.setattr(an, "get_forex_rates", lambda **k: rate)
+        _inject_estimates(m, row)
+        at = _app("🔬 Stock Analysis")
+        at.session_state["deep_ticker_selector"] = "AAPL"
+        at.session_state["sa_group"] = "Business & value"
+        at.run()
+        assert not at.exception, [e.value for e in at.exception]
+        return re.sub(r"\s+", " ", " ".join(x.value for x in at.markdown))
+
+
+def test_r12_one_sided_revision_counts_do_not_invent_the_other_side(warehouse, monkeypatch):
+    import re
+    nan = float("nan")
+    flat = _analyst_html({"upgrades_30d": 4.0, "downgrades_30d": nan, "eps_trend_delta_30d": nan, "cur_price": 100.0},
+                         monkeypatch, 1.0)
+    assert re.search(r"Upgrades: <b[^>]*>4</b>", flat) and re.search(r"Downgrades: <b[^>]*>N/A</b>", flat)
+    assert "width:0%" in flat and "No 30-day change reported" in flat                 # no bar from one count, no "stable"
+    flat = _analyst_html({"upgrades_30d": 3.0, "downgrades_30d": 1.0, "eps_trend_delta_30d": 0.0, "cur_price": 100.0},
+                         monkeypatch, 1.0)
+    assert re.search(r"Downgrades: <b[^>]*>1</b>", flat) and "width:75%" in flat and "Estimates unchanged" in flat
+
+
+def test_r10_an_unknown_eur_rate_gives_no_eur_amounts_and_no_parity(warehouse, monkeypatch):
+    import re
+    row = {"eps_est_next_y": 5.0, "eps_est_cur_y": 4.0, "cur_price": 100.0, "eps_trend_delta_30d": 0.2,
+           "upgrades_30d": 1.0, "downgrades_30d": 0.0}
+    flat = _analyst_html(row, monkeypatch, None)
+    assert re.search(r"Forward P/E \(NTM\)</div> <div[^>]*>N/A</div>", flat)           # not 100 / 5 = 20x at parity
+    assert re.search(r"EPS Estimate Drift \(30d\)</div> <div[^>]*> *N/A", flat)
+    assert "20.0x" in _analyst_html(row, monkeypatch, 1.0)                              # with a rate the page computes
+
+
+def test_r10_get_forex_rates_returns_none_not_one_when_the_lookup_fails(monkeypatch):
+    from services import market_data
+    for failing in (lambda *a, **k: (_ for _ in ()).throw(OSError("offline")),
+                    lambda *a, **k: pd.DataFrame({"Close": []})):
+        monkeypatch.setattr(market_data.yf, "download", failing)
+        market_data.get_forex_rates.clear()
+        assert market_data.get_forex_rates(target="EUR", source="JPY") is None
+        assert market_data.get_forex_rates(target="EUR", source="GBp") is None         # pence: unknown too, not 0.01 or 1
+    market_data.get_forex_rates.clear()
+    assert market_data.get_forex_rates(target="EUR", source="EUR") == 1.0              # real parity stays 1
+    assert market_data.get_forex_rates(target="GBP", source="GBp") == 0.01             # pence → pounds without a lookup
+
+
+def test_r15_a_holding_without_a_price_is_held_but_makes_the_portfolio_unvalued(warehouse, monkeypatch):
+    import views.stock_analysis.header as hd
+    monkeypatch.setattr(hd, "read_portfolio_snapshot",
+                        lambda: ({"ZZZ": {"shares": 10}, "AAPL": {"shares": 5}}, 100.0, {}))
     at = _app("🔬 Stock Analysis")
     at.session_state["deep_ticker_selector"] = "AAPL"
-    at.session_state["sa_group"] = "Business & value"
     at.run()
-    keys = [n.key for n in at.number_input if n.key and n.key.startswith(("dcf_g_", "pb_roe_"))]
-    if not keys:
-        pytest.skip("no valuation sandbox for this ticker in the synthetic warehouse")
-    k = keys[0]
-    at.number_input(key=k).set_value(7.0).run()
-    for g in ("Overview", "Price & timing", "Business & value"):                 # leave and come back
+    assert not at.exception, [e.value for e in at.exception]
+    assert any("no price for ZZZ" in c.value for c in at.caption)
+    html = " ".join(m.value for m in at.markdown)
+    assert "For your portfolio" in html and "Portfolio fit" not in " ".join(i.value for i in at.info)
+    assert not any("Portfolio policy limits" in w.value for w in at.warning)          # no NAV, no weights from a €0 holding
+
+
+def test_r09_the_watchlist_draft_survives_other_groups_and_is_not_written_until_save(warehouse, monkeypatch):
+    from views.stock_analysis import watchlist_save as ws
+    saved = []
+    monkeypatch.setattr(ws, "save_watchlist", lambda df: saved.append(df))
+    at = _app("🔬 Stock Analysis")
+    at.session_state["deep_ticker_selector"] = "AAPL"
+    at.run()
+    uid = at.session_state["user_id"]
+    key = f"wl_{uid}_AAPL_thesis"
+    at.text_area(key=key).set_value("my own thesis").run()
+    at.number_input(key=f"wl_{uid}_AAPL_tp").set_value(321.0).run()
+    for g in ("Business & value", "Risks & data", "Overview"):
         at.session_state["sa_group"] = g
         at.run()
         assert not at.exception, [e.value for e in at.exception]
-    assert at.number_input(key=k).value == 7.0
+    assert at.text_area(key=key).value == "my own thesis" and at.number_input(key=f"wl_{uid}_AAPL_tp").value == 321.0
+    assert saved == []                                                                 # nothing written by browsing
+    at.session_state["deep_ticker_selector"] = "MSFT"
+    at.run()
+    assert at.text_area(key=f"wl_{uid}_MSFT_thesis").value != "my own thesis"          # drafts are per ticker
+    at.button(key=f"wl_{uid}_MSFT_reset").click().run()                                # reset works without a save
+    assert saved == []
+
+
+def test_r14_signal_market_cache_key_carries_the_snapshot_and_is_cleared_with_it(monkeypatch):
+    from services import db
+    from ui import signal_hub
+    px = pd.DataFrame({"date": pd.to_datetime(["2026-10-16"]), "ticker": ["A"], "price_close": [10.0], "volume": [5.0]})
+    monkeypatch.setattr(db, "_expected", lambda: "v1")
+    k1 = signal_hub._version(px)
+    monkeypatch.setattr(db, "_expected", lambda: "v2")
+    assert signal_hub._version(px) != k1 and signal_hub._version(px)[0] == "v2"      # same sums, another snapshot
+    cleared = []
+    monkeypatch.setattr(signal_hub._market, "clear", lambda: cleared.append(1))
+    db.clear_snapshot_caches()
+    assert cleared == [1]
+
+
+def test_r16_a_feed_that_failed_as_a_result_is_unavailable_not_empty():
+    from services.news import fetch_news_sentiment
+
+    class Feed:
+        def __init__(self, **kw):
+            self.entries = []
+            self.__dict__.update(kw)
+    cases = [(Feed(status=503), "HTTP 503"), (Feed(bozo=True, bozo_exception=OSError("offline")), "OSError"),
+             (Feed(status=200, bozo=False), None), (Feed(), None)]
+    for feed, expected in cases:
+        r = fetch_news_sentiment("Acme", "ACM", parse=lambda url, f=feed: f)
+        assert r["items"] == []
+        assert (r["error"] is None) if expected is None else (expected in r["error"]), (expected, r["error"])
+    ok = fetch_news_sentiment("Acme", "ACM", parse=lambda url: Feed(status=200, entries=[{"title": "T - W", "link": "l"}]),
+                              get_pipe=lambda: None)
+    assert len(ok["items"]) == 1 and ok["error"] is None

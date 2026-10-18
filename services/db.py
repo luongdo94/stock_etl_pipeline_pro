@@ -38,7 +38,8 @@ _MANIFEST_PATH = _CACHE_DIR / "manifest.json"
 # reruns the app, which reloads everything from the new one — so a fragment of an old context, a second session or a
 # cache entry of an older run never mixes two snapshots into one answer.
 _PIN = threading.local()        # per thread: .version / .manifest of the connection opened last, .loading
-_RERUN_LOG: list = []           # recent snapshot reruns (monotonic seconds): a guard against a rerun loop
+_RERUN_LOG: list = []           # fallback when there is no session; a session keeps its own (see _rerun_log)
+RERUN_BUDGET, RERUN_WINDOW = 5, 30.0    # at most this many snapshot reruns per session within this many seconds
 EXPECTED_KEY = "_data_version"
 
 
@@ -65,13 +66,31 @@ def loading_snapshot():
         _PIN.loading = False
 
 
+def _rerun_log() -> list:
+    """The recent snapshot reruns (monotonic seconds) of THIS session — one session's reruns must not use up another's."""
+    try:
+        return st.session_state.setdefault("_snap_reruns", [])
+    except Exception:
+        return _RERUN_LOG
+
+
+def _give_up(message: str):
+    """Stop the run: nothing is read from a snapshot that is not the session's. Never returns."""
+    logger.warning(message)
+    st.error(message, icon="🔄")
+    st.stop()
+
+
 def _rerun_for_new_snapshot():
+    """The source is on another snapshot than this session's frames: rerun the app (which reloads onto it). When the
+    session has used its budget of reruns the run STOPS — returning would let the caller read, and cache under the old
+    version, the very snapshot it must not mix in. Never returns."""
     now = time.monotonic()
-    _RERUN_LOG[:] = [t for t in _RERUN_LOG if now - t < 30]
-    if len(_RERUN_LOG) >= 5:             # the source keeps moving (or the version cannot settle): stop, do not loop
-        logger.warning("snapshot changed repeatedly — not rerunning again")
-        return
-    _RERUN_LOG.append(now)
+    log = _rerun_log()
+    log[:] = [t for t in log if now - t < RERUN_WINDOW]
+    if len(log) >= RERUN_BUDGET:
+        _give_up("The warehouse keeps changing underneath this page — reload the page once the data refresh has finished.")
+    log.append(now)
     st.rerun()
 
 
@@ -88,13 +107,26 @@ def _guard():
         _rerun_for_new_snapshot()
 
 
+def _read_is_consistent(opened, expected) -> bool:
+    """After a read: the connection was built on the session's snapshot and the source has not moved since it was
+    identified (a local file replaced between the stat and the connect, or during the read)."""
+    if expected is not None and opened not in (None, expected):
+        return False
+    return _source_unchanged(opened)
+
+
 def snapshot_cached(ttl: int = 600):
     """st.cache_data for a reader of the warehouse whose arguments are plain values. The session's snapshot version is
     part of the cache key and is checked before the call, so no entry of another snapshot is ever returned. The wrapper
     keeps the original name and `.clear()`."""
     def deco(fn):
         def cached(name, version, args, kwargs):
-            return fn(*args, **kwargs)
+            for _ in range(2):                    # a read the source moved under is read again, once
+                _PIN.version = None               # only the connection(s) this reader opens count
+                result = fn(*args, **kwargs)
+                if _read_is_consistent(opened_version(), version):
+                    return result
+            _rerun_for_new_snapshot()             # never returns: nothing is cached from a mixed read
         # Streamlit keys a cache by the function's module and qualified name: one name per reader, or the readers
         # would share (and return) each other's entries
         cached.__name__ = cached.__qualname__ = f"snapshot_cached_{fn.__name__}"
@@ -417,8 +449,9 @@ def load_snapshot(version=None) -> tuple:
             loaded = opened_version() or version
             frames = read_warehouse(conn)
         if _source_unchanged(loaded):
-            break
-    return frames, loaded
+            return frames, loaded
+    # twice in a row the file was replaced while it was read: frames and version cannot be shown to belong together
+    _give_up("The warehouse was replaced while it was being loaded — reload the page in a moment.")
 
 
 def load_data():
@@ -769,17 +802,10 @@ def load_discovery(generation=None) -> pd.DataFrame:
 
 def warehouse_tz() -> str:
     """The clock of `knowledge_at`: the naive local time of the machine that ran the ETL (etl/snapshot.py writes
-    pd.Timestamp.now()). Set WAREHOUSE_TZ (an IANA name, e.g. Europe/Berlin) when the reader runs elsewhere (cloud);
-    unset, it is this machine's current UTC offset ("+02:00") — right for the usual single-machine setup, off by an hour
-    within an hour of the cutoff for dates in the other daylight-saving season."""
-    name = os.environ.get("WAREHOUSE_TZ")
-    if name:
-        return name
-    from datetime import datetime
-    off = datetime.now().astimezone().utcoffset()
-    total = int(off.total_seconds()) if off is not None else 0
-    sign = "-" if total < 0 else "+"
-    return f"{sign}{abs(total) // 3600:02d}:{abs(total) % 3600 // 60:02d}"
+    pd.Timestamp.now()). Set WAREHOUSE_TZ (an IANA name, e.g. Europe/Berlin) when the reader runs elsewhere (cloud). Unset,
+    the clock is this machine's own local time, with the daylight-saving rules of the date in question (the writer and the
+    reader are the same machine in the usual setup) — never today's offset applied to another season."""
+    return os.environ.get("WAREHOUSE_TZ") or "system local time"
 
 
 def _tzinfo(name: str):
@@ -800,7 +826,11 @@ def decision_cutoff(ticker: str, as_of) -> pd.Timestamp:
     known on `as_of` when knowledge_at is strictly before it."""
     from core.earnings import exchange_tz
     end = (pd.Timestamp(as_of).normalize() + pd.Timedelta(days=1)).tz_localize(exchange_tz(ticker))
-    return end.tz_convert(_tzinfo(warehouse_tz())).tz_localize(None)
+    name = os.environ.get("WAREHOUSE_TZ")
+    if name:
+        return end.tz_convert(_tzinfo(name)).tz_localize(None)
+    # the operating system's own rules for THIS instant (daylight saving included), as a naive local time
+    return pd.Timestamp(end.to_pydatetime().astimezone().replace(tzinfo=None))
 
 
 @snapshot_cached(ttl=600)
@@ -862,7 +892,8 @@ def clear_snapshot_caches() -> None:
     warehouse's last close; earnings events / reactions are read from the snapshot. Most of these are also keyed by
     the loaded version, so a session on the new snapshot never reads an old entry."""
     from services import earnings, market_data, screener
-    for fn in (load_snapshot, load_track_record, load_etl_exceptions, load_ticker_provenance, load_data_health,
+    from ui import signal_hub
+    for fn in (signal_hub._market, load_snapshot, load_track_record, load_etl_exceptions, load_ticker_provenance, load_data_health,
                _evidence_cached, load_decision_snapshots, load_discovery, load_recorded_decision,
                screener.get_master_screener_data, market_data.fetch_macro_data, earnings.load_earnings_events,
                earnings.universe_reactions):

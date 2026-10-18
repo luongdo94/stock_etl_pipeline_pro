@@ -22,7 +22,11 @@ def render(dd, ctx):
         """({ticker: EUR value}, cash EUR) — the panel sizes against NAV = holdings + cash."""
         _pf, _cash, _ = read_portfolio_snapshot()
         _last = prices_full.sort_values("date").groupby("ticker")["price_close"].last()
-        return {t: v.get("shares", 0) * float(_last.get(t, 0)) for t, v in _pf.items()}, _cash
+        # a holding without a price is held but of UNKNOWN value (None), not worth €0
+        def _val(t, v):
+            px = _last.get(t)
+            return None if px is None or pd.isna(px) else v.get("shares", 0) * float(px)
+        return {t: _val(t, v) for t, v in _pf.items()}, _cash
 
     render_decision_panel(
         ticker=dd.ticker, meta=meta, price=float(dd.cur_p),

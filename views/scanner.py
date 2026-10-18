@@ -131,14 +131,14 @@ def render(ctx):
                         "taiwan": "TWD", "korea": "KRW"
                     }
                     local_currency = market_currency_map.get(selected_tv_market.lower(), "USD")
-                    local_to_eur = get_forex_rates("EUR", local_currency)
+                    local_to_eur = get_forex_rates("EUR", local_currency)      # None = unknown: no EUR amounts, not parity
                     
                     for d in (data.get('data') or []):
                         f = d['d']
                         price_local = f[3]
-                        price_eur = price_local * local_to_eur if price_local else None
+                        price_eur = price_local * local_to_eur if price_local and local_to_eur else None
                         mcap_local = f[7]
-                        mcap_eur = (mcap_local * local_to_eur) / 1e9 if mcap_local else None
+                        mcap_eur = (mcap_local * local_to_eur) / 1e9 if mcap_local and local_to_eur else None
                         
                         results.append({
                             "Symbol": d['s'].split(':')[-1],

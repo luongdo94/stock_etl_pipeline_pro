@@ -26,14 +26,18 @@ _DIR = {"up": "#2ecc71", "down": "#e74c3c"}
 def _version(prices_full, reco_df=None) -> tuple:
     """Generation of the hub's market inputs: shape, newest date and a checksum of closes / volumes (a weekly rebase
     rewrites history with the same shape and last date — review SIG-R02) plus a hash of the reco columns the
-    observations read. O(rows) numeric sums, no hashing of the frame."""
+    observations read. O(rows) numeric sums, no hashing of the frame. The session's snapshot version comes first: sums
+    cannot tell two snapshots apart that differ in a field they do not add up (a latest bar's daily return, the way volume
+    is spread over tickers)."""
+    from services.db import _expected
+    snap = _expected()
     if prices_full.empty:
-        return 0, "", 0.0, 0.0, 0
+        return snap, 0, "", 0.0, 0.0, 0
     reco = 0
     if reco_df is not None and not reco_df.empty:
         cols = [c for c in ("ticker", "score", "rsi", "ma_signal") if c in reco_df.columns]
         reco = int(pd.util.hash_pandas_object(reco_df[cols], index=False).sum())
-    return (len(prices_full), str(prices_full["date"].max()), float(prices_full["price_close"].sum()),
+    return (snap, len(prices_full), str(prices_full["date"].max()), float(prices_full["price_close"].sum()),
             float(prices_full["volume"].sum()) if "volume" in prices_full.columns else 0.0, reco)
 
 

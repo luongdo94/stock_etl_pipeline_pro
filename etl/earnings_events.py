@@ -124,9 +124,12 @@ def _dedupe(d: pd.DataFrame) -> pd.DataFrame:
     keep = []
     for g in groups:
         rows = d.loc[g]
+        # a complete EPS pair (estimate and actual) outranks "more fields present": a (1.0, NULL, 0.1) row ties a
+        # (1.0, 1.1, NULL) row on count and must not win it, or the published actual is lost
+        full = rows["eps_actual"].notna() & rows["eps_estimate"].notna()
         score = rows[list(_FIGURES)].notna().sum(axis=1)
-        order = pd.DataFrame({"score": score, "ext": pd.to_datetime(rows["_extracted_at"], errors="coerce"),
-                              "ts": rows["earnings_ts"]}).sort_values(["score", "ext", "ts"], ascending=False)
+        order = pd.DataFrame({"full": full, "score": score, "ext": pd.to_datetime(rows["_extracted_at"], errors="coerce"),
+                              "ts": rows["earnings_ts"]}).sort_values(["full", "score", "ext", "ts"], ascending=False)
         keep.append(order.index[0])
     return d.loc[keep].reset_index(drop=True)
 
@@ -168,15 +171,16 @@ def _combine(o: pd.Series, n: pd.Series) -> pd.Series:
       * fetched row complete (estimate and actual) → the fetched figures (the provider's surprise only when the stored row
         has the same EPS pair; otherwise it is derived from the pair downstream);
       * fetched row partial, stored row complete → the stored figures whole (a partial or estimate-only response never
-        erases or rewrites a published EPS pair);
+        erases or rewrites a published EPS pair); likewise a fetched row that reports nothing (no actual, no surprise)
+        never replaces a stored row that does, even one with only an actual or only a surprise;
       * neither complete → the fetched row, its estimate filled from the stored one when it has none."""
     row = n.copy()
     if _full(n):
         if pd.isna(n["surprise_pct"]) and _full(o) and n["eps_actual"] == o["eps_actual"] \
                 and n["eps_estimate"] == o["eps_estimate"]:
             row["surprise_pct"] = o["surprise_pct"]
-    elif _full(o):
-        for c in _FIGURES:
+    elif _full(o) or (_reported(o) and not _reported(n)):
+        for c in _FIGURES:                      # the stored observation whole — also an actual-only / surprise-only one
             row[c] = o[c]
     elif pd.isna(n["eps_estimate"]) and not _reported(n):
         row["eps_estimate"] = o["eps_estimate"]
@@ -236,10 +240,16 @@ def seed_from_production(conn: duckdb.DuckDBPyConnection, prod_path: str, change
         renamed = {o: n for o, n in (changes or {}).items() if o in set(df["ticker"])}
         expected = len(df)
         if renamed:
-            df["ticker"] = df["ticker"].replace(renamed)
-            touched = set(renamed.values())
-            df = pd.concat([df[~df["ticker"].isin(touched)]]
-                           + [_dedupe(g) for _, g in df[df["ticker"].isin(touched)].groupby("ticker")], ignore_index=True)
+            # the history of OLD continues under NEW: reconcile the two with the matcher a refresh uses (the same report
+            # dated 01/07 under OLD and 11/07 under NEW is one report), NEW's own rows winning
+            parts = []
+            for new_sym in sorted(set(renamed.values())):
+                olds = [o for o, n in renamed.items() if n == new_sym]
+                carried = df[df["ticker"].isin(olds)].assign(ticker=new_sym)
+                own = df[df["ticker"] == new_sym]
+                parts.append(merge_events(carried, own, now=None) if len(own) else _dedupe(carried))
+            keep = df[~df["ticker"].isin(set(renamed) | set(renamed.values()))]
+            df = pd.concat([keep] + parts, ignore_index=True)
             expected = len(df)
         conn.register("ee_seed", df[list(COLUMNS)])
         try:

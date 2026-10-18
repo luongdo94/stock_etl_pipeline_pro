@@ -576,3 +576,82 @@ def test_cr12_note_keys_change_with_facts_model_prompt_and_language():
     base = svc.note_key("AAPL", ts, "English", "- a")
     assert base != svc.note_key("AAPL", ts, "English", "- b") and base != svc.note_key("AAPL", ts, "Vietnamese", "- a")
     assert svc.text_hash("release v1") != svc.text_hash("release v1, corrected") and len(svc.text_hash("x")) == 12
+
+
+def test_r03_a_complete_eps_pair_outranks_a_row_with_the_same_number_of_fields():
+    a, b = ("2026-07-30 20:00", 1.0, 1.1, np.nan), ("2026-07-30 21:00", 1.0, np.nan, 0.1)
+    for spec in ([a, b], [b, a]):                                    # whatever the order of the response
+        m = _m(None, spec)
+        assert len(m) == 1 and _tuple(m)[:2] == (1.0, 1.1)
+    for ext_new in ("2026-10-02", "2026-09-01"):                     # and whichever row was fetched later
+        both = pd.concat([_rows("A", [a], at="2026-10-01"), _rows("A", [b], at=ext_new)], ignore_index=True)
+        assert _tuple(ee.merge_events(None, both, now=NOW))[:2] == (1.0, 1.1)
+    zero = _m(None, [("2026-07-30 20:00", 1.0, 0.0, np.nan), ("2026-07-30 21:00", 1.0, np.nan, 0.1)])
+    assert _tuple(zero)[:2] == (1.0, 0.0)                            # a real 0.00 actual is a full pair
+
+
+@pytest.mark.parametrize("old, new", [
+    ((np.nan, 1.1, 0.1), (1.0, np.nan, np.nan)), ((np.nan, 1.1, np.nan), (1.0, np.nan, np.nan)),
+    ((np.nan, np.nan, 0.1), (1.0, np.nan, np.nan)), ((1.0, np.nan, 0.1), (np.nan, np.nan, np.nan)),
+    ((np.nan, 1.1, 0.1), (np.nan, np.nan, np.nan)),
+])
+def test_r04_a_response_that_reports_nothing_never_replaces_a_reported_observation(old, new):
+    m = _m([("2026-07-30 20:00", *old)], [("2026-07-30 20:00", *new)])
+    got = _tuple(m)
+    assert all((pd.isna(g) and pd.isna(o)) or g == o for g, o in zip(got, old))      # the stored observation, whole
+
+
+def test_r04_a_newer_report_of_the_same_kind_still_corrects_it():
+    m = _m([("2026-07-30 20:00", np.nan, 1.1, 0.1)], [("2026-07-30 20:00", 1.0, 1.2, np.nan)])
+    assert _tuple(m)[:2] == (1.0, 1.2)
+
+
+def test_r05_a_renamed_symbols_history_is_reconciled_with_the_one_to_one_matcher(tmp_path):
+    prod = str(tmp_path / "prod.duckdb")
+    with duckdb.connect(prod) as p:
+        ee.load_earnings_events(p, pd.concat([
+            _rows("OLD", [("2020-07-01 20:00", 1, 1.1, 0.1), ("2021-07-01 20:00", 2, 2.2, 0.1)]),
+            _rows("NEW", [("2020-07-11 20:00", 1, 1.1, 0.1), ("2024-07-01 20:00", 3, 3.3, 0.1)])]), now=NOW)
+    with duckdb.connect(str(tmp_path / "shadow.duckdb")) as s:
+        ee.seed_from_production(s, prod, {"OLD": "NEW"})
+        out = _stored(s)
+    assert set(out["ticker"]) == {"NEW"}
+    assert [t.strftime("%Y-%m-%d") for t in out["earnings_ts"]] == ["2020-07-11", "2021-07-01", "2024-07-01"]
+    two = pd.concat([_rows("OLD", [("2020-04-01 20:00", 1, 1.1, 0.1)]), _rows("NEW", [("2020-07-01 20:00", 1, 1.1, 0.1)])])
+    with duckdb.connect(prod.replace("prod", "prod2")) as p:
+        ee.load_earnings_events(p, two, now=NOW)
+    with duckdb.connect(str(tmp_path / "shadow2.duckdb")) as s:
+        ee.seed_from_production(s, prod.replace("prod", "prod2"), {"OLD": "NEW"})
+        assert len(_stored(s)) == 2                                  # two real quarters with the same EPS stay two
+
+
+@pytest.mark.parametrize("est, act, stored, expect_replaced", [
+    (0.004, 1.0, -1.0, True), (0.004, 1.0, 40.0, False), (0.0, 0.10, -0.5, True), (0.0, 0.10, 3.0, False),
+    (0.0, -0.10, 0.5, True), (0.0, -0.10, -2.0, False), (0.005, 0.0, -1.0, False),     # act ≈ est: any sign is possible
+    (-0.004, -1.0, 5.0, True), (0.004, 0.0, -0.5, False),
+])
+def test_r06_a_zero_estimate_still_fixes_the_sign_of_the_surprise(est, act, stored, expect_replaced):
+    f = er.fill_surprise(pd.DataFrame({"earnings_ts": [NOW], "eps_estimate": [est], "eps_actual": [act],
+                                       "surprise_pct": [stored]}))
+    kept = f.loc[0, "surprise_pct"] == stored
+    assert bool(kept) is (not expect_replaced)
+    if est == 0.0 and expect_replaced:
+        assert np.isnan(f.loc[0, "surprise_pct"])                    # no ratio for a zero base, not a made-up one
+    assert f.loc[0, "direction"] == np.sign(act - est)
+
+
+@pytest.mark.parametrize("day, tz, now, expected", [
+    ("2026-11-01", "America/New_York", "2026-11-02 04:30", True),     # 23:30 EST on the day the clocks go back
+    ("2026-11-01", "America/New_York", "2026-11-02 05:01", False),
+    ("2026-03-08", "America/New_York", "2026-03-09 03:59", True),     # the day the clocks go forward: 23 h long
+    ("2026-03-08", "America/New_York", "2026-03-09 04:01", False),
+    ("2026-10-25", "Europe/Berlin", "2026-10-25 22:59", True),        # 25 h day: ends 26 Oct 00:00 CET = 23:00Z
+    ("2026-10-25", "Europe/Berlin", "2026-10-25 23:01", False),
+    ("2026-03-29", "Europe/Berlin", "2026-03-29 21:59", True),        # 23 h day: ends 29 Mar 22:00Z
+    ("2026-03-29", "Europe/Berlin", "2026-03-29 22:01", False),
+])
+def test_r07_a_date_only_event_lasts_to_the_real_midnight_on_daylight_saving_days(day, tz, now, expected):
+    ticker = "AAPL" if tz.startswith("America") else "SAP.DE"
+    ev = pd.DataFrame({"ticker": [ticker], "earnings_ts": [pd.Timestamp(day, tz=tz).tz_convert("UTC")],
+                       "eps_estimate": [1.0], "eps_actual": [np.nan], "surprise_pct": [np.nan]})
+    assert bool(er.upcoming_mask(ev, pd.Timestamp(now, tz="UTC")).iloc[0]) is expected

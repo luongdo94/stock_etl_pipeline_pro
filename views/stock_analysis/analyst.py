@@ -44,10 +44,12 @@ def render(dd, ctx):
         # Forward P/E: computed on-the-fly — cur_price (EUR) ÷ eps_est_next_y (native→EUR)
         # NOT read from DB because ETL stored it with a EUR/USD currency mismatch.
         _fwd_pe = None
-        _fe_fxr = 1.0
+        _fe_fxr = None                                      # EUR rate; None = unknown (never parity)
         try:
             _fe_ccy   = str(meta.get("currency") or "USD")
             _fe_fxr   = get_forex_rates(target="EUR", source=_fe_ccy)
+            if _fe_fxr is None:
+                raise ValueError("no EUR rate")
             _eps_ny_eur = (_fv("eps_est_next_y") or 0) * _fe_fxr
             _fe_price_eur = _fv("cur_price")   # already EUR from fct_daily_returns
             if _eps_ny_eur and _eps_ny_eur > 0 and _fe_price_eur and _fe_price_eur > 0:
@@ -139,7 +141,8 @@ def render(dd, ctx):
             for _lbl, _col, _offset in [("CY", "eps_est_cur_y", 0), ("NTY", "eps_est_next_y", 1)]:
                 _v = _fv(_col)
                 if _v is not None:
-                    _fwd_periods.append({"year": _cur_yr + _offset, "eps": _v * _fe_fxr})
+                    if _fe_fxr is not None:                         # an unknown rate gives no EUR bar, not a native one
+                        _fwd_periods.append({"year": _cur_yr + _offset, "eps": _v * _fe_fxr})
 
             fig_eps = go.Figure()
             if not _hist_eps.empty:
@@ -166,15 +169,15 @@ def render(dd, ctx):
             st.plotly_chart(fig_eps, use_container_width=True)
 
         with ch_r:
-            _counts_known = _upgrades is not None or _downgrades is not None      # unknown is not "0 upgrades"
-            _up    = int(_upgrades or 0)
-            _down  = int(_downgrades or 0)
-            _total = _up + _down
-            _up_pct   = (_up / _total * 100) if _total > 0 else 0
-            _down_pct = (_down / _total * 100) if _total > 0 else 0
+            # each count is known or not on its own: 4 upgrades and an unreported downgrade count is not "0 downgrades"
+            _up_known, _down_known = _upgrades is not None, _downgrades is not None
+            _up, _down = int(_upgrades or 0), int(_downgrades or 0)
+            _both = _up_known and _down_known and (_up + _down) > 0              # the split bar needs both counts
+            _up_pct = (_up / (_up + _down) * 100) if _both else 0
+            _down_pct = (_down / (_up + _down) * 100) if _both else 0
             # 30d change of the consensus EPS, reported in the listing currency → EUR like every other amount
             _eps_delta_30d = _fv("eps_trend_delta_30d")
-            _eps_delta_30d = _eps_delta_30d * _fe_fxr if _eps_delta_30d is not None else None
+            _eps_delta_30d = _eps_delta_30d * _fe_fxr if (_eps_delta_30d is not None and _fe_fxr is not None) else None
             _delta_color = "#2ecc71" if _eps_delta_30d and _eps_delta_30d > 0 else "#e74c3c"
 
             st.markdown(f"""
@@ -184,8 +187,8 @@ def render(dd, ctx):
                             text-transform:uppercase; margin-bottom:14px;'>Analyst Revision Sentiment (30d)</div>
                 <div style='display:flex; justify-content:space-between;
                             font-size:0.72rem; color:#8899aa; margin-bottom:4px;'>
-                    <span>⬆️ Upgrades: <b style='color:#2ecc71;'>{_up if _counts_known else "N/A"}</b></span>
-                    <span>⬇️ Downgrades: <b style='color:#e74c3c;'>{_down if _counts_known else "N/A"}</b></span>
+                    <span>⬆️ Upgrades: <b style='color:#2ecc71;'>{_up if _up_known else "N/A"}</b></span>
+                    <span>⬇️ Downgrades: <b style='color:#e74c3c;'>{_down if _down_known else "N/A"}</b></span>
                 </div>
                 <div style='background:rgba(255,255,255,0.08); border-radius:4px;
                             height:14px; overflow:hidden; display:flex;'>

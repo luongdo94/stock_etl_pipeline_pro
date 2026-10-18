@@ -65,15 +65,94 @@ def test_cr02_a_session_on_an_old_snapshot_reruns_instead_of_reading_the_new_one
     assert reader() == "data"
 
 
-def test_cr02_the_rerun_guard_stops_a_loop(session):
+class _Stopped(Exception):
+    pass
+
+
+def test_r01_when_a_session_has_used_its_reruns_the_run_stops_and_reads_nothing_more(session, monkeypatch):
+    """Review R-01: the guard used to return when the budget was spent, and the caller went on to read — and cache under
+    the old version — the very snapshot it must not mix in."""
+    errors = []
+    monkeypatch.setattr(db.st, "error", lambda msg, **k: errors.append(msg))
+    monkeypatch.setattr(db.st, "stop", lambda: (_ for _ in ()).throw(_Stopped()))
+    monkeypatch.setattr(db.st, "session_state", {})                 # a fresh session: its own budget
     session["current"] = "v2"
-    reruns = []
+    outcomes = []
     for _ in range(8):
         try:
             db._guard()
         except _Rerun:
-            reruns.append(1)
-    assert len(reruns) == 5                                          # then it stops instead of looping forever
+            outcomes.append("rerun")
+        except _Stopped:
+            outcomes.append("stop")
+    assert outcomes == ["rerun"] * 5 + ["stop"] * 3 and errors and "keeps changing" in errors[0]
+    reads = []
+
+    @db.snapshot_cached(ttl=60)
+    def reader():
+        reads.append(1)
+        return "data from v2"
+    reader.clear()
+    with pytest.raises(_Stopped):                                    # nothing is read, nothing is cached
+        reader()
+    assert reads == []
+    # another session has its own budget
+    monkeypatch.setattr(db.st, "session_state", {})
+    with pytest.raises(_Rerun):
+        db._guard()
+
+
+def test_r02_a_secondary_reader_whose_source_moves_between_the_stat_and_the_read_is_read_again(tmp_path, monkeypatch):
+    wh = tmp_path / "stock_dw.duckdb"
+    duckdb.connect(str(wh)).close()
+    monkeypatch.setattr(db, "DB_PATH", str(wh))
+    monkeypatch.setenv("SUPABASE_REMOTE_MODE", "false")
+    monkeypatch.setattr(db.st, "rerun", lambda: (_ for _ in ()).throw(_Rerun()))
+    monkeypatch.setattr(db.st, "session_state", {})
+    seen = []
+
+    def swap_once():                                                 # the ETL replaces the file after the reader's stat
+        os.utime(wh, ns=(time.time_ns(), time.time_ns() + 10 ** 9))
+
+    @db.snapshot_cached(ttl=60)
+    def reader():
+        with db.get_db_connection(read_only=True):
+            seen.append(db.opened_version())
+            if len(seen) == 1:
+                swap_once()
+            return f"read-{len(seen)}"
+    reader.clear()
+    monkeypatch.setattr(db, "_expected", lambda: None)               # no session: the second attempt is v2 / v2
+    assert reader() == "read-2" and seen[0] != seen[1] and seen[1] == db.data_version()[0]
+    reader.clear()
+    seen.clear()
+    v1 = db.data_version()[0]
+    monkeypatch.setattr(db, "_expected", lambda: v1)                 # a v1 session: the v2 read is never returned
+    os.utime(wh, ns=(time.time_ns(), time.time_ns() + 3 * 10 ** 9))   # the source is already past v1
+    with pytest.raises(_Rerun):
+        reader()
+
+
+def test_r02_a_loader_that_sees_the_file_replaced_twice_stops(tmp_path, monkeypatch):
+    wh = tmp_path / "stock_dw.duckdb"
+    duckdb.connect(str(wh)).close()
+    monkeypatch.setattr(db, "DB_PATH", str(wh))
+    monkeypatch.setenv("SUPABASE_REMOTE_MODE", "false")
+    monkeypatch.setattr(db, "_expected", lambda: None)
+    monkeypatch.setattr(db.st, "error", lambda *a, **k: None)
+    monkeypatch.setattr(db.st, "stop", lambda: (_ for _ in ()).throw(_Stopped()))
+    n = []
+
+    def always_swapping(conn):
+        n.append(1)
+        os.utime(wh, ns=(time.time_ns(), time.time_ns() + len(n) * 10 ** 9))
+        return "frames"
+    monkeypatch.setattr(db, "read_warehouse", always_swapping)
+    db.load_snapshot.clear()
+    with pytest.raises(_Stopped):                                    # not "frames of v1 labelled v2"
+        db.load_snapshot("seed")
+    db.load_snapshot.clear()
+    assert len(n) == 2
 
 
 def _write_parquet(path, value):
@@ -229,3 +308,16 @@ def test_the_evidence_cache_key_is_stable_across_reads(monkeypatch):
     assert len(keys) == 1
     df = db.load_price_history()
     assert df.equals(df.sort_values(["date", "ticker"]).reset_index(drop=True))
+
+
+def test_r08_without_a_configured_zone_the_cutoff_uses_the_machines_rules_for_that_date(monkeypatch):
+    """Review R-08: today's UTC offset was applied to every date; on a machine with daylight saving the cutoff of a
+    winter date was an hour off in summer (and the other way round)."""
+    from datetime import datetime
+    monkeypatch.delenv("WAREHOUSE_TZ", raising=False)
+    assert db.warehouse_tz() == "system local time"
+    for as_of in ("2026-01-15", "2026-07-15"):
+        end = (pd.Timestamp(as_of) + pd.Timedelta(days=1)).tz_localize("America/New_York")
+        local = end.to_pydatetime().astimezone()                     # the OS's own offset for that very instant
+        assert db.decision_cutoff("AAPL", as_of) == pd.Timestamp(local.replace(tzinfo=None))
+        assert (db.decision_cutoff("AAPL", as_of) - end.tz_convert("UTC").tz_localize(None)) == local.utcoffset()

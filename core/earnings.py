@@ -127,6 +127,12 @@ def surprise_interval(est, act):
     est, act = float(est), float(act)
     lo_e, hi_e = est - EPS_ROUNDING, est + EPS_ROUNDING
     if lo_e <= 0 <= hi_e or (lo_e < 0) != (hi_e < 0):
+        # the estimate could be zero: the size is unbounded, but the SIGN of (actual − estimate) may still be fixed
+        # (0.004 → 1.00 beat for every value the rounding allows, so a −100 % cannot be this pair's ratio)
+        if act - EPS_ROUNDING - hi_e > 0:
+            return 0.0, np.inf
+        if act + EPS_ROUNDING - lo_e < 0:
+            return -np.inf, 0.0
         return -np.inf, np.inf
     corners = [(a - e) / abs(e) for a in (act - EPS_ROUNDING, act + EPS_ROUNDING) for e in (lo_e, hi_e)]
     return min(corners), max(corners)
@@ -151,8 +157,9 @@ def fill_surprise(events: pd.DataFrame) -> pd.DataFrame:
     est, act = pd.to_numeric(e["eps_estimate"], errors="coerce"), pd.to_numeric(e["eps_actual"], errors="coerce")
     calc = ((act - est) / est.abs()).where(est.abs() > 0)
     stored = pd.to_numeric(e["surprise_pct"], errors="coerce")
-    inconsistent = pd.Series([pd.notna(sv) and pd.notna(c) and not surprise_consistent(a, b, sv)
-                              for a, b, sv, c in zip(est, act, stored, calc)], index=e.index)
+    # a zero estimate has no ratio (calc is NaN) but still fixes the sign: a stored −50 % next to 0 → 0.10 is not possible
+    inconsistent = pd.Series([pd.notna(sv) and pd.notna(a) and pd.notna(b) and not surprise_consistent(a, b, sv)
+                              for a, b, sv in zip(est, act, stored)], index=e.index)
     e["surprise_pct"] = stored.where(~inconsistent, calc).fillna(calc)
     pair = (act - est).where(est.notna() & act.notna())
     e["direction"] = np.sign(pair).where(pair.notna(), np.sign(e["surprise_pct"]))
@@ -300,7 +307,9 @@ def event_end(ts, tz: str) -> pd.Timestamp:
     if time_known(t, tz):
         return t + UPCOMING_GRACE
     day = t.tz_convert(tz).date()
-    return pd.Timestamp(day).tz_localize(tz) + pd.Timedelta(days=1)
+    # the next calendar date's midnight in the listing's zone (adding 24 h to this midnight is an hour off on the days the
+    # clocks change)
+    return (pd.Timestamp(day) + pd.Timedelta(days=1)).tz_localize(tz, ambiguous=True, nonexistent="shift_forward")
 
 
 def is_upcoming(ts, tz: str, now=None) -> bool:

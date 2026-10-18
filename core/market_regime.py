@@ -121,15 +121,16 @@ def breadth_series(prices_full):
     return ts
 
 
-REGIMES = (  # (min score, label, colour, read)
+MAX_SCORE = 85       # trend 25 + 5-day momentum 10 + breadth 30 + VIX 10 + macro 10 (market_confidence); NOT 100
+REGIMES = (  # (min score, label, colour, read) — a description of the inputs, never an instruction to act
     (75, "STRONG BULLISH", "#2ecc71",
-     "Market internals are robust with strong trend alignment. Ideal for aggressive growth deployment."),
+     "Trend, breadth and the volatility / rates inputs are all supportive (heuristic reading, not a forecast)."),
     (50, "BULLISH", "#27ae60",
-     "Constructive environment. Focus on quality growth and leaders breaking out on volume."),
+     "Most inputs are supportive: constructive trend and participation (heuristic reading, not a forecast)."),
     (35, "NEUTRAL / SIDEWAYS", "#f39c12",
-     "Trend-less environment. Stick to selective bottom-up picking and range-bound strategies."),
+     "Mixed or trend-less inputs: neither trend nor breadth is clearly supportive (heuristic reading)."),
     (-1, "BEARISH / CAUTION", "#e74c3c",
-     "Defensive posture required. Breadth is deteriorating or trend has failed. Focus on capital preservation."),
+     "Weak breadth or a failed trend among the inputs (heuristic reading, not a forecast)."),
 )
 REGIME_TO_SCORING = {"STRONG BULLISH": "RISK_ON", "BULLISH": "RISK_ON",
                      "NEUTRAL / SIDEWAYS": "NEUTRAL", "BEARISH / CAUTION": "RISK_OFF"}
@@ -222,6 +223,16 @@ def regime_from_score(score, tnx_chg=0.0, dxy_pct=0.0, vix=20.0):
     if None not in (tnx_chg, dxy_pct, vix) and tnx_chg > 0.05 and dxy_pct > 0.1 and vix < 25:  # yields + USD up
         scoring = "INFLATION_SHOCK"
     return {"regime": label, "color": colour, "advice": advice, "scoring_regime": scoring}
+
+
+def regime_summary(regime: dict, score, reasons, *, breadth=None, vix=None, dxy_pct=None, tnx_chg=None) -> dict:
+    """What the market-context answer states, from the ONE regime result (no stance, exposure or tilt of its own):
+    {"label", "score", "max_score", "reasons", "incomplete": [inputs that were unknown], "rates_usd_flag": bool}.
+    `incomplete` names the inputs scored as unknown (market_confidence gives them the middle of their range)."""
+    unknown = [name for name, v in (("VIX", vix), ("DXY", dxy_pct), ("10Y yield change", tnx_chg), ("Breadth", breadth))
+               if _finite(v) is None]
+    return {"label": regime["regime"], "score": score, "max_score": MAX_SCORE, "reasons": list(reasons or []),
+            "incomplete": unknown, "rates_usd_flag": regime.get("scoring_regime") == "INFLATION_SHOCK"}
 
 
 def dxy_5d_move(prices_full, fallback_pct):

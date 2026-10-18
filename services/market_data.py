@@ -34,13 +34,14 @@ def fx_rate(source: str, target: str = "EUR"):
 
 @st.cache_data(ttl=1800, show_spinner="🌍 Fetching FX Rates...")
 def get_forex_rates(target="EUR", source="USD"):
-    """Returns the rate to convert `source` currency → `target` currency.
-    Handles GBp (pence) automatically: GBp → GBP → EUR."""
-    # GBp / GBX = UK pence = GBP/100. Case matters: "GBP" is pounds. (Comparing after .upper()
-    # used to treat pounds as pence and divide every GBP rate by 100.)
+    """Rate to convert `source` currency → `target`, or None when it could not be obtained (a failed lookup is not
+    parity: callers show the native amount / N/A instead of an amount labelled with the wrong currency).
+    GBp / GBX (UK pence = GBP / 100) is handled the same way on every path: GBp → GBP → target."""
     _gbp_pence = source in ("GBp", "GBX", "GBx")
-    _src = "GBP" if _gbp_pence else source.upper()
+    _src = "GBP" if _gbp_pence else str(source or "").upper()
     _scale = 0.01 if _gbp_pence else 1.0
+    if not _src:
+        return None
     if _src == target.upper():
         return _scale  # pence → pounds still needs /100
     try:
@@ -49,10 +50,13 @@ def get_forex_rates(target="EUR", source="USD"):
         with open(os.devnull, 'w') as devnull:
             with redirect_stdout(devnull), redirect_stderr(devnull):
                 df = yf.download(f"{_src}{target}=X", period="5d", progress=False, threads=False)["Close"]
-        rate = float(df.dropna().iloc[-1].item()) if not df.dropna().empty else 1.0
-        return rate * _scale
-    except:
-        return 1.0
+        df = df.dropna()
+        if df.empty:
+            return None
+        rate = float(df.iloc[-1].item())
+        return rate * _scale if (math.isfinite(rate) and rate > 0) else None
+    except Exception:
+        return None
 
 
 def _finite(v):

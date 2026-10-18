@@ -40,10 +40,20 @@ def fetch_news_sentiment(company: str, ticker: str, parse: Optional[Callable] = 
         if parse is None:
             import feedparser
             parse = feedparser.parse
-        entries = list(parse(news_url(company, ticker)).entries)[:max_items]
+        feed = parse(news_url(company, ticker))
+        entries = list(feed.entries)[:max_items]
     except Exception as e:
         out["error"] = f"{type(e).__name__}: {str(e)[:80]}"
         return out
+    if not entries:
+        # feedparser reports a failed download as a RESULT (an HTTP status, `bozo` with the exception), not by raising:
+        # an empty feed with that evidence is "unavailable", an empty feed without it is "no news"
+        status = getattr(feed, "status", None)
+        exc = getattr(feed, "bozo_exception", None)
+        if (isinstance(status, int) and status >= 400) or (getattr(feed, "bozo", False) and exc is not None):
+            out["error"] = (f"HTTP {status}" if isinstance(status, int) and status >= 400
+                            else f"{type(exc).__name__}: {str(exc)[:80]}")
+            return out
     titles = [str(e.get("title", "")).split(" - ")[0] for e in entries]
     items = [{"title": t, "source": (e.get("source") or {}).get("title", "Google News"),
               "published": e.get("published", "N/A"), "link": e.get("link"), "label": None, "score": None}

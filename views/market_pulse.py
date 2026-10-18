@@ -1,35 +1,18 @@
-"""View: 🌐 Market Pulse"""
+"""View: 🌐 Market Pulse — the market context for your research.
+
+One regime result (core.market_regime, the same one the header and SIGNAL show) is stated first with its reasons and the
+inputs that were unknown; the SPY trend and the breadth follow the sidebar range for display only. The external
+TradingView widgets load only when switched on. Nothing here is a forecast or an allocation: no exposure %, no factor tilt.
+"""
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
+from core import market_regime as mr
 from ui.icons import render_header
+from ui.sticky import sticky
 
-
-def render(ctx):
-    """Render the 🌐 Market Pulse tab. ctx is the context dict built in app.py."""
-    _macro_regime = ctx['_macro_regime']
-    breadth_ts_global = ctx['breadth_ts_global']
-    conf_reason_str = ctx['conf_reason_str']
-    conf_score_global = ctx['conf_score_global']
-    df_spy_global = ctx['df_spy_global']
-    latest_breadth_global = ctx['latest_breadth_global']
-    t_end = ctx['t_end']
-    t_start = ctx['t_start']
-    tv_sector_rotation = ctx['tv_sector_rotation']
-    # ── [STEP 2] 6-BLOCK GRID LAYOUT ─────────────────────────────────────────
-    # Note: Logic (Step 1) has been moved to global dashboard level for consistency
-    
-    # ── MARKET PULSE (Global Heatmap & Macro Calendar) ───────────────────────
-    import streamlit.components.v1 as _mp_comp
-    render_header("pulse", "Market Pulse — Global Heatmap & Macro Calendar", level="###")
-    st.markdown("<p style='color:#667788; font-size:0.82rem;'>Real-time global market heat, cross-asset performance and upcoming economic events that may trigger volatility.</p>", unsafe_allow_html=True)
-
-    pulse_c1, pulse_c2 = st.columns([3, 2])
-
-    with pulse_c1:
-        st.markdown("#### 🌍 S&P 500 Sector Heatmap")
-        _mp_comp.html("""
+_HEATMAP = """
         <!-- TradingView Market Heatmap Widget -->
         <div class="tradingview-widget-container" style="height:500px; width:100%">
           <div class="tradingview-widget-container__widget" style="height:500px; width:100%"></div>
@@ -53,11 +36,8 @@ def render(ctx):
           }
           </script>
         </div>
-        """, height=520)
-
-    with pulse_c2:
-        st.markdown("#### 📅 Economic Calendar")
-        _mp_comp.html("""
+        """
+_CALENDAR = """
         <!-- TradingView Economic Calendar Widget -->
         <div class="tradingview-widget-container" style="height:500px; width:100%">
           <div class="tradingview-widget-container__widget" style="height:500px; width:100%"></div>
@@ -73,10 +53,109 @@ def render(ctx):
           }
           </script>
         </div>
-        """, height=520)
+        """
+_CROSS = """
+        <!-- TradingView Market Overview (Full) Widget -->
+        <div class="tradingview-widget-container" style="height:400px; width:100%">
+          <div class="tradingview-widget-container__widget" style="height:400px; width:100%"></div>
+          <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-market-overview.js" async>
+          {
+            "colorTheme": "dark",
+            "dateRange": "YTD",
+            "showChart": true,
+            "locale": "en",
+            "isTransparent": true,
+            "width": "100%",
+            "height": "400",
+            "tabs": [
+              {
+                "title": "US Indices",
+                "symbols": [
+                  {"s": "FOREXCOM:SPXUSD", "d": "S&P 500"},
+                  {"s": "FOREXCOM:NSXUSD", "d": "Nasdaq 100"},
+                  {"s": "CBOE:VIX",        "d": "VIX"},
+                  {"s": "TVC:DJI",         "d": "Dow Jones"}
+                ],
+                "originalTitle": "US Indices"
+              },
+              {
+                "title": "Europe",
+                "symbols": [
+                  {"s": "XETR:DAX",          "d": "DAX"},
+                  {"s": "EURONEXT:CAC40",    "d": "CAC 40"},
+                  {"s": "INDEX:SX5E",        "d": "STOXX 50"},
+                  {"s": "TVC:FTSE100",       "d": "FTSE 100"}
+                ],
+                "originalTitle": "Europe"
+              },
+              {
+                "title": "Macro",
+                "symbols": [
+                  {"s": "TVC:GOLD",   "d": "Gold"},
+                  {"s": "TVC:USOIL", "d": "Oil WTI"},
+                  {"s": "TVC:DXY",   "d": "Dollar Index"},
+                  {"s": "FX:EURUSD", "d": "EUR/USD"}
+                ],
+                "originalTitle": "Macro"
+              }
+            ]
+          }
+          </script>
+        </div>
+        """
 
+_NEXT_STEPS = (("🔭 Look for ideas", "🔭 Stock Scanner", "Scanner — Decisions of the whole universe"),
+               ("💼 Check what you hold", "💼 Portfolio", "Portfolio — your holdings and their Decisions"),
+               ("🎲 One stock's range", "🎲 Risk Lab", "Risk Lab — the volatility range of a single stock"))
+
+
+def _go(tab):
+    st.session_state["active_tab"] = tab
+
+
+def _answer(ctx):
+    """The first thing on the page: the regime, why, what is unknown, and where to look next."""
+    summ = mr.regime_summary(
+        {"regime": ctx["regime"], "scoring_regime": ctx["_macro_regime"]}, ctx["conf_score_global"],
+        [r for r in ctx["conf_reason_str"].split(", ") if r and not r.startswith("No warning")],
+        breadth=ctx["latest_breadth_global"], vix=ctx["_vix_val"], dxy_pct=ctx["_dxy_pct"],
+        tnx_chg=(ctx.get("macro") or {}).get("US10Y", {}).get("chg"))
+    colour = ctx["regime_ui_color"]
+    latest = ctx["df_spy_global"]["date"].max() if not ctx["df_spy_global"].empty else None
+    why = "".join(f"<li>{r}</li>" for r in summ["reasons"]) or "<li>No warning among the inputs.</li>"
+    gaps = (f"<li><b>Incomplete inputs:</b> {', '.join(summ['incomplete'])} — scored at the middle of their range, "
+            "so the regime is less certain than it looks.</li>" if summ["incomplete"] else "")
+    flag = ("<li>Rates &amp; USD pressure flag (10Y yield and the dollar rising together; a heuristic, not a forecast).</li>"
+            if summ["rates_usd_flag"] else "")
+    st.markdown(f"""
+    <div style='border:1px solid {colour}55; border-left:5px solid {colour}; border-radius:10px; padding:12px 18px;
+                margin:6px 0 10px 0; background:rgba(255,255,255,0.03);'>
+      <div style='display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;'>
+        <span style='color:{colour}; font-size:1.5rem; font-weight:900;'>{summ['label']}</span>
+        <span style='color:#8899aa; font-size:0.78rem;'>raw heuristic score {summ['score']}/{summ['max_score']}
+          · {"prices to " + f"{latest:%d %b %Y}" if latest is not None else "price date unknown"}</span>
+      </div>
+      <div style='color:#cfd8dc; font-size:0.82rem; margin-top:4px;'>{ctx['regime_advice']}</div>
+      <ul style='margin:6px 0 0 16px; padding:0; font-size:0.82rem;'>{why}{gaps}{flag}</ul>
+    </div>""", unsafe_allow_html=True)
+    cols = st.columns(len(_NEXT_STEPS))
+    for col, (label, tab, tip) in zip(cols, _NEXT_STEPS):
+        col.button(label, key=f"mp_go_{tab}", help=tip, width="stretch", on_click=_go, args=(tab,))
+    st.caption("Context for your research, not an instruction: the regime does not change any stock's Decision. The charts "
+               f"below follow the sidebar range ({ctx['t_start']:%d %b %Y} → {ctx['t_end']:%d %b %Y}); the regime above "
+               "always uses the latest data.")
+
+
+def render(ctx):
+    """Render the 🌐 Market Pulse tab. ctx is the context dict built in app.py."""
+    breadth_ts_global = ctx['breadth_ts_global']
+    df_spy_global = ctx['df_spy_global']
+    t_end = ctx['t_end']
+    t_start = ctx['t_start']
+    tv_sector_rotation = ctx['tv_sector_rotation']
+    render_header("pulse", "Market Pulse — the market context for your research", level="###")
+    _answer(ctx)
     st.markdown("---")
-
 
     # ROW 2: PRIMARY CHARTS
     # Filter SPY and breadth to the selected time horizon
@@ -147,10 +226,15 @@ def render(ctx):
 
 
 
+
     st.markdown("---")
-    
+
     st.markdown("#### 🚀 ETF Sector Rotation")
-    st.caption("Tracking large ETF money flow to identify the strongest sectors.")
+    _asof = ""
+    if "_extracted_at" in tv_sector_rotation.columns and tv_sector_rotation["_extracted_at"].notna().any():
+        _asof = f" Stored {tv_sector_rotation['_extracted_at'].max():%d %b %Y %H:%M}."
+    st.caption("Price change of the 11 US sector ETFs over the last month (1M performance, not fund flows — the data has no "
+               "subscriptions or redemptions)." + _asof)
     
     if not tv_sector_rotation.empty:
         # Prepare data for chart
@@ -186,116 +270,25 @@ def render(ctx):
         
         st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("⚠️ Sector Rotation data is currently being collected...")
+        st.info("Sector ETF performance is not in this snapshot (it is collected by the ETL).")
 
     st.markdown("---")
 
-    # Bottom Row: Global Performance & Stance
-    bot_c1, bot_c2 = st.columns([2, 1])
-    
-    with bot_c1:
-        st.markdown("#### 📈 Global Cross-Asset Performance")
-        _mp_comp.html("""
-        <!-- TradingView Market Overview (Full) Widget -->
-        <div class="tradingview-widget-container" style="height:400px; width:100%">
-          <div class="tradingview-widget-container__widget" style="height:400px; width:100%"></div>
-          <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-market-overview.js" async>
-          {
-            "colorTheme": "dark",
-            "dateRange": "YTD",
-            "showChart": true,
-            "locale": "en",
-            "isTransparent": true,
-            "width": "100%",
-            "height": "400",
-            "tabs": [
-              {
-                "title": "US Indices",
-                "symbols": [
-                  {"s": "FOREXCOM:SPXUSD", "d": "S&P 500"},
-                  {"s": "FOREXCOM:NSXUSD", "d": "Nasdaq 100"},
-                  {"s": "CBOE:VIX",        "d": "VIX"},
-                  {"s": "TVC:DJI",         "d": "Dow Jones"}
-                ],
-                "originalTitle": "US Indices"
-              },
-              {
-                "title": "Europe",
-                "symbols": [
-                  {"s": "XETR:DAX",          "d": "DAX"},
-                  {"s": "EURONEXT:CAC40",    "d": "CAC 40"},
-                  {"s": "INDEX:SX5E",        "d": "STOXX 50"},
-                  {"s": "TVC:FTSE100",       "d": "FTSE 100"}
-                ],
-                "originalTitle": "Europe"
-              },
-              {
-                "title": "Macro",
-                "symbols": [
-                  {"s": "TVC:GOLD",   "d": "Gold"},
-                  {"s": "TVC:USOIL", "d": "Oil WTI"},
-                  {"s": "TVC:DXY",   "d": "Dollar Index"},
-                  {"s": "FX:EURUSD", "d": "EUR/USD"}
-                ],
-                "originalTitle": "Macro"
-              }
-            ]
-          }
-          </script>
-        </div>
-        """, height=420)
 
-    with bot_c2:
-        render_header("package", "Market Regime Gauge (heuristic)")
-        
-        # Stance card content
-        if conf_score_global >= 70:
-            stance, size, bias = "AGGRESSIVE", "80-100%", "Momentum & Growth"
-        elif conf_score_global >= 50:
-            stance, size, bias = "MODERATE", "50-80%", "Quality Growth"
-        elif conf_score_global >= 30:
-            stance, size, bias = "DEFENSIVE", "20-50%", "Value & Low Vol"
-        else:
-            stance, size, bias = "PROTECTIVE", "0-20%", "Cash & Hedging"
-
-        # 🚀 DYNAMIC OVERRIDE: If breadth is weak and macro is Risk-Off, force Defensive stance
-        if latest_breadth_global < 50 and _macro_regime == "RISK_OFF" and conf_score_global >= 50:
-            stance, size, bias = "DEFENSIVE (Overridden)", "30-50%", "Defensive Value"
-            
-        st.markdown(f"""
-        <div style='background:rgba(20,30,45,0.7); border:1px solid rgba(255,255,255,0.1); border-radius:12px; padding:25px; height:400px;'>
-            <div style='margin-bottom:15px; display:flex; justify-content:space-between; align-items:center;'>
-                <div>
-                    <span style='color:#8899aa; font-size:0.75rem; font-weight:700;'>REGIME READ</span>
-                    <div style='color:#fff; font-size:1.4rem; font-weight:800;'>{stance}</div>
-                </div>
-                <div style='text-align:right;'>
-                    <span style='color:#8899aa; font-size:0.75rem; font-weight:700;'>REGIME SCORE</span>
-                    <div style='color:#3498db; font-size:1.4rem; font-weight:800;'>{conf_score_global}/100</div>
-                </div>
-            </div>
-            <div style='font-size:0.75rem; font-style:italic; color:#cfd8dc; margin-bottom:15px; border-bottom:1px solid rgba(255,255,255,0.1); padding-bottom:10px;'>
-                { '🚨 ' + conf_reason_str if conf_score_global < 50 else '⚠️ ' + conf_reason_str if conf_score_global < 100 else '✅ ' + conf_reason_str }
-            </div>
-            <div style='display:flex; gap:20px; margin-bottom:20px;'>
-                <div style='flex:1;'>
-                    <span style='color:#8899aa; font-size:0.7rem;'>Rule-of-thumb exposure</span>
-                    <div style='color:#3498db; font-size:1.1rem; font-weight:700;'>{size}</div>
-                </div>
-                <div style='flex:1;'>
-                    <span style='color:#8899aa; font-size:0.7rem;'>Typical factor tilt</span>
-                    <div style='color:#2ecc71; font-size:1.1rem; font-weight:700;'>{bias}</div>
-                </div>
-            </div>
-            <div style='border-top:1px solid rgba(255,255,255,0.1); padding-top:15px;'>
-                <span style='color:#e74c3c; font-size:0.75rem; font-weight:700;'>⚠️ RISK ALERT</span>
-                <p style='color:#cfd8dc; font-size:0.85rem; margin-top:5px;'>
-                    {'Watch for failed breakouts in laggard sectors.' if conf_score_global > 50 else 'Focus on capital preservation as breadth deteriorates.'}
-                </p>
-                <div style='margin-top:15px; background:rgba(52,152,219,0.1); padding:10px; border-radius:6px;'>
-                    <span style='color:#3498db; font-size:0.7rem; font-weight:700;'>HOW TO USE</span>
-                    <p style='color:#fff; font-size:0.85rem; margin:0;'>Context only — a score of trend, breadth, VIX and rates, <b>not validated against returns</b> and not an allocation recommendation. Stock calls come from the <b>Decision</b> column.</p>
-                </div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
+    st.markdown("---")
+    st.markdown("#### 🌐 External market tools (TradingView)")
+    import streamlit.components.v1 as _mp_comp
+    if not sticky(st.toggle, "Load the external widgets", False, "mp_external",
+                  help="Heatmap, economic calendar and cross-asset performance are TradingView widgets: they load scripts from "
+                       "tradingview.com in your browser, are not part of the warehouse snapshot and never feed the Decision."):
+        st.caption("Not loaded. Switch on to see the S&P 500 sector heatmap, the economic calendar and cross-asset performance.")
+        return
+    c1, c2 = st.columns([3, 2])
+    with c1:
+        st.markdown("##### 🌍 S&P 500 Sector Heatmap")
+        _mp_comp.html(_HEATMAP, height=520)
+    with c2:
+        st.markdown("##### 📅 Economic Calendar")
+        _mp_comp.html(_CALENDAR, height=520)
+    st.markdown("##### 📈 Global Cross-Asset Performance")
+    _mp_comp.html(_CROSS, height=420)

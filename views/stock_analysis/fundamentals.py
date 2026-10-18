@@ -13,6 +13,10 @@ from services.market_data import get_forex_rates
 
 
 
+class _NoFx(Exception):
+    """The EUR rate of the listing's currency is unknown: the analyst forecast overlays are left out."""
+
+
 def _estimates_of(ctx, ticker, cols):
     """The analyst-estimate row(s) of `ticker` from the loaded snapshot (ctx), limited to `cols`. A column the warehouse
     does not have raises KeyError like the SQL it replaces did (the callers sit in try blocks)."""
@@ -137,6 +141,8 @@ def render(dd, ctx):
                     # FX normalisation: forecast native currency → EUR
                     _ticker_ccy = str(meta.get("currency") or "USD")
                     _fx_rate = get_forex_rates(target="EUR", source=_ticker_ccy)
+                    if _fx_rate is None:                       # unknown rate: no overlay in a wrong currency
+                        raise _NoFx(_ticker_ccy)
 
                     # Revision metrics (also in native currency → convert)
                     _delta_cy = _fe2r.get("eps_trend_delta_30d")
@@ -204,6 +210,8 @@ def render(dd, ctx):
                             annotation_text="Forecast", annotation_position="top left",
                             annotation_font=dict(size=10, color="#9b59b6")
                         )
+            except _NoFx as _e:
+                st.caption(f"Analyst forecast overlay not shown: no EUR rate for {_e} right now.")
             except Exception:
                 pass  # Silently skip if forward estimates not available
 
@@ -384,6 +392,8 @@ def render(dd, ctx):
                         # FX normalisation: forecast native currency → EUR
                         _ticker_ccy_q = str(meta.get("currency") or "USD")
                         _fx_rate_q = get_forex_rates(target="EUR", source=_ticker_ccy_q)
+                        if _fx_rate_q is None:
+                            raise _NoFx(_ticker_ccy_q)
 
                         # Revision metrics for quarterly (CQ only; NQ has no separate delta)
                         _fe_qr = _fe_q.iloc[0]
@@ -450,6 +460,8 @@ def render(dd, ctx):
                                     annotation_text="Forecast", annotation_position="top left",
                                     annotation_font=dict(size=10, color="#9b59b6")
                                 )
+                except _NoFx as _e:
+                    st.caption(f"Analyst forecast overlay not shown: no EUR rate for {_e} right now.")
                 except Exception:
                     pass  # Skip silently if data not available
 

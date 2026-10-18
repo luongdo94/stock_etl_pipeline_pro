@@ -229,10 +229,10 @@ def render(dd, ctx):
                 _e_fx = get_forex_rates(target="EUR", source=_e_ccy)
                 
                 _raw_eps = e_row.iloc[0]['eps_avg']
-                eps_est = float(_raw_eps) * _e_fx if pd.notnull(_raw_eps) else None
+                eps_est = float(_raw_eps) * _e_fx if pd.notnull(_raw_eps) and _e_fx else None      # no rate → N/A
                 
                 _raw_rev = e_row.iloc[0]['rev_avg']
-                rev_est = float(_raw_rev) * _e_fx if pd.notnull(_raw_rev) else None
+                rev_est = float(_raw_rev) * _e_fx if pd.notnull(_raw_rev) and _e_fx else None
             else:
                 e_date_str = "N/A"
                 eps_est = None
