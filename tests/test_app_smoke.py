@@ -412,4 +412,8 @@ def test_cr02_data_health_shows_the_same_last_good_run_as_the_sidebar(warehouse)
     card = next(m.value for m in at.sidebar.markdown if "sb-card" in m.value and "<div" in m.value)
     side = re.search(r"Last good ETL (?:finished|started) (\d\d \w{3} \d\d:\d\d)", card)
     metric = next(m for m in at.metric if m.label == "Last good ETL")
-    assert side and side.group(1) == metric.value
+    # (the audit database is a separate, untracked file: on a clean checkout there is no run and BOTH say "unknown")
+    if side:
+        assert side.group(1) == metric.value
+    else:
+        assert "Last good ETL: unknown" in card and metric.value == "unknown"
