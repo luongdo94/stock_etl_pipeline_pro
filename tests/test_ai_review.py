@@ -62,3 +62,12 @@ def test_overview_shows_the_review_with_its_date_and_disclaimer(warehouse, tmp_p
     monkeypatch.setattr(ar, "DIR", tmp_path / "none")                            # no review file: the section is absent
     at.run()
     assert not any("External AI review" in e.label for e in at.expander)
+
+
+def test_prompt_explains_the_method_and_carries_the_stored_dcf():
+    inputs = json.dumps({"valuation": {"base": 5.7, "bear": 3.8, "bull": 9.1, "growth": 0.124, "cost_of_equity": 0.066,
+                                       "currency": "TWD"}})
+    p = ar.build_prompt({**ROW, "inputs": inputs, "price_close": 3.13}, "2026-10-19")
+    assert "base value 5.70 EUR vs price 3.13 EUR (+82%)" in p and "growth assumption 12.4%" in p
+    assert "cost of equity 6.6%" in p and "Blume-adjusted beta" in p and "5 stocks" in p
+    assert ar.dcf_line("not json") == "not available" and ar.dcf_line(None) == "not available"

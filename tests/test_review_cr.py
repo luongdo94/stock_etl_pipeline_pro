@@ -129,3 +129,19 @@ def test_cr08_prune_keeps_leased_and_a_pruned_snapshot_is_not_cache_ready(tmp_pa
     assert not db._files_complete(m)                              # no file: not ready, the connection falls back
     (tmp_path / "v1" / "a.parquet").write_bytes(b"x")
     assert db._files_complete(m)
+
+
+def test_snapshot_job_uses_the_same_stored_us10y_as_the_dashboard(tmp_path, monkeypatch):
+    """The 16 Oct snapshot ran with no macro (the series left the stock `prices` frame): 5 BUY CANDIDATEs were not BUY on
+    the page that uses the stored 10Y."""
+    import core.screener as screener
+    from etl import snapshot
+    from services import market_data as md
+    from tests.synthetic_warehouse import build
+    db = build(str(tmp_path / "dw.duckdb"))
+    seen = {}
+    real = screener.build_screener_table
+    monkeypatch.setattr(screener, "build_screener_table", lambda *a, **k: seen.update(macro=a[5]) or real(*a, **k))
+    monkeypatch.setattr(md, "_get_macro_fallback_from_db", lambda conn: {"US10Y": {"val": 5.1}})
+    snapshot.build_snapshot(db)
+    assert seen["macro"]["US10Y"]["val"] == 5.1

@@ -43,8 +43,12 @@ Today: {today}. Data below is from the user's screener as of {as_of} (a starting
 - Sector: {sector} - Region: {region}
 - Quality {quality}/100 (business quality), Value {value}/100 (vs sector peers), Momentum {momentum}/100 (timing only)
 - Upside to the analysts' mean target: {upside}% - RSI {rsi} - Trend: {trend} - Smart money: {smart_money}
+- The system's own DCF (free cash flow to equity): {dcf}
 - The screener labels it "BUY CANDIDATE". That label is UNVALIDATED (its statistical evidence is not established): treat
   it as a hypothesis to challenge.
+
+How the screener works (so you do not need to ask for its formulas; judge whether they are sensible, not whether they exist):
+{method}
 
 Use web search for current facts (latest results, guidance, debt, legal or regulatory news, next report date). Give the
 date of every figure. If you are not sure of something, say "unsure" - do not guess. No price targets, no promised
@@ -67,6 +71,45 @@ Fill the JSON fields:
 """
 
 
+METHOD = """- Quality (0-100): return on invested capital 20, margins 25, growth and stability 20, balance sheet (net debt/EBITDA) 20,
+  free cash flow conversion 15; red flags subtract points (losses, debt without EBITDA, net debt/EBITDA > 5x, dividend not
+  covered by FCF, negative equity).
+- Value (0-100): FCF yield (after stock compensation) 25, EV/EBITDA 20, earnings yield 20, PEG 15, shareholder yield 10,
+  price/sales 10; each is half percentile within peers, half an absolute band. Peers = same industry if it has at least
+  5 stocks, else the same sector, else the whole universe (about 860 stocks, hand-assigned sectors).
+- Momentum (0-100): 12-1 month return rank (70%) plus price above the 200-day average / golden cross (30%); timing only,
+  never part of Quality or Value.
+- A BUY CANDIDATE needs: Quality above a floor, the system's DCF base value at least 25% above the price (margin of safety),
+  reward/risk of at least 2, no results within 7 days, and enough trading liquidity. DCF: cost of equity = risk-free + a
+  Blume-adjusted beta x 5% equity risk premium (risk-free in the stock's own currency), 10 explicit years, growth anchored
+  on revenue growth (capped at 20%), 2-2.5% terminal growth, three scenarios (bear/base/bull).
+- Unknown inputs are left out and the rest re-weighted, never scored as zero."""
+
+
+def dcf_line(inputs, price=None) -> str:
+    """One line from the snapshot's stored valuation: what the Decision's margin of safety rests on."""
+    try:
+        v = (json.loads(inputs) if isinstance(inputs, str) else inputs or {}).get("valuation") or {}
+        price = float(price) if price else None
+        base, bear, bull = v.get("base"), v.get("bear"), v.get("bull")
+        parts = []
+        if base is not None and price:
+            parts.append(f"base value {base:.2f} EUR vs price {price:.2f} EUR ({(base / price - 1) * 100:+.0f}%)")
+        elif base is not None:
+            parts.append(f"base value {base:.2f}")
+        if bear is not None and bull is not None:
+            parts.append(f"bear {bear:.2f} / bull {bull:.2f} EUR")
+        if v.get("growth") is not None:
+            parts.append(f"growth assumption {v['growth'] * 100:.1f}%")
+        if v.get("cost_of_equity") is not None:
+            parts.append(f"cost of equity {v['cost_of_equity'] * 100:.1f}%")
+        if v.get("currency"):
+            parts.append(f"cash flows in {v['currency']}")
+        return ", ".join(parts) or "not available"
+    except (ValueError, TypeError, KeyError, AttributeError):
+        return "not available"
+
+
 def build_prompt(row: dict, today: str) -> str:
     def n(v, nd=0):
         try:
@@ -79,7 +122,7 @@ def build_prompt(row: dict, today: str) -> str:
         sector=row.get("sector") or "n/a", region=row.get("region") or "n/a", quality=n(row.get("quality")),
         value=n(row.get("value")), momentum=n(row.get("momentum")), upside=n(row.get("upside_pct"), 1),
         rsi=n(row.get("rsi")), trend=row.get("trend") or "n/a", smart_money=row.get("smart_money") or "n/a",
-        labels=" | ".join(f'"{x}"' for x in LABELS))
+        labels=" | ".join(f'"{x}"' for x in LABELS), method=METHOD, dcf=dcf_line(row.get("inputs"), row.get("price_close")))
 
 
 def validate(obj) -> Optional[dict]:

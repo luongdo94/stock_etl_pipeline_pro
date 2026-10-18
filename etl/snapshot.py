@@ -116,12 +116,14 @@ def build_snapshot(db_path: str = DB_PATH, track_db_path: str = TRACK_DB_PATH) -
     # Same inputs as the dashboard (audit F-20): live US 10Y from the warehouse and the current evidence state
     macro, track_ok = {}, False
     try:
-        tnx = prices[prices["ticker"] == "^TNX"].sort_values("date")
-        if not tnx.empty:
-            r = tnx.iloc[-1]
-            local = float(r["price_close"]) * float(r.get("price_scale") or 1) / float(r.get("fx_rate") or 1)
-            macro = {"US10Y": {"val": local}}
-    except Exception:
+        # the SAME stored macro the dashboard reads (services.market_data.stored_macro): the market-context series are no
+        # longer in the stock `prices` frame, and without them every USD Decision used the configured fallback rate
+        # while the dashboard used the stored 10Y - 5 BUY CANDIDATEs of the 16 Oct snapshot were not BUY on the page
+        from services.market_data import _get_macro_fallback_from_db
+        with duckdb.connect(db_path, read_only=True) as mconn:
+            macro = _get_macro_fallback_from_db(mconn)
+    except Exception as e:
+        logger.warning(f"   ⚠️ Stored macro unavailable for the snapshot ({e}); USD valuations use the configured rate.")
         macro = {}
     try:
         from core.track_record import evidence_status

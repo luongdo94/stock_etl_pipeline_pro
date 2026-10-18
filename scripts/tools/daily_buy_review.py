@@ -49,7 +49,7 @@ def buy_rows(db_path: str) -> list:
             return []
         return c.execute("""
             SELECT s.ticker, d.company, s.as_of_date::VARCHAR AS as_of_date, s.sector, s.region, s.quality, s.value,
-                   s.momentum, s.upside_pct, s.rsi, s.trend, s.smart_money, s.decision
+                   s.momentum, s.upside_pct, s.rsi, s.trend, s.smart_money, s.decision, s.inputs, s.price_close
             FROM marts.score_snapshots s LEFT JOIN marts.dim_companies d USING (ticker)
             WHERE s.as_of_date = ? AND s.decision = 'BUY CANDIDATE' ORDER BY s.quality DESC NULLS LAST""", [as_of]).df() \
             .to_dict("records")
