@@ -33,3 +33,22 @@ def forget(prefix: str) -> None:
     """Drop the remembered values (and the widget state) of every key that starts with `prefix`."""
     for k in [k for k in st.session_state if str(k).startswith(kept_key(prefix)) or str(k).startswith(prefix)]:
         del st.session_state[k]
+
+
+def sticky_multi(label, options, default, key, **kw):
+    """st.multiselect that remembers its choice; options that no longer exist (the snapshot changed) are dropped."""
+    options = list(options)
+    cur = [o for o in st.session_state.get(kept_key(key), default) if o in options]
+    v = st.multiselect(label, options, default=cur, key=key, **kw)
+    st.session_state[kept_key(key)] = v
+    return v
+
+
+def sticky_pills(label, options, default, key, **kw):
+    """st.pills (single choice) that remembers its choice; never returns None (a deselected pill keeps the last one)."""
+    options = list(options)
+    cur = st.session_state.get(kept_key(key), default)
+    cur = cur if cur in options else default
+    v = st.pills(label, options, selection_mode="single", default=cur, key=key, **kw) or cur
+    st.session_state[kept_key(key)] = v
+    return v

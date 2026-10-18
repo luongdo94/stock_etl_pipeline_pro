@@ -126,7 +126,7 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
             chg_1d = 0
             
         mcap = row.get("market_cap", 0)
-        mcap_b = (mcap / 1e9) if pd.notnull(mcap) and mcap > 0 else 0
+        mcap_b = (mcap / 1e9) if pd.notnull(mcap) and mcap > 0 else float("nan")      # unknown, not "€0.0B"
         
         latest_p = ticker_prices.iloc[-1]
         # ── SCORES (core/scoring.py): Quality, Value, Momentum ────────────────────────
@@ -214,7 +214,8 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
 
         roe_raw = row.get('roe')
         roe_val = (float(roe_raw) * 100) if pd.notnull(roe_raw) else float("nan")
-        net_payout = row.get('net_payout_yield_pct', 0) or 0
+        _np = row.get('net_payout_yield_pct')
+        net_payout = float(_np) if pd.notnull(_np) else float("nan")                  # unknown, not a 0 % payout
         vol_30d = row.get('volatility_30d', 0) or 0
         short_pct = (row.get('short_percent_of_float', 0) * 100) if pd.notnull(row.get('short_percent_of_float')) else 0
 
@@ -244,6 +245,10 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
             "Verdict": verdict(_dec.stance, action_label),
             "Quality": quality_raw if quality_raw is not None else float("nan"),   # unknown stays visibly unknown
             "Conflicts": "; ".join(_dec.conflicts),
+            # what the Decision says about itself — shown, never re-derived by a view: the first reason, then the lists
+            "Why": str(_dec.reasons[0]) if _dec.reasons else "",
+            "_reasons": [str(r) for r in _dec.reasons], "_warnings": [str(w) for w in _dec.warnings],
+            "_confidence_notes": [str(n) for n in _dec.confidence_notes], "_invalidation": [str(i) for i in _dec.invalidation],
             "Value": value_score if value_score is not None else float("nan"),
             "Momentum": momentum,
             "Revisions": float(_sc["revisions"]) if pd.notnull(_sc["revisions"]) else float("nan"),
@@ -252,7 +257,7 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
             "_stop_distance_pct": _dec.downside_pct if _dec.downside_pct is not None else float("nan"),
             "_thesis_stop": _dec.stop if _dec.stop is not None else float("nan"),   # recorded once at opening (P1/5)
             "ADV (EUR M)": round(float(_sc["adv_eur"]) / 1e6, 1) if pd.notnull(_sc["adv_eur"]) else float("nan"),
-            "Coverage (%)": float(_cov) if pd.notnull(_cov) else 0.0,
+            "Coverage (%)": float(_cov) if pd.notnull(_cov) else float("nan"),         # unknown, not 0 % observable
             "Flags": _sc["flags"],
             "Missing": _sc["missing"],
             "Components": _sc["components"],
@@ -265,9 +270,9 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
             "Price": cur_p,
             "MCap (B)": round(mcap_b, 1),
             "RSI (14)": round(latest_rsi, 1),
-            "Z-Score": round(ticker_prices['price_z_score'].iloc[-1] if 'price_z_score' in ticker_prices.columns else 0, 2),
+            "Z-Score": round(ticker_prices['price_z_score'].iloc[-1], 2) if 'price_z_score' in ticker_prices.columns else float("nan"),
             "Smart Money": sm_spirit,
-            "vs MA200 (%)": round(ticker_prices['pct_from_ma200'].iloc[-1] if 'pct_from_ma200' in ticker_prices.columns else 0, 1),
+            "vs MA200 (%)": round(ticker_prices['pct_from_ma200'].iloc[-1], 1) if 'pct_from_ma200' in ticker_prices.columns else float("nan"),
             "Yield (%)": round(div_yield, 2),
             "Net Payout (%)": round(net_payout, 2),
             "FCF Margin (%)": round(fcf_margin, 1),

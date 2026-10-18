@@ -122,8 +122,11 @@ def build(ctx, deep_ticker):
         "quality": _num("Quality"), "value": _num("Value"), "momentum": _num("Momentum"), "revisions": _num("Revisions"),
         "coverage": _num("Coverage (%)"),
         # liquidity for the Decision's BUY gate (unknown = blocked); the screener stores EUR millions
-        "adv_eur": (_num("ADV (EUR M)") * 1e6) if ("ADV (EUR M)" in m_df.columns and _num("ADV (EUR M)") is not None)
-        else None,
+        # RAW median traded value (as the Scanner passes it to the Decision), not the display column rounded to 0.1 M:
+        # 1.96 M rounds to 2.0 M and would clear the 2 M floor here while the Scanner blocks it
+        "adv_eur": (_num("_adv_eur") if "_adv_eur" in m_df.columns
+                    else (_num("ADV (EUR M)") * 1e6) if ("ADV (EUR M)" in m_df.columns and _num("ADV (EUR M)") is not None)
+                    else None),
         "flags": str(_row.iloc[0]["Flags"]) if not _row.empty else "",
         "missing": list(_row.iloc[0]["Missing"]) if not _row.empty else [],
         "components": dict(_row.iloc[0]["Components"]) if not _row.empty else {},

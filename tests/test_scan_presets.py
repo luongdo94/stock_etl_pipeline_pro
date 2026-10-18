@@ -80,7 +80,8 @@ def test_value_trap_and_red_flags():
 
 def test_scanner_table_has_a_slim_fixed_default_and_unique_columns():
     from views import scanner
-    assert len(scanner.DEFAULT_COLS) == 12                 # R3-E: open conflicts are shown, not clamped away
+    assert len(scanner.DEFAULT_COLS) == 13                 # R3-E: open conflicts are shown, not clamped away;
+    assert "Why" in scanner.DEFAULT_COLS                   # + the Decision's own first reason (Scanner redesign)
     assert "Conflicts" in scanner.DEFAULT_COLS
     assert len(set(scanner.DEFAULT_COLS + scanner.EXTRA_COLS)) == len(scanner.DEFAULT_COLS + scanner.EXTRA_COLS)
     assert "Upside (%)" not in scanner.DEFAULT_COLS + scanner.EXTRA_COLS           # analyst target: not used by Value / Decision
