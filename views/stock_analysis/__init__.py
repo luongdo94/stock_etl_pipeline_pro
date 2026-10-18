@@ -6,7 +6,7 @@ layer of the page from that DeepDive and the app context.
 import streamlit as st
 
 from ui.icons import render_header
-from views.stock_analysis import (analyst, answer, context, diagnostics, fundamentals, header, ownership,
+from views.stock_analysis import (ai_review, analyst, answer, context, diagnostics, fundamentals, header, ownership,
                                       peers, performance, research, risk_hub, signal_matrix, technical,
                                       watchlist_save)
 from ui.decision_panel import render_valuation_section
@@ -14,7 +14,7 @@ from ui.decision_panel import render_valuation_section
 # The page is organised by the question it answers. Only the chosen group is built (st.tabs would run all of them on
 # every rerun); the answer block above the choice is always there.
 GROUPS = {
-    "Overview": (header, signal_matrix, watchlist_save),
+    "Overview": (header, ai_review, signal_matrix, watchlist_save),
     "Business & value": (diagnostics, fundamentals, analyst, peers),
     "Price & timing": (technical, performance),
     "Risks & data": (risk_hub, research, ownership),

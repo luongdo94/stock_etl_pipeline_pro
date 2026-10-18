@@ -71,3 +71,4 @@ audit/
 !infra/airflow/**
 __pycache__/
 *.pyc
+warehouse/ai_reviews/
