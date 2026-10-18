@@ -32,7 +32,7 @@ def render(dd, ctx):
         next_earnings=dd.next_earnings, quality=dd.ai_score,
         snapshots=load_track_record(), prices=prices_full,
         holdings_loader=_holdings_value, companies=ctx["companies_full"],
-        signal_conflict=dd.extra.get("signal_conflict"))
+        signal_conflict=dd.extra.get("signal_conflict"), decision=dd.extra.get("decision"))
     render_confidence_line(load_ticker_provenance(dd.ticker), dd.vin)
 
     pos, lo, hi = dd.w52_pos, dd.tm["w52_lo"], dd.tm["w52_hi"]

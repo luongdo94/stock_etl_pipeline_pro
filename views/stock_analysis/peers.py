@@ -53,12 +53,6 @@ def render(dd, ctx):
         peer_df = peer_companies.merge(peer_prices, on='ticker', how='left')
 
         # ── Compute Net Debt / EBITDA ──────────────────────────────────
-        def _net_debt_ebitda(row):
-            td  = row.get("total_debt") or 0
-            eb  = row.get("ebitda")
-            if eb and eb > 0:
-                return td / eb
-            return None
 
         # ── Compute YoY growth from actual annual_fin data ─────────────
         # Same method as Financial Performance chart: (Y - Y-1) / |Y-1| * 100
@@ -78,10 +72,17 @@ def render(dd, ctx):
 
         # ── Build unified rows ─────────────────────────────────────────
         def _build_row(row, ticker, is_selected):
-            td   = row.get("total_debt") or 0
-            eb   = row.get("ebitda")
+            def _val(k):                                      # None when missing (0 is a value, unknown is not 0)
+                v = row.get(k)
+                try:
+                    f = float(v)
+                except (TypeError, ValueError):
+                    return None
+                return f if f == f else None
+            td, eb = _val("total_debt"), _val("ebitda")
             rev_growth = _yoy_growth_from_annual(ticker, "revenue")
-            fcf_mgn = row.get("fcf_margin") or 0
+            fcf_mgn = _val("fcf_margin")
+            _pct100 = lambda k: None if _val(k) is None else _val(k) * 100          # noqa: E731
             return {
                 "ticker":           ticker,
                 "company":          row.get("company", ticker),
@@ -90,13 +91,13 @@ def render(dd, ctx):
                 "revenue_growth":   rev_growth,
                 "earnings_growth":  _yoy_growth_from_annual(ticker, "eps"),
                 # Quality / Profitability
-                "gross_margin":     (row.get("gross_margin") or 0) * 100,
-                "operating_margin": (row.get("operating_margin") or 0) * 100,
-                "roe_pct":          (row.get("roe") or 0) * 100,
+                "gross_margin":     _pct100("gross_margin"),
+                "operating_margin": _pct100("operating_margin"),
+                "roe_pct":          _pct100("roe"),
                 "fcf_margin":       fcf_mgn,
-                "rule_of_40":       (rev_growth or 0) + fcf_mgn if rev_growth is not None else None,
+                "rule_of_40":       rev_growth + fcf_mgn if rev_growth is not None and fcf_mgn is not None else None,
                 # Balance sheet & Risk
-                "net_debt_ebitda":  td / eb if (pd.notna(eb) and eb > 0) else None,
+                "debt_ebitda":  td / eb if (td is not None and eb is not None and eb > 0) else None,
                 "debt_to_equity":   row.get("debt_to_equity"),
                 "dividend_yield":   row.get("dividend_yield_pct"),
                 # Valuation
@@ -150,7 +151,7 @@ def render(dd, ctx):
                 ("gross_margin",     "Gross Mgn",         "pct",        "higher"),
                 ("operating_margin", "Op Mgn",            "pct",        "higher"),
                 ("roe_pct",          "ROE",               "pct",        "higher"),
-                ("net_debt_ebitda",  "ND/EBITDA",         "x",          "lower"),
+                ("debt_ebitda",  "Debt/EBITDA",         "x",          "lower"),
                 ("ev_to_ebitda",     "EV/EBITDA",         "x",          "lower"),
                 ("peg_ratio",        "PEG",               "x1",         "lower"),
             ]
@@ -183,7 +184,7 @@ def render(dd, ctx):
                 ("operating_margin", "Op Mgn",            "pct",        "higher"),
                 ("roe_pct",          "ROE",               "pct",        "higher"),
                 ("fcf_margin",       "FCF Mgn",           "pct",        "higher"),
-                ("net_debt_ebitda",  "ND/EBITDA",         "x",          "lower"),
+                ("debt_ebitda",  "Debt/EBITDA",         "x",          "lower"),
                 ("ev_to_ebitda",     "EV/EBITDA",         "x",          "lower"),
                 ("pe_ratio",         "P/E",               "x",          "lower"),
                 ("price_to_sales",   "P/S",               "x1",         "lower"),
@@ -203,9 +204,9 @@ def render(dd, ctx):
 
         # ── Color coding ───────────────────────────────────────────────
         # Higher = green: growth, margins, roe, fcf
-        # Lower  = green: net_debt_ebitda, valuation multiples
+        # Lower  = green: debt_ebitda, valuation multiples
         HIGHER_BETTER = {"revenue_growth", "earnings_growth", "gross_margin", "operating_margin", "roe_pct", "fcf_margin", "rule_of_40", "dividend_yield"}
-        LOWER_BETTER  = {"net_debt_ebitda", "ev_to_ebitda", "pe_ratio", "price_to_sales", "price_to_book", "debt_to_equity", "peg_ratio"}
+        LOWER_BETTER  = {"debt_ebitda", "ev_to_ebitda", "pe_ratio", "price_to_sales", "price_to_book", "debt_to_equity", "peg_ratio"}
 
         def _cell_bg(val, col_key, is_avg_row):
             if is_avg_row or val is None: return ""

@@ -97,16 +97,19 @@ def test_stock_analysis_shows_measures_confidence_and_model_risk(warehouse, monk
     at.session_state["user_id"] = "00000000-0000-0000-0000-000000000000"
     at.session_state["active_tab"] = "🔬 Stock Analysis"
     at.session_state["deep_ticker_selector"] = "NVDA"
-    at.run()
-    assert not at.exception, [e.value for e in at.exception]
-    html = " ".join(m.value for m in at.markdown)
+    import sys
+    sys.path.insert(0, os.path.dirname(__file__))
+    from test_app_smoke import stock_pages
+    pages = stock_pages(at)                       # one run per group: only the chosen group is drawn
+    html = " ".join(p["html"] for p in pages.values())
     assert "ROIC (3y median)" in html and "FCF conversion" in html and "Net debt / EBITDA" in html
     assert "Data confidence" in html and "TradingView disagrees" in html     # NVDA's stubbed quote is 5% off
-    assert "Insider activity" in html
-    if "Intrinsic Valuation (FCFE DCF)" in html and "No positive free cash flow" not in " ".join(i.value for i in at.info):
+    assert "Insider activity" in pages["Risks & data"]["html"]
+    infos = " ".join(p["infos"] for p in pages.values())
+    if "Intrinsic Valuation (FCFE DCF)" in html and "No positive free cash flow" not in infos:
         assert "Value after year" in html and "Net debt repayment / FCFE" in html
-    captions = " ".join(c.value for c in at.caption)
-    assert "This quarter" in captions or "No analyst estimates" in " ".join(i.value for i in at.info)
+    captions = " ".join(p["captions"] for p in pages.values())
+    assert "This quarter" in captions or "No analyst estimates" in infos
 
 
 # ── Scanner review (2026-10-16): default columns every stock has, near-duplicates out ──────────────────────────────

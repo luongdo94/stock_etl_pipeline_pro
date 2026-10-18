@@ -6,7 +6,7 @@ import streamlit as st
 
 from views.stock_analysis.layout import layer_banner
 
-from services.db import get_db_connection
+
 from services.market_data import get_forex_rates
 
 
@@ -20,15 +20,11 @@ def render(dd, ctx):
     st.markdown("---")
     layer_banner(7, "Analyst expectations (forward-looking)", "#9b59b6", top=10, bottom=0)
 
-    _fe_df = pd.DataFrame()
+    # the estimates of the snapshot this page was built from (ctx), not a second read of the warehouse
+    _fe_all = ctx.get("forward_estimates_full")
+    _fe_df = (_fe_all[_fe_all["ticker"] == deep_ticker] if _fe_all is not None and not _fe_all.empty
+              and "ticker" in _fe_all.columns else pd.DataFrame())
     _fe_err_msg = ""
-    try:
-        with get_db_connection() as _fe_conn:
-            _fe_df = _fe_conn.execute("""
-                SELECT * FROM marts.dim_forward_estimates WHERE ticker = ?
-            """, [deep_ticker]).df()
-    except Exception as _fe_err:
-        _fe_err_msg = str(_fe_err)
 
     if _fe_df.empty:
         if _fe_err_msg:
@@ -170,6 +166,7 @@ def render(dd, ctx):
             st.plotly_chart(fig_eps, use_container_width=True)
 
         with ch_r:
+            _counts_known = _upgrades is not None or _downgrades is not None      # unknown is not "0 upgrades"
             _up    = int(_upgrades or 0)
             _down  = int(_downgrades or 0)
             _total = _up + _down
@@ -187,8 +184,8 @@ def render(dd, ctx):
                             text-transform:uppercase; margin-bottom:14px;'>Analyst Revision Sentiment (30d)</div>
                 <div style='display:flex; justify-content:space-between;
                             font-size:0.72rem; color:#8899aa; margin-bottom:4px;'>
-                    <span>⬆️ Upgrades: <b style='color:#2ecc71;'>{_up}</b></span>
-                    <span>⬇️ Downgrades: <b style='color:#e74c3c;'>{_down}</b></span>
+                    <span>⬆️ Upgrades: <b style='color:#2ecc71;'>{_up if _counts_known else "N/A"}</b></span>
+                    <span>⬇️ Downgrades: <b style='color:#e74c3c;'>{_down if _counts_known else "N/A"}</b></span>
                 </div>
                 <div style='background:rgba(255,255,255,0.08); border-radius:4px;
                             height:14px; overflow:hidden; display:flex;'>
@@ -201,7 +198,7 @@ def render(dd, ctx):
                         {f"€{_eps_delta_30d:+.3f}" if _eps_delta_30d is not None else "N/A"}
                     </div>
                     <div style='color:#556677; font-size:0.65rem; margin-top:2px;'>
-                        {"Analysts raising estimates ↑" if _eps_delta_30d and _eps_delta_30d > 0 else "Analysts cutting estimates ↓" if _eps_delta_30d and _eps_delta_30d < 0 else "Estimates stable"}
+                        {"No 30-day change reported" if _eps_delta_30d is None else "Analysts raising estimates ↑" if _eps_delta_30d > 0 else "Analysts cutting estimates ↓" if _eps_delta_30d < 0 else "Estimates unchanged"}
                     </div>
                 </div>
             </div>

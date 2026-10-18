@@ -20,6 +20,44 @@ def _known(v):
     return "N/A" if f is None else f
 
 
+def _render_news(meta, ticker):
+    """Headline sentiment, fetched when the user asks (it used to run on every page open: a request to Google News, and
+    the ~440 MB FinBERT model on first use). The result is kept in the session per ticker."""
+    from services.news import fetch_news_sentiment
+    key = f"news_sent::{ticker}"
+    rec = st.session_state.get(key)
+    label = "🔄 Refresh headlines" if rec else "📰 Load headlines and sentiment"
+    if st.button(label, key=f"news_btn_{ticker}",
+                 help="Reads recent headlines from Google News and scores them with FinBERT. The first use downloads "
+                      "the model (~440 MB). Headline sentiment is context only — it does not feed the Decision."):
+        with st.spinner(f"Reading headlines for {meta.get('company', ticker)}..."):
+            rec = fetch_news_sentiment(meta.get("company", ticker), ticker, get_pipe=get_finbert_pipeline)
+        st.session_state[key] = rec
+    if not rec:
+        st.caption("Not loaded — headlines and their sentiment are fetched only when you ask.")
+        return
+    if rec["error"] and not rec["items"]:
+        st.caption(f"⚠️ News feed unavailable: {rec['error']}")
+        return
+    if not rec["items"]:
+        st.info("No recent news found for this ticker.")
+        return
+    if rec["scored"]:
+        colour = {"BULLISH": "#2ecc71", "BEARISH": "#e74c3c", "NEUTRAL": "#f1c40f"}[rec["mood"]]
+        icon = {"BULLISH": "🚀", "BEARISH": "📉", "NEUTRAL": "😴"}[rec["mood"]]
+        st.markdown(f"<div style='margin-bottom:12px;padding:8px 12px;background:rgba(255,255,255,0.04);border-radius:6px;border-left:3px solid {colour};font-size:0.85rem;'><b style='color:{colour};'>{icon} {rec['mood']}</b> &nbsp;·&nbsp; FinBERT: {rec['avg']:+.2f} on {len(rec['items'])} headlines</div>", unsafe_allow_html=True)
+    else:
+        st.caption("Headlines are listed without a sentiment score (the model was not available).")
+    st.caption(f"Fetched {rec['fetched_at']:%d %b %H:%M}. Headlines are context, not an input of the Decision.")
+    with st.popover(f"View {len(rec['items'])} Detailed Headlines", width="stretch"):
+        st.markdown("### 📰 Recent Headlines")
+        for it in rec["items"]:
+            icon = {"POSITIVE": "🟢", "NEGATIVE": "🔴"}.get(it["label"], "⚪" if it["label"] else "📰")
+            with st.expander(f"{icon} {it['title'][:70]}..."):
+                st.caption(f"**Source:** {it['source']} | **Date:** {it['published']}")
+                st.markdown(f"[Read Article ↗]({it['link']})")
+
+
 def render(dd, ctx):
     _dxy_pct = ctx["_dxy_pct"]
     _r1 = dd.r1
@@ -297,57 +335,9 @@ def render(dd, ctx):
 
     with qual_col:
 
-        # ── NEWS FEED (Auto-load, FinBERT Sentiment) ─────────────────
+        # ── NEWS FEED (on request: Google News + FinBERT) ────────────────────────────────────────
         st.markdown("<div style='color:#f39c12; font-size:0.85rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-top:16px; margin-bottom:8px; border-bottom:1px solid rgba(243,156,18,0.3); padding-bottom:6px;'>📰 Market Sentiment (FinBERT)</div>", unsafe_allow_html=True)
-        try:
-            import feedparser
-            import urllib.parse
-            # Prefer searching by company name to avoid ticker clash with US stocks
-            _q = urllib.parse.quote(f"{meta.get('company', deep_ticker)} stock when:7d")
-            _rss_url = f"https://news.google.com/rss/search?q={_q}&hl=en-US&gl=US&ceid=US:en"
-            _feed = feedparser.parse(_rss_url)
-            _news_items = _feed.entries[:10]
-            if _news_items:
-                _pipe = get_finbert_pipeline()
-                _titles = [item.get("title", "").split(" - ")[0] for item in _news_items]
-                _sent_scores = []
-                
-                # Pre-calculate sentiment to show mood OUTSIDE popover
-                if _pipe:
-                    _results = _pipe(_titles)
-                    for _res in _results:
-                        _lbl = _res['label'].upper()
-                        _sc = _res['score']
-                        _sent_scores.append(_sc if _lbl == 'POSITIVE' else (-_sc if _lbl == 'NEGATIVE' else 0))
-                    
-                    if _sent_scores:
-                        _avg_sent = sum(_sent_scores) / len(_sent_scores)
-                        _mood_lbl = "🚀 BULLISH" if _avg_sent > 0.1 else ("📉 BEARISH" if _avg_sent < -0.1 else "😴 NEUTRAL")
-                        _mood_color = "#2ecc71" if _avg_sent > 0.1 else ("#e74c3c" if _avg_sent < -0.1 else "#f1c40f")
-                        st.markdown(f"<div style='margin-bottom:12px;padding:8px 12px;background:rgba(255,255,255,0.04);border-radius:6px;border-left:3px solid {_mood_color};font-size:0.85rem;'><b style='color:{_mood_color};'>{_mood_lbl}</b> &nbsp;·&nbsp; FinBERT: {_avg_sent:+.2f}</div>", unsafe_allow_html=True)
-                
-                # Popover for details
-                with st.popover(f"View {len(_news_items)} Detailed Headlines", width="stretch"):
-                    st.markdown("### 📰 Recent Headlines")
-                    if _pipe:
-                        for _i, _res in enumerate(_results):
-                            _lbl = _res['label'].upper()
-                            _sc = _res['score']
-                            _icon = "🟢" if _lbl == 'POSITIVE' else ("🔴" if _lbl == 'NEGATIVE' else "⚪")
-                            _entry = _news_items[_i]
-                            with st.expander(f"{_icon} {_titles[_i][:70]}..."):
-                                st.caption(f"**Source:** {_entry.get('source', {}).get('title', 'Google News')} | **Date:** {_entry.get('published', 'N/A')}")
-                                st.markdown(f"[Read Article ↗]({_entry.get('link')})")
-                    else:
-                        for _entry in _news_items[:5]:
-                            _title = _entry.get("title", "").split(" - ")[0]
-                            with st.expander(f"📰 {_title[:70]}..."):
-                                st.caption(f"**Date:** {_entry.get('published', 'N/A')}")
-                                st.markdown(f"[Read Article ↗]({_entry.get('link')})")
-            else:
-                st.info("No recent news found for this ticker.")
-        except Exception as _e:
-            st.caption(f"⚠️ News feed unavailable: {str(_e)[:60]}")
+        _render_news(meta, deep_ticker)
 
 
     with quant_col:

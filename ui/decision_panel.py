@@ -19,6 +19,15 @@ _STANCE_COLORS = {dec.BUY: "#2ecc71", dec.RESEARCH: "#3498db", dec.HOLD: "#f1c40
 _CONF_COLORS = {"HIGH": "#2ecc71", "MEDIUM": "#f1c40f", "LOW": "#e74c3c"}
 
 
+def _sticky(widget, label, default, key, **kw):
+    """A widget whose value survives the runs in which it is not drawn (another group of the page is open): Streamlit
+    drops the state of an undrawn widget, so the last value is remembered in a plain key and passed back as `value`."""
+    mem = f"_kept::{key}"
+    v = widget(label, value=st.session_state.get(mem, default), key=key, **kw)
+    st.session_state[mem] = v
+    return v
+
+
 def _cached_evidence(snapshots: pd.DataFrame, prices: pd.DataFrame) -> dict:
     """Same evidence service as the Scanner and the snapshot job (R2-05); `snapshots` kept for the signature."""
     from services.db import evidence
@@ -64,13 +73,18 @@ def render_score_strip(scores):
 
 def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, relval, missing,
                           next_earnings, quality, snapshots, prices, holdings_loader, companies,
-                          scores=None, signal_conflict=None):
+                          scores=None, signal_conflict=None, decision=None):
+    """`decision`: the Decision the page already computed (DeepDive, the same one as the Scanner and the assistant) —
+    shown as it is. Without it (other callers) the panel decides from its own inputs, as before."""
     ev = _cached_evidence(snapshots, prices[["date", "ticker", "price_close"]])
-    d = dec.decide(price=price, vin=vin, stop_loss=stop_loss, meta=meta,
-                   scores={**(scores or {}), "quality": (scores or {}).get("quality", quality), "missing": missing},
-                   price_date=price_date, next_earnings=next_earnings, track_record_ok=ev["ok"])
-    if signal_conflict:
-        d = dec.with_conflict(d, signal_conflict)
+    if decision is not None:
+        d = decision
+    else:
+        d = dec.decide(price=price, vin=vin, stop_loss=stop_loss, meta=meta,
+                       scores={**(scores or {}), "quality": (scores or {}).get("quality", quality), "missing": missing},
+                       price_date=price_date, next_earnings=next_earnings, track_record_ok=ev["ok"])
+        if signal_conflict:
+            d = dec.with_conflict(d, signal_conflict)
 
     sc, cc = _STANCE_COLORS.get(d.stance, "#8899aa"), _CONF_COLORS[d.confidence]
     _H = (vin.get("irr") or {}).get("horizon_years") or dec.load_rules()["valuation"].get("horizon_years", 4)
@@ -95,16 +109,18 @@ def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, re
       </div>
     </div>""", unsafe_allow_html=True)
 
-    _irr = d.scenario_irr_pct or {}
-    _f = lambda x: "n/a" if x is None else f"{x:+.1f}%"   # noqa: E731
-    st.caption(
-        f"Model gross IRR over {_H} years if each DCF scenario materialises — the model's cash flow to equity per share "
-        f"(assumed paid out or reinvested at the cost of equity), constant share count, exit at the model's own year-{_H} "
-        f"value; before tax, withholding, FX and costs: bear {_f(_irr.get('bear'))} · base {_f(_irr.get('base'))} · "
-        f"bull {_f(_irr.get('bull'))} · probability-weighted average of the scenario IRRs {_f(d.expected_value_irr_pct)}. "
-        f"Not an expected investor return. Upside to base value (no horizon, after costs): "
-        f"{fmt(d.net_expected_return_pct)}. Reward/risk and size use the thesis STOP "
-        f"({fmt(-d.downside_pct) if d.downside_pct else 'N/A'}); a stop can gap and is not proof the thesis failed.")
+    # the answer comes first; how its numbers are defined is one click away
+    with st.expander("How the numbers above are defined"):
+        _irr = d.scenario_irr_pct or {}
+        _f = lambda x: "n/a" if x is None else f"{x:+.1f}%"   # noqa: E731
+        st.caption(
+            f"Model gross IRR over {_H} years if each DCF scenario materialises — the model's cash flow to equity per share "
+            f"(assumed paid out or reinvested at the cost of equity), constant share count, exit at the model's own year-{_H} "
+            f"value; before tax, withholding, FX and costs: bear {_f(_irr.get('bear'))} · base {_f(_irr.get('base'))} · "
+            f"bull {_f(_irr.get('bull'))} · probability-weighted average of the scenario IRRs {_f(d.expected_value_irr_pct)}. "
+            f"Not an expected investor return. Upside to base value (no horizon, after costs): "
+            f"{fmt(d.net_expected_return_pct)}. Reward/risk and size use the thesis STOP "
+            f"({fmt(-d.downside_pct) if d.downside_pct else 'N/A'}); a stop can gap and is not proof the thesis failed.")
     if scores:
         render_score_strip(scores)
     for c in d.conflicts:
@@ -191,13 +207,13 @@ def _render_financial_valuation(meta, price, vin, companies=None):
             "Summary, scanner, alerts, watchlist and AI brief keep using the system defaults shown in the inputs' "
             "starting values.", icon="🧪")
     c1, c2, c3 = st.columns(3)
-    roe = c1.number_input("Normalised ROE today (%)", value=round((vin["roe"] or 0) * 100, 1), step=0.5,
-                          key=f"pb_roe_{meta.get('ticker')}") / 100
-    payout = c2.number_input("Payout (%)", value=round((vin.get("payout") if vin.get("payout") is not None
-                                                        else val.DEFAULT_PAYOUT) * 100, 0), step=5.0,
-                             min_value=0.0, max_value=100.0, key=f"pb_pay_{meta.get('ticker')}") / 100
-    r = c3.number_input("Cost of equity (%)", value=round(vin["cost_of_equity"] * 100, 1), step=0.5,
-                        key=f"pb_r_{meta.get('ticker')}") / 100
+    roe = _sticky(c1.number_input, "Normalised ROE today (%)", round((vin["roe"] or 0) * 100, 1),
+                  f"pb_roe_{meta.get('ticker')}", step=0.5) / 100
+    payout = _sticky(c2.number_input, "Payout (%)", round((vin.get("payout") if vin.get("payout") is not None
+                                                           else val.DEFAULT_PAYOUT) * 100, 0),
+                     f"pb_pay_{meta.get('ticker')}", step=5.0, min_value=0.0, max_value=100.0) / 100
+    r = _sticky(c3.number_input, "Cost of equity (%)", round(vin["cost_of_equity"] * 100, 1),
+                f"pb_r_{meta.get('ticker')}", step=0.5) / 100
     tg = vin["terminal_growth"]
     if r <= tg:
         st.warning("Cost of equity must exceed long-run growth.")
@@ -274,12 +290,12 @@ def render_valuation_section(*, meta, price, vin, relval, companies=None):
             "Summary, scanner, alerts, watchlist and AI brief keep using the system defaults shown in the inputs' "
             "starting values.", icon="🧪")
     c1, c2, c3 = st.columns(3)
-    g = c1.number_input("Starting FCF growth (%)", value=round(vin["growth"] * 100, 1), step=1.0,
-                        key=f"dcf_g_{meta.get('ticker')}") / 100
-    tg = c2.number_input("Terminal growth (%)", value=round(vin["terminal_growth"] * 100, 2), step=0.25,
-                         key=f"dcf_tg_{meta.get('ticker')}") / 100
-    r = c3.number_input("Cost of equity (%)", value=round(vin["cost_of_equity"] * 100, 1), step=0.5,
-                        key=f"dcf_r_{meta.get('ticker')}") / 100
+    g = _sticky(c1.number_input, "Starting FCF growth (%)", round(vin["growth"] * 100, 1),
+                f"dcf_g_{meta.get('ticker')}", step=1.0) / 100
+    tg = _sticky(c2.number_input, "Terminal growth (%)", round(vin["terminal_growth"] * 100, 2),
+                 f"dcf_tg_{meta.get('ticker')}", step=0.25) / 100
+    r = _sticky(c3.number_input, "Cost of equity (%)", round(vin["cost_of_equity"] * 100, 1),
+                f"dcf_r_{meta.get('ticker')}", step=0.5) / 100
     if r <= tg:
         st.warning("Cost of equity must exceed terminal growth.")
         return

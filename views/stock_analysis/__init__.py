@@ -6,13 +6,21 @@ layer of the page from that DeepDive and the app context.
 import streamlit as st
 
 from ui.icons import render_header
-from views.stock_analysis import (analyst, context, diagnostics, fundamentals, header, ownership,
+from views.stock_analysis import (analyst, answer, context, diagnostics, fundamentals, header, ownership,
                                       peers, performance, research, risk_hub, signal_matrix, technical,
                                       watchlist_save)
 from ui.decision_panel import render_valuation_section
 
-SECTIONS = (header, signal_matrix, risk_hub, research, diagnostics, technical, fundamentals, analyst,
-            ownership, peers, performance, watchlist_save)
+# The page is organised by the question it answers. Only the chosen group is built (st.tabs would run all of them on
+# every rerun); the answer block above the choice is always there.
+GROUPS = {
+    "Overview": (header, signal_matrix, watchlist_save),
+    "Business & value": (diagnostics, fundamentals, analyst, peers),
+    "Price & timing": (technical, performance),
+    "Risks & data": (risk_hub, research, ownership),
+}
+DEFAULT_GROUP = "Overview"
+SECTIONS = tuple(m for group in GROUPS.values() for m in group)
 
 
 def _select_ticker(ctx):
@@ -49,6 +57,18 @@ def _chart_range_note(dd, ctx=None):
             f"latest close of **{latest:%d %b %Y}** — the same Decision as the Scanner.{then}")
 
 
+def _select_group() -> str:
+    """The chosen group, kept across tab visits and ticker changes (the widget's own state is dropped when the page is
+    not drawn, so it is mirrored in a plain key)."""
+    saved = st.session_state.get("_sa_group")
+    if "sa_group" not in st.session_state and saved in GROUPS:
+        st.session_state["sa_group"] = saved
+    group = st.pills("Section", list(GROUPS), selection_mode="single", default=DEFAULT_GROUP, key="sa_group",
+                     label_visibility="collapsed") or DEFAULT_GROUP
+    st.session_state["_sa_group"] = group
+    return group
+
+
 def render(ctx):
     """Render the 🔬 Stock Analysis tab."""
     render_header("search", "Single Stock Deep Dive")
@@ -59,7 +79,9 @@ def render(ctx):
         return
     dd = context.build(ctx, ticker)
     _chart_range_note(dd, ctx)
-    for section in SECTIONS:
+    answer.render(dd, ctx)
+    group = _select_group()
+    for section in GROUPS[group]:
         section.render(dd, ctx)
         if section is fundamentals:
             render_valuation_section(meta=dd.meta, price=float(dd.cur_p), vin=dd.vin, relval=dd.relval,

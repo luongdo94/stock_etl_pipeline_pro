@@ -7,10 +7,19 @@ import streamlit as st
 
 from views.stock_analysis.layout import layer_banner
 
-from services.db import get_db_connection, load_ticker_provenance
+from services.db import load_ticker_provenance
 from ui.provenance import pit_caption
 from services.market_data import get_forex_rates
 
+
+
+def _estimates_of(ctx, ticker, cols):
+    """The analyst-estimate row(s) of `ticker` from the loaded snapshot (ctx), limited to `cols`. A column the warehouse
+    does not have raises KeyError like the SQL it replaces did (the callers sit in try blocks)."""
+    fe = ctx.get("forward_estimates_full")
+    if fe is None or fe.empty or "ticker" not in fe.columns:
+        return pd.DataFrame(columns=cols)
+    return fe.loc[fe["ticker"] == ticker, cols]
 
 
 def render(dd, ctx):
@@ -118,14 +127,8 @@ def render(dd, ctx):
             
             # ── Analyst EPS Forecast overlay (Annual) ──────────────────
             try:
-                with get_db_connection() as _fe_conn2:
-                    _fe2 = _fe_conn2.execute(
-                        """SELECT eps_est_cur_y, eps_est_next_y,
-                                  eps_trend_delta_30d, eps_trend_delta_next_y,
-                                  upgrade_ratio_30d
-                           FROM marts.dim_forward_estimates WHERE ticker = ?""",
-                        [deep_ticker]
-                    ).df()
+                # the estimates of the snapshot this page was built from (ctx), not a second read of the warehouse
+                _fe2 = _estimates_of(ctx, deep_ticker, ['eps_est_cur_y', 'eps_est_next_y', 'eps_trend_delta_30d', 'eps_trend_delta_next_y', 'upgrade_ratio_30d'])
                 if not _fe2.empty:
                     import datetime as _dt2
                     _cy = _dt2.datetime.now().year
@@ -374,13 +377,8 @@ def render(dd, ctx):
                 
                 # EPS QUARTERLY FORECAST (Analyst Consensus — CQ & NQ)
                 try:
-                    with get_db_connection() as _fe_q_conn:
-                        _fe_q = _fe_q_conn.execute(
-                            """SELECT eps_est_cur_q, eps_est_next_q,
-                                      eps_trend_delta_30d, upgrade_ratio_30d
-                               FROM marts.dim_forward_estimates WHERE ticker = ?""",
-                            [deep_ticker]
-                        ).df()
+                    # the estimates of the snapshot this page was built from (ctx), not a second read of the warehouse
+                    _fe_q = _estimates_of(ctx, deep_ticker, ['eps_est_cur_q', 'eps_est_next_q', 'eps_trend_delta_30d', 'upgrade_ratio_30d'])
                     if not _fe_q.empty:
 
                         # FX normalisation: forecast native currency → EUR

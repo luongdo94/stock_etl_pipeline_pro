@@ -87,14 +87,28 @@ def test_unauthenticated_user_sees_login_only(warehouse):
     assert not any("Run All Strategies" in (b.label or "") for b in at.button)
 
 
+STOCK_GROUPS = ["Overview", "Business & value", "Price & timing", "Risks & data"]
+
+
+def stock_pages(at):
+    """Run the Stock Analysis page once per group (only the chosen group is drawn) → {group: {html, captions, infos}}."""
+    pages = {}
+    for g in STOCK_GROUPS:
+        at.session_state["sa_group"] = g
+        at.run()
+        assert not at.exception, (g, [e.value for e in at.exception])
+        pages[g] = {"html": " ".join(m.value for m in at.markdown), "captions": " ".join(c.value for c in at.caption),
+                    "infos": " ".join(i.value for i in at.info)}
+    return pages
+
+
 def test_stock_analysis_shows_decision_summary(warehouse):
     at = _app("🔬 Stock Analysis")
     at.session_state["deep_ticker_selector"] = "AAPL"
-    at.run()
-    assert not at.exception, [e.value for e in at.exception]
-    html = "\n".join(m.value for m in at.markdown)
-    assert "Decision Summary" in html
-    assert "FCFE DCF" in html or "No positive free cash flow" in " ".join(i.value for i in at.info)
+    pages = stock_pages(at)
+    assert "Decision Summary" in pages["Overview"]["html"]
+    assert "Intrinsic Valuation" in pages["Business & value"]["html"] or "FCFE DCF" in pages["Business & value"]["html"] \
+        or "No positive free cash flow" in pages["Business & value"]["infos"]
 
 
 def test_track_record_tab_scores_history(warehouse):
@@ -137,9 +151,8 @@ def test_decision_and_signal_never_contradict_across_the_universe(warehouse):
 
 def test_deep_dive_shows_each_number_once(warehouse):
     """Quality / Value / R-R / 52-week position / revisions / forward P/E / short interest each live in ONE place."""
-    at = _app("🔬 Stock Analysis").run()
-    assert not at.exception, [e.value for e in at.exception]
-    html = " ".join(m.value for m in at.markdown)
+    pages = stock_pages(_app("🔬 Stock Analysis"))
+    html = " ".join(p["html"] for p in pages.values())
     for gone in ("Quant Health", "Revision Signal", "52-week position", "Reward/Risk (Decision)", "THESIS STOP",
                  "Short Float", "Inst Own", "Smart Money Flow", "Risk &amp; Volume", "Risk & Volume"):
         assert gone not in html, gone
@@ -275,6 +288,7 @@ def test_a_chart_range_without_bars_keeps_the_decision_and_the_assistant(warehou
     monkeypatch.setattr(context, "build", spy)
     at = _app("🔬 Stock Analysis")
     at.session_state["deep_ticker_selector"] = "AAPL"
+    at.session_state["sa_group"] = "Price & timing"
     at.session_state["time_horizon_ctrl"] = "Custom"
     at.run()
     latest = pd.to_datetime(seen["ctx"]["prices_full"]["date"]).max().date()

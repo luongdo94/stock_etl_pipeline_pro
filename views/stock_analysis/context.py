@@ -97,8 +97,9 @@ def build(ctx, deep_ticker):
         upside = 0  # Treat as stale (reverse split, crash, FX mismatch)
     upside = max(-100, min(100, upside))
 
-    z_score = df_now['price_z_score'].iloc[-1] if 'price_z_score' in df_now.columns else 0
-    if pd.isna(z_score): z_score = 0
+    z_score = df_now['price_z_score'].iloc[-1] if 'price_z_score' in df_now.columns else float("nan")
+    z_known = bool(pd.notna(z_score))              # the score engine keeps its neutral 0; the display says N/A
+    if not z_known: z_score = 0
 
     # --- Enrich meta with latest technicals for the scoring engine ---
     latest_tech = df_now.iloc[-1]
@@ -205,5 +206,5 @@ def build(ctx, deep_ticker):
                            # the charts may end earlier than the data the Decision uses — the page says so
                            "chart_end": (pd.to_datetime(df_deep["date"].iloc[-1]).date() if not df_deep.empty
                                          else pd.Timestamp(ctx.get("t_end", df_now["date"].iloc[-1])).date()),
-                           "chart_bars": int(len(df_deep)),
+                           "chart_bars": int(len(df_deep)), "z_known": z_known,
                            "latest_date": pd.to_datetime(df_now["date"].iloc[-1]).date()})

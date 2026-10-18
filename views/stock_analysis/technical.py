@@ -157,7 +157,23 @@ def render(dd, ctx):
         )
         fig_tech.update_yaxes(title_text="Price (€)", row=1, col=1)
         fig_tech.update_yaxes(title_text="RSI", row=2, col=1, range=[0, 100])
-    tech_tab_2, tech_tab_1 = st.tabs(["📈 Interactive TradingView", "📊 AI Technical Master"])
+    # Smart Money reading, then the chart: the local chart first; TradingView only when asked for
+    # Smart Money badge (our own volume-flow reading, not TradingView's)
+    _sm_color = "#2ecc71" if p_sm == "ACCUMULATION" else "#e74c3c"
+    _sm_icon  = "📈" if p_sm == "ACCUMULATION" else "📉"
+    _sm_badge_html = f"""
+    <div style="display:flex; gap:10px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
+        <span style="background:{_sm_color}22; border:1px solid {_sm_color}; color:{_sm_color};
+                     padding:4px 12px; border-radius:20px; font-size:0.82rem; font-weight:700;">
+            {_sm_icon} Smart Money: {p_sm} ({p_sm_strength})
+        </span>
+        <span style="background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.12); color:#aaa;
+                     padding:4px 12px; border-radius:20px; font-size:0.82rem;">
+            Layer: {p_sm_layer}
+        </span>
+    </div>"""
+    st.markdown(_sm_badge_html, unsafe_allow_html=True)
+    tech_tab_1, tech_tab_2 = st.tabs(["📊 Chart (local data)", "📈 TradingView (opt-in)"])
 
     with tech_tab_1:
         if fig_tech is None:
@@ -168,228 +184,174 @@ def render(dd, ctx):
     with tech_tab_2:
         import streamlit.components.v1 as components
         tv_symbol = get_tv_symbol(deep_ticker)
+        # st.tabs renders every tab on each run: without this switch the TradingView scripts would load, and send
+        # requests to tradingview.com from the browser, every time the page is opened
+        _tv_key = f"tv_on_{deep_ticker}"
+        _tv_on = st.toggle("Load the TradingView widgets", key=_tv_key,
+                           value=st.session_state.get(f"_kept::{_tv_key}", False),      # survives another group being open
+                           help="Loads scripts from tradingview.com in your browser (symbol "
+                                f"{tv_symbol}). Nothing from TradingView feeds the Decision.")
+        st.session_state[f"_kept::{_tv_key}"] = _tv_on
+        if not _tv_on:
+            st.caption("Not loaded. The chart on the left tab uses the warehouse data; TradingView is optional.")
+        else:
+            # Main layout: chart (left) + side panels (right)
+            _tv_col_main, _tv_col_side = st.columns([3, 1])
 
-        # Smart Money badge above chart
-        _sm_color = "#2ecc71" if p_sm == "ACCUMULATION" else "#e74c3c"
-        _sm_icon  = "📈" if p_sm == "ACCUMULATION" else "📉"
-        _sm_badge_html = f"""
-        <div style="display:flex; gap:10px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
-            <span style="background:{_sm_color}22; border:1px solid {_sm_color}; color:{_sm_color};
-                         padding:4px 12px; border-radius:20px; font-size:0.82rem; font-weight:700;">
-                {_sm_icon} Smart Money: {p_sm} ({p_sm_strength})
-            </span>
-            <span style="background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.12); color:#aaa;
-                         padding:4px 12px; border-radius:20px; font-size:0.82rem;">
-                Layer: {p_sm_layer}
-            </span>
-            <span style="color:#888; font-size:0.75rem; margin-left:auto;">TradingView Institutional Panel · {tv_symbol}</span>
-        </div>"""
-        st.markdown(_sm_badge_html, unsafe_allow_html=True)
+            with _tv_col_main:
+                # Advanced Chart with pre-loaded indicators
+                components.html(f"""
+                <!-- TradingView Advanced Chart Widget -->
+                <div class="tradingview-widget-container" style="height:660px;width:100%">
+                  <div id="tv_adv_chart_{tv_symbol.replace(':','_')}" style="height:660px;width:100%"></div>
+                  <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
+                  <script type="text/javascript">
+                  new TradingView.widget({{
+                    "autosize": true,
+                    "symbol": "{tv_symbol}",
+                    "interval": "D",
+                    "timezone": "Etc/UTC",
+                    "theme": "dark",
+                    "style": "1",
+                    "locale": "en",
+                    "enable_publishing": false,
+                    "backgroundColor": "rgba(13, 14, 20, 1)",
+                    "gridColor": "rgba(255, 255, 255, 0.05)",
+                    "withdateranges": true,
+                    "hide_top_toolbar": false,
+                    "hide_legend": false,
+                    "hide_side_toolbar": false,
+                    "allow_symbol_change": true,
+                    "save_image": true,
+                    "show_popup_button": true,
+                    "popup_width": "1000",
+                    "popup_height": "650",
+                    "studies": [
+                      "STD;MA%Cross",
+                      "STD;RSI",
+                      "STD;MACD",
+                      "STD;Volume"
+                    ],
+                    "studies_overrides": {{
+                      "moving average cross.first ma length": 50,
+                      "moving average cross.second ma length": 200,
+                      "rsi.length": 14,
+                      "macd.fast length": 12,
+                      "macd.slow length": 26,
+                      "macd.signal smoothing": 9
+                    }},
+                    "overrides": {{
+                      "paneProperties.background": "rgba(13, 14, 20, 1)",
+                      "mainSeriesProperties.candleStyle.upColor": "#26a69a",
+                      "mainSeriesProperties.candleStyle.downColor": "#ef5350",
+                      "mainSeriesProperties.candleStyle.borderUpColor": "#26a69a",
+                      "mainSeriesProperties.candleStyle.borderDownColor": "#ef5350"
+                    }},
+                    "drawing_access": {{ "type": "all" }},
+                    "container_id": "tv_adv_chart_{tv_symbol.replace(':','_')}"
+                  }});
+                  </script>
+                </div>
+                """, height=680)
 
-        # Main layout: chart (left) + side panels (right)
-        _tv_col_main, _tv_col_side = st.columns([3, 1])
+            with _tv_col_side:
+                # (the TradingView Buy/Sell gauge was removed: it is a second rating next to the Decision)
 
-        with _tv_col_main:
-            # Advanced Chart with pre-loaded indicators
+                # Panel 2: Symbol Overview (Financials + Analyst Targets)
+                components.html(f"""
+                <!-- TradingView Symbol Overview Widget -->
+                <div class="tradingview-widget-container" style="height:330px; margin-top:10px;">
+                  <div class="tradingview-widget-container__widget"></div>
+                  <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-symbol-overview.js" async>
+                  {{
+                    "symbols": [["{tv_symbol}"]],
+                    "chartOnly": false,
+                    "width": "100%",
+                    "height": "330",
+                    "locale": "en",
+                    "colorTheme": "dark",
+                    "autosize": false,
+                    "showVolume": false,
+                    "showMA": false,
+                    "hideDateRanges": false,
+                    "hideMarketStatus": false,
+                    "hideSymbolLogo": false,
+                    "scalePosition": "right",
+                    "scaleMode": "Normal",
+                    "fontFamily": "-apple-system, BlinkMacSystemFont, Trebuchet MS, Roboto, Ubuntu, sans-serif",
+                    "fontSize": "10",
+                    "noTimeScale": false,
+                    "valuesTracking": "1",
+                    "changeMode": "price-and-percent",
+                    "chartType": "area",
+                    "isTransparent": true,
+                    "lineWidth": 2,
+                    "lineType": 0,
+                    "dateRanges": ["1m|1D", "3m|1D", "12m|1W", "60m|1M"]
+                  }}
+                  </script>
+                </div>
+                """, height=340)
+
+            # ── STOCK PROFILE (Full Width) ────────────────────────────────────────────
             components.html(f"""
-            <!-- TradingView Advanced Chart Widget -->
-            <div class="tradingview-widget-container" style="height:660px;width:100%">
-              <div id="tv_adv_chart_{tv_symbol.replace(':','_')}" style="height:660px;width:100%"></div>
-              <script type="text/javascript" src="https://s3.tradingview.com/tv.js"></script>
-              <script type="text/javascript">
-              new TradingView.widget({{
+            <!-- TradingView Symbol Profile Widget -->
+            <div class="tradingview-widget-container">
+              <div class="tradingview-widget-container__widget"></div>
+              <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-symbol-profile.js" async>
+              {{
+                "width": "100%",
+                "height": "400",
+                "colorTheme": "dark",
+                "isTransparent": true,
+                "symbol": "{tv_symbol}",
+                "locale": "en"
+              }}
+              </script>
+            </div>
+            """, height=410)
+
+            # Cross-Asset Comparison (Relative Strength vs Benchmark)
+            st.markdown("<div style='margin-top:12px; color:#667788; font-size:0.75rem; font-weight:700; text-transform:uppercase; letter-spacing:0.08em;'>📊 Relative Strength vs Key Benchmarks</div>", unsafe_allow_html=True)
+            _compare_syms = json.dumps([
+                {"symbol": "FOREXCOM:SPXUSD", "position": "SameScale"},
+                {"symbol": "FOREXCOM:NSXUSD", "position": "SameScale"},
+                {"symbol": "XETR:DAX",        "position": "SameScale"},
+            ])
+            components.html(f"""
+            <!-- TradingView Advanced Chart (Relative Strength) -->
+            <div class="tradingview-widget-container" style="height:220px;">
+              <div class="tradingview-widget-container__widget"></div>
+              <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>
+              {{
                 "autosize": true,
                 "symbol": "{tv_symbol}",
                 "interval": "D",
                 "timezone": "Etc/UTC",
                 "theme": "dark",
-                "style": "1",
+                "style": "3",
                 "locale": "en",
-                "enable_publishing": false,
-                "backgroundColor": "rgba(13, 14, 20, 1)",
-                "gridColor": "rgba(255, 255, 255, 0.05)",
-                "withdateranges": true,
-                "hide_top_toolbar": false,
+                "backgroundColor": "rgba(0, 0, 0, 0)",
+                "gridColor": "rgba(255, 255, 255, 0.06)",
+                "hide_top_toolbar": true,
                 "hide_legend": false,
-                "hide_side_toolbar": false,
-                "allow_symbol_change": true,
-                "save_image": true,
-                "show_popup_button": true,
-                "popup_width": "1000",
-                "popup_height": "650",
-                "studies": [
-                  "STD;MA%Cross",
-                  "STD;RSI",
-                  "STD;MACD",
-                  "STD;Volume"
-                ],
-                "studies_overrides": {{
-                  "moving average cross.first ma length": 50,
-                  "moving average cross.second ma length": 200,
-                  "rsi.length": 14,
-                  "macd.fast length": 12,
-                  "macd.slow length": 26,
-                  "macd.signal smoothing": 9
-                }},
-                "overrides": {{
-                  "paneProperties.background": "rgba(13, 14, 20, 1)",
-                  "mainSeriesProperties.candleStyle.upColor": "#26a69a",
-                  "mainSeriesProperties.candleStyle.downColor": "#ef5350",
-                  "mainSeriesProperties.candleStyle.borderUpColor": "#26a69a",
-                  "mainSeriesProperties.candleStyle.borderDownColor": "#ef5350"
-                }},
-                "drawing_access": {{ "type": "all" }},
-                "container_id": "tv_adv_chart_{tv_symbol.replace(':','_')}"
-              }});
-              </script>
-            </div>
-            """, height=680)
-
-        with _tv_col_side:
-            # Panel 1: Technical Analysis Summary (Buy/Sell gauge)
-            components.html(f"""
-            <!-- TradingView Technical Analysis Widget -->
-            <div class="tradingview-widget-container" style="height:310px;">
-              <div class="tradingview-widget-container__widget"></div>
-              <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-technical-analysis.js" async>
-              {{
-                "interval": "1D",
-                "width": "100%",
-                "isTransparent": true,
-                "height": "310",
-                "symbol": "{tv_symbol}",
-                "showIntervalTabs": true,
-                "locale": "en",
-                "colorTheme": "dark"
+                "save_image": false,
+                "calendar": false,
+                "hide_volume": true,
+                "compare_symbols": {_compare_syms},
+                "studies": [],
+                "height": 220,
+                "width": "100%"
               }}
               </script>
             </div>
-            """, height=320)
+            """, height=230)
 
-            # Panel 2: Symbol Overview (Financials + Analyst Targets)
-            components.html(f"""
-            <!-- TradingView Symbol Overview Widget -->
-            <div class="tradingview-widget-container" style="height:330px; margin-top:10px;">
-              <div class="tradingview-widget-container__widget"></div>
-              <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-symbol-overview.js" async>
-              {{
-                "symbols": [["{tv_symbol}"]],
-                "chartOnly": false,
-                "width": "100%",
-                "height": "330",
-                "locale": "en",
-                "colorTheme": "dark",
-                "autosize": false,
-                "showVolume": false,
-                "showMA": false,
-                "hideDateRanges": false,
-                "hideMarketStatus": false,
-                "hideSymbolLogo": false,
-                "scalePosition": "right",
-                "scaleMode": "Normal",
-                "fontFamily": "-apple-system, BlinkMacSystemFont, Trebuchet MS, Roboto, Ubuntu, sans-serif",
-                "fontSize": "10",
-                "noTimeScale": false,
-                "valuesTracking": "1",
-                "changeMode": "price-and-percent",
-                "chartType": "area",
-                "isTransparent": true,
-                "lineWidth": 2,
-                "lineType": 0,
-                "dateRanges": ["1m|1D", "3m|1D", "12m|1W", "60m|1M"]
-              }}
-              </script>
-            </div>
-            """, height=340)
 
-        # ── STOCK PROFILE (Full Width) ────────────────────────────────────────────
-        components.html(f"""
-        <!-- TradingView Symbol Profile Widget -->
-        <div class="tradingview-widget-container">
-          <div class="tradingview-widget-container__widget"></div>
-          <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-symbol-profile.js" async>
-          {{
-            "width": "100%",
-            "height": "400",
-            "colorTheme": "dark",
-            "isTransparent": true,
-            "symbol": "{tv_symbol}",
-            "locale": "en"
-          }}
-          </script>
-        </div>
-        """, height=410)
-
-        # Cross-Asset Comparison (Relative Strength vs Benchmark)
-        st.markdown("<div style='margin-top:12px; color:#667788; font-size:0.75rem; font-weight:700; text-transform:uppercase; letter-spacing:0.08em;'>📊 Relative Strength vs Key Benchmarks</div>", unsafe_allow_html=True)
-        _compare_syms = json.dumps([
-            {"symbol": "FOREXCOM:SPXUSD", "position": "SameScale"},
-            {"symbol": "FOREXCOM:NSXUSD", "position": "SameScale"},
-            {"symbol": "XETR:DAX",        "position": "SameScale"},
-        ])
-        components.html(f"""
-        <!-- TradingView Advanced Chart (Relative Strength) -->
-        <div class="tradingview-widget-container" style="height:220px;">
-          <div class="tradingview-widget-container__widget"></div>
-          <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js" async>
-          {{
-            "autosize": true,
-            "symbol": "{tv_symbol}",
-            "interval": "D",
-            "timezone": "Etc/UTC",
-            "theme": "dark",
-            "style": "3",
-            "locale": "en",
-            "backgroundColor": "rgba(0, 0, 0, 0)",
-            "gridColor": "rgba(255, 255, 255, 0.06)",
-            "hide_top_toolbar": true,
-            "hide_legend": false,
-            "save_image": false,
-            "calendar": false,
-            "hide_volume": true,
-            "compare_symbols": {_compare_syms},
-            "studies": [],
-            "height": 220,
-            "width": "100%"
-          }}
-          </script>
-        </div>
-        """, height=230)
-
-        # ── COMMUNITY IDEAS ──────────────────────────────────────────
-        _tv_base_ideas = tv_symbol if tv_symbol else deep_ticker
-        _ideas_url = f"https://www.tradingview.com/symbols/{_tv_base_ideas}/ideas/"
-        _chart_url  = f"https://www.tradingview.com/chart/?symbol={_tv_base_ideas}"
-        _profile_url = f"https://www.tradingview.com/symbols/{_tv_base_ideas}/"
-        components.html(f"""
-        <div style="margin-top:16px; display:flex; gap:12px; flex-wrap:wrap;">
-          <a href="{_ideas_url}" target="_blank" style="
-            display:inline-flex; align-items:center; gap:8px;
-            padding:12px 22px; border-radius:8px; text-decoration:none;
-            background:rgba(155,89,182,0.15); border:1px solid rgba(155,89,182,0.4);
-            color:#c39bd3; font-size:0.85rem; font-weight:700;
-            font-family:Inter,sans-serif; transition:all 0.2s;
-            letter-spacing:0.5px;">
-            💡 View Community Ideas
-          </a>
-          <a href="{_chart_url}" target="_blank" style="
-            display:inline-flex; align-items:center; gap:8px;
-            padding:12px 22px; border-radius:8px; text-decoration:none;
-            background:rgba(52,152,219,0.15); border:1px solid rgba(52,152,219,0.4);
-            color:#7fb3d3; font-size:0.85rem; font-weight:700;
-            font-family:Inter,sans-serif; letter-spacing:0.5px;">
-            📈 Full Chart
-          </a>
-          <a href="{_profile_url}" target="_blank" style="
-            display:inline-flex; align-items:center; gap:8px;
-            padding:12px 22px; border-radius:8px; text-decoration:none;
-            background:rgba(46,204,113,0.12); border:1px solid rgba(46,204,113,0.35);
-            color:#82e0aa; font-size:0.85rem; font-weight:700;
-            font-family:Inter,sans-serif; letter-spacing:0.5px;">
-            🏢 Symbol Profile
-          </a>
-        </div>
-        <p style="margin-top:10px; color:#445566; font-size:0.72rem; font-family:Inter,sans-serif;">
-          Opens TradingView in a new tab · Symbol: <b style="color:#667788;">{_tv_base_ideas}</b>
-        </p>
-        """, height=120)
+    # ── COMMUNITY IDEAS / links (plain links: nothing is loaded until one is clicked) ───────────────────────────────
+    _tv_base_ideas = get_tv_symbol(deep_ticker) or deep_ticker
+    st.markdown(
+        f"[💡 Community ideas ↗](https://www.tradingview.com/symbols/{_tv_base_ideas}/ideas/) · "
+        f"[📈 Full chart ↗](https://www.tradingview.com/chart/?symbol={_tv_base_ideas}) · "
+        f"[🏢 Symbol profile ↗](https://www.tradingview.com/symbols/{_tv_base_ideas}/) &nbsp;—&nbsp; opens TradingView "
+        f"in a new tab (symbol {_tv_base_ideas}).")

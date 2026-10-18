@@ -84,8 +84,9 @@ def render(dd, ctx):
 
         with kcol1:
             st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Valuation & Size</div>", unsafe_allow_html=True)
-            _mc = meta.get('market_cap'); m_cap = float(_mc) if not pd.isna(_mc) and _mc else 0.0
-            if m_cap >= 1e12: m_cap_txt = f"€{m_cap/1e12:.2f}T"
+            m_cap = _num(meta.get('market_cap'))
+            if not m_cap: m_cap_txt = "N/A"                     # missing is not "€0M"
+            elif m_cap >= 1e12: m_cap_txt = f"€{m_cap/1e12:.2f}T"
             elif m_cap >= 1e9: m_cap_txt = f"€{m_cap/1e9:.1f}B"
             else: m_cap_txt = f"€{m_cap/1e6:.0f}M"
             
@@ -149,12 +150,16 @@ def render(dd, ctx):
 
         with kcol3:
             st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Risk & Solvency</div>", unsafe_allow_html=True)
-            debt_eq_raw = meta.get('debt_to_equity', 0)
-            if pd.notnull(debt_eq_raw) and debt_eq_raw != 0:
+            debt_eq_raw = _num(meta.get('debt_to_equity'))
+            _tot_debt = _num(meta.get('total_debt'))
+            if debt_eq_raw is not None and debt_eq_raw != 0:
                 debt_eq_txt = f"{(debt_eq_raw / 100.0):.2f}x"
+            elif _tot_debt is not None and _tot_debt > 0:
+                debt_eq_txt = "N/A (Neg Equity)"
+            elif _tot_debt == 0:
+                debt_eq_txt = "0.00x"                           # no debt reported as such
             else:
-                _tot_debt = meta.get('total_debt', 0)
-                debt_eq_txt = "N/A (Neg Equity)" if pd.notnull(_tot_debt) and _tot_debt > 0 else "0.00x"
+                debt_eq_txt = "N/A"                             # unknown, not "no debt"
             
             curr_rat  = _num(meta.get('current_ratio'))
             quick_rat = _num(meta.get('quick_ratio'))
@@ -163,18 +168,16 @@ def render(dd, ctx):
             c_col = None if curr_rat is None else ("#2ecc71" if curr_rat > 1.5 else ("#e74c3c" if curr_rat < 1.0 else "#f39c12"))
             q_col = None if quick_rat is None else ("#2ecc71" if quick_rat > 1.0 else ("#e74c3c" if quick_rat < 0.7 else "#f39c12"))
             
-            _ebitda_val = 0.0
-            try: _ebitda_val = float(meta.get('ebitda', 0) or 0)
-            except (TypeError, ValueError): pass
-            _debt_val = 0.0
-            try: _debt_val = float(meta.get('total_debt', 0) or 0)
-            except (TypeError, ValueError): pass
-            debt_ebitda = (_debt_val / _ebitda_val) if _ebitda_val > 0 else 0
-            
-            de_col = "#2ecc71" if 0 < debt_ebitda < 3.0 else ("#e74c3c" if debt_ebitda >= 5.0 else "#f39c12")
+            _ebitda_val, _debt_val = _num(meta.get('ebitda')), _num(meta.get('total_debt'))
+            # gross debt / EBITDA; unknown when either is missing or EBITDA is not positive (0 is a value only for debt)
+            debt_ebitda = (_debt_val / _ebitda_val) if (_ebitda_val is not None and _ebitda_val > 0
+                                                         and _debt_val is not None) else None
+            de_col = (None if debt_ebitda is None else
+                      "#2ecc71" if debt_ebitda < 3.0 else ("#e74c3c" if debt_ebitda >= 5.0 else "#f39c12"))
 
             render_metric_row("Debt/Eq", debt_eq_txt)
-            render_metric_row("Debt/EBITDA", f"{debt_ebitda:.2f}x" if debt_ebitda > 0 else "N/A", value_color=de_col)
+            render_metric_row("Debt/EBITDA (gross)", _txt(debt_ebitda, "{:.2f}x"), value_color=de_col,
+                              help_text="Total debt ÷ EBITDA, cash not deducted. N/A when EBITDA is missing or not positive.")
             render_metric_row("Current Ratio", _txt(curr_rat, "{:.2f}"), value_color=c_col)
             render_metric_row("Quick Ratio",   _txt(quick_rat, "{:.2f}"), value_color=q_col)
             beta_val = meta.get('beta', 1.0)
@@ -191,14 +194,17 @@ def render(dd, ctx):
             render_metric_row("Analyst Target (not in Decision)", _txt(_tgt if _tgt else None, "€{:.2f}"),
                               delta=upside if _tgt else None, is_pct=True)
             
-            pe_5y_avg    = meta.get('pe_5y_avg', 0)
-            pe_cur       = meta.get('pe_ratio', 0)
-            pe_delta     = ((pe_cur / pe_5y_avg) - 1) * 100 if pe_5y_avg > 0 and pe_cur > 0 else 0
-            
-            render_metric_row("5Y Avg P/E",    f"{pe_5y_avg:.1f}" if pe_5y_avg > 0 else "N/A", delta=pe_delta, is_pct=True, color_invert=True)
-            
-            zs_col = "#2ecc71" if z_score < -1 else ("#e74c3c" if z_score > 1.5 else None)
-            render_metric_row("Z-Score (5Y)",  f"{z_score:.2f}", value_color=zs_col)
+            pe_5y_avg    = _num(meta.get('pe_5y_avg'))
+            pe_cur       = _num(meta.get('pe_ratio'))
+            pe_known     = pe_5y_avg is not None and pe_5y_avg > 0
+            pe_delta     = ((pe_cur / pe_5y_avg) - 1) * 100 if pe_known and pe_cur is not None and pe_cur > 0 else None
+
+            render_metric_row("5Y Avg P/E",    f"{pe_5y_avg:.1f}" if pe_known else "N/A", delta=pe_delta,
+                              is_pct=True, color_invert=True)
+
+            z_known = dd.extra.get("z_known", True)
+            zs_col = None if not z_known else ("#2ecc71" if z_score < -1 else ("#e74c3c" if z_score > 1.5 else None))
+            render_metric_row("Z-Score (5Y)",  f"{z_score:.2f}" if z_known else "N/A", value_color=zs_col)
             st.markdown("</div>", unsafe_allow_html=True)
 
         with kcol5:
