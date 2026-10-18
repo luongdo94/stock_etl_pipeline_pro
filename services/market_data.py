@@ -5,7 +5,7 @@ import pandas as pd
 import streamlit as st
 import yfinance as yf
 
-from services.db import get_db_connection
+from services.db import get_db_connection, snapshot_cached
 
 
 @st.cache_data(ttl=1800, show_spinner=False)
@@ -70,8 +70,9 @@ def _finite(v):
 
 @st.cache_data(ttl=1799, show_spinner="Fetching Live Macro Data...")
 def fetch_macro_data(generation=None):
-    """Fetches real-time SPY, DXY, US10Y and VIX from Yahoo Finance. `generation` (the loaded snapshot version) keys
-    the cache because the fallback reads the warehouse: a new snapshot must not keep the old snapshot's 10Y."""
+    """LIVE SPY, DXY, US10Y, VIX… from Yahoo Finance (falling back to the stored closes). Called only when the user asks
+    (sidebar "Fetch live rates"); the page itself reads stored_macro. `generation` keys the cache because the fallback
+    reads the warehouse."""
     import logging
     yf.set_tz_cache_location("/tmp/yfinance_tz") # Mute warnings in streamlit
     try:
@@ -175,66 +176,66 @@ def fetch_fred_macro():
         return {}
 
 
+_MACRO_TICKERS = (("SPY", "SPY"), ("^VIX", "VIX"), ("^TNX", "US10Y"), ("DX-Y.NYB", "DXY"), ("^IRX", "US2Y"),
+                  ("CL=F", "Oil"), ("GC=F", "Gold"))
+
+
 def _get_macro_fallback_from_db(conn=None) -> dict:
-    """
-    Fallback for fetch_macro_data when Yahoo Finance is unavailable (e.g. Cloud deploy).
-    Reads the two most-recent closes for all macro tickers from the provided connection.
-    """
-    # a series the warehouse does not hold stays UNKNOWN (None), never 0
-    defaults = {k: {"val": None, "chg": None, "pct": None, "source": "unavailable"}
-                for k in ("SPY", "DXY", "US10Y", "VIX", "US2Y", "Oil", "Gold")}
-    
+    """The market inputs STORED in the snapshot (raw.stock_prices): the two latest closes of each macro series, in the
+    series' own unit. The warehouse stores these closes multiplied by the day's USD→EUR rate (close × fx_rate; the 10Y
+    "4.55" is the yield 5.10 × 0.89), so the native level is close × price_scale ÷ fx_rate — the same conversion the
+    snapshot job uses for the Decision's risk-free rate. Each entry also carries the date of the close (`as_of`) and of the
+    previous one; one close alone gives a level but no change (unknown, not 0). A series the warehouse does not hold stays
+    unknown (None)."""
+    defaults = {k: {"val": None, "chg": None, "pct": None, "source": "unavailable", "as_of": None}
+                for _, k in _MACRO_TICKERS}
     if conn is None:
         return defaults
-
+    symbols = ", ".join(f"'{t}'" for t, _ in _MACRO_TICKERS)
     try:
-        from collections import defaultdict
-        
-        def _process(tkr_code, fallback_key):
-            prices = [v for v in (_finite(x) for x in by_ticker.get(tkr_code, [])) if v is not None]
-            if prices:
-                v_now, v_prev = prices[0], (prices[1] if len(prices) > 1 else prices[0])
-                chg = v_now - v_prev
-                defaults[fallback_key] = {
-                    "val": v_now,
-                    "chg": chg,
-                    "pct": (chg / v_prev * 100) if v_prev != 0 else None,
-                    "source": "warehouse (last stored close)",
-                }
-
-        # First, try to fetch with 'close' column (standard Raw table)
         try:
-            rows = conn.execute("""
-                SELECT ticker, date, close
-                FROM raw.stock_prices
-                WHERE ticker IN ('SPY', '^VIX', '^TNX', 'DX-Y.NYB', '^IRX', 'CL=F', 'GC=F')
-                QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) <= 2
+            rows = conn.execute(f"""
+                SELECT ticker, date, close, price_scale, fx_rate FROM raw.stock_prices WHERE ticker IN ({symbols})
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) <= 2 ORDER BY ticker, date DESC
             """).fetchall()
         except Exception:
-            # Fallback for Cloud/Parquet views where 'close' has been renamed to 'price_close' for marts
-            rows = conn.execute("""
-                SELECT ticker, date, price_close as close
-                FROM raw.stock_prices
-                WHERE ticker IN ('SPY', '^VIX', '^TNX', 'DX-Y.NYB', '^IRX', 'CL=F', 'GC=F')
-                QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) <= 2
+            # views of the cloud snapshot name the column price_close
+            rows = conn.execute(f"""
+                SELECT ticker, date, price_close, price_scale, fx_rate FROM raw.stock_prices WHERE ticker IN ({symbols})
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker ORDER BY date DESC) <= 2 ORDER BY ticker, date DESC
             """).fetchall()
-
-        by_ticker = defaultdict(list)
-        for ticker, _date, close in rows:
-            by_ticker[ticker].append(close)
-
-        _process("SPY", "SPY")
-        _process("^VIX", "VIX")
-        _process("^TNX", "US10Y")
-        _process("DX-Y.NYB", "DXY")
-        _process("^IRX", "US2Y")
-        _process("CL=F", "Oil")
-        _process("GC=F", "Gold")
-
+        by_ticker = {}
+        for ticker, day, close, scale, fx in rows:
+            close, scale, fx = _finite(close), _finite(scale), _finite(fx)
+            if close is None or fx is None or fx <= 0:
+                continue                      # without the rate the native level cannot be recovered: unknown
+            by_ticker.setdefault(ticker, []).append((day, close * (scale or 1.0) / fx))
+        for ticker, key in _MACRO_TICKERS:
+            obs = sorted(by_ticker.get(ticker, []), key=lambda r: r[0], reverse=True)
+            if not obs:
+                continue
+            (day, now), prev = obs[0], (obs[1] if len(obs) > 1 else None)
+            chg = now - prev[1] if prev else None
+            defaults[key] = {"val": now, "chg": chg,
+                             "pct": (chg / prev[1] * 100) if prev and prev[1] != 0 else None,
+                             "source": f"warehouse (stored close of {day})", "as_of": str(day),
+                             "prev_as_of": str(prev[0]) if prev else None}
+            if key == "SPY":
+                defaults[key]["ccy"] = "USD"
     except Exception as db_err:
         print(f"Macro DB fallback error: {db_err}")
-
     return defaults
+
+
+def stored_macro(generation=None) -> dict:
+    """The macro inputs of the loaded snapshot (see _get_macro_fallback_from_db) — what the Decision's risk-free rate and
+    the regime read, with no request to a provider: pinned to the snapshot, reproducible, the same on every run of it.
+    Live values are fetched only on request (fetch_macro_data) and are display only."""
+    with get_db_connection(read_only=True) as conn:
+        return _get_macro_fallback_from_db(conn)
+
+
+stored_macro = snapshot_cached(ttl=600)(stored_macro)
 
 
 @st.cache_data(ttl=86400, show_spinner="📅 Fetching Dividend Calendar...")

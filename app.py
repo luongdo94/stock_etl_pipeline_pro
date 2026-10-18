@@ -28,7 +28,7 @@ from services import auth
 from core import market_regime as mr
 from etl.utils import clean_upside_pct
 from services.db import DB_PATH, data_version, load_snapshot, track_record_ok
-from services.market_data import fetch_fred_macro, fetch_macro_data
+from services.market_data import stored_macro
 from services.screener import get_master_screener_data
 from ui import header, sidebar
 from ui.styles import inject_global_css
@@ -72,7 +72,8 @@ if prices_full.empty:
     st.error("The warehouse has no prices yet — run `python run.py` to load data.")
     st.stop()
 
-macro = fetch_macro_data(_loaded_version) or {}     # its fallback is the snapshot's last close
+# the market inputs STORED in this snapshot: no request to a provider on open, the same on every run of the snapshot
+macro = stored_macro(_loaded_version) or {}
 # Same live 10Y yield as the Decision Summary → the screener's Decision column and the panel agree
 _track_ok = track_record_ok(prices_full, rows_key=len(prices_full))
 m_df = get_master_screener_data(companies_full, prices_full, quarterly_fin, annual_fin, hist_fcf_full,
@@ -145,7 +146,7 @@ market_quality_idx = mr.cap_weighted_quality(reco_df)
 
 
 # ── Header ──────────────────────────────────────────────────────────────────────────────────
-sidebar.render_macro_panel(macro, fetch_fred_macro())
+sidebar.render_macro_panel(macro, None, st.session_state.get("_live_markets"))
 st.sidebar.markdown("---")
 auth.render_user_profile(cm)                         # account last
 head_l, head_r = st.columns([5, 1])

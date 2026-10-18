@@ -147,19 +147,41 @@ def _num(d, k):
         return None
 
 
-def render_macro_panel(macro, fred):
-    """Rates and economy, collapsed; N/A when a value is unknown; values are context, not signals."""
-    fred = fred or {}
-    tnx, irx = _num(macro, "US10Y"), _num(macro, "US2Y")
-    spread = tnx - irx if tnx is not None and irx is not None else None
-    cpi, un, ff = _num(fred, "CPI"), _num(fred, "UNRATE"), _num(fred, "FEDFUNDS")
-    fmt = lambda v, f: "N/A" if v is None else format(v, f) + "%"  # noqa: E731
-    month = str(fred.get("CPI", {}).get("date") or "")[:7] or "n/a"
-    src = (macro or {}).get("US10Y", {}).get("source") or ("unavailable" if not macro else "Yahoo")
+def render_macro_panel(macro, fred=None, live=None):
+    """Rates and economy, collapsed; N/A when a value is unknown; values are context, not signals.
+
+    `macro` is what the snapshot stores (dated closes). "Fetch live" asks the providers (Yahoo, FRED) once and shows the
+    result here, labelled, for display only: the Decision's risk-free rate and the regime keep reading the stored closes.
+    `live` = {"version", "macro", "fred", "at"} as kept by the button; ignored once the snapshot changed."""
+    ss = st.session_state
     with st.sidebar.expander("Macro — US rates & economy", expanded=False):
+        if st.button("🌐 Fetch live rates & economy", key="sb_live_macro", width="stretch",
+                     help="Asks Yahoo (rates, VIX, dollar) and FRED (CPI, unemployment, Fed funds) now. Shown here only — "
+                          "the Decision and the regime keep using the closes stored in the snapshot."):
+            from datetime import datetime
+            from services.market_data import fetch_fred_macro, fetch_macro_data
+            with st.spinner("Asking the providers..."):
+                ss["_live_markets"] = live = {"version": ss.get("_data_version"), "macro": fetch_macro_data(ss.get("_data_version")),
+                                              "fred": fetch_fred_macro(), "at": datetime.now()}
+        if live and live.get("version") != ss.get("_data_version"):
+            live = None                                   # fetched for another snapshot
+        shown = (live or {}).get("macro") or macro
+        fred = (live or {}).get("fred") or fred or {}
+        tnx, irx = _num(shown, "US10Y"), _num(shown, "US2Y")
+        spread = tnx - irx if tnx is not None and irx is not None else None
+        cpi, un, ff = _num(fred, "CPI"), _num(fred, "UNRATE"), _num(fred, "FEDFUNDS")
+        fmt = lambda v, f: "N/A" if v is None else format(v, f) + "%"  # noqa: E731
+        month = str(fred.get("CPI", {}).get("date") or "")[:7] or "n/a"
         rows = [("US 10Y yield", fmt(tnx, ".2f")), ("10Y – 3M spread", fmt(spread, ".2f")),
                 ("CPI YoY", fmt(cpi, ".2f")), ("Unemployment", fmt(un, ".1f")), ("Fed Funds", fmt(ff, ".2f"))]
         st.markdown("".join(f"<div class='sb-macro-row'><span class='sb-macro-label'>{k}</span><b>{v}</b></div>"
                             for k, v in rows), unsafe_allow_html=True)
-        st.caption(f"Rates: {src} (the 10Y also prices the DCF). Economy: FRED, latest {month}. "
-                   "3M = 13-week T-bill (^IRX). Context only — not a signal.")
+        if live:
+            st.caption(f"Live from Yahoo / FRED, fetched {live['at']:%d %b %H:%M} — display only. The Decision and the "
+                       "regime read the stored closes.")
+        else:
+            src = (macro or {}).get("US10Y", {}).get("source") or "unavailable"
+            st.caption(f"Rates: {src} (the 10Y also prices the DCF). The 3M bill and the economy (CPI, unemployment, Fed "
+                       "funds) are not stored: press Fetch live. Context only — not a signal.")
+        if live:
+            st.caption(f"Economy: FRED, latest {month}. 3M = 13-week T-bill (^IRX).")

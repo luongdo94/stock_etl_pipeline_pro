@@ -895,7 +895,8 @@ def clear_snapshot_caches() -> None:
     from ui import signal_hub
     for fn in (signal_hub._market, load_snapshot, load_track_record, load_etl_exceptions, load_ticker_provenance, load_data_health,
                _evidence_cached, load_decision_snapshots, load_discovery, load_recorded_decision,
-               screener.get_master_screener_data, market_data.fetch_macro_data, earnings.load_earnings_events,
+               screener.get_master_screener_data, market_data.fetch_macro_data, market_data.stored_macro,
+               earnings.load_earnings_events,
                earnings.universe_reactions):
         try:
             fn.clear()
