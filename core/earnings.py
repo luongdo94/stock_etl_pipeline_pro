@@ -120,6 +120,35 @@ def small_base(eps_estimate, surprise) -> bool:
 EPS_ROUNDING = 0.005          # EPS is published to the cent: the figures behind a pair may be ±0.005 each
 
 
+def _side_interval(a_lo, a_hi, m_lo, m_hi, c):
+    """Range of a/m + c for a in [a_lo, a_hi] and m in (m_lo, m_hi] (m_lo may be 0: the magnitude of the estimate is then
+    unbounded above the ratio). Division is monotone in each variable, so the corners are enough."""
+    vals = [a / m + c for a in (a_lo, a_hi) for m in (m_lo, m_hi) if m > 0]
+    if m_lo <= 0:                              # m → 0+: a/m runs to ±inf with the sign of a
+        if a_hi > 0:
+            vals.append(np.inf)
+        if a_lo < 0:
+            vals.append(-np.inf)
+        if a_lo <= 0 <= a_hi:
+            vals.append(c)
+    return min(vals), max(vals)
+
+
+def surprise_intervals(est, act):
+    """The ranges the true ratio (act − est) / |est| can take when both EPS are rounded to the cent: one per sign of the
+    estimate. A positive and a negative true estimate are different intervals; a near-zero estimate makes the upper end
+    unbounded but NOT the lower end (0.004 → 1.00 cannot be a 40 % surprise: at least ~110×)."""
+    est, act = float(est), float(act)
+    lo_e, hi_e = est - EPS_ROUNDING, est + EPS_ROUNDING
+    a_lo, a_hi = act - EPS_ROUNDING, act + EPS_ROUNDING
+    out = []
+    if hi_e > 0:
+        out.append(_side_interval(a_lo, a_hi, max(lo_e, 0.0), hi_e, -1.0))
+    if lo_e < 0:
+        out.append(_side_interval(a_lo, a_hi, max(-hi_e, 0.0), -lo_e, 1.0))
+    return out
+
+
 def surprise_interval(est, act):
     """The range the true surprise ratio (act − est) / |est| can have when both EPS are rounded to the cent. Wide for a
     small estimate (0.02 → 0.09 is 2.4 to 5.3, a provider working from unrounded EPS may say 4.9), unbounded when the
@@ -140,8 +169,7 @@ def surprise_interval(est, act):
 
 def surprise_consistent(est, act, stored, slack: float = 0.005) -> bool:
     """Whether a provider surprise can be the ratio of this EPS pair, given the cent rounding of the pair."""
-    lo, hi = surprise_interval(est, act)
-    return lo - slack <= float(stored) <= hi + slack
+    return any(lo - slack <= float(stored) <= hi + slack for lo, hi in surprise_intervals(est, act))
 
 
 def fill_surprise(events: pd.DataFrame) -> pd.DataFrame:

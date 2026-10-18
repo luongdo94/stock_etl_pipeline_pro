@@ -240,10 +240,17 @@ def regime_summary(regime: dict, score, reasons, *, breadth=None, vix=None, dxy_
 def dxy_5d_move(prices_full, fallback_pct):
     """Cumulative 5-day % move of DX-Y.NYB; falls back to the live daily % when missing."""
     d = prices_full[prices_full["ticker"] == "DX-Y.NYB"].sort_values("date").tail(6)
-    if len(d) >= 2:
-        move = _finite((float(d["price_close"].iloc[-1]) / float(d["price_close"].iloc[0]) - 1) * 100)
-        if move is not None:
-            return move
+    # The warehouse stores close × the day's USD→EUR rate: the move of THAT is the dollar index against the euro, so a
+    # weaker dollar would read as a weaker index while the index itself rose. Recover the native level; without the rate
+    # the move is unknown and the live daily % is used (labelled by the caller), never the EUR series.
+    if len(d) >= 2 and {"fx_rate", "price_scale"} <= set(d.columns):
+        fx = pd.to_numeric(d["fx_rate"], errors="coerce")
+        native = pd.to_numeric(d["price_close"], errors="coerce") * pd.to_numeric(d["price_scale"], errors="coerce").fillna(1.0) / fx
+        native = native.where(fx > 0).dropna()
+        if len(native) >= 2:
+            move = _finite((float(native.iloc[-1]) / float(native.iloc[0]) - 1) * 100)
+            if move is not None:
+                return move
     return _finite(fallback_pct)
 
 

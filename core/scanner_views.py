@@ -140,6 +140,29 @@ def held_tickers(holdings) -> list:
     return out
 
 
+MEMBERSHIP_VIEWS = ("Held", "Watchlist", "Changed")      # views defined by a list of the user's / the history's tickers
+
+
+def as_list(v) -> list:
+    """A list column's cell as a list: a join or a placeholder row leaves NaN / None there."""
+    return list(v) if isinstance(v, (list, tuple)) else []
+
+
+def within_scope(rows: pd.DataFrame, scope: pd.DataFrame, full: pd.DataFrame, narrowed: bool, query: str = "") -> pd.DataFrame:
+    """Narrow a membership view (built on the WHOLE table) to the region / sector / search scope. A ticker that has a
+    screener row stays only if the scope holds it; a ticker the table has no row for (placeholder) has no region or sector,
+    so a region / sector filter hides it, and a search matches its ticker text."""
+    if rows.empty or "Ticker" not in rows.columns:
+        return rows
+    t = rows["Ticker"].astype(str)
+    has_row = t.isin(set(full["Ticker"].astype(str)))
+    keep = t.isin(set(scope["Ticker"].astype(str)))
+    if not narrowed:
+        absent = rows[~has_row]
+        keep = keep | (~has_row & t.isin(set(search(absent, query)["Ticker"].astype(str))))
+    return rows[keep]
+
+
 def view_held(df: pd.DataFrame, holdings) -> pd.DataFrame:
     """The held names, in the table's order; a held name the screener has no row for is listed (Decision N/A), not dropped."""
     held = held_tickers(holdings)

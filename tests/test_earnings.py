@@ -626,8 +626,9 @@ def test_r05_a_renamed_symbols_history_is_reconciled_with_the_one_to_one_matcher
 
 
 @pytest.mark.parametrize("est, act, stored, expect_replaced", [
-    (0.004, 1.0, -1.0, True), (0.004, 1.0, 40.0, False), (0.0, 0.10, -0.5, True), (0.0, 0.10, 3.0, False),
-    (0.0, -0.10, 0.5, True), (0.0, -0.10, -2.0, False), (0.005, 0.0, -1.0, False),     # act ≈ est: any sign is possible
+    (0.004, 1.0, -1.0, True), (0.004, 1.0, 40.0, True), (0.004, 1.0, 200.0, False),   # 40 is below the ~110x floor
+    (0.0, 0.10, -0.5, True), (0.0, 0.10, 3.0, True), (0.0, 0.10, 30.0, False),         # CR-05: >= 18x for a 0 -> 0.10 pair
+    (0.0, -0.10, 0.5, True), (0.0, -0.10, -2.0, True), (0.005, 0.0, -1.0, False),      # act ≈ est: any sign is possible
     (-0.004, -1.0, 5.0, True), (0.004, 0.0, -0.5, False),
 ])
 def test_r06_a_zero_estimate_still_fixes_the_sign_of_the_surprise(est, act, stored, expect_replaced):

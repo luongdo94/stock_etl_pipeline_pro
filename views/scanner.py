@@ -291,11 +291,11 @@ def _selected_panel(shown, ctx):
     c1, c2, c3 = st.columns(3)
     with c1:
         st.markdown("**Why**")
-        for x in (r.get("_reasons") or ([r["Why"]] if r.get("Why") else [])):
+        for x in (sv.as_list(r.get("_reasons")) or ([r["Why"]] if isinstance(r.get("Why"), str) and r["Why"] else [])):
             st.markdown(f"- {x}")
     with c2:
         st.markdown("**What could change it**")
-        items = (list(r.get("_warnings") or []) + list(r.get("_invalidation") or []))
+        items = sv.as_list(r.get("_warnings")) + sv.as_list(r.get("_invalidation"))
         if r.get("Conflicts"):
             items = [f"Conflict: {x}" for x in str(r["Conflicts"]).split("; ") if x] + items
         for x in items[:5] or ["—"]:
@@ -304,7 +304,7 @@ def _selected_panel(shown, ctx):
         st.markdown("**Data**")
         issue = r.get("Data issue")
         st.markdown(f"- {issue}" if issue else "- no data issue flagged")
-        for x in list(r.get("_confidence_notes") or [])[:3]:
+        for x in sv.as_list(r.get("_confidence_notes"))[:3]:
             st.markdown(f"- {x}")
     ok = sel in set(ctx["current_universe"])
     st.button("🔬 Open in Stock Analysis", key="scan_open", disabled=not ok, on_click=_open_analysis, args=(sel,),
@@ -358,8 +358,13 @@ def render(ctx):
             st.warning(f"Your {'portfolio' if view == 'Held' else 'watchlist'} could not be read, so this view cannot be "
                        "shown (that is not an empty list).", icon="⚠️")
             return
-    base = sv.select_view(scope, view, holdings=(user or {}).get("holdings"), watchlist=(user or {}).get("watchlist"),
-                          changes=changes, include_archived=include_archived)
+    _members = view in sv.MEMBERSHIP_VIEWS
+    base = sv.select_view(m_df if _members else scope, view, holdings=(user or {}).get("holdings"),
+                          watchlist=(user or {}).get("watchlist"), changes=changes, include_archived=include_archived)
+    if _members:       # a name that has a screener row but is outside the scope is out of the view, not "missing"
+        base = sv.within_scope(base, scope, m_df,
+                               narrowed=(selected_region != "🌎 All Regions" or selected_sector != "🌍 All Sectors"),
+                               query=query)
     if view == "Changed" and not (changes or {}).get("previous"):
         st.info("Decision changes need two daily snapshots (written by the ETL) — none to compare yet. That is not '0 changes'.")
         return
@@ -369,7 +374,9 @@ def render(ctx):
     can_filter = {"Quality", "RSI (14)", "Smart Money"} <= set(f_df.columns)
     scan_presets = presets.options()
     # A preset removed in an update must not break a session that still has it selected.
-    if st.session_state.get("scan_mode") not in scan_presets:
+    # (the widget key is absent on a run after a tab in which the Scanner was not drawn: judge the remembered value then)
+    _cur_mode = st.session_state.get("scan_mode", st.session_state.get(kept_key("scan_mode")))
+    if _cur_mode is not None and _cur_mode not in scan_presets:
         st.session_state.pop("scan_mode", None)
         st.session_state.pop(kept_key("scan_mode"), None)
     p1, p2 = st.columns([1.6, 1])

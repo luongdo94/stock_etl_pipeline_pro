@@ -179,7 +179,7 @@ def _combine(o: pd.Series, n: pd.Series) -> pd.Series:
         if pd.isna(n["surprise_pct"]) and _full(o) and n["eps_actual"] == o["eps_actual"] \
                 and n["eps_estimate"] == o["eps_estimate"]:
             row["surprise_pct"] = o["surprise_pct"]
-    elif _full(o) or (_reported(o) and not _reported(n)):
+    elif _full(o) or (_reported(o) and not _reported(n)) or (pd.notna(o["eps_actual"]) and pd.isna(n["eps_actual"])):
         for c in _FIGURES:                      # the stored observation whole — also an actual-only / surprise-only one
             row[c] = o[c]
     elif pd.isna(n["eps_estimate"]) and not _reported(n):
