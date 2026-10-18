@@ -6,7 +6,7 @@ import streamlit as st
 
 from views.stock_analysis.layout import layer_banner
 
-from services.market_data import get_forex_rates
+from services.market_data import stored_fx_rate
 from services.db import load_ticker_provenance
 from ui.components import render_metric_row
 from ui.provenance import payout_status
@@ -226,7 +226,7 @@ def render(dd, ctx):
                     e_date_str = "TBD"
                 
                 _e_ccy = meta.get('currency', 'USD')
-                _e_fx = get_forex_rates(target="EUR", source=_e_ccy)
+                _e_fx = stored_fx_rate(_e_ccy)
                 
                 _raw_eps = e_row.iloc[0]['eps_avg']
                 eps_est = float(_raw_eps) * _e_fx if pd.notnull(_raw_eps) and _e_fx else None      # no rate → N/A

@@ -236,7 +236,7 @@ def _analyst_html(row, monkeypatch, rate):
     import re
     import views.stock_analysis.analyst as an
     with monkeypatch.context() as m:                       # undone after each page, so two pages in one test do not stack
-        m.setattr(an, "get_forex_rates", lambda **k: rate)
+        m.setattr(an, "stored_fx_rate", lambda *a, **k: rate)
         _inject_estimates(m, row)
         at = _app("🔬 Stock Analysis")
         at.session_state["deep_ticker_selector"] = "AAPL"

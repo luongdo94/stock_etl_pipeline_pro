@@ -238,6 +238,33 @@ def stored_macro(generation=None) -> dict:
 stored_macro = snapshot_cached(ttl=600)(stored_macro)
 
 
+def stored_fx_rate(source="USD", generation=None):
+    """Rate `source` currency → EUR from the loaded snapshot (the newest stored fx_rate of a ticker quoted in it), or None.
+    No request to a provider (CR-07): a page that only opens must not call Yahoo. Pence (GBp / GBX) = GBP / 100."""
+    src = str(source or "").strip()
+    if not src:
+        return None
+    pence = src in ("GBp", "GBX", "GBx")
+    ccy = "GBP" if pence else src.upper()
+    if ccy == "EUR":
+        return 0.01 if pence else 1.0
+    rate = _stored_fx(ccy, generation)
+    return rate * (0.01 if pence else 1.0) if rate else None
+
+
+def _stored_fx(ccy, generation=None):
+    with get_db_connection(read_only=True) as conn:
+        try:
+            row = conn.execute("SELECT fx_rate FROM raw.stock_prices WHERE upper(currency) = ? AND fx_rate > 0 "
+                               "ORDER BY date DESC LIMIT 1", [ccy]).fetchone()
+        except Exception:
+            return None
+    return _finite(row[0]) if row else None
+
+
+_stored_fx = snapshot_cached(ttl=600)(_stored_fx)
+
+
 @st.cache_data(ttl=86400, show_spinner="📅 Fetching Dividend Calendar...")
 def fetch_dividend_calendar(tickers_tuple: tuple, companies_df: "pd.DataFrame" = None) -> dict:
     """

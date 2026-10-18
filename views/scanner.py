@@ -384,6 +384,8 @@ def render(ctx):
         scan_mode = sticky_choice("Intelligence Strategy Preset", scan_presets, presets.ALL, "scan_mode")
     with p2:
         sort_label = sticky_choice("Sort", list(SORTS), "Decision, then Quality, Value", "scan_sort")
+    if view == "Changed":
+        st.caption("Preset, refinements and sort do not apply to this view: it lists recorded stance changes in a fixed order.")
     if can_filter:
         preset = presets.get(scan_mode)
         if preset is not None:
@@ -490,8 +492,22 @@ def render(ctx):
             st.rerun()
 
     b1, b2, _ = st.columns([1.3, 1, 3])
-    meta = {"view": view, "scope": f"{selected_region} / {selected_sector} / search '{query}'", "preset": scan_mode,
-            "sort": sort_label, "rows": len(ordered), "prices_to": f"{latest:%Y-%m-%d}" if latest is not None else "unknown",
+    _applied = can_filter
+    _refine = []
+    if _applied:
+        for label, on in (("min_quality", min_score > 0), ("min_value", min_value > 0), ("min_momentum", min_mom > 0),
+                          ("rsi", tuple(rsi_range) != (0, 100)), ("max_fwd_pe", max_pe < 200),
+                          ("z_score", tuple(z_score_range) != (-5.0, 5.0)), ("peg", tuple(peg_range) != (-5.0, 10.0)),
+                          ("min_fcf_yield", min_fcf_yield > -10.0), ("hide_earnings_7d", bool(skip_er)),
+                          ("smart_money", "All" not in filter_sm)):
+            if on:
+                _refine.append(label)
+    meta = {"view": view, "scope": f"{selected_region} / {selected_sector} / search '{query}'",
+            "preset": scan_mode if _applied else "not applied to this view",
+            "refinements": ", ".join(_refine) if _applied else "not applied to this view",
+            "sort": sort_label if view != "Changed" else "fixed order (not applied)",
+            "include_archived": include_archived, "data_version": ctx.get("data_version") or "unknown",
+            "rows": len(ordered), "prices_to": f"{latest:%Y-%m-%d}" if latest is not None else "unknown",
             "note": "Decision = the app's one recommendation; scores are rules, not forecasts"}
     b1.download_button("⬇️ Export filtered results (CSV)", data=sv.export_csv(ordered, display_cols, meta=meta),
                        file_name=f"scanner_{view.lower().replace(' ', '_')}.csv", mime="text/csv", key="scan_export",

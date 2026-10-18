@@ -271,5 +271,6 @@ def export_csv(df: pd.DataFrame, columns: list, *, meta: Optional[dict] = None) 
         if out[c].dtype == object:
             out[c] = out[c].map(lambda v: "" if v is None or (isinstance(v, float) and np.isnan(v)) else _safe_text(v))
     out.columns = [UNITS.get(c, c) for c in cols]
-    head = "".join(f"# {k}: {v}\n" for k, v in (meta or {}).items())
+    one_line = lambda v: re.sub(r"[\r\n]+", " ", str(v))        # a value cannot start a second line of the CSV
+    head = "".join(f"# {k}: {one_line(v)}\n" for k, v in (meta or {}).items())
     return (head + out.to_csv(index=False, na_rep="", lineterminator="\n")).encode("utf-8-sig")

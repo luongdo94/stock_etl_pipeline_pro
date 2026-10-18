@@ -85,3 +85,47 @@ def test_cr06_dxy_move_is_the_native_index_not_the_eur_close():
     assert abs(mr.dxy_5d_move(d, None) - 2.0) < 1e-9
     d2 = d.drop(columns=["fx_rate", "price_scale"])               # no rate on file: the EUR series is NOT used
     assert mr.dxy_5d_move(d2, 0.7) == 0.7 and mr.dxy_5d_move(d2, None) is None
+
+
+def test_cr07_business_and_value_makes_no_provider_call(warehouse, monkeypatch):
+    import yfinance as yf
+    calls = []
+    monkeypatch.setattr(yf, "download", lambda *a, **k: calls.append(a) or pd.DataFrame())
+    at = _app("🔬 Stock Analysis")
+    at.session_state["deep_ticker_selector"] = "AAPL"
+    for g in ("Overview", "Business & value", "Price & timing", "Risks & data"):
+        at.session_state["sa_group"] = g
+        at.run()
+        assert not at.exception, (g, [e.value for e in at.exception])
+    assert calls == []
+
+
+def test_cr07_stored_fx_rate(warehouse):
+    from services import market_data as md
+    assert md.stored_fx_rate("EUR") == 1.0
+    assert md.stored_fx_rate("EUR") == 1.0 and md.stored_fx_rate("") is None
+    assert md.stored_fx_rate("ZZZ") is None                       # unknown currency: None, never parity
+
+
+def test_cr09_cr10_export_metadata_is_one_line_per_key_and_states_what_applied():
+    df = pd.DataFrame({"Ticker": ["A"], "Verdict": ["x"]})
+    out = sv.export_csv(df, ["Ticker", "Verdict"], meta={"scope": "a\nb", "refinements": "min_quality", "data_version": "v7"}).decode("utf-8-sig")
+    head = [l for l in out.splitlines() if l.startswith("#")]
+    assert head == ["# scope: a b", "# refinements: min_quality", "# data_version: v7"]
+
+
+def test_cr11_give_up_raises_where_streamlit_only_returns():
+    import pytest
+    from services import db
+    with pytest.raises(db.SnapshotUnstable):
+        db._give_up("changed twice")
+
+
+def test_cr08_prune_keeps_leased_and_a_pruned_snapshot_is_not_cache_ready(tmp_path, monkeypatch):
+    from services import db
+    monkeypatch.setattr(db, "_CACHE_DIR", tmp_path)
+    (tmp_path / "v1").mkdir()
+    m = {"version": "v1", "tables": {"raw.t": ["a.parquet"]}}
+    assert not db._files_complete(m)                              # no file: not ready, the connection falls back
+    (tmp_path / "v1" / "a.parquet").write_bytes(b"x")
+    assert db._files_complete(m)

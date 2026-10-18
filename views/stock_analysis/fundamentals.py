@@ -9,7 +9,7 @@ from views.stock_analysis.layout import layer_banner
 
 from services.db import load_ticker_provenance
 from ui.provenance import pit_caption
-from services.market_data import get_forex_rates
+from services.market_data import stored_fx_rate
 
 
 
@@ -140,7 +140,7 @@ def render(dd, ctx):
 
                     # FX normalisation: forecast native currency → EUR
                     _ticker_ccy = str(meta.get("currency") or "USD")
-                    _fx_rate = get_forex_rates(target="EUR", source=_ticker_ccy)
+                    _fx_rate = stored_fx_rate(_ticker_ccy)
                     if _fx_rate is None:                       # unknown rate: no overlay in a wrong currency
                         raise _NoFx(_ticker_ccy)
 
@@ -391,7 +391,7 @@ def render(dd, ctx):
 
                         # FX normalisation: forecast native currency → EUR
                         _ticker_ccy_q = str(meta.get("currency") or "USD")
-                        _fx_rate_q = get_forex_rates(target="EUR", source=_ticker_ccy_q)
+                        _fx_rate_q = stored_fx_rate(_ticker_ccy_q)
                         if _fx_rate_q is None:
                             raise _NoFx(_ticker_ccy_q)
 

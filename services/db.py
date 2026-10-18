@@ -107,11 +107,17 @@ def _rerun_log() -> list:
         return _RERUN_LOG
 
 
+class SnapshotUnstable(RuntimeError):
+    """The source kept changing under a read. Raised after st.stop() / st.rerun(), which only return when there is no
+    Streamlit script run (a CLI / test caller): the caller then gets an error instead of None or mixed data."""
+
+
 def _give_up(message: str):
     """Stop the run: nothing is read from a snapshot that is not the session's. Never returns."""
     logger.warning(message)
     st.error(message, icon="🔄")
     st.stop()
+    raise SnapshotUnstable(message)
 
 
 def _rerun_for_new_snapshot():
@@ -125,6 +131,7 @@ def _rerun_for_new_snapshot():
         _give_up("The warehouse keeps changing underneath this page — reload the page once the data refresh has finished.")
     log.append(now)
     st.rerun()
+    raise SnapshotUnstable("the source is on another snapshot than this session's")
 
 
 def _guard():
@@ -254,6 +261,12 @@ def _local_tables(m=None) -> dict:
     return {t: [str(_CACHE_DIR / f) for f in files if (_CACHE_DIR / f).exists()] for t, files in _LEGACY_TABLE_MAP.items()}
 
 
+def _files_complete(m) -> bool:
+    """Every file of the manifest is on disk (a pruned or half-downloaded snapshot is not 'cache ready')."""
+    base = _CACHE_DIR / m["version"]
+    return all((base / n).exists() for files in m["tables"].values() for n in files)
+
+
 def _ensure_local_cache() -> bool:
     """
     Make the local parquet cache hold the current published snapshot. Returns True when it is ready.
@@ -305,10 +318,10 @@ def _ensure_local_cache() -> bool:
         # must not lose its files to another session's refresh
         others = sorted((d for d in _CACHE_DIR.iterdir() if d.is_dir() and d.name != manifest["version"]),
                         key=lambda d: d.stat().st_mtime, reverse=True)
-        leased = _leased()
         for old in others[1:]:
-            if old.name not in leased:                # a snapshot a reader holds stays until the next prune after it ends
-                shutil.rmtree(old, ignore_errors=True)
+            with _LEASE_LOCK:       # check and delete are one step: a lease taken meanwhile waits and then sees the files gone
+                if old.name not in _LEASES:           # a snapshot a reader holds stays until the next prune after it ends
+                    shutil.rmtree(old, ignore_errors=True)
     return not errors
 
 
@@ -361,6 +374,8 @@ def get_db_connection(read_only=False):
             try:
                 leased = _PIN.version
                 _lease_add(leased)                        # held from before the views are built until the connection ends
+                if manifest and not _files_complete(manifest):
+                    raise RuntimeError("the cached snapshot was pruned before it could be leased")   # → S3 fallback below
                 conn = duckdb.connect(":memory:")
                 conn.execute("CREATE SCHEMA IF NOT EXISTS marts; CREATE SCHEMA IF NOT EXISTS raw;")
                 for table, local_paths in _local_tables(manifest).items():

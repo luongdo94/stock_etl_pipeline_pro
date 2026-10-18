@@ -7,7 +7,7 @@ import streamlit as st
 from views.stock_analysis.layout import layer_banner
 
 
-from services.market_data import get_forex_rates
+from services.market_data import stored_fx_rate
 
 
 
@@ -47,7 +47,7 @@ def render(dd, ctx):
         _fe_fxr = None                                      # EUR rate; None = unknown (never parity)
         try:
             _fe_ccy   = str(meta.get("currency") or "USD")
-            _fe_fxr   = get_forex_rates(target="EUR", source=_fe_ccy)
+            _fe_fxr   = stored_fx_rate(_fe_ccy)
             if _fe_fxr is None:
                 raise ValueError("no EUR rate")
             _eps_ny_eur = (_fv("eps_est_next_y") or 0) * _fe_fxr
