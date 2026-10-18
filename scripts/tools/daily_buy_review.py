@@ -69,7 +69,8 @@ def review_one(codex: str, row: dict, today: str, schema_path: Path, model) -> d
                            timeout=TIMEOUT_S, cwd=work)
         raw = out.read_text(encoding="utf-8") if out.exists() else ""
         review = ar.validate(json.loads(raw)) if raw.strip() else None
-        err = None if review else (f"no valid review (exit {p.returncode})")
+        errs = [l for l in (p.stderr or "").splitlines() if l.startswith("ERROR")]
+        err = None if review else (errs[-1][:160] if errs else f"no valid review (exit {p.returncode})")   # e.g. spend cap
     except subprocess.TimeoutExpired:
         review, err = None, f"timeout after {TIMEOUT_S}s"
     except Exception as e:                                       # one stock never stops the others
