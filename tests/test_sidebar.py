@@ -169,10 +169,13 @@ def test_the_range_is_always_inside_the_warehouse(rng):
 
 
 def test_dq_and_undated_fundamentals_count_in_the_level():
-    """F06 / F07: DQ warnings are WARN; 99 of 100 companies without a refresh date is UNKNOWN, not a 1-day median."""
+    """F06 / F07 / CR-13: DQ missing is UNKNOWN, critical is WARN, non-critical is its own state; 99 of 100 companies without a refresh date is UNKNOWN, not a 1-day median."""
     today = date(2026, 10, 17)
     noncrit = pd.DataFrame({"check_name": ["a"], "violations": [3], "is_critical": [False]})
-    assert data_freshness(_prices(), _companies(), _audit(), noncrit, today=today)["level"] == "WARN"
+    # non-critical findings are a separate dimension (CR-13: 8 coverage checks flag after every run); they do not
+    # turn the freshness badge amber, but the card shows them and a critical one does
+    f = data_freshness(_prices(), _companies(), _audit(), noncrit, today=today)
+    assert f["level"] == "OK" and f["dq"]["state"] == "WARN" and f["dq"]["warnings"] == 1
     f = data_freshness(_prices(), _companies(), _audit(), noncrit.assign(is_critical=[True]), today=today)
     assert f["level"] == "WARN" and f["dq"]["state"] == "CRIT"
     c = pd.DataFrame({"ticker": [f"T{i}" for i in range(100)],

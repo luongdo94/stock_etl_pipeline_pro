@@ -62,10 +62,12 @@ def render_data_status(fresh: dict, n_exceptions: int = 0):
         etl = "Last good ETL: unknown"
     dq_txt = {"CLEAN": "checks clean", "WARN": f"{dq['warnings']} check warning(s)",
               "CRIT": f"{dq['critical']} critical check(s)", "UNKNOWN": "checks unavailable"}[dq["state"]]
+    dq_col = {"CLEAN": "#2ecc71", "WARN": "#f1c40f", "CRIT": "#e74c3c", "UNKNOWN": "#8899aa"}[dq["state"]]
     exc = f"<br><span class='sb-muted'>{n_exceptions} ticker exception(s) — 🩺 Data Health</span>" if n_exceptions else ""
     st.sidebar.markdown(
         f"<div class='sb-card'><span style='color:{colour};font-weight:700;'>● {word}</span><br>{px}{fresh_share}<br>"
-        f"<span class='sb-muted'>{fund}<br>{etl}<br>Data quality: {dq_txt}</span>{exc}</div>", unsafe_allow_html=True)
+        f"<span class='sb-muted'>{fund}<br>{etl}</span><br>"
+        f"<span class='sb-muted'>Data quality: <span style='color:{dq_col};font-weight:700;'>● {dq_txt}</span></span>{exc}</div>", unsafe_allow_html=True)
     if st.sidebar.button("🔄 Check for new data", width="stretch", key="sb_check_data",
                          help="Looks for a newer warehouse snapshot and reloads only what depends on it. It does not "
                               "run the ETL or fetch new data from the providers."):

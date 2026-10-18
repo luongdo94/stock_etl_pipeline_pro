@@ -216,6 +216,7 @@ ctx = dict(
     earnings_cal=earnings_cal, earnings_surprise_full=earnings_surprise_full, hist_fcf_full=hist_fcf_full,
     hist_fcf_q_full=hist_fcf_q_full, tv_sector_rotation=tv_sector_rotation, all_tickers=all_tickers,
     forward_estimates_full=forward_estimates_full, data_version=_loaded_version,
+    etl_audit=etl_audit, dq_warnings=dq_warnings,        # the frames of this snapshot (Data Health shows the same rows)
     # horizon window
     prices=prices, spy_prices=spy_prices, companies=companies, selected_horizon=selected_horizon,
     t_start=t_start, t_end=t_end, current_universe=current_universe, indices_list=indices_list,

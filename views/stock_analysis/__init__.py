@@ -36,11 +36,12 @@ def _chart_range_note(dd, ctx=None):
     if not end or not latest or end >= latest:
         return
     from services.db import load_recorded_decision
-    rec = load_recorded_decision(dd.ticker, end, (ctx or {}).get("data_version") or str(latest))
+    rec = load_recorded_decision(dd.ticker, end, (ctx or {}).get("data_version"))
     if rec["decision"]:
         px = f" (close €{rec['price_close']:,.2f})" if rec["price_close"] is not None else ""
-        then = (f" By the end of {end:%d %b %Y} the latest recorded Decision was **{rec['decision']}** for the close "
-                f"of {rec['as_of_date']:%d %b %Y}{px}, written {rec['knowledge_at']:%d %b %Y %H:%M}.")
+        then = (f" By the end of {end:%d %b %Y} (at the stock's exchange) the latest recorded Decision was "
+                f"**{rec['decision']}** for the close of {rec['as_of_date']:%d %b %Y}{px}, written "
+                f"{rec['knowledge_at']:%d %b %Y %H:%M} (warehouse clock, {rec['tz']}).")
     else:
         first = f" (the first snapshot was written {rec['first_snapshot']:%d %b %Y})" if rec["first_snapshot"] else ""
         then = f" No Decision had been recorded by the end of {end:%d %b %Y}{first}."

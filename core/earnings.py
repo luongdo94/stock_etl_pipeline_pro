@@ -75,17 +75,18 @@ def exchange_close(tz: str, day) -> "Optional[str]":
 
 
 def session_label(ts, tz: str) -> str:
-    """Where a stamp falls against the exchange's real session that day: before the open / during the session /
-    after the close / time not announced / time unknown vs the close (exchange close not known here)."""
+    """Where a stamp falls against the exchange's real regular session that day: before the open / during the session /
+    after the close, "time not announced" for a date-only stamp, and "time of day vs the close unknown" for an exchange
+    whose close is not in EXCHANGE_CLOSE (no label is guessed). The label says nothing about the release minute itself:
+    Yahoo rounds stamps to the hour (see the reaction cutoff above) and EXCHANGE_CLOSE has no half-day sessions."""
     if not time_known(ts, tz):
         return "time not announced"
     t = pd.Timestamp(ts)
     local = (t.tz_localize("UTC") if t.tzinfo is None else t).tz_convert(tz)
     close = exchange_close(tz, local.date())
-    hm = local.strftime("%H:%M")
     if close is None:
-        return "after the close" if local.hour >= reaction_cutoff_hour(tz) else (
-            "before the open" if local.hour < 9 else "during the session")
+        return "time of day vs the close unknown"
+    hm = local.strftime("%H:%M")
     return "after the close" if hm >= close else "before the open" if local.hour < 9 else "during the session"
 
 
@@ -116,17 +117,45 @@ def small_base(eps_estimate, surprise) -> bool:
         return False
 
 
+EPS_ROUNDING = 0.005          # EPS is published to the cent: the figures behind a pair may be ±0.005 each
+
+
+def surprise_interval(est, act):
+    """The range the true surprise ratio (act − est) / |est| can have when both EPS are rounded to the cent. Wide for a
+    small estimate (0.02 → 0.09 is 2.4 to 5.3, a provider working from unrounded EPS may say 4.9), unbounded when the
+    estimate could be zero."""
+    est, act = float(est), float(act)
+    lo_e, hi_e = est - EPS_ROUNDING, est + EPS_ROUNDING
+    if lo_e <= 0 <= hi_e or (lo_e < 0) != (hi_e < 0):
+        return -np.inf, np.inf
+    corners = [(a - e) / abs(e) for a in (act - EPS_ROUNDING, act + EPS_ROUNDING) for e in (lo_e, hi_e)]
+    return min(corners), max(corners)
+
+
+def surprise_consistent(est, act, stored, slack: float = 0.005) -> bool:
+    """Whether a provider surprise can be the ratio of this EPS pair, given the cent rounding of the pair."""
+    lo, hi = surprise_interval(est, act)
+    return lo - slack <= float(stored) <= hi + slack
+
+
 def fill_surprise(events: pd.DataFrame) -> pd.DataFrame:
-    """surprise_pct from the EPS pair where it is missing (older loads dropped |surprise| > 500 %) or where the stored
-    one has the other SIGN than the pair (beyond rounding: |pair surprise| > 0.5 %) — a beat / miss must agree with the
-    EPS shown; small rounding differences keep the provider's value. Adds `small_base`."""
+    """surprise_pct consistent with the EPS pair, `direction` and `small_base`.
+
+    * missing surprise → the ratio of the pair (older loads dropped |surprise| > 500 %);
+    * a stored surprise that cannot be the pair's ratio even allowing for the cent rounding of the EPS
+      (surprise_interval) — the other sign, or a different size (e.g. −100 % for a +0.3 % pair) — is replaced by the
+      pair's ratio;
+    * `direction` (+1 beat / 0 in line / −1 miss) comes from the pair when both EPS are known — also with a zero
+      estimate, where the ratio is undefined (NaN) but the report still beat or missed — else from the surprise sign."""
     e = events.copy()
     est, act = pd.to_numeric(e["eps_estimate"], errors="coerce"), pd.to_numeric(e["eps_actual"], errors="coerce")
-    calc = (act - est) / est.abs()
-    calc = calc.where(est.abs() > 0)
+    calc = ((act - est) / est.abs()).where(est.abs() > 0)
     stored = pd.to_numeric(e["surprise_pct"], errors="coerce")
-    conflict = stored.notna() & calc.notna() & (calc.abs() > 0.005) & (np.sign(stored) != np.sign(calc))
-    e["surprise_pct"] = stored.where(~conflict, calc).fillna(calc)
+    inconsistent = pd.Series([pd.notna(sv) and pd.notna(c) and not surprise_consistent(a, b, sv)
+                              for a, b, sv, c in zip(est, act, stored, calc)], index=e.index)
+    e["surprise_pct"] = stored.where(~inconsistent, calc).fillna(calc)
+    pair = (act - est).where(est.notna() & act.notna())
+    e["direction"] = np.sign(pair).where(pair.notna(), np.sign(e["surprise_pct"]))
     e["small_base"] = [small_base(a, b) for a, b in zip(est, e["surprise_pct"])]
     return e
 
@@ -226,15 +255,19 @@ def event_reactions(events: pd.DataFrame, close: pd.Series, tz: str, bench: Opti
 def beat_summary(events: pd.DataFrame, last_n: int = 12) -> dict:
     """Beat rate, average / median surprise and the current streak over the last `last_n` reported quarters. A
     small-base report counts as a beat / miss by its sign but not in the average / median (`n_avg` reports)."""
-    r = events.dropna(subset=["surprise_pct"]).sort_values("earnings_ts", ascending=False).head(last_n)
+    r = events.copy()
+    # a report counts by its direction (the EPS pair; a zero estimate has no ratio but still beat or missed)
+    r["_dir"] = r["direction"] if "direction" in r.columns else np.sign(pd.to_numeric(r["surprise_pct"], errors="coerce"))
+    r = r.dropna(subset=["_dir"]).sort_values("earnings_ts", ascending=False).head(last_n)
     if r.empty:
         return {"n": 0, "n_avg": 0, "beat_rate": None, "avg_surprise": None, "median_surprise": None, "streak": 0,
                 "streak_kind": None}
-    s = r["surprise_pct"].to_numpy()
+    s = r["_dir"].to_numpy()                     # +1 / 0 / -1, newest first
+    ratio = pd.to_numeric(r["surprise_pct"], errors="coerce").to_numpy()
     sb = (r["small_base"].fillna(False).astype(bool).to_numpy() if "small_base" in r.columns
-          else np.array([small_base(a, b) for a, b in zip(r["eps_estimate"], s)]) if "eps_estimate" in r.columns
+          else np.array([small_base(a, b) for a, b in zip(r["eps_estimate"], ratio)]) if "eps_estimate" in r.columns
           else np.zeros(len(s), dtype=bool))
-    comparable = s[~sb]
+    comparable = ratio[~sb & ~np.isnan(ratio)]
     kind = "beat" if s[0] > 0 else ("miss" if s[0] < 0 else "in line")
     streak = 0
     for v in s:
@@ -256,14 +289,42 @@ def expected_move(reactions: pd.DataFrame, last_n: int = 8) -> dict:
     return {"n": int(len(r)), "median_abs": float(r.median()), "mean_abs": float(r.mean()), "max_abs": float(r.max())}
 
 
+UPCOMING_GRACE = pd.Timedelta(hours=12)       # a timed announcement stays "upcoming" this long after its stamp
+
+
+def event_end(ts, tz: str) -> pd.Timestamp:
+    """The instant until which an unreported announcement is still upcoming: its stamp + UPCOMING_GRACE; for a date-only
+    stamp the end of that date in the listing's own time zone (the release may come after the close)."""
+    t = pd.Timestamp(ts)
+    t = t.tz_localize("UTC") if t.tzinfo is None else t.tz_convert("UTC")
+    if time_known(t, tz):
+        return t + UPCOMING_GRACE
+    day = t.tz_convert(tz).date()
+    return pd.Timestamp(day).tz_localize(tz) + pd.Timedelta(days=1)
+
+
+def is_upcoming(ts, tz: str, now=None) -> bool:
+    now = pd.Timestamp.now(tz="UTC") if now is None else pd.Timestamp(now)
+    now = now.tz_localize("UTC") if now.tzinfo is None else now
+    return event_end(ts, tz) > now
+
+
+def upcoming_mask(events: pd.DataFrame, now=None) -> pd.Series:
+    """Rows not yet reported (no actual and no surprise) whose announcement is still ahead (is_upcoming)."""
+    if events is None or events.empty:
+        return pd.Series(dtype=bool, index=getattr(events, "index", None))
+    unreported = events["eps_actual"].isna() & (events["surprise_pct"].isna() if "surprise_pct" in events.columns else True)
+    ahead = pd.Series([is_upcoming(t, exchange_tz(k), now) for t, k in zip(events["earnings_ts"], events["ticker"])]
+                      if "ticker" in events.columns else
+                      [is_upcoming(t, "America/New_York", now) for t in events["earnings_ts"]], index=events.index)
+    return unreported & ahead
+
+
 def next_event(events: pd.DataFrame, now: Optional[pd.Timestamp] = None) -> Optional[pd.Series]:
     """The next scheduled announcement (not yet reported), if any."""
     if events is None or events.empty:
         return None
-    now = pd.Timestamp.now(tz="UTC") if now is None else pd.Timestamp(now)
-    now = now.tz_localize("UTC") if now.tzinfo is None else now
-    ts = pd.to_datetime(events["earnings_ts"], utc=True)
-    up = events[(ts >= now - pd.Timedelta(hours=12)) & events["eps_actual"].isna()]
+    up = events[upcoming_mask(events, now)]
     return None if up.empty else up.loc[pd.to_datetime(up["earnings_ts"], utc=True).idxmin()]
 
 

@@ -568,7 +568,7 @@ def _run_pipeline_locked(lookback_days, force_full, fast_mode):
             audit.rows_processed += load_insider_summary(conn, data["insider_summary"])
             audit.rows_processed += load_insider_transactions(conn, data["insider_tx"])
             if not is_incremental:
-                earnings_events.seed_from_production(conn, DB_PATH)
+                earnings_events.seed_from_production(conn, DB_PATH, changes)     # SeedError fails the run: no swap
             audit.rows_processed += earnings_events.load_earnings_events(conn, data.get("earnings_events"))
             if rebased_full is not None:
                 replaced, skipped = replace_ticker_prices(conn, rebased_full, cfg["price_integrity"]["min_rebase_ratio"])

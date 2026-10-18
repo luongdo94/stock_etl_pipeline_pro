@@ -9,6 +9,7 @@ from core import earnings as er
 from etl import earnings_events as ee
 
 SESSIONS = pd.bdate_range("2026-01-01", "2026-06-30")
+NOW = pd.Timestamp("2026-10-18", tz="UTC")             # the clock of the tests with fixed dates
 
 
 def _ts(s, tz="America/New_York"):
@@ -237,15 +238,15 @@ def test_a_refresh_keeps_reports_older_than_yahoos_window_and_never_erases_a_rep
     (EPS missing) erased a reported figure."""
     conn = duckdb.connect(":memory:")
     ee.load_earnings_events(conn, _rows("A", [("2020-02-01 21:00", 1.0, 1.1, 0.1), ("2026-07-30 20:00", 2.0, 2.2, 0.1),
-                                              ("2026-11-02 20:00", 2.1, np.nan, np.nan)]))
+                                              ("2026-11-02 20:00", 2.1, np.nan, np.nan)]), now=NOW)
     # next week's window no longer holds 2020; the July EPS comes back empty; the November date moved
     ee.load_earnings_events(conn, _rows("A", [("2026-07-30 20:00", 2.0, np.nan, np.nan),
-                                              ("2026-11-05 20:00", 2.15, np.nan, np.nan)], at="2026-10-08"))
+                                              ("2026-11-05 20:00", 2.15, np.nan, np.nan)], at="2026-10-08"), now=NOW)
     s = _stored(conn)
     assert len(s) == 3 and s["earnings_ts"].dt.year.tolist() == [2020, 2026, 2026]          # 2020 kept, no 2nd Nov
     assert s.loc[1, "eps_actual"] == 2.2                                                    # not erased
     assert pd.Timestamp(s.loc[2, "earnings_ts"]).day == 5 and s.loc[2, "eps_estimate"] == 2.15   # rescheduled
-    ee.load_earnings_events(conn, _rows("A", [("2026-07-30 21:00", 2.0, 2.2, 0.1)]))         # re-timed stamp
+    ee.load_earnings_events(conn, _rows("A", [("2026-07-30 21:00", 2.0, 2.2, 0.1)]), now=NOW)         # re-timed stamp
     assert len(_stored(conn)) == 3
 
 
@@ -323,15 +324,6 @@ def test_a_failed_read_is_not_an_empty_calendar(monkeypatch):
     assert df.empty and "OSError" in df.attrs["error"]
 
 
-def test_the_calendar_fills_names_the_events_table_has_no_date_for():
-    from views.earnings import _calendar_events
-    now = pd.Timestamp("2026-10-18", tz="UTC")
-    cal = pd.DataFrame({"ticker": ["A", "B", "C"], "earnings_date": ["2026-10-20", "2026-10-22", "2026-12-30"],
-                        "eps_avg": [1.0, 2.0, 3.0]})
-    c = _calendar_events(cal, now, 14, {"A"})
-    assert c["ticker"].tolist() == ["B"] and c["source"].iloc[0] == "Yahoo calendar" and c["eps_estimate"].iloc[0] == 2.0
-
-
 # ── review of the implementation (EARNINGS_IMPROVEMENT_PLAN 8) ───────────────────────────────────────────────────────
 def test_er_f01_a_full_refresh_merges_with_production_history(tmp_path):
     """The shadow of a full refresh starts empty: the merge must see production's events (seeded first), and the
@@ -349,7 +341,7 @@ def test_er_f01_a_full_refresh_merges_with_production_history(tmp_path):
         with duckdb.connect(str(tmp_path / "shadow.duckdb")) as s:
             s.execute("DROP TABLE IF EXISTS raw.earnings_events")
             ee.seed_from_production(s, prod)
-            ee.load_earnings_events(s, fetched)
+            ee.load_earnings_events(s, fetched, now=NOW)
             pipeline.carry_forward_history(s, prod, ["A"])
             return _stored(s)
     out = full_refresh()
@@ -381,18 +373,6 @@ def test_er_f02_a_provider_surprise_of_the_other_sign_is_replaced_but_rounding_i
     assert ev.loc[0, "surprise_pct"] == pytest.approx(-0.1 / 1.2) and ev.loc[1, "surprise_pct"] == -0.001
 
 
-@pytest.mark.parametrize("ticker, date_, day", [("AAPL", "2026-10-20", 20), ("AAPL", "2026-01-20", 20),   # EDT / EST
-                                                ("SAP.DE", "2026-10-20", 20), ("7203.T", "2026-10-20", 20)])
-def test_er_f03_a_calendar_date_keeps_its_day_and_has_no_time(ticker, date_, day):
-    from views.earnings import _calendar_events, _local
-    c = _calendar_events(pd.DataFrame({"ticker": [ticker], "earnings_date": [date_], "eps_avg": [1.0]}),
-                         pd.Timestamp("2026-01-01", tz="UTC"), 400, set())
-    when, session = _local(c["earnings_ts"].iloc[0], ticker)
-    assert session == "time not announced" and f"{day:02d}" in when and ":" not in when
-    # a real stamp still converts: 16:30 New York is after the close
-    assert _local(pd.Timestamp("2026-10-20 20:30", tz="UTC"), "AAPL")[1] == "after the close"
-
-
 def test_er_f04_a_response_without_a_schedule_does_not_cancel_the_stored_date():
     now = pd.Timestamp("2026-10-18", tz="UTC")
     old = _rows("A", [("2026-07-30 20:00", 2.0, 2.2, 0.1), ("2026-11-02 20:00", 2.1, np.nan, np.nan)])
@@ -402,3 +382,197 @@ def test_er_f04_a_response_without_a_schedule_does_not_cancel_the_stored_date():
     moved = _rows("A", [("2026-12-15 20:00", 2.2, np.nan, np.nan)])                       # a new date > 20 d away
     m = ee.merge_events(old, moved, now=now)
     assert set(m["earnings_ts"].dt.month) == {7, 12}
+
+
+# ── review of the review (COMMIT_REVIEW_5325df3_ad3899e) ─────────────────────────────────────────────────────────────
+def _m(old_spec, new_spec):
+    return ee.merge_events(_rows("A", old_spec) if old_spec else None, _rows("A", new_spec), now=NOW)
+
+
+def _tuple(df, i=0):
+    r = df.iloc[i]
+    return (r["eps_estimate"], r["eps_actual"], r["surprise_pct"])
+
+
+@pytest.mark.parametrize("fetched", [(1.0, np.nan, 0.1), (np.nan, 1.1, 0.1), (1.0, np.nan, np.nan), (np.nan, 1.15, np.nan),
+                                     (np.nan, np.nan, 0.1), (np.nan, np.nan, np.nan)])
+def test_cr03_a_partial_response_never_replaces_a_published_eps_pair(fetched):
+    m = _m([("2026-07-30 20:00", 1.0, 1.1, 0.1)], [("2026-07-30 20:00", *fetched)])
+    assert len(m) == 1 and _tuple(m) == (1.0, 1.1, 0.1)
+
+
+def test_cr03_a_complete_correction_replaces_it_and_a_zero_actual_is_a_value():
+    m = _m([("2026-07-30 20:00", 1.0, 1.1, 0.1)], [("2026-07-30 20:00", 1.0, 0.0, np.nan)])
+    assert _tuple(m)[:2] == (1.0, 0.0)                                   # a real 0.00 is not "missing"
+    assert er.fill_surprise(m).loc[0, "surprise_pct"] == pytest.approx(-1.0)
+
+
+def test_cr04_retimed_stamps_in_one_response_keep_the_reported_row_whatever_the_order():
+    a, b = ("2026-07-30 20:00", 1.0, np.nan, np.nan), ("2026-07-30 21:00", 1.0, 1.1, 0.1)
+    for spec in ([a, b], [b, a]):
+        m = _m(None, spec)
+        assert len(m) == 1 and _tuple(m) == (1.0, 1.1, 0.1)
+
+
+def test_cr04_stamps_19_days_apart_are_three_reports_not_one_and_old_only_rows_are_kept():
+    spec = [("2026-07-01 20:00", 1, 1.1, .1), ("2026-07-20 20:00", 1, 1.2, .2), ("2026-08-08 20:00", 1, 1.3, .3)]
+    assert len(_m(None, spec)) == 3 and len(_m(spec, [("2026-04-01 20:00", 1, 1.0, 0.0)])) == 4
+    m = _m(spec, [("2026-07-20 21:00", 1, np.nan, np.nan)])               # touches the middle one only
+    assert m["eps_actual"].tolist() == [1.1, 1.2, 1.3]
+
+
+def test_cr04_a_reported_event_whose_date_the_provider_moved_stays_one_report():
+    m = _m([("2026-07-01 20:00", 1.0, 1.1, 0.1)], [("2026-07-25 20:00", 1.0, 1.1, 0.1)])      # same EPS pair, 24 d later
+    assert len(m) == 1 and m.loc[0, "earnings_ts"].day == 25
+    two = _m([("2026-04-30 20:00", 1.0, 1.1, 0.1)], [("2026-07-30 20:00", 1.2, 1.3, 0.08)])    # a different quarter
+    assert len(two) == 2
+    assert len(_m(None, [("2026-07-30 20:00", 1.0, 1.1, .1)])) == 1 and len(_m([("2026-07-30 20:00", 1, 1.1, .1)], [("2026-07-30 20:00", 1, 1.1, .1)])) == 1
+
+
+def test_cr05_a_replacement_changes_only_the_date_it_replaces():
+    old = [("2026-11-02 20:00", 2.0, np.nan, np.nan), ("2027-02-01 20:00", 2.2, np.nan, np.nan)]
+    m = _m(old, [("2026-11-05 20:00", 2.0, np.nan, np.nan)])
+    assert [t.strftime("%m-%d") for t in m["earnings_ts"]] == ["11-05", "02-01"]
+    moved = _m(old, [("2026-12-15 20:00", 2.0, np.nan, np.nan)])                 # the next date moved further out
+    assert [t.strftime("%m-%d") for t in moved["earnings_ts"]] == ["12-15", "02-01"]
+    yesterday = _m(old, [("2026-10-17 20:00", 1.9, np.nan, np.nan)])             # a stale row is not a replacement
+    assert len(yesterday) == 3
+
+
+def test_cr06_a_production_history_that_cannot_be_copied_stops_the_run(tmp_path):
+    prod = str(tmp_path / "prod.duckdb")
+    with duckdb.connect(prod) as p:
+        ee.load_earnings_events(p, _rows("A", [("2026-07-30 20:00", 1.0, 1.1, 0.1)]))
+    with duckdb.connect(str(tmp_path / "s1.duckdb")) as s:
+        assert ee.seed_from_production(s, prod) == 1
+        assert ee.seed_from_production(s, prod) == 0                              # already seeded: idempotent
+    with duckdb.connect(str(tmp_path / "s2.duckdb")) as s:                        # a file that is not a database
+        bad = tmp_path / "bad.duckdb"
+        bad.write_bytes(b"not a duckdb file" * 100)
+        with pytest.raises(ee.SeedError):
+            ee.seed_from_production(s, str(bad))
+    with duckdb.connect(str(tmp_path / "s3.duckdb")) as s:                        # first run: nothing to carry
+        assert ee.seed_from_production(s, str(tmp_path / "missing.duckdb")) == 0
+    empty = str(tmp_path / "empty.duckdb")
+    duckdb.connect(empty).close()                                                 # production without the table
+    with duckdb.connect(str(tmp_path / "s4.duckdb")) as s:
+        assert ee.seed_from_production(s, empty) == 0
+
+
+def test_cr07_a_renamed_symbol_continues_its_history_under_the_new_symbol(tmp_path):
+    prod = str(tmp_path / "prod.duckdb")
+    with duckdb.connect(prod) as p:
+        ee.load_earnings_events(p, pd.concat([
+            _rows("OLD", [("2024-07-30 20:00", 1.0, 1.1, 0.1), ("2026-01-29 21:00", 1.4, 1.5, 0.07)]),
+            _rows("NEW", [("2026-01-29 20:00", 1.4, 1.5, 0.07)])]))               # both symbols know Jan 2026
+    with duckdb.connect(str(tmp_path / "shadow.duckdb")) as s:
+        assert ee.seed_from_production(s, prod, {"OLD": "NEW"}) == 2
+        ee.load_earnings_events(s, _rows("NEW", [("2026-07-30 20:00", 1.6, 1.7, 0.06)]), now=NOW)
+        out = _stored(s)
+    assert set(out["ticker"]) == {"NEW"} and len(out) == 3                       # 2024, one Jan 2026, Jul 2026
+
+
+@pytest.mark.parametrize("est, act, stored, expect", [
+    (1.0, 1.003, -0.001, -0.001), (1.0, 1.003, 0.001, 0.001),                     # rounding: kept
+    (1.0, 1.003, -1.0, 0.003), (1.0, 1.003, 0.10, 0.003), (1.2, 1.1, 0.10, -0.1 / 1.2),
+    (1.0, 1.1, 0.1, 0.1), (1.0, 1.1, 0.108, 0.108), (1.0, 1.1, 0.12, 0.1),        # edge of the tolerance
+    (0.04, -1.49, 38.25, -38.25),                                                  # a huge ratio of the wrong sign
+])
+def test_cr08_a_provider_surprise_must_be_the_ratio_of_the_pair_within_rounding(est, act, stored, expect):
+    f = er.fill_surprise(_events([(_ts("2026-07-30 16:05"), est, act, stored)]))
+    assert f.loc[0, "surprise_pct"] == pytest.approx(expect, abs=1e-9)
+
+
+@pytest.mark.parametrize("act, direction", [(0.10, 1), (-0.10, -1), (0.0, 0)])
+def test_cr09_a_zero_estimate_has_a_direction_but_no_ratio(act, direction):
+    ev = er.fill_surprise(_events([(_ts("2026-07-30 16:05"), 0.0, act, np.nan)]))
+    assert np.isnan(ev.loc[0, "surprise_pct"]) and bool(ev.loc[0, "small_base"]) and ev.loc[0, "direction"] == direction
+    b = er.beat_summary(ev)
+    assert b["n"] == 1 and b["n_avg"] == 0 and b["avg_surprise"] is None
+    assert b["beat_rate"] == (1.0 if direction > 0 else 0.0)
+
+
+@pytest.mark.parametrize("est, sur, small", [(0.0499, 0.5, True), (0.05, 0.5, False), (1.0, 5.0, False), (1.0, 5.01, True),
+                                             (-0.0499, -1.0, True), (np.nan, 0.1, False)])
+def test_cr09_the_small_base_thresholds(est, sur, small):
+    assert er.small_base(est, sur) is small
+
+
+def test_cr11_a_date_only_event_stays_upcoming_for_its_whole_local_day():
+    ev = pd.DataFrame({"ticker": ["AAPL", "AAPL.X"], "earnings_ts": [pd.Timestamp("2026-10-20", tz="America/New_York")
+                                                                      .tz_convert("UTC")] * 2,
+                       "eps_estimate": [1.0, 1.0], "eps_actual": [np.nan] * 2, "surprise_pct": [np.nan] * 2})
+    ev = ev.iloc[:1]
+    for now, expected in [("2026-10-20 04:00", True), ("2026-10-20 18:00", True),          # 14:00 New York
+                          ("2026-10-21 03:59", True), ("2026-10-21 04:01", False)]:     # 23:59 / 00:01 New York
+        assert bool(er.upcoming_mask(ev, pd.Timestamp(now, tz="UTC")).iloc[0]) is expected, now
+    # EST: the day ends at 05:00Z
+    est = ev.assign(earnings_ts=pd.Timestamp("2026-12-01", tz="America/New_York").tz_convert("UTC"))
+    assert bool(er.upcoming_mask(est, pd.Timestamp("2026-12-02 04:30", tz="UTC")).iloc[0])
+    assert not bool(er.upcoming_mask(est, pd.Timestamp("2026-12-02 05:01", tz="UTC")).iloc[0])
+    # Tokyo: 20/10 local day ends 20/10 15:00Z
+    tk = ev.assign(ticker="7203.T", earnings_ts=pd.Timestamp("2026-10-20", tz="Asia/Tokyo").tz_convert("UTC"))
+    assert bool(er.upcoming_mask(tk, pd.Timestamp("2026-10-20 14:59", tz="UTC")).iloc[0])
+    assert not bool(er.upcoming_mask(tk, pd.Timestamp("2026-10-20 15:01", tz="UTC")).iloc[0])
+
+
+def test_cr11_a_timed_event_keeps_the_12_hour_grace_and_a_reported_one_is_never_upcoming():
+    ev = pd.DataFrame({"ticker": ["AAPL"] * 2, "earnings_ts": [pd.Timestamp("2026-10-20 20:30", tz="UTC")] * 2,
+                       "eps_estimate": [1.0] * 2, "eps_actual": [np.nan, np.nan], "surprise_pct": [np.nan, 0.05]})
+    m = er.upcoming_mask(ev, pd.Timestamp("2026-10-21 08:00", tz="UTC"))
+    assert m.tolist() == [True, False]                                           # a surprise is a report even without EPS
+    assert not er.upcoming_mask(ev, pd.Timestamp("2026-10-21 09:00", tz="UTC")).any()
+
+
+def test_h02_an_exchange_without_a_known_close_gets_no_guessed_label():
+    assert er.session_label(pd.Timestamp("2026-05-08 06:00", tz="UTC"), "Asia/Kolkata") == "time of day vs the close unknown"
+    assert er.session_label(pd.Timestamp("2026-05-08 00:00", tz="UTC"), "Asia/Kolkata") == "time not announced"
+    assert er.session_label(pd.Timestamp("2026-05-08 21:00", tz="UTC"), "America/New_York") == "after the close"
+
+
+# views: the two calendar sources together (CR-10)
+def _cal(rows):
+    return pd.DataFrame(rows, columns=["ticker", "earnings_date", "eps_avg"])
+
+
+def test_cr10_the_calendar_fills_what_the_events_table_lacks_and_conflicts_are_named():
+    from views.earnings import _calendar_dates, _pending
+    now = pd.Timestamp("2026-10-18 12:00", tz="UTC")
+    ev = pd.concat([_rows("A", [("2026-12-30 21:00", 1.5, np.nan, np.nan)]),        # events: 30 Dec
+                    _rows("B", [("2026-10-22 21:00", 2.0, np.nan, np.nan)])], ignore_index=True)
+    cal = _calendar_dates(_cal([("A", "2026-10-25", 1.0), ("B", "2026-10-22", 2.0), ("C", "2026-10-24", 3.0),
+                                ("D", "2027-03-01", 4.0)]))
+    out = _pending(ev, cal, now, 14).set_index("ticker")
+    assert set(out.index) == {"A", "B", "C"}                                         # D is outside the window
+    assert out.at["A", "source"] == "Yahoo calendar" and "Yahoo events says 30 Dec" in out.at["A", "note"]
+    assert out.at["B", "source"] == "Yahoo events" and out.at["B", "note"] == ""
+    assert out.at["C", "source"] == "Yahoo calendar"
+    # an empty events table still lists the calendar
+    only_cal = _pending(ev.iloc[0:0], cal, now, 14)
+    assert set(only_cal["ticker"]) == {"A", "B", "C"}
+
+
+@pytest.mark.parametrize("ticker, date_", [("AAPL", "2026-10-20"), ("AAPL", "2026-01-20"), ("SAP.DE", "2026-10-20"),
+                                           ("7203.T", "2026-10-20")])
+def test_er_f03_a_calendar_date_keeps_its_day_and_has_no_time(ticker, date_):
+    from views.earnings import _calendar_dates, _local
+    c = _calendar_dates(_cal([(ticker, date_, 1.0)]))
+    when, session = _local(c["earnings_ts"].iloc[0], ticker)
+    assert session == "time not announced" and "20" in when and ":" not in when
+    assert _local(pd.Timestamp("2026-10-20 20:30", tz="UTC"), "AAPL")[1] == "after the close"
+
+
+@pytest.mark.parametrize("filing, event, ok", [("2026-07-30", "2026-07-30 20:30", True), ("2026-08-04", "2026-07-30 20:30", True),
+                                               ("2026-08-05", "2026-07-30 20:30", False), ("2026-07-29", "2026-07-30 20:30", False),
+                                               ("2026-05-01", "2026-07-30 20:30", False), (None, "2026-07-30 20:30", False)])
+def test_cr12_the_8k_filing_date_window(filing, event, ok):
+    from services import earnings as svc
+    assert svc.release_matches_event(filing, pd.Timestamp(event, tz="UTC")) is ok
+
+
+def test_cr12_note_keys_change_with_facts_model_prompt_and_language():
+    from services import earnings as svc
+    ts = pd.Timestamp("2026-07-30", tz="UTC")
+    base = svc.note_key("AAPL", ts, "English", "- a")
+    assert base != svc.note_key("AAPL", ts, "English", "- b") and base != svc.note_key("AAPL", ts, "Vietnamese", "- a")
+    assert svc.text_hash("release v1") != svc.text_hash("release v1, corrected") and len(svc.text_hash("x")) == 12

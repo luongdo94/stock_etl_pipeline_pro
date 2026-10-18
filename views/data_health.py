@@ -135,7 +135,10 @@ def _exceptions(exc: pd.DataFrame, unavailable: bool = False):
 def _freshness(ctx, h):
     """The same freshness answer as the sidebar (core.freshness), with the run END times this tab has."""
     from core.freshness import data_freshness
-    f = data_freshness(ctx.get("prices_full"), ctx.get("companies_full"), h.get("runs"), h.get("dq"))
+    # the audit and DQ rows of the SAME snapshot as the sidebar (its frames), not a second read of the source
+    runs = ctx["etl_audit"] if ctx.get("etl_audit") is not None else h.get("runs")
+    dq = ctx["dq_warnings"] if ctx.get("dq_warnings") is not None else h.get("dq")
+    f = data_freshness(ctx.get("prices_full"), ctx.get("companies_full"), runs, dq)
     p, fu, e, dq = f["prices"], f["fundamentals"], f["etl"], f["dq"]
     st.markdown(f"##### Freshness — **{f['level']}**")
     c1, c2, c3, c4 = st.columns(4)

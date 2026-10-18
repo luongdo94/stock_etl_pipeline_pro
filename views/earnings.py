@@ -41,27 +41,63 @@ def _local(ts, ticker):
     return local.strftime("%a %d %b %Y %H:%M"), er.session_label(t, er.exchange_tz(ticker))
 
 
-def _calendar_events(cal, now, days, have) -> pd.DataFrame:
-    """Upcoming dates of raw.earnings_calendar for tickers without an upcoming event in raw.earnings_events, shaped like
-    events (date only: the calendar has no time of day). On the measured warehouse both sources agree where both have a
-    date; they differ in coverage."""
-    cols = ["ticker", "earnings_ts", "eps_estimate", "eps_actual", "surprise_pct", "source"]
+def _calendar_dates(cal) -> pd.DataFrame:
+    """raw.earnings_calendar as events: ticker, earnings_ts (the date at midnight in the listing's own time zone — a date
+    has no time; as a UTC midnight it showed a US date as the evening before), eps_estimate, source. All dates, past
+    and future: whether one is still ahead is decided with the listing's day (core.earnings.is_upcoming)."""
+    cols = ["ticker", "earnings_ts", "eps_estimate", "source"]
     if cal is None or getattr(cal, "empty", True) or not {"ticker", "earnings_date"} <= set(cal.columns):
         return pd.DataFrame(columns=cols)
     c = cal.copy()
-    # a calendar DATE has no time: midnight in the listing's own time zone (date-only for time_known / the labels). As a
-    # UTC midnight it showed a US date as the evening before, "after the close".
     d = pd.to_datetime(c["earnings_date"], errors="coerce")
     d = d.dt.tz_localize(None) if d.dt.tz is not None else d
-    c["earnings_ts"] = [pd.Timestamp(x.date()).tz_localize(er.exchange_tz(t)).tz_convert("UTC") if pd.notna(x) else pd.NaT
-                        for t, x in zip(c["ticker"], d)]
-    c["earnings_ts"] = pd.to_datetime(c["earnings_ts"], utc=True)
-    c = c[c["earnings_ts"].notna() & (d.dt.date >= now.date())
-          & (c["earnings_ts"] <= now + pd.Timedelta(days=days)) & ~c["ticker"].isin(have)]
-    c = c.sort_values("earnings_ts").drop_duplicates("ticker")
-    return pd.DataFrame({"ticker": c["ticker"], "earnings_ts": c["earnings_ts"],
-                         "eps_estimate": pd.to_numeric(c.get("eps_avg"), errors="coerce"), "eps_actual": float("nan"),
-                         "surprise_pct": float("nan"), "source": "Yahoo calendar"})
+    ts = [pd.Timestamp(x.date()).tz_localize(er.exchange_tz(t)).tz_convert("UTC") if pd.notna(x) else pd.NaT
+          for t, x in zip(c["ticker"], d)]
+    out = pd.DataFrame({"ticker": c["ticker"].to_numpy(), "earnings_ts": pd.to_datetime(pd.Series(ts), utc=True),
+                        "eps_estimate": pd.to_numeric(c.get("eps_avg"), errors="coerce").to_numpy(),
+                        "source": "Yahoo calendar"})
+    return out[out["earnings_ts"].notna()].reset_index(drop=True)
+
+
+def _next_dates(df, now) -> pd.DataFrame:
+    """The next still-upcoming row per ticker."""
+    if df is None or df.empty:
+        return pd.DataFrame(columns=["ticker", "earnings_ts", "eps_estimate", "source"])
+    keep = [er.is_upcoming(t, er.exchange_tz(k), now) for t, k in zip(df["earnings_ts"], df["ticker"])]
+    return df[keep].sort_values("earnings_ts").drop_duplicates("ticker")
+
+
+CONFLICT_DAYS = 3        # two sources whose next dates differ by more than this disagree
+
+
+def _pending(events, cal_all, now, days) -> pd.DataFrame:
+    """Upcoming reports inside the look-ahead window from both sources, one row per ticker, with a `note` when the two
+    sources disagree. The events table is preferred where both have a date within CONFLICT_DAYS; a ticker only one
+    source knows is still listed; a ticker whose sources disagree is shown at the date inside the window, and the other
+    source's date is named — neither is silently preferred."""
+    ev = events[er.upcoming_mask(events, now)].assign(source="Yahoo events") if len(events) else events
+    ev = _next_dates(ev, now) if len(ev) else pd.DataFrame(columns=["ticker", "earnings_ts", "eps_estimate", "source"])
+    ca = _next_dates(cal_all, now)
+    end = now + pd.Timedelta(days=days)
+    cols = ["ticker", "earnings_ts", "eps_estimate", "source", "note"]
+    rows = []
+    e_i, c_i = ev.set_index("ticker") if len(ev) else ev, ca.set_index("ticker") if len(ca) else ca
+    for t in sorted(set(ev["ticker"]) | set(ca["ticker"])):
+        e = e_i.loc[t] if t in getattr(e_i, "index", []) else None
+        c = c_i.loc[t] if t in getattr(c_i, "index", []) else None
+        cands = [(r, r["source"]) for r in (e, c) if r is not None]
+        inside = [r for r, _ in cands if r["earnings_ts"] <= end]
+        if not inside:
+            continue
+        pick = e if (e is not None and e["earnings_ts"] <= end) else c
+        note = ""
+        if e is not None and c is not None and abs(e["earnings_ts"] - c["earnings_ts"]) > pd.Timedelta(days=CONFLICT_DAYS):
+            other = c if pick is e else e
+            note = f"{other['source']} says {pd.Timestamp(other['earnings_ts']).tz_convert(er.exchange_tz(t)):%d %b %Y}"
+        rows.append({"ticker": t, "earnings_ts": pick["earnings_ts"], "eps_estimate": pick["eps_estimate"],
+                     "source": pick["source"], "note": note})
+    return pd.DataFrame(rows, columns=cols).sort_values("earnings_ts").reset_index(drop=True) if rows \
+        else pd.DataFrame(columns=cols)
 
 
 def render(ctx):
@@ -70,12 +106,15 @@ def render(ctx):
     render_header("calendar", "Earnings reports (ER)", "Beat / miss history · price reactions · upcoming reports · AI note")
 
     events = svc.load_earnings_events(ctx.get("data_version"))
+    cal_all = _calendar_dates(ctx.get("earnings_cal"))
     if events.attrs.get("error"):
-        st.error(f"The earnings events could not be read ({events.attrs['error']}) — this is not an empty calendar.")
-        return
-    if events.empty:
-        st.info("No earnings-announcement history in the warehouse yet. It is collected by the ETL (weekly); run "
-                "`python run.py` once and reload.")
+        # a failed read is not an empty calendar; the calendar table (another source) is still shown
+        st.error(f"The earnings events could not be read ({events.attrs['error']}) — this is not an empty calendar. "
+                 + ("Only the earnings-calendar dates are shown." if not cal_all.empty else ""))
+    if events.empty and cal_all.empty:
+        if not events.attrs.get("error"):
+            st.info("No earnings-announcement history in the warehouse yet. It is collected by the ETL (weekly); run "
+                    "`python run.py` once and reload.")
         return
     if "_extracted_at" in events.columns and events["_extracted_at"].notna().any():
         st.caption(f"Events fetched from Yahoo on {pd.Timestamp(events['_extracted_at'].max()):%d %b %Y %H:%M}.")
@@ -91,13 +130,9 @@ def render(ctx):
     with tab_up:
         days = st.slider("Look ahead (days)", 3, 30, 14, key="er_days")
         now = pd.Timestamp.now(tz="UTC")
-        pending = events[events["eps_actual"].isna() & (events["earnings_ts"] >= now - pd.Timedelta(hours=12))
-                         & (events["earnings_ts"] <= now + pd.Timedelta(days=days))]
-        pending = pending.sort_values("earnings_ts").drop_duplicates("ticker").assign(source="Yahoo events")
-        # the earnings calendar (the Decision's earnings gate reads it) covers names the events table lacks
-        cal = _calendar_events(ctx.get("earnings_cal"), now, days, set(events.loc[
-            events["eps_actual"].isna() & (events["earnings_ts"] >= now - pd.Timedelta(hours=12)), "ticker"]))
-        pending = pd.concat([pending, cal], ignore_index=True).sort_values("earnings_ts") if not cal.empty else pending
+        # both sources (events table + the calendar the Decision's earnings gate reads); a date-only entry stays
+        # upcoming for its whole local day
+        pending = _pending(events, cal_all, now, days)
         if pending.empty:
             st.info(f"No reports scheduled in the next {days} days for the tracked universe.")
         else:
@@ -118,7 +153,7 @@ def render(ctx):
                              "Beat rate": None if b["beat_rate"] is None else b["beat_rate"] * 100,
                              "Reports": b["n"],
                              "Typical move": None if mv["median_abs"] is None else mv["median_abs"] * 100,
-                             "Decision": verdict.get(t, ""), "Source": e.get("source", "Yahoo events")})
+                             "Decision": verdict.get(t, ""), "Source": e["source"], "Check": e["note"]})
             up = pd.DataFrame(rows)
             st.dataframe(up, hide_index=True, width="stretch", column_config={
                 "EPS est.": st.column_config.NumberColumn(format="%.2f", help="Consensus EPS (reporting currency, Yahoo)"),
@@ -141,7 +176,7 @@ def render(ctx):
 
     # ── single stock ────────────────────────────────────────────────────────────────────────
     with tab_stock:
-        universe = sorted(events["ticker"].unique())
+        universe = sorted(set(events["ticker"]) | set(cal_all["ticker"]))     # either source knows the stock
         default = st.session_state.get("active_ticker")
         idx = universe.index(default) if default in universe else 0
         t = st.selectbox("Stock", universe, index=idx, format_func=ctx["format_ticker"], key="er_ticker")
@@ -149,8 +184,7 @@ def render(ctx):
         rt = reactions[reactions["ticker"] == t].sort_values("reaction_day", ascending=False) if not reactions.empty else pd.DataFrame()
         b, mv, nxt = er.beat_summary(hist), er.expected_move(rt) if not rt.empty else {"n": 0, "median_abs": None, "max_abs": None}, er.next_event(hist)
         if nxt is None:                                   # the calendar may know a date the events table does not
-            _c = _calendar_events(ctx.get("earnings_cal"), pd.Timestamp.now(tz="UTC"), 365, set())
-            _c = _c[_c["ticker"] == t]
+            _c = _next_dates(cal_all[cal_all["ticker"] == t], pd.Timestamp.now(tz="UTC"))
             nxt = _c.iloc[0] if not _c.empty else None
 
         nxt_txt, nxt_sub = ("not scheduled", "")
@@ -252,21 +286,29 @@ def render(ctx):
                     text = "\n".join(heads)
                     source = (f"recent news headlines ({len(heads)}) — secondary source, not the company's release; "
                               f"press release unavailable: {where}")
-            if mismatch:
-                st.warning(mismatch)
-            elif not text.strip():
-                st.warning(f"No source text found ({where}).")
+            if mismatch or not text.strip():
+                # no valid source for THIS request: the earlier note of this report is not shown as if it answered it
+                st.session_state.pop(key, None)
+                st.warning(mismatch or f"No source text found ({where}).")
             else:
-                try:
-                    with st.spinner("Writing the note..."):
-                        note = svc.summarise_earnings(svc.api_key(), company, t, facts or "- none", source, text, lang)
-                    st.session_state[key] = (note, source)
-                except Exception as e:
-                    st.error(f"AI summary unavailable: {e}")
-        if key in st.session_state:                    # a note of this report, language and model only
-            note, source = st.session_state[key]
-            st.markdown(note)
-            st.caption(f"Source: {source}. Generated by an LLM from that text — check the original before relying on it.")
+                text_id = svc.text_hash(text)
+                rec = st.session_state.get(key)
+                if rec and rec["text_id"] == text_id:
+                    st.caption("Same report, facts and source text as the note below — kept (no new LLM call).")
+                else:
+                    try:
+                        with st.spinner("Writing the note..."):
+                            note = svc.summarise_earnings(svc.api_key(), company, t, facts or "- none", source, text, lang)
+                        st.session_state[key] = {"note": note, "source": source, "text_id": text_id,
+                                                 "created_at": pd.Timestamp.now()}
+                    except Exception as e:
+                        st.error(f"AI summary unavailable: {e}")
+        if key in st.session_state:                    # a note of this report, facts, language and model only
+            rec = st.session_state[key]
+            st.markdown(rec["note"])
+            st.caption(f"Source: {rec['source']}. Written {rec['created_at']:%d %b %Y %H:%M} by an LLM from that text — "
+                       "check the original before relying on it. A new source text, or new figures for this report, "
+                       "make a new note.")
         if not svc.sec_user_agent():
             st.caption("For US stocks the note uses the SEC 8-K earnings press release when SEC_USER_AGENT is set "
                        "(e.g. 'Your Name your@email.com'); otherwise it falls back to recent headlines.")

@@ -42,10 +42,10 @@ def render(dd, ctx):
     if not df_deep.empty:
         # Main Technical Chart (Full Width)
 
-        fig_tech = make_subplots(rows=2, cols=1, shared_xaxes=True, 
-                                 vertical_spacing=0.05, 
+        fig_tech = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                                 vertical_spacing=0.05,
                                  row_heights=[0.7, 0.3])
-    
+
         fig_tech.add_trace(go.Candlestick(
             x=df_deep['date'],
             open=df_deep['price_open'], high=df_deep['price_high'],
@@ -54,13 +54,13 @@ def render(dd, ctx):
             increasing=dict(line=dict(color='#00e676', width=1), fillcolor='rgba(0,230,118,0.85)'),
             decreasing=dict(line=dict(color='#ff5252', width=1), fillcolor='rgba(255,82,82,0.85)')
         ), row=1, col=1)
-    
+
         fig_tech.add_trace(go.Scatter(x=df_deep['date'], y=df_deep['ma_20'], name='MA20', line=dict(color='#FFB300', width=1.5)), row=1, col=1)
         fig_tech.add_trace(go.Scatter(x=df_deep['date'], y=df_deep['ma_50'], name='MA50', line=dict(color='#40C4FF', width=1.5)), row=1, col=1)
         # 🏆 EXPERT: MA200 (Long-term trend anchor)
         if 'ma_200' in df_deep.columns:
             fig_tech.add_trace(go.Scatter(x=df_deep['date'], y=df_deep['ma_200'], name='MA200', line=dict(color='#E040FB', width=2.5)), row=1, col=1)
-    
+
         # Support/Resistance → Scatter traces (appear in legend, not as annotations).
         # Each label says where the level comes from; ATR projections are grey and dotted so they
         # are never mistaken for real support/resistance.
@@ -158,13 +158,13 @@ def render(dd, ctx):
         fig_tech.update_yaxes(title_text="Price (€)", row=1, col=1)
         fig_tech.update_yaxes(title_text="RSI", row=2, col=1, range=[0, 100])
     tech_tab_2, tech_tab_1 = st.tabs(["📈 Interactive TradingView", "📊 AI Technical Master"])
-    
+
     with tech_tab_1:
         if fig_tech is None:
             st.info("No price bars in the sidebar chart range — widen the range to see the chart.")
         else:
             st.plotly_chart(fig_tech, use_container_width=True)
-        
+
     with tech_tab_2:
         import streamlit.components.v1 as components
         tv_symbol = get_tv_symbol(deep_ticker)

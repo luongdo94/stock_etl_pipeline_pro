@@ -56,6 +56,12 @@ def release_matches_event(filing_date, event_ts) -> bool:
     return 0 <= (f - e).days <= RELEASE_MATCH_DAYS
 
 
+def text_hash(text: str) -> str:
+    """Identity of the source text a note was written from (a corrected release is a different text)."""
+    import hashlib
+    return hashlib.sha1(str(text).encode("utf-8", "ignore")).hexdigest()[:12]
+
+
 def note_key(ticker: str, event_ts, language: str, facts: str = "") -> str:
     """Session key of an AI note: one report of one ticker, its facts, in one language, by one model / prompt (new
     figures for the same report — a corrected EPS, a new beat rate — are a new note). The source text is fetched on

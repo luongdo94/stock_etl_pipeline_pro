@@ -3,7 +3,9 @@
 A successful ETL run is not fresh data (SIDEBAR_REFACTOR_REVIEW 3.3): this reports, separately, how old the newest
 close is, what share of the universe has a recent close, how old the fundamentals are (and for what share of companies
 that is known), when the last successful run started / finished and the data-quality state. Anything the inputs cannot
-tell is UNKNOWN, never OK; the level is the worst of the parts, data quality included. This is a summary of the whole
+tell is UNKNOWN, never OK; the level is the worst of the freshness parts (prices, fundamentals, ETL) and of the
+data-quality checks only when they are missing (UNKNOWN) or critical (WARN) — non-critical findings are the separate
+`dq` state the sidebar shows beside the badge. This is a summary of the whole
 universe — it does not confirm a single ticker or holding (the Decision checks its own price date).
 """
 from datetime import date, datetime
@@ -129,8 +131,10 @@ def data_freshness(prices: Optional[pd.DataFrame], companies: Optional[pd.DataFr
             levels.append("WARN")
             notes.append(f"{crit} critical data-quality check(s) violated")
         elif warn:
-            levels.append("WARN")
-            notes.append(f"{warn} data-quality check(s) with violations")
+            # a second dimension, not part of the freshness level: the same coverage checks flag after every run
+            # (8 on the real warehouse), so counting them made the badge permanently "Check" and hid real changes. A
+            # CRITICAL violation still lowers the level; missing checks are UNKNOWN; the card shows this state itself.
+            notes.append(f"{warn} data-quality check(s) with violations (shown as data quality, not freshness)")
         else:
             levels.append("OK")
     else:

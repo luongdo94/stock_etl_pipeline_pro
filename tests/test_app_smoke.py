@@ -330,3 +330,67 @@ def test_a_snapshot_written_the_next_morning_was_not_known_that_day(monkeypatch)
     assert on_16["decision"] == "HOLD / WATCH" and on_16["knowledge_at"].hour == 22      # the 17 Oct row is later
     assert db.load_recorded_decision("A", date(2026, 10, 17))["decision"] == "BUY CANDIDATE"
     assert db.load_recorded_decision("A", date(2026, 10, 14))["decision"] is None          # NULL time: not placed
+
+
+def test_cr10_the_earnings_tab_lists_the_calendar_when_the_events_table_is_empty(warehouse, monkeypatch):
+    """COMMIT_REVIEW CR-10: with no events (empty table), the calendar dates still show in Upcoming, and a stock only the
+    calendar knows can be chosen in Single stock."""
+    import views.earnings as ve
+    from services import earnings as svc
+    empty = pd.DataFrame(columns=["ticker", "earnings_ts", "eps_estimate", "eps_actual", "surprise_pct", "_extracted_at",
+                                  "small_base", "direction"])
+    day = pd.Timestamp.now(tz="America/New_York").normalize() + pd.Timedelta(days=3)
+    cal = pd.DataFrame({"ticker": ["AAPL"], "earnings_ts": [day.tz_convert("UTC")], "eps_estimate": [1.5],
+                        "source": ["Yahoo calendar"]})
+    monkeypatch.setattr(svc, "load_earnings_events", lambda generation=None: empty)
+    monkeypatch.setattr(ve, "_calendar_dates", lambda c: cal)
+    at = _app("🗓️ Earnings")
+    at.session_state["active_ticker"] = "AAPL"
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    up = next(d.value for d in at.dataframe if "Source" in getattr(d.value, "columns", []))
+    assert up["Ticker"].tolist() == ["AAPL"] and up["Source"].tolist() == ["Yahoo calendar"]
+    assert up["Session"].tolist() == ["time not announced"]
+    assert any(o.startswith("AAPL") for o in at.selectbox(key="er_ticker").options)
+
+
+def test_cr12_a_note_is_per_report_source_and_never_shown_after_a_mismatch(warehouse, monkeypatch):
+    """COMMIT_REVIEW CR-12: same report + same source text keeps the note (no new LLM call); a changed source text writes a
+    new note; a request whose release belongs to another quarter shows the warning and NOT the earlier note."""
+    from services import earnings as svc
+    state = {"match": True, "text": "release text v1", "calls": 0}
+    monkeypatch.setattr(svc, "api_key", lambda: "test-key")
+    monkeypatch.setattr(svc, "sec_user_agent", lambda: "Test test@example.com")
+    monkeypatch.setattr(svc, "sec_press_release", lambda t, ua: (state["text"], "https://sec.example/x", "2026-07-30"))
+    monkeypatch.setattr(svc, "release_matches_event", lambda f, e: state["match"])
+
+    def fake_summary(*a, **k):
+        state["calls"] += 1
+        return f"NOTE-{state['calls']}"
+    monkeypatch.setattr(svc, "summarise_earnings", fake_summary)
+    at = _app("🗓️ Earnings")
+    at.session_state["active_ticker"] = "AAPL"
+    at.session_state["er_ticker"] = "AAPL"
+    at.run()
+    shown = lambda: " ".join(m.value for m in at.markdown)                      # noqa: E731
+    at.button(key="er_ai").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert "NOTE-1" in shown() and state["calls"] == 1
+    at.button(key="er_ai").click().run()
+    assert state["calls"] == 1 and "NOTE-1" in shown()                           # same report, same text: kept
+    state["match"] = False
+    at.button(key="er_ai").click().run()
+    assert any("is not the report of" in w.value for w in at.warning) and "NOTE-1" not in shown()
+    state.update(match=True, text="release text v2, corrected")
+    at.button(key="er_ai").click().run()
+    assert state["calls"] == 2 and "NOTE-2" in shown() and "NOTE-1" not in shown()
+
+
+def test_cr02_data_health_shows_the_same_last_good_run_as_the_sidebar(warehouse):
+    import re
+    at = _app("🩺 Data Health").run()
+    assert not at.exception, [e.value for e in at.exception]
+    card = next(m.value for m in at.sidebar.markdown if "sb-card" in m.value and "<div" in m.value)
+    side = re.search(r"Last good ETL (?:finished|started) (\d\d \w{3} \d\d:\d\d)", card)
+    metric = next(m for m in at.metric if m.label == "Last good ETL")
+    assert side and side.group(1) == metric.value

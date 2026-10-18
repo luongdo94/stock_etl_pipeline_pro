@@ -1,8 +1,11 @@
 """Warehouse access: local DuckDB, remote parquet cache / S3, and the cached load_data()."""
 from pathlib import Path
 import contextlib
+import functools
 import logging
 import os
+import threading
+import time
 
 import duckdb
 import pandas as pd
@@ -28,6 +31,83 @@ DB_PATH = os.environ.get("STOCK_DW_PATH") or os.path.join(ROOT, "warehouse", "st
 _CACHE_DIR = Path(os.path.join(ROOT, ".cache", "parquet"))
 _MANIFEST_TTL_MINUTES = 5
 _MANIFEST_PATH = _CACHE_DIR / "manifest.json"
+
+# ── SNAPSHOT PINNING ─────────────────────────────────────────────────────────────────────────────────────────
+# A session works on ONE snapshot: the version its frames were read from (app.py stores it as `_data_version`). Every
+# reader of the warehouse is keyed by that version (snapshot_cached) and a read that finds the source on another version
+# reruns the app, which reloads everything from the new one — so a fragment of an old context, a second session or a
+# cache entry of an older run never mixes two snapshots into one answer.
+_PIN = threading.local()        # per thread: .version / .manifest of the connection opened last, .loading
+_RERUN_LOG: list = []           # recent snapshot reruns (monotonic seconds): a guard against a rerun loop
+EXPECTED_KEY = "_data_version"
+
+
+def _expected():
+    """The snapshot version this session loaded, or None (no session / not loaded yet → nothing to check)."""
+    try:
+        return st.session_state.get(EXPECTED_KEY)
+    except Exception:
+        return None
+
+
+def opened_version():
+    """The version of the snapshot the last get_db_connection of this thread was built on."""
+    return getattr(_PIN, "version", None)
+
+
+@contextlib.contextmanager
+def loading_snapshot():
+    """The loader of a NEW snapshot opens the source without the session check (it is what sets the new version)."""
+    _PIN.loading = True
+    try:
+        yield
+    finally:
+        _PIN.loading = False
+
+
+def _rerun_for_new_snapshot():
+    now = time.monotonic()
+    _RERUN_LOG[:] = [t for t in _RERUN_LOG if now - t < 30]
+    if len(_RERUN_LOG) >= 5:             # the source keeps moving (or the version cannot settle): stop, do not loop
+        logger.warning("snapshot changed repeatedly — not rerunning again")
+        return
+    _RERUN_LOG.append(now)
+    st.rerun()
+
+
+def _guard():
+    """Rerun the app when the source is on another version than this session's frames (cheap: a stat / the manifest)."""
+    exp = _expected()
+    if exp is None or getattr(_PIN, "loading", False):
+        return
+    try:
+        current = data_version()[0]
+    except Exception:
+        return
+    if current is not None and current != exp:
+        _rerun_for_new_snapshot()
+
+
+def snapshot_cached(ttl: int = 600):
+    """st.cache_data for a reader of the warehouse whose arguments are plain values. The session's snapshot version is
+    part of the cache key and is checked before the call, so no entry of another snapshot is ever returned. The wrapper
+    keeps the original name and `.clear()`."""
+    def deco(fn):
+        def cached(name, version, args, kwargs):
+            return fn(*args, **kwargs)
+        # Streamlit keys a cache by the function's module and qualified name: one name per reader, or the readers
+        # would share (and return) each other's entries
+        cached.__name__ = cached.__qualname__ = f"snapshot_cached_{fn.__name__}"
+        cached = st.cache_data(ttl=ttl, show_spinner=False)(cached)
+
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            _guard()
+            return cached(fn.__name__, _expected(), args, kwargs)
+        wrapper.clear = cached.clear
+        return wrapper
+    return deco
+
 
 # Pre-manifest layout (flat, overwritten files). Used only until the first snapshot has been published.
 _LEGACY_TABLE_MAP = {
@@ -91,17 +171,18 @@ def _refresh_manifest(client, bucket, force: bool = False):
         return None if force else _cached_manifest()   # no manifest published yet (legacy layout) or offline
 
 
-def _remote_tables() -> dict:
-    """{table: [remote paths relative to the bucket]} for the current snapshot (legacy flat names without one)."""
-    m = _cached_manifest()
+def _remote_tables(m=None) -> dict:
+    """{table: [remote paths relative to the bucket]} for the manifest `m` (default: the cached one; legacy flat names
+    without one)."""
+    m = m if m is not None else _cached_manifest()
     if m:
         return {t: [f"{m['prefix']}/{n}" for n in files] for t, files in m["tables"].items()}
     return dict(_LEGACY_TABLE_MAP)
 
 
-def _local_tables() -> dict:
-    """{table: [local parquet paths that exist]} for the current snapshot."""
-    m = _cached_manifest()
+def _local_tables(m=None) -> dict:
+    """{table: [local parquet paths that exist]} for the manifest `m` (default: the cached one)."""
+    m = m if m is not None else _cached_manifest()
     if m:
         base = _CACHE_DIR / m["version"]
         return {t: [str(base / n) for n in files if (base / n).exists()] for t, files in m["tables"].items()}
@@ -119,10 +200,12 @@ def _ensure_local_cache() -> bool:
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
     conn_info = _supabase_bucket()
     manifest_local = _cached_manifest()
+    _PIN.manifest = manifest_local              # the manifest the views of this connection are built from
     if conn_info is None:
         return manifest_local is not None or any(_CACHE_DIR.glob("*.parquet"))     # offline: use what is cached
     client, bucket = conn_info
     manifest = _refresh_manifest(client, bucket)
+    _PIN.manifest = manifest
 
     if manifest:
         target = _CACHE_DIR / manifest["version"]
@@ -153,9 +236,12 @@ def _ensure_local_cache() -> bool:
         if errors:
             logger.warning(f"[Cache] Failed to download: {errors}")
     if manifest and not errors:
-        for old in _CACHE_DIR.iterdir():   # drop superseded snapshots
-            if old.is_dir() and old.name != manifest["version"]:
-                shutil.rmtree(old, ignore_errors=True)
+        # drop superseded snapshots — but keep the newest one: a session still reading it (a query in flight, a fragment)
+        # must not lose its files to another session's refresh
+        others = sorted((d for d in _CACHE_DIR.iterdir() if d.is_dir() and d.name != manifest["version"]),
+                        key=lambda d: d.stat().st_mtime, reverse=True)
+        for old in others[1:]:
+            shutil.rmtree(old, ignore_errors=True)
     return not errors
 
 
@@ -173,7 +259,13 @@ def clear_local_cache():
 
 @contextlib.contextmanager
 def get_db_connection(read_only=False):
-    """Database connection context manager with fallback and Hybrid Remote support."""
+    """Database connection context manager with fallback and Hybrid Remote support.
+
+    The snapshot it is built on is identified BEFORE any data is read (`opened_version()`): remote, the manifest that
+    _ensure_local_cache made ready (the views are built from that manifest, not from whatever the manifest file says by
+    the time they are created); local, the file's modification time taken before connecting. When the session already
+    holds frames of another version the app is rerun instead of mixing the two."""
+    _PIN.version = _PIN.manifest = None
     is_remote = os.environ.get("SUPABASE_REMOTE_MODE", "false").lower() == "true"
     
     # Auto-detection: If not in remote mode but local DB file is missing,
@@ -186,6 +278,11 @@ def get_db_connection(read_only=False):
     if is_remote:
         # ── HYBRID REMOTE MODE: Local Shadow Cache (fast) → S3 direct (fallback) ──
         cache_ready = _ensure_local_cache()
+        manifest = getattr(_PIN, "manifest", None)
+        _PIN.version = (manifest or {}).get("version")
+        exp = _expected()
+        if exp is not None and not getattr(_PIN, "loading", False) and _PIN.version not in (None, exp):
+            _rerun_for_new_snapshot()
 
         # Only connection *setup* may fall back to S3. The yield stays outside the
         # try/except: catching errors raised by the caller's `with` body and then
@@ -196,7 +293,7 @@ def get_db_connection(read_only=False):
             try:
                 conn = duckdb.connect(":memory:")
                 conn.execute("CREATE SCHEMA IF NOT EXISTS marts; CREATE SCHEMA IF NOT EXISTS raw;")
-                for table, local_paths in _local_tables().items():
+                for table, local_paths in _local_tables(manifest).items():
                     if not local_paths:
                         continue
                     if len(local_paths) == 1:
@@ -240,7 +337,7 @@ def get_db_connection(read_only=False):
             conn.execute("SET s3_url_style='path';")
 
             conn.execute("CREATE SCHEMA IF NOT EXISTS marts; CREATE SCHEMA IF NOT EXISTS raw;")
-            for table, files in _remote_tables().items():
+            for table, files in _remote_tables(manifest).items():
                 if len(files) == 1:
                     s3_path = f"s3://{bucket}/{files[0]}"
                     conn.execute(f"CREATE VIEW {table} AS SELECT * FROM read_parquet('{s3_path}')")
@@ -283,6 +380,13 @@ def get_db_connection(read_only=False):
         st.error(f"FATAL: Database file not found at {DB_PATH}")
         raise FileNotFoundError(f"Database missing at {DB_PATH}")
         
+    try:
+        _PIN.version = f"local:{os.stat(actual_path).st_mtime_ns}"          # identified before connecting
+    except OSError:
+        _PIN.version = None
+    exp = _expected()
+    if exp is not None and not getattr(_PIN, "loading", False) and _PIN.version not in (None, exp):
+        _rerun_for_new_snapshot()
     conn = duckdb.connect(actual_path, read_only=read_only)
     try:
         yield conn
@@ -290,17 +394,31 @@ def get_db_connection(read_only=False):
         conn.close()
 
 
+def _source_unchanged(loaded) -> bool:
+    """A local read is consistent when the file is still the one that was identified before it was opened; a remote
+    snapshot's files are immutable per version."""
+    if loaded is None or _is_remote():
+        return True
+    try:
+        return data_version()[0] == loaded
+    except Exception:
+        return True
+
+
 @st.cache_data(ttl=600, show_spinner="📉 Loading Institutional Data Warehouse...")
 def load_snapshot(version=None) -> tuple:
     """(frames, version of the snapshot they were read from). `version` (data_version() at the call) keys the cache,
-    so a new warehouse file / published manifest is loaded on the next run instead of after the TTL; the returned
-    version is measured on the open connection, i.e. it is the snapshot actually read, not the current source."""
-    with get_db_connection(read_only=True) as conn:
-        try:
-            loaded = data_version()[0]
-        except Exception:
-            loaded = None
-        return read_warehouse(conn), loaded
+    so a new warehouse file / published manifest is loaded on the next run instead of after the TTL. The returned
+    version is the one identified when the connection was opened (opened_version), not read from the source afterwards;
+    a local file swapped while it was being read is read again (once) so frames and version always belong together."""
+    loaded, frames = version, None
+    for attempt in range(2):
+        with loading_snapshot(), get_db_connection(read_only=True) as conn:
+            loaded = opened_version() or version
+            frames = read_warehouse(conn)
+        if _source_unchanged(loaded):
+            break
+    return frames, loaded
 
 
 def load_data():
@@ -450,7 +568,7 @@ def read_warehouse(conn):
     )
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@snapshot_cached(ttl=600)
 def load_track_record():
     """Daily score snapshots written by etl/snapshot.py (empty until the first ETL run with it)."""
     try:
@@ -460,7 +578,7 @@ def load_track_record():
         return pd.DataFrame(columns=["as_of_date", "ticker", "price_close", "quality", "action"])
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@snapshot_cached(ttl=600)
 def load_etl_exceptions() -> pd.DataFrame:
     """Per-ticker exception ledger of the last ETL run (etl/exceptions.py) and the security lifecycle status."""
     try:
@@ -481,7 +599,7 @@ def _has_column(conn, table: str, col: str) -> bool:
         return False
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@snapshot_cached(ttl=600)
 def load_ticker_provenance(ticker: str) -> dict:
     """Per-ticker data confidence for the Stock Analysis page: payout evidence, fields kept from an earlier extraction,
     independent-source checks, when the latest statements became public, and history-audit findings. Each part is
@@ -528,7 +646,7 @@ _HEALTH_QUERIES = {
 }
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@snapshot_cached(ttl=600)
 def load_data_health() -> dict:
     """Frames for the 🩺 Data Health tab; a table an older warehouse does not have yet comes back empty."""
     out, failed = {}, []
@@ -553,7 +671,10 @@ def load_price_history() -> pd.DataFrame:
     It survives full warehouse rebuilds, so long-horizon outcomes can accumulate (audit A07)."""
     try:
         with get_db_connection(read_only=True) as conn:
-            return conn.execute("SELECT date, ticker, price_close FROM marts.track_prices ORDER BY date").df()
+            # a total order: with ORDER BY date alone the rows of one day came back in a different order on each read, the
+            # frame's content hash (the evidence cache key) changed every time and the evidence was recomputed on every rerun
+            return conn.execute("SELECT date, ticker, price_close FROM marts.track_prices "
+                                "ORDER BY date, ticker, price_close").df()
     except Exception:
         return pd.DataFrame(columns=["date", "ticker", "price_close"])
 
@@ -617,7 +738,7 @@ def load_insider_transactions(ticker=None, tx_type=None, min_value_usd=0.0, days
         return conn.execute(sql, params).df()
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@snapshot_cached(ttl=600)
 def load_decision_snapshots(generation=None) -> pd.DataFrame:
     """The two newest daily score snapshots (one row per ticker and date) — the SIGNAL hub's "Decision changed" feed.
     `generation` (the price data's shape / newest date) re-reads them as soon as a new ETL run is loaded."""
@@ -633,7 +754,7 @@ def load_decision_snapshots(generation=None) -> pd.DataFrame:
                                      "score_version", "inputs"])
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+@snapshot_cached(ttl=600)
 def load_discovery(generation=None) -> pd.DataFrame:
     """Names the ETL's TradingView screens added to the universe (raw.universe: source, first_seen, last_seen) — the
     SIGNAL hub shows this snapshot instead of scanning TradingView live on every page load. Empty when the table is not
@@ -646,16 +767,54 @@ def load_discovery(generation=None) -> pd.DataFrame:
         return pd.DataFrame(columns=["ticker", "name", "sector", "region", "source", "first_seen", "last_seen"])
 
 
-@st.cache_data(ttl=600, show_spinner=False)
+def warehouse_tz() -> str:
+    """The clock of `knowledge_at`: the naive local time of the machine that ran the ETL (etl/snapshot.py writes
+    pd.Timestamp.now()). Set WAREHOUSE_TZ (an IANA name, e.g. Europe/Berlin) when the reader runs elsewhere (cloud);
+    unset, it is this machine's current UTC offset ("+02:00") — right for the usual single-machine setup, off by an hour
+    within an hour of the cutoff for dates in the other daylight-saving season."""
+    name = os.environ.get("WAREHOUSE_TZ")
+    if name:
+        return name
+    from datetime import datetime
+    off = datetime.now().astimezone().utcoffset()
+    total = int(off.total_seconds()) if off is not None else 0
+    sign = "-" if total < 0 else "+"
+    return f"{sign}{abs(total) // 3600:02d}:{abs(total) % 3600 // 60:02d}"
+
+
+def _tzinfo(name: str):
+    """An IANA name or a fixed "+HH:MM" offset → tzinfo."""
+    import re
+    from datetime import timedelta, timezone
+    m = re.fullmatch(r"([+-])(\d\d):(\d\d)", str(name))
+    if m:
+        off = timedelta(hours=int(m.group(2)), minutes=int(m.group(3)))
+        return timezone(-off if m.group(1) == "-" else off)
+    import zoneinfo
+    return zoneinfo.ZoneInfo(str(name))
+
+
+def decision_cutoff(ticker: str, as_of) -> pd.Timestamp:
+    """The end of the market day `as_of` AT THE LISTING (its exchange time zone — 16 Oct ends 17 Oct 06:00 in Berlin for
+    a US stock), as a naive timestamp on the warehouse's clock (warehouse_tz) to compare with knowledge_at. A snapshot is
+    known on `as_of` when knowledge_at is strictly before it."""
+    from core.earnings import exchange_tz
+    end = (pd.Timestamp(as_of).normalize() + pd.Timedelta(days=1)).tz_localize(exchange_tz(ticker))
+    return end.tz_convert(_tzinfo(warehouse_tz())).tz_localize(None)
+
+
+@snapshot_cached(ttl=600)
 def load_recorded_decision(ticker: str, as_of, generation=None) -> dict:
     """The Decision the daily snapshot had RECORDED for `ticker` by the end of `as_of` — point in time as it was known
-    then, not recomputed with today's fundamentals. A snapshot is known from its knowledge_at (when the ETL wrote it,
-    warehouse-local time); one for `as_of` written the next morning was not known on `as_of`. Rows without a
-    knowledge_at cannot be placed in time and are not used. {"as_of_date", "decision", "price_close", "knowledge_at",
-    "first_snapshot"}; empty values when nothing had been recorded by then."""
-    out = {"as_of_date": None, "decision": None, "price_close": None, "knowledge_at": None, "first_snapshot": None}
+    then, not recomputed with today's fundamentals. A snapshot is known from its knowledge_at (when the ETL wrote it, on
+    the warehouse clock, see warehouse_tz); the day ends at the stock's exchange (decision_cutoff). One for `as_of`
+    written the next morning was not known on `as_of`. Rows without a knowledge_at cannot be placed in time and are not
+    used. {"as_of_date", "decision", "price_close", "knowledge_at", "first_snapshot", "tz"}; empty values when nothing had
+    been recorded by then."""
+    out = {"as_of_date": None, "decision": None, "price_close": None, "knowledge_at": None, "first_snapshot": None,
+           "tz": warehouse_tz()}
     try:
-        cutoff = pd.Timestamp(as_of).normalize() + pd.Timedelta(days=1)          # end of that day
+        cutoff = decision_cutoff(ticker, as_of)
         with get_db_connection(read_only=True) as conn:
             out["first_snapshot"] = conn.execute("SELECT min(knowledge_at) FROM marts.score_snapshots").fetchone()[0]
             row = conn.execute("""SELECT as_of_date, decision, price_close, knowledge_at FROM marts.score_snapshots
@@ -667,7 +826,6 @@ def load_recorded_decision(ticker: str, as_of, generation=None) -> dict:
     except Exception:
         pass
     return out
-
 
 
 # ── "Check for new data" (sidebar) — SIDEBAR_REFACTOR_REVIEW 3.2 ──────────────────────────────────────────────────

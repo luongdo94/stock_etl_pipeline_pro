@@ -88,67 +88,134 @@ def extract_earnings_events(tickers: Iterable[str], limit: int = 24, max_workers
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame(columns=COLUMNS)
 
 
-SAME_EVENT_DAYS = 20          # two stamps of one ticker closer than this are the same report (quarters are ~90 d apart)
+SAME_EVENT_DAYS = 20          # a fetched stamp this close to a stored one is the same report (quarters are ~90 d apart)
+SAME_FIGURES_DAYS = 60        # ... or this close when both carry the same reported EPS pair (a reported date moved)
+SAME_STAMP_DAYS = 3           # rows of ONE side this close are re-timed stamps of one report (anchor-based, never chained)
+_FIGURES = ("eps_estimate", "eps_actual", "surprise_pct")
+
+
+class SeedError(RuntimeError):
+    """The stored earnings history exists but could not be carried into the new warehouse."""
 
 
 def _reported(r) -> bool:
     return pd.notna(r["eps_actual"]) or pd.notna(r["surprise_pct"])
 
 
+def _full(r) -> bool:
+    return pd.notna(r["eps_actual"]) and pd.notna(r["eps_estimate"])
+
+
+def _dedupe(d: pd.DataFrame) -> pd.DataFrame:
+    """One row per report within one side: rows within SAME_STAMP_DAYS of the group's first stamp are re-timed stamps of
+    it; the most complete (then the most recently fetched) is kept — a partial 20:00 stamp never hides the reported 21:00
+    one, whatever the input order."""
+    if d.empty:
+        return d
+    d = d.sort_values("earnings_ts").reset_index(drop=True)
+    groups, cur = [], [0]
+    for i in range(1, len(d)):
+        if d.loc[i, "earnings_ts"] - d.loc[cur[0], "earnings_ts"] <= pd.Timedelta(days=SAME_STAMP_DAYS):
+            cur.append(i)
+        else:
+            groups.append(cur)
+            cur = [i]
+    groups.append(cur)
+    keep = []
+    for g in groups:
+        rows = d.loc[g]
+        score = rows[list(_FIGURES)].notna().sum(axis=1)
+        order = pd.DataFrame({"score": score, "ext": pd.to_datetime(rows["_extracted_at"], errors="coerce"),
+                              "ts": rows["earnings_ts"]}).sort_values(["score", "ext", "ts"], ascending=False)
+        keep.append(order.index[0])
+    return d.loc[keep].reset_index(drop=True)
+
+
+def _pair_up(old: pd.DataFrame, new: pd.DataFrame, now) -> list:
+    """One-to-one (new index, old index) pairs of the same report. Nearest first within SAME_EVENT_DAYS; then reported
+    rows with identical EPS figures within SAME_FIGURES_DAYS (a moved reported date); then the earliest unmatched stored
+    UPCOMING date with the earliest unmatched fetched one (a rescheduled date) — an old date nothing replaces is kept."""
+    pairs, used_o, used_n = [], set(), set()
+
+    def take(cands):
+        for _, i, j in sorted(cands):
+            if i not in used_n and j not in used_o:
+                pairs.append((i, j))
+                used_n.add(i)
+                used_o.add(j)
+    def stale_vs_future(n, o):          # an unreported row from the past does not stand for a future date
+        return not _reported(n) and n.earnings_ts < now and not _reported(o) and o.earnings_ts >= now
+    near = [(abs(n.earnings_ts - o.earnings_ts), i, j) for i, n in new.iterrows() for j, o in old.iterrows()
+            if abs(n.earnings_ts - o.earnings_ts) <= pd.Timedelta(days=SAME_EVENT_DAYS) and not stale_vs_future(n, o)]
+    take(near)
+    same = [(abs(n.earnings_ts - o.earnings_ts), i, j) for i, n in new.iterrows() if i not in used_n and _full(n)
+            for j, o in old.iterrows() if j not in used_o and _full(o)
+            and n.eps_estimate == o.eps_estimate and n.eps_actual == o.eps_actual
+            and abs(n.earnings_ts - o.earnings_ts) <= pd.Timedelta(days=SAME_FIGURES_DAYS)]
+    take(same)
+    # a rescheduled date: both still ahead (a stale unreported row from the past is not a replacement for a future date)
+    up_n = [i for i in new.index if i not in used_n and not _reported(new.loc[i]) and new.loc[i, "earnings_ts"] >= now]
+    up_o = [j for j in old.index if j not in used_o and not _reported(old.loc[j]) and old.loc[j, "earnings_ts"] >= now]
+    if up_n and up_o:
+        i, j = min(up_n, key=lambda k: new.loc[k, "earnings_ts"]), min(up_o, key=lambda k: old.loc[k, "earnings_ts"])
+        if abs(new.loc[i, "earnings_ts"] - old.loc[j, "earnings_ts"]) <= pd.Timedelta(days=SAME_FIGURES_DAYS):
+            pairs.append((i, j))
+    return pairs
+
+
+def _combine(o: pd.Series, n: pd.Series) -> pd.Series:
+    """The merged row of one report: the fetched stamp, and ONE observation of the figures —
+      * fetched row complete (estimate and actual) → the fetched figures (the provider's surprise only when the stored row
+        has the same EPS pair; otherwise it is derived from the pair downstream);
+      * fetched row partial, stored row complete → the stored figures whole (a partial or estimate-only response never
+        erases or rewrites a published EPS pair);
+      * neither complete → the fetched row, its estimate filled from the stored one when it has none."""
+    row = n.copy()
+    if _full(n):
+        if pd.isna(n["surprise_pct"]) and _full(o) and n["eps_actual"] == o["eps_actual"] \
+                and n["eps_estimate"] == o["eps_estimate"]:
+            row["surprise_pct"] = o["surprise_pct"]
+    elif _full(o):
+        for c in _FIGURES:
+            row[c] = o[c]
+    elif pd.isna(n["eps_estimate"]) and not _reported(n):
+        row["eps_estimate"] = o["eps_estimate"]
+    return row
+
+
 def merge_events(old: pd.DataFrame, new: pd.DataFrame, now=None) -> pd.DataFrame:
     """History-preserving merge of one ticker's stored and fetched events.
 
-    Yahoo returns the latest `limit` events, so a refresh is a window: events older than it are kept. Rows of one report
-    (the same stamp, or a re-timed one within SAME_EVENT_DAYS) become one row, and its REPORTED figures stay one
-    observation — estimate, actual and surprise are never assembled from two fetches (a new estimate with an old actual
-    and the old surprise could read as a beat while the pair shows a miss):
-      * fetched row reported → the fetched figures (the provider's surprise only when stored with the same EPS pair);
-      * fetched row unreported, stored row reported → the stored figures (a partial response never erases them), the
-        fetched stamp;
-      * neither reported → the fetched estimate / stamp (a schedule update).
-    A stored UPCOMING event is replaced only by an upcoming event of the response: a response without one (only past
-    quarters, some without an actual) is no evidence that the date was cancelled."""
+    Yahoo returns the latest `limit` events, so a refresh is a window: stored events it does not return are kept.
+    Fetched and stored rows are matched ONE-TO-ONE as the same report (_pair_up); a matched pair becomes one row
+    (_combine); a fetched row nothing matches is added; a stored row nothing matches is kept — in particular the
+    absence of a date from a response is no evidence that it was cancelled, and other upcoming dates of the ticker
+    survive a replacement of one of them. Re-timed stamps within one side are one report (_dedupe)."""
     now = pd.Timestamp.now(tz="UTC") if now is None else pd.Timestamp(now)
     now = now.tz_localize("UTC") if now.tzinfo is None else now
     old = old.copy() if old is not None else pd.DataFrame(columns=COLUMNS)
     new = new.copy()
     for d in (old, new):
         d["earnings_ts"] = pd.to_datetime(d["earnings_ts"], utc=True)
-    soon = now - pd.Timedelta(days=1)
-
-    def upcoming(d):
-        return d["eps_actual"].isna() & d["surprise_pct"].isna() & (d["earnings_ts"] >= soon)
-    if len(new) and upcoming(new).any():
-        old = old[~upcoming(old)]                   # the response has its own schedule: a moved date replaces the old
-    new["_new"], old["_new"] = True, False
-    both = pd.concat([new, old], ignore_index=True).sort_values("earnings_ts").reset_index(drop=True)
-    group = (both["earnings_ts"].diff() > pd.Timedelta(days=SAME_EVENT_DAYS)).cumsum()
-    rows = []
-    for _, g in both.groupby(group):
-        fetched, stored = g[g["_new"]], g[~g["_new"]]
-        if fetched.empty:
-            rows.append(stored.iloc[0])
-            continue
-        row = fetched.iloc[0].copy()
-        prev = stored.iloc[0] if len(stored) else None
-        if _reported(row):
-            same_pair = prev is not None and _reported(prev) and row["eps_actual"] == prev["eps_actual"] \
-                and row["eps_estimate"] == prev["eps_estimate"]
-            if pd.isna(row["surprise_pct"]) and same_pair:
-                row["surprise_pct"] = prev["surprise_pct"]
-        elif prev is not None and _reported(prev):
-            for col in ("eps_estimate", "eps_actual", "surprise_pct"):
-                row[col] = prev[col]                # one observation, kept whole
-        elif prev is not None and pd.isna(row["eps_estimate"]):
-            row["eps_estimate"] = prev["eps_estimate"]
-        rows.append(row)
-    return pd.DataFrame(rows)[list(COLUMNS)].reset_index(drop=True)
+    old, new = _dedupe(old), _dedupe(new)
+    pairs = _pair_up(old, new, now)
+    paired_n, paired_o = {i for i, _ in pairs}, {j for _, j in pairs}
+    rows = [_combine(old.loc[j], new.loc[i]) for i, j in pairs]
+    rows += [new.loc[i] for i in new.index if i not in paired_n]
+    rows += [old.loc[j] for j in old.index if j not in paired_o]
+    if not rows:
+        return pd.DataFrame(columns=COLUMNS)
+    return pd.DataFrame(rows)[list(COLUMNS)].sort_values("earnings_ts").reset_index(drop=True)
 
 
-def seed_from_production(conn: duckdb.DuckDBPyConnection, prod_path: str) -> int:
+def seed_from_production(conn: duckdb.DuckDBPyConnection, prod_path: str, changes: dict = None) -> int:
     """FULL refresh: the shadow warehouse starts empty, so the merge would not see the stored history. Copy production's
     events into the shadow before the fetched ones are merged (and instead of the key-based carry-forward afterwards,
-    which re-added the old stamp of a moved event and could not refill a reported EPS). Returns the rows copied."""
+    which re-added the old stamp of a moved event and could not refill a reported EPS). Renamed symbols
+    (`changes` {old: new}) are renamed in the copy — the history continues under the new symbol, one row per report.
+
+    Returns the rows copied. No production file, or one without the table (a first run) → 0. A production history that
+    exists but cannot be read or copied completely raises SeedError: publishing the new warehouse would lose it."""
     ensure_table(conn)
     if not prod_path or not Path(prod_path).exists():
         return 0
@@ -157,28 +224,47 @@ def seed_from_production(conn: duckdb.DuckDBPyConnection, prod_path: str) -> int
     try:
         conn.execute(f"ATTACH '{prod_path}' AS prod_ee (READ_ONLY)")
     except duckdb.Error as e:
-        logger.warning(f"   ⚠️ earnings events not seeded from production: {e}")
-        return 0
+        raise SeedError(f"production warehouse cannot be attached: {e}") from e
     try:
-        cols = ", ".join(COLUMNS)
-        conn.execute(f"INSERT INTO {TABLE} ({cols}) SELECT {cols} FROM prod_ee.{TABLE}")
-        return int(conn.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchone()[0])
+        try:
+            df = conn.execute(f"SELECT {', '.join(COLUMNS)} FROM prod_ee.{TABLE}").df()
+        except duckdb.CatalogException:
+            return 0                                # production has no earnings events yet
+        if df.empty:
+            return 0
+        df["earnings_ts"] = pd.to_datetime(df["earnings_ts"], utc=True)
+        renamed = {o: n for o, n in (changes or {}).items() if o in set(df["ticker"])}
+        expected = len(df)
+        if renamed:
+            df["ticker"] = df["ticker"].replace(renamed)
+            touched = set(renamed.values())
+            df = pd.concat([df[~df["ticker"].isin(touched)]]
+                           + [_dedupe(g) for _, g in df[df["ticker"].isin(touched)].groupby("ticker")], ignore_index=True)
+            expected = len(df)
+        conn.register("ee_seed", df[list(COLUMNS)])
+        try:
+            conn.execute(f"INSERT INTO {TABLE} ({', '.join(COLUMNS)}) SELECT {', '.join(COLUMNS)} FROM ee_seed")
+        finally:
+            conn.unregister("ee_seed")
+        copied = int(conn.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchone()[0])
+        if copied != expected:
+            raise SeedError(f"{copied:,} of {expected:,} production earnings events copied")
+        return copied
     except duckdb.Error as e:
-        logger.warning(f"   ⚠️ earnings events not seeded from production: {e}")
-        return 0
+        raise SeedError(f"production earnings events cannot be copied: {e}") from e
     finally:
         conn.execute("DETACH prod_ee")
 
 
-def load_earnings_events(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame) -> int:
+def load_earnings_events(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame, now=None) -> int:
     """Merge the fetched events into the stored history (merge_events), per ticker present in df; a re-run never
-    duplicates. Returns the number of fetched rows."""
+    duplicates. `now` (default: the clock) decides which dates are still ahead. Returns the number of fetched rows."""
     ensure_table(conn)
     if df is None or df.empty:
         return 0
     tickers = df["ticker"].unique().tolist()
     stored = conn.execute(f"SELECT {', '.join(COLUMNS)} FROM {TABLE} WHERE ticker = ANY(?)", [tickers]).df()
-    merged = pd.concat([merge_events(stored[stored["ticker"] == t], g) for t, g in df.groupby("ticker")],
+    merged = pd.concat([merge_events(stored[stored["ticker"] == t], g, now=now) for t, g in df.groupby("ticker")],
                        ignore_index=True)
     conn.register("ee_tmp", merged)
     try:

@@ -162,9 +162,18 @@ def test_dashboard_reads_the_published_snapshot_and_switches_versions(wh, tmp_pa
     os.utime(tmp_path / "cache" / "manifest.json", (old, old))                  # manifest TTL expired
     assert sdb._ensure_local_cache() is True
     assert sdb._cached_manifest()["version"] == "20260102T000000Z"
-    assert not (tmp_path / "cache" / "20260101T000000Z").exists()               # superseded snapshot dropped
+    # the snapshot just superseded is kept (a session or fragment still reading it must not lose its files) ...
+    assert (tmp_path / "cache" / "20260101T000000Z").exists()
     with sdb.get_db_connection(read_only=True) as c:
         assert c.execute("SELECT COUNT(*) FROM marts.fct_daily_returns").fetchone()[0] == n
+        assert sdb.opened_version() == "20260102T000000Z"
+    # ... and dropped when the next one arrives
+    publish("20260103T000000Z")
+    old = time.time() - 3600
+    os.utime(tmp_path / "cache" / "manifest.json", (old, old))
+    assert sdb._ensure_local_cache() is True
+    assert not (tmp_path / "cache" / "20260101T000000Z").exists()
+    assert (tmp_path / "cache" / "20260102T000000Z").exists() and (tmp_path / "cache" / "20260103T000000Z").exists()
 
 
 def test_partial_download_never_looks_complete(wh, tmp_path, monkeypatch):

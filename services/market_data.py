@@ -128,7 +128,7 @@ def fetch_macro_data(generation=None):
         try:
             with get_db_connection(read_only=True) as conn:
                 return _get_macro_fallback_from_db(conn)
-        except:
+        except Exception:                  # (not a bare except: a snapshot rerun must pass through)
             return {}
 
 
