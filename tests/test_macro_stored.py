@@ -50,7 +50,7 @@ def test_the_rows_are_ordered_by_date_not_by_the_order_the_database_returns_them
 def test_opening_a_page_asks_no_provider_for_macro(warehouse, monkeypatch, tab):
     calls = []
     monkeypatch.setattr(md.yf, "download", lambda *a, **k: calls.append(a) or pd.DataFrame())
-    monkeypatch.setattr(md, "_fred_series", lambda *a, **k: calls.append(a), raising=False)
+    monkeypatch.setattr(md, "fetch_fred_macro", lambda *a, **k: calls.append(a) or {})
     md.fetch_macro_data.clear()
     at = _app(tab)
     at.run()

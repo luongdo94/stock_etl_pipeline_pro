@@ -151,7 +151,7 @@ def test_the_table_carries_the_decisions_own_reasons_and_no_invented_zeros(wareh
     m = seen["ctx"]["m_df"]
     assert {"Why", "_reasons", "_warnings", "_confidence_notes", "_invalidation"} <= set(m.columns)
     assert (m["Why"] == m["_reasons"].map(lambda r: r[0] if r else "")).all()
-    assert m["Coverage (%)"].isna().sum() >= 0 and not (m["MCap (B)"] == 0).any()          # unknown stays NaN
+    assert not (m["MCap (B)"] == 0).any()          # unknown stays NaN
     assert m["Net Payout (%)"].isna().any() or (m["Net Payout (%)"] > 0).any()
 
 
