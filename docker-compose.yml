@@ -18,3 +18,33 @@ services:
     command: >
       bash -c "pip install -r requirements.lock -q && python run.py"
     restart: "no"
+
+  # Scheduler: python run.py --fast at 07:30 Europe/Berlin, Mon-Sat (infra/airflow/dags/stock_etl_dag.py).
+  #   docker compose --profile airflow up -d --build airflow      UI http://localhost:8080 (admin password: docker compose logs airflow)
+  # Needs Docker Desktop running whenever the schedule should fire. The ETL mails its own report (SMTP_* in .env).
+  airflow:
+    profiles: ["airflow"]
+    build:
+      context: .
+      dockerfile: infra/airflow/Dockerfile
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - .:/opt/project
+      - ./infra/airflow/dags:/opt/airflow/dags:ro
+      - airflow_home:/opt/airflow/state
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      AIRFLOW_HOME: /opt/airflow
+      AIRFLOW__CORE__DEFAULT_TIMEZONE: Europe/Berlin
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////opt/airflow/state/airflow.db
+      AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: "60"
+      TZ: Europe/Berlin
+    command: standalone
+    restart: unless-stopped
+
+volumes:
+  airflow_home:

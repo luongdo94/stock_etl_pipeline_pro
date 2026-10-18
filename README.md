@@ -34,7 +34,7 @@ The backbone of Honest Quant is a robust, production-ready Data Engineering pipe
   - **`marts.dim_companies`**: The master static dimension table containing aggregated fundamental markers (Market Cap, Sub-Sector, Beta, Short Interest).
   - **`marts.fct_daily_returns`**: The time-series fact table computing daily logarithmic returns, Technical Indicators ($MA_{20}, MA_{50}, MA_{200}$, RSI), and Rolling Volatility arrays.
   - **`marts.dim_quarterly_financials` & `dim_annual_financials`**: Financial statements optimized for longitudinal queries.
-- **Automation**: `python run.py` is the single entry point; schedule it with Windows Task Scheduler (`scripts/windows/register_daily_etl.ps1`) or cron. Each run is locked against overlap, validated against the universe and the previous production warehouse, and swapped in atomically (see *ETL reliability* below).
+- **Automation**: `python run.py` is the single entry point; schedule it with Airflow (`docker compose --profile airflow up -d --build airflow`: `run.py --fast` at 07:30 Europe/Berlin, Mon-Sat), Windows Task Scheduler (`scripts/windows/register_daily_etl.ps1`) or cron. Each run is locked against overlap, validated against the universe and the previous production warehouse, and swapped in atomically (see *ETL reliability* below).
 
 ---
 

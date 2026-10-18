@@ -65,3 +65,7 @@ docs/
 audit/
 *.md
 !README.md
+
+# the old, never-committed Airflow folder stays ignored; the scheduler config under infra/ is tracked
+!infra/airflow/
+!infra/airflow/**
