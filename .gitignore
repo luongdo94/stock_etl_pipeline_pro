@@ -69,3 +69,5 @@ audit/
 # the old, never-committed Airflow folder stays ignored; the scheduler config under infra/ is tracked
 !infra/airflow/
 !infra/airflow/**
+__pycache__/
+*.pyc
