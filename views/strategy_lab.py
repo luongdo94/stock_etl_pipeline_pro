@@ -1,171 +1,154 @@
-"""View: 🧪 Strategy Lab"""
+"""View: 🧪 Strategy Lab — evidence summary + exploratory timing comparison on one stock."""
+import time
+
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from core import lab_view as lv
 from core.backtest import STATIC_QUALITY, run_backtest_simulation
+from core.track_record import evidence_headline
+from services import db
 from ui.components import render_metric_tile
 from ui.icons import render_header
+from ui.sticky import sticky
+
+RULES = [
+    "Trend Following (MA20/50 Cross)",
+    "RSI Mean Reversion (30/70)",
+    "Z-Score Mean Reversion (60-bar price deviation)",
+    "Buy on Dip (Uptrend + Oversold)",
+    "Multi-Indicator Breakout (Price>MA50 + RSI>50)",
+]
+DEMO = f"{STATIC_QUALITY} (today's Quality ≥ 75 applied to past bars — lookahead, not evidence)"
+_SKIP = ["^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"]
+
+
+def _evidence_block(prices_full):
+    try:
+        ev = db.evidence(prices_full)
+    except Exception as e:           # a read error is not "no history"
+        ev = {"ok": False, "label": f"Evidence not computable: {e}"}
+    head = evidence_headline(ev)
+    gate = True
+    try:
+        from core.decision import load_rules
+        gate = bool((load_rules().get("evidence") or {}).get("require_validated_evidence_for_buy", True))
+    except Exception:
+        pass
+    st.markdown("**What is supported, what is not**")
+    c1, c2 = st.columns([2, 3])
+    with c1:
+        st.metric("System evidence (Quality, 12 months)", head)
+    with c2:
+        st.caption(f"{ev.get('label', '')}  \nEvidence required for BUY: **{'On' if gate else 'Off'}** (owner setting). "
+                   f"The timing experiments below are a different question and do not change this status. "
+                   f"Details: the 📈 Track Record tab.")
 
 
 def render(ctx):
-    """Render the 🧪 Strategy Lab tab. ctx is the context dict built in app.py."""
     all_tickers = ctx['all_tickers']
     format_ticker = ctx['format_ticker']
     prices_full = ctx['prices_full']
     reco_df = ctx['reco_df']
 
-    render_header("activity", "Strategy Backtesting Engine — Signal Simulator")
+    render_header("activity", "Strategy Lab — Evidence & Experiments")
+    _evidence_block(prices_full)
+    st.markdown("---")
 
-    st.markdown("""
-    <div style='background:rgba(0,255,204,0.05); border:1px solid rgba(0,255,204,0.2);
-                border-radius:8px; padding:12px 16px; margin-bottom:16px; font-size:0.85rem; color:#aaa;'>
-    <span style='color:#00ffcc; font-weight:900;'>[INFO]</span> <b>How it works:</b> Select a trading rule or run a tournament to find the best logic for a specific ticker.
-    The engine simulates every signal on <b>the full price history loaded in the dashboard</b> (up to ~3 years, independent of the sidebar horizon).
-    </div>
-    """, unsafe_allow_html=True)
+    st.markdown("#### Compare timing rules on one stock")
+    st.caption(f"{lv.EXPLORATORY} A single stock, closes only, today's universe: this is not evidence for a 3-5-year "
+               f"fundamental decision. The simulation uses the full price history loaded in the dashboard (up to ~3 years).")
 
+    col1, col2 = st.columns([1, 2])
+    options = [t for t in all_tickers if t not in _SKIP]
+    with col1:
+        cur = st.session_state.get("_kept::slab_ticker")
+        idx = options.index(cur) if cur in options else 0
+        ticker = st.selectbox("Ticker", options, index=idx, format_func=format_ticker, key="slab_ticker") if options else None
+        st.session_state["_kept::slab_ticker"] = ticker
+        sl_c, tp_c = st.columns(2)
+        with sl_c:
+            sl = sticky(st.slider, "Stop loss (%)", 8, "slab_sl", min_value=0, max_value=30,
+                        help="Closing-price stop, filled at the next close. 0 does NOT disable it: any loss triggers an exit.")
+        with tp_c:
+            tp = sticky(st.slider, "Take profit (%)", 25, "slab_tp", min_value=0, max_value=100,
+                        help="0 disables the take-profit.")
+        capital = sticky(st.number_input, "Initial capital (€)", 10000, "slab_cap", min_value=1000, max_value=1_000_000,
+                         step=1000)
+        fee = sticky(st.slider, "Transaction cost per fill (%)", 0.1, "slab_fee", min_value=0.0, max_value=1.0, step=0.05)
+        demo = sticky(st.toggle, "Include the Static Quality demo (lookahead — methodology only)", False, "slab_demo")
+        run = st.button("▶ Compare all rules", type="primary", width="stretch")
 
-    bt_col1, bt_col2 = st.columns([1, 2])
+    spec = lv.run_spec(ticker, sl, tp, capital, fee, db.opened_version())
 
-    with bt_col1:
-        st.markdown("#### Trading Rule Configuration")
-        _bt_options = [t for t in all_tickers if t not in ["^VIX","SPY","^GSPC","^DJI","^IXIC"]]
-        
-        with st.form("backtest_form"):
-            bt_ticker = st.selectbox("Select Ticker to Backtest", options=_bt_options, format_func=format_ticker, key="bt_ticker_form")
-            
-            st.markdown("###### Risk Management")
-            sl_col, tp_col = st.columns(2)
-            with sl_col: stop_loss = st.slider("Stop Loss (%)", 0, 30, 8)
-            with tp_col: take_profit = st.slider("Take Profit (%)", 0, 100, 25)
-                
-            st.markdown("###### Capital Constraints")
-            initial_capital = st.number_input("Initial Capital (€)", 1000, 1_000_000, 10000, step=1000)
-            tx_cost_v = st.slider("Transaction Cost (%)", 0.0, 1.0, 0.1, step=0.05)
-            
-            run_backtest = st.form_submit_button("▶ Run All Strategies & Find Best", width="stretch", type="primary")
-
-    with bt_col2:
-        if run_backtest and bt_ticker:
-            tx_cost_pct = tx_cost_v / 100.0
-            sl_pct = stop_loss / 100.0
-            tp_pct = take_profit / 100.0
-            
-            # Full loaded history — the sidebar horizon (default 1Y) left only a handful of trades
-            bt_prices = prices_full[prices_full["ticker"] == bt_ticker].sort_values("date").copy()
-            
-            all_strats = [
-                f"{STATIC_QUALITY} (today's Quality > 75 — lookahead, not evidence)",
-                "Trend Following (MA20/50 Cross)", 
-                "RSI Mean Reversion (30/70)",
-                "Z-Score Mean Reversion (Deep Value)",
-                "Buy on Dip (Uptrend + Oversold)",
-                "Multi-Indicator Breakout (Price>MA50 + RSI>50)"
-            ]
-            results = []
-            progress_bar = st.progress(0)
-            for idx, s in enumerate(all_strats):
-                progress_bar.progress((idx + 1) / len(all_strats), text=f"Simulating: {s}")
-                r = run_backtest_simulation(bt_ticker, bt_prices, s, sl_pct, tp_pct, tx_cost_pct, initial_capital, reco_df)
-                if r: results.append(r)
-            progress_bar.empty()
-            
-            if results:
-                st.session_state["bt_leaderboard"] = results
-                best_res = max(results, key=lambda x: (not x["lookahead"],
-                                                       x["sharpe"] if x["sharpe"] == x["sharpe"] else float("-inf")))
-                st.session_state["bt_results"] = best_res
-
-        # ── RENDER RESULTS ────────────────────────────────────────────────────
-        if "bt_results" in st.session_state and st.session_state["bt_results"]:
-            r = st.session_state["bt_results"]
-            l_board = st.session_state.get("bt_leaderboard")
-            
-            if l_board:
-                render_header("trophy", f"Strategy Tournament Leaderboard — {r['ticker']}")
-                
-                # Build Comparison Table
-                comp_data = []
-                for s_res in l_board:
-                    comp_data.append({
-                        "Strategy": s_res["strategy"],
-                        "Return %": s_res["total_return"],
-                        "Sharpe": s_res["sharpe"],
-                        "Max DD %": s_res["max_dd"],
-                        "Win Rate %": s_res["win_rate"],
-                        "Trades": s_res["n_trades"],
-                        "Lookahead": s_res.get("lookahead", False),
-                        "Missing returns": s_res.get("missing_returns", 0),
-                    })
-
-                # Lookahead-biased rows sink to the bottom so iloc[0] is always a fair winner
-                comp_df = pd.DataFrame(comp_data).sort_values(["Lookahead", "Sharpe"], ascending=[True, False],
-                                                              na_position="last")
-                _gaps = int(comp_df["Missing returns"].max() or 0)
-                if _gaps:
-                    st.warning(f"{_gaps} trading day(s) without a return inside {bt_ticker}'s history were counted as 0% — "
-                               f"read these results as indicative, not as a clean performance record.", icon="⚠️")
-
-                # Only call a "winner" if it actually beats doing nothing (buy & hold) after costs
-                best = comp_df.iloc[0]
-                best_strat_name = best["Strategy"]
-                _bnh = r["bnh_return"]
-                if best["Return %"] > _bnh and best["Sharpe"] == best["Sharpe"] and best["Sharpe"] > 0:
-                    st.markdown(f"""
-                    <div style='background:rgba(46, 204, 113, 0.1); border-left:4px solid #2ecc71; padding:15px; border-radius:4px; margin-bottom:20px;'>
-                        <span style='color:#2ecc71; font-weight:800; font-size:1.1rem;'>BEST RULE: {best_strat_name}</span><br>
-                        <span style='color:#bbb; font-size:0.9rem;'>For {r['ticker']}: {best['Return %']:+.1f}% vs buy &amp; hold {_bnh:+.1f}% (Sharpe {best['Sharpe']:.2f}).</span>
-                    </div>
-                    """, unsafe_allow_html=True)
-                else:
-                    st.markdown(f"""
-                    <div style='background:rgba(241, 196, 15, 0.08); border-left:4px solid #f1c40f; padding:15px; border-radius:4px; margin-bottom:20px;'>
-                        <span style='color:#f1c40f; font-weight:800; font-size:1.1rem;'>NO RULE BEAT BUY &amp; HOLD</span><br>
-                        <span style='color:#bbb; font-size:0.9rem;'>For {r['ticker']}, buy &amp; hold returned {_bnh:+.1f}%; the best rule ({best_strat_name}) returned {best['Return %']:+.1f}%. Trading these signals would have cost money here.</span>
-                    </div>
-                    """, unsafe_allow_html=True)
-                
-                st.dataframe(comp_df, width="stretch", hide_index=True,
-                             column_config={
-                                 "Return %": st.column_config.NumberColumn("Return", format="%.1f%%"),
-                                 "Sharpe": st.column_config.NumberColumn("Sharpe", format="%.2f"),
-                                 "Max DD %": st.column_config.NumberColumn("Max DD", format="%.1f%%"),
-                                 "Win Rate %": st.column_config.NumberColumn("Win Rate", format="%.0f%%"),
-                                 "Lookahead": st.column_config.CheckboxColumn("⚠️ Lookahead", help="Uses today's Quality Score on historical bars — results are optimistic and excluded from the ranking."),
-                             })
-                st.caption("⚠️ The winner is picked in-sample on the same history it is scored on — "
-                           "treat it as a hypothesis to validate on newer data, not as an expected return.")
-                st.markdown("---")
-
-            # Main Metrics (of best/selected)
-            st.caption(f"Showing detailed analytics for: **{r['strategy']}**")
-            m1, m2, m3, m4, m5 = st.columns(5)
-            with m1: render_metric_tile("Total Return",  f"{r['total_return']:+.1f}%", delta=r["total_return"])
-            with m2: render_metric_tile("vs Buy&Hold",   f"{r['total_return']-r['bnh_return']:+.1f}%", delta=r["total_return"]-r["bnh_return"])
-            with m3: render_metric_tile("Sharpe Ratio",  f"{r['sharpe']:.2f}")
-            with m4: render_metric_tile("Max Drawdown",  f"{r['max_dd']:.1f}%")
-            with m5: render_metric_tile("Win Rate",      f"{r['win_rate']:.0f}% ({r['n_trades']} trades)")
-
-            # Chart
-            fig_bt = go.Figure()
-            # Overlay B&H
-            fig_bt.add_trace(go.Scatter(x=r["dates_arr"], y=r["bnh_curve"], name="Buy & Hold", line=dict(color="rgba(255,255,255,0.3)", width=1.5, dash="dot")))
-            
-            if l_board:
-                # Add Top 3 Curves
-                colors = ["#00ffcc", "#3498db", "#9b59b6"]
-                for i, row in enumerate(comp_df.head(3).itertuples()):
-                    # Find matches in results
-                    s_dat = next(x for x in l_board if x["strategy"] == row.Strategy)
-                    fig_bt.add_trace(go.Scatter(x=s_dat["dates_arr"], y=s_dat["equity_curve"], name=f"Rank {i+1}: {row.Strategy}", line=dict(color=colors[i], width=2 if i>0 else 3.5)))
+    with col2:
+        if run and ticker:
+            bars = prices_full[prices_full["ticker"] == ticker].sort_values("date").copy()
+            problem = lv.validate(bars)
+            if problem:
+                st.session_state.pop("slab_run", None)          # never leave an old result under a failed run
+                st.warning(problem)
             else:
-                fig_bt.add_trace(go.Scatter(x=r["dates_arr"], y=r["equity_curve"], name=r["strategy"], line=dict(color="#00ffcc", width=3)))
-            
-            fig_bt.update_layout(template="plotly_dark", height=450, yaxis_title="Equity (€)", hovermode="x unified", legend=dict(orientation="h", y=1.05))
-            st.plotly_chart(fig_bt, use_container_width=True)
+                results, names = [], RULES + ([DEMO] if demo else [])
+                bar = st.progress(0)
+                for i, name in enumerate(names):
+                    bar.progress((i + 1) / len(names), text=f"Simulating: {name}")
+                    r = run_backtest_simulation(ticker, bars, name, sl / 100, tp / 100, fee / 100, capital, reco_df)
+                    if r:
+                        results.append(r)
+                bar.empty()
+                if results:
+                    st.session_state["slab_run"] = {"spec": spec, "results": results, "at": time.strftime("%H:%M")}
+                else:
+                    st.session_state.pop("slab_run", None)
+                    st.warning("The simulation returned no result for this ticker.")
 
-            with st.expander("📋 View Trade Log"):
-                st.dataframe(pd.DataFrame(r["trade_log"]), width="stretch", hide_index=True)
-        else:
-            st.info("👈 Configure your trading rule on the left and click **▶ Run All Strategies & Find Best** to start.")
+        saved = st.session_state.get("slab_run")
+        if not saved:
+            st.info("Choose a ticker and press **▶ Compare all rules**.")
+            return
+        results, rspec = saved["results"], saved["spec"]
+        why = lv.stale_reason(saved, spec)
+        if why:
+            st.warning(f"Showing the run of {saved['at']} for {rspec['ticker']}: {why}. Press Compare to refresh.")
+        comp = lv.comparison_rows(results)
+        render_header("trophy", f"Rule comparison — {rspec['ticker']}")
+        gaps = int(comp["Missing returns"].max() or 0)
+        if gaps:
+            st.warning(f"{gaps} trading day(s) without a return inside {rspec['ticker']}'s history were counted as 0% — "
+                       f"read these results as indicative.", icon="⚠️")
+        st.markdown(f"<div style='border-left:4px solid #8899aa; padding:10px 14px; margin-bottom:12px; color:#bbb;'>"
+                    f"{lv.neutral_summary(results)}</div>", unsafe_allow_html=True)
+        st.dataframe(comp, width="stretch", hide_index=True, column_config={
+            "Return %": st.column_config.NumberColumn("Return", format="%.1f%%"),
+            "vs buy & hold (pts)": st.column_config.NumberColumn("vs buy & hold", format="%+.1f"),
+            "Sharpe": st.column_config.NumberColumn("Sharpe", format="%.2f", help="N/A when the rule never traded or had no variance."),
+            "Max DD %": st.column_config.NumberColumn("Max DD", format="%.1f%%"),
+            "Win rate %": st.column_config.NumberColumn("Win rate", format="%.0f%%", help="N/A when no trade was completed."),
+            "Days in market %": st.column_config.NumberColumn("In market", format="%.0f%%"),
+            "Lookahead": st.column_config.CheckboxColumn("⚠️ Lookahead", help="Uses today's Quality on past bars: optimistic by construction."),
+        })
+        st.caption(lv.sample_meta(results[0]))
+
+        names = [r["strategy"] for r in results]
+        pick = st.selectbox("Show details for", names, key="slab_pick")
+        r = next(x for x in results if x["strategy"] == pick)
+        m = st.columns(5)
+        with m[0]: render_metric_tile("Total return", lv.fmt(r["total_return"], "{:+.1f}", "%"), delta=r["total_return"])
+        with m[1]: render_metric_tile("vs buy & hold", lv.fmt(r["total_return"] - r["bnh_return"], "{:+.1f}", " pts"),
+                                      delta=r["total_return"] - r["bnh_return"])
+        with m[2]: render_metric_tile("Sharpe", lv.fmt(r["sharpe"]))
+        with m[3]: render_metric_tile("Max drawdown", lv.fmt(r["max_dd"], "{:.1f}", "%"))
+        with m[4]:
+            wr = lv.win_rate(r)
+            render_metric_tile("Win rate", "N/A (no completed trade)" if wr is None else f"{wr:.0f}% ({r['n_trades']} trades)")
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=r["dates_arr"], y=r["bnh_curve"], name="Buy & hold (fee-free)",
+                                 line=dict(color="rgba(255,255,255,0.4)", width=1.5, dash="dot")))
+        fig.add_trace(go.Scatter(x=r["dates_arr"], y=r["equity_curve"], name=r["strategy"], line=dict(color="#00ffcc", width=3)))
+        fig.update_layout(template="plotly_dark", height=420, yaxis_title="Equity (€)", hovermode="x unified",
+                          legend=dict(orientation="h", y=1.05))
+        st.plotly_chart(fig, width="stretch")
+        with st.expander("📋 Trade log"):
+            st.dataframe(pd.DataFrame(r["trade_log"]).drop(columns=["_pnl"], errors="ignore"), width="stretch", hide_index=True)

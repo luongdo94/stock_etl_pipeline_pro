@@ -151,6 +151,7 @@ def run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct,
         # Such results are shown for reference but never crowned the winner.
         "lookahead": STATIC_QUALITY in strategy_type, "missing_returns": missing_returns,
         "total_return": total_return, "bnh_return": bnh_return, "sharpe": sharpe, "max_dd": max_dd,
-        "win_rate": win_rate, "n_trades": n_trades, "dates_arr": dates_arr, "equity_curve": equity_curve,
+        "win_rate": win_rate, "n_trades": n_trades, "n_bars": int(n_bars), "bars_held": int(held_prev.sum()),
+        "dates_arr": dates_arr, "equity_curve": equity_curve,
         "bnh_curve": bnh_curve, "trade_log": trade_log
     }

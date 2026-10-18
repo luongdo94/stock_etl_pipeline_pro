@@ -69,10 +69,11 @@ def test_tab_renders_without_exception(warehouse, tab):
 
 def test_strategy_lab_backtest_runs(warehouse):
     at = _app("🧪 Strategy Lab").run()
-    run_btn = next(b for b in at.button if "Run All Strategies" in (b.label or ""))
+    run_btn = next(b for b in at.button if "Compare all rules" in (b.label or ""))
     at = run_btn.click().run()
     assert not at.exception, [e.value for e in at.exception]
-    assert any(("BEST RULE" in m.value) or ("NO RULE BEAT BUY" in m.value) for m in at.markdown)
+    assert any("timing rules ended above buy & hold" in m.value for m in at.markdown)
+    assert not any(("BEST RULE" in m.value) or ("NO RULE BEAT" in m.value) for m in at.markdown)
 
 
 def test_unauthenticated_user_sees_login_only(warehouse):
@@ -84,7 +85,7 @@ def test_unauthenticated_user_sees_login_only(warehouse):
     at.run()
     assert not at.exception, [e.value for e in at.exception]
     assert any(b.label == "Sign In" for b in at.button)
-    assert not any("Run All Strategies" in (b.label or "") for b in at.button)
+    assert not any("Compare all rules" in (b.label or "") for b in at.button)
 
 
 STOCK_GROUPS = ["Overview", "Business & value", "Price & timing", "Risks & data"]

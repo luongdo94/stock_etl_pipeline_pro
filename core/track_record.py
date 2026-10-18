@@ -193,15 +193,22 @@ def recommendation_log(snapshots: pd.DataFrame, action_col: str = "action") -> p
 
 
 def since_call_returns(log: pd.DataFrame, prices: pd.DataFrame) -> pd.Series:
+    return since_call_frame(log, prices)["ret"]
+
+
+def since_call_frame(log: pd.DataFrame, prices: pd.DataFrame) -> pd.DataFrame:
     """Return of each call from its first executable session (the session after the signal was knowable — the same
     entry convention as forward_returns) to the latest stored close, on ONE price basis (audit F19: today's adjusted
     close divided by the immutable snapshot price showed a 2:1 split as −50%)."""
     if log.empty:
-        return pd.Series(dtype=float, index=log.index)
+        return pd.DataFrame({"ret": pd.Series(dtype=float, index=log.index),
+                             "entry_date": pd.Series(pd.NaT, index=log.index, dtype="datetime64[ns]"),
+                             "last_date": pd.Series(pd.NaT, index=log.index, dtype="datetime64[ns]")})
     px = prices[["date", "ticker", "price_close"]].dropna().copy()
     px["date"] = _ns(px["date"])
     px = px.sort_values("date")
     last = px.groupby("ticker")["price_close"].last()
+    last_day = px.groupby("ticker")["date"].last()
     calls = log.reset_index()[["index", "ticker", "as_of_date"]].copy()
     calls["_known"] = _ns(calls["as_of_date"])
     if "knowledge_at" in log.columns:
@@ -212,7 +219,8 @@ def since_call_returns(log: pd.DataFrame, prices: pd.DataFrame) -> pd.Series:
     m = pd.merge_asof(calls.sort_values("_known"), entries, left_on="_known", right_on="entry_date", by="ticker",
                       direction="forward", allow_exact_matches=False)
     m["ret"] = m["ticker"].map(last) / m["px0"] - 1
-    return m.set_index("index")["ret"].reindex(log.index)
+    m["last_date"] = m["ticker"].map(last_day)
+    return m.set_index("index")[["ret", "entry_date", "last_date"]].reindex(log.index)
 
 
 MAX_CENSORED_SHARE = 0.05       # matured signals allowed to have no outcome (delisted / stopped quoting) before the
@@ -335,3 +343,14 @@ def evidence_status(snapshots: pd.DataFrame, prices: pd.DataFrame, h: int = EVID
                  + ("statistically supported." if ok else "NOT statistically supported."))
     return {**ic, "ok": ok, "label": label, "factor_premium": fm["premium"], "factor_t": fm["t_stat"],
             "net_top_pct": net["net_pct"], "outcome_coverage": cover}
+
+
+def evidence_headline(ev: dict) -> str:
+    """The one-line status of the primary test (Quality, 12 months) — the same words on every tab."""
+    if ev.get("ok"):
+        return "Supported under this test"
+    if str(ev.get("label", "")).startswith("Evidence not computable"):
+        return "Not computable"
+    if (ev.get("n_independent") or 0) < MIN_INDEPENDENT_PERIODS or not ev.get("n_days"):
+        return "Insufficient history"
+    return "Not supported"
