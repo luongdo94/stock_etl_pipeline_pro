@@ -6,20 +6,20 @@
 #            | diff (change vs the previous observation)
 # max_age_days: older than this the row is shown as STALE (a source that stopped updating must not look current).
 #
-# NOT available for free and current (so not listed): China CPI, retail sales, industrial output, fixed-asset investment,
-# house prices (the NBS site blocks automated access from outside China, FRED/OECD copies stop in 2025, DBnomics' NBS
-# mirror lags ~8 months); Japan CPI and industrial production (FRED copies stop in 2021-2024; the official e-Stat API
-# needs a free registration key). Add them here once a source is chosen.
+# China comes from the National Bureau of Statistics' own English press releases (source: nbs, etl/nbs_china.py): there is no
+# free current API (the NBS data site blocks automated access from outside China; FRED / DBnomics copies lag by months).
+# Not available: China house prices (the NBS publishes city lists, no national figure); Japan CPI and industrial production
+# (FRED copies stop in 2021-2024; the official e-Stat API needs a free registration key).
 indicators:
   # ── United States (FRED) ─────────────────────────────────────────────────────────────────────────────────────────
   - {id: us_gdp_qoq, region: US, name: "Real GDP, quarterly growth (annualised)", unit: "%", source: fred, series: A191RL1Q225SBEA, transform: level, frequency: quarterly, max_age_days: 200}
-  - {id: us_cpi_yoy, region: US, name: "CPI, year on year", unit: "%", source: fred, series: CPIAUCSL, transform: yoy, frequency: monthly, max_age_days: 75}
-  - {id: us_unemployment, region: US, name: "Unemployment rate", unit: "%", source: fred, series: UNRATE, transform: level, frequency: monthly, max_age_days: 75}
-  - {id: us_payrolls, region: US, name: "Non-farm payrolls, monthly change", unit: "thousand", source: fred, series: PAYEMS, transform: diff, frequency: monthly, max_age_days: 75}
-  - {id: us_retail_mom, region: US, name: "Retail sales, month on month", unit: "%", source: fred, series: RSAFS, transform: mom, frequency: monthly, max_age_days: 75}
-  - {id: us_industrial_yoy, region: US, name: "Industrial production, year on year", unit: "%", source: fred, series: INDPRO, transform: yoy, frequency: monthly, max_age_days: 75}
+  - {id: us_cpi_yoy, region: US, name: "CPI, year on year", unit: "%", source: fred, series: CPIAUCSL, transform: yoy, frequency: monthly, max_age_days: 100}
+  - {id: us_unemployment, region: US, name: "Unemployment rate", unit: "%", source: fred, series: UNRATE, transform: level, frequency: monthly, max_age_days: 100}
+  - {id: us_payrolls, region: US, name: "Non-farm payrolls, monthly change", unit: "thousand", source: fred, series: PAYEMS, transform: diff, frequency: monthly, max_age_days: 100}
+  - {id: us_retail_mom, region: US, name: "Retail sales, month on month", unit: "%", source: fred, series: RSAFS, transform: mom, frequency: monthly, max_age_days: 100}
+  - {id: us_industrial_yoy, region: US, name: "Industrial production, year on year", unit: "%", source: fred, series: INDPRO, transform: yoy, frequency: monthly, max_age_days: 100}
   # ── Euro area ────────────────────────────────────────────────────────────────────────────────────────────────────
-  - {id: ea_hicp_yoy, region: EU, name: "HICP inflation, year on year", unit: "%", source: fred, series: CP0000EZ19M086NEST, transform: yoy, frequency: monthly, max_age_days: 75}
+  - {id: ea_hicp_yoy, region: EU, name: "HICP inflation, year on year", unit: "%", source: fred, series: CP0000EZ19M086NEST, transform: yoy, frequency: monthly, max_age_days: 100}
   - {id: ea_gdp_qoq, region: EU, name: "Real GDP, quarter on quarter", unit: "%", source: fred, series: CLVMNACSCAB1GQEA19, transform: mom, frequency: quarterly, max_age_days: 200}
   - id: ea_unemployment
     region: EU
@@ -30,7 +30,7 @@ indicators:
     params: {geo: EA21, s_adj: SA, age: TOTAL, unit: PC_ACT, sex: T}
     transform: level
     frequency: monthly
-    max_age_days: 90
+    max_age_days: 110
   - id: ea_industrial_yoy
     region: EU
     name: "Industrial production, year on year (euro area)"
@@ -40,9 +40,16 @@ indicators:
     params: {geo: EA21, s_adj: CA, nace_r2: B-D, unit: PCH_SM}
     transform: level
     frequency: monthly
-    max_age_days: 90
+    max_age_days: 110
   # ── Japan ────────────────────────────────────────────────────────────────────────────────────────────────────────
-  - {id: jp_unemployment, region: JP, name: "Unemployment rate", unit: "%", source: fred, series: LRUNTTTTJPM156S, transform: level, frequency: monthly, max_age_days: 90}
+  - {id: jp_unemployment, region: JP, name: "Unemployment rate", unit: "%", source: fred, series: LRUNTTTTJPM156S, transform: level, frequency: monthly, max_age_days: 110}
   - {id: jp_gdp_qoq, region: JP, name: "Real GDP, quarter on quarter", unit: "%", source: fred, series: NGDPRSAXDCJPQ, transform: mom, frequency: quarterly, max_age_days: 200}
   # ── China ────────────────────────────────────────────────────────────────────────────────────────────────────────
-  - {id: cn_exports_yoy, region: CN, name: "Exports of goods (USD), year on year", unit: "%", source: fred, series: XTEXVA01CNM667S, transform: yoy, frequency: monthly, max_age_days: 90}
+  - {id: cn_exports_yoy, region: CN, name: "Exports of goods (USD), year on year", unit: "%", source: fred, series: XTEXVA01CNM667S, transform: yoy, frequency: monthly, max_age_days: 110}
+  - {id: cn_cpi_yoy, region: CN, name: "CPI, year on year", unit: "%", source: nbs, key: cpi, transform: level, frequency: monthly, max_age_days: 100}
+  - {id: cn_ppi_yoy, region: CN, name: "Producer prices (PPI), year on year", unit: "%", source: nbs, key: ppi, transform: level, frequency: monthly, max_age_days: 100}
+  - {id: cn_industrial_yoy, region: CN, name: "Industrial value added, year on year", unit: "%", source: nbs, key: industrial, transform: level, frequency: monthly, max_age_days: 100}
+  - {id: cn_retail_yoy, region: CN, name: "Retail sales, year on year (month)", unit: "%", source: nbs, key: retail, transform: level, frequency: monthly, max_age_days: 100}
+  - {id: cn_fai_ytd, region: CN, name: "Fixed-asset investment, year on year (year to date)", unit: "%", source: nbs, key: fai, transform: level, frequency: monthly, max_age_days: 100}
+  - {id: cn_unemployment, region: CN, name: "Urban surveyed unemployment rate", unit: "%", source: nbs, key: unemployment, transform: level, frequency: monthly, max_age_days: 100}
+  - {id: cn_gdp_yoy, region: CN, name: "GDP, year on year (quarter)", unit: "%", source: nbs, key: gdp, transform: level, frequency: quarterly, max_age_days: 200}

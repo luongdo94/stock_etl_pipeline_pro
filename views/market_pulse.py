@@ -190,9 +190,10 @@ def _economic_data(ctx):
         "Latest": st.column_config.NumberColumn(format="%.2f"), "Previous": st.column_config.NumberColumn(format="%.2f"),
         "Change": st.column_config.NumberColumn(format="%+.2f")})
     st.caption("Actual and previous release only: consensus forecasts are licensed data and are not included. Context for "
-               "reading the market; it never feeds a Decision. China: only goods exports are available for free and current "
-               "(the statistics bureau's own releases are not reachable from outside China). Collected "
-               f"{pd.to_datetime(t['fetched_at']).max():%d %b %Y} from FRED and Eurostat.")
+               "reading the market; it never feeds a Decision. Sources: FRED (US, Japan), Eurostat and FRED (euro area), the "
+               "National Bureau of Statistics' own English releases (China: read from the press-release text, so a change in "
+               "wording shows up as a stale row, not a wrong number). No national house-price figure exists for China. "
+               f"Collected {pd.to_datetime(t['fetched_at']).max():%d %b %Y}.")
 
 
 def render(ctx):

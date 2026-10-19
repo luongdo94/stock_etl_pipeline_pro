@@ -81,7 +81,11 @@ def latest_two(s: pd.Series) -> Optional[dict]:
             "previous_value": float(s.iloc[-2]) if prev is not None else None}
 
 
-def fetch_series(ind: dict, fetch: Callable[[str], bytes] = _get) -> pd.Series:
+def fetch_series(ind: dict, fetch: Callable[[str], bytes] = _get, nbs_get: Optional[Callable] = None,
+                 cache: Optional[dict] = None) -> pd.Series:
+    if ind["source"] == "nbs":                                  # China: the statistics bureau's English releases (etl/nbs_china.py)
+        from etl import nbs_china
+        return nbs_china.fetch(ind, nbs_get or nbs_china.http_get, cache)
     if ind["source"] == "fred":
         return parse_fred(fetch(FRED.format(series=ind["series"])).decode("utf-8"))
     if ind["source"] == "eurostat":
@@ -99,22 +103,22 @@ def ensure_table(conn: duckdb.DuckDBPyConnection) -> None:
 
 
 def refresh(conn: duckdb.DuckDBPyConnection, indicators: Optional[list] = None, fetch: Callable[[str], bytes] = _get,
-            now: Optional[datetime] = None) -> dict:
+            now: Optional[datetime] = None, nbs_get: Optional[Callable] = None) -> dict:
     """Fetch every indicator; upsert the ones that came back. Returns {'ok': [...ids], 'failed': {id: error}}."""
     indicators = load_config() if indicators is None else indicators
     now = now or datetime.now()
     ensure_table(conn)
-    ok, failed = [], {}
+    ok, failed, cache = [], {}, {}                                # cache: the NBS release list / pages, shared by its indicators
     for ind in indicators:
         try:
-            got = latest_two(transform(fetch_series(ind, fetch), ind.get("transform", "level")))
+            got = latest_two(transform(fetch_series(ind, fetch, nbs_get, cache), ind.get("transform", "level")))
             if got is None:
                 raise ValueError("no observations")
         except Exception as e:                                   # one source down must not stop the others
             failed[ind["id"]] = f"{type(e).__name__}: {e}"[:160]
             continue
         row = {"id": ind["id"], "region": ind["region"], "name": ind["name"], "unit": ind.get("unit", ""), **got,
-               "source": ind["source"], "series": ind.get("series") or ind.get("dataset"),
+               "source": ind["source"], "series": ind.get("series") or ind.get("dataset") or ind.get("key"),
                "frequency": ind.get("frequency", ""), "max_age_days": int(ind.get("max_age_days", 90)), "fetched_at": now}
         conn.execute(f"DELETE FROM {TABLE} WHERE id = ?", [row["id"]])
         conn.execute(f"INSERT INTO {TABLE} ({', '.join(COLUMNS)}) VALUES ({', '.join('?' * len(COLUMNS))})",
