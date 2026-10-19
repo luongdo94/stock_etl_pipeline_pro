@@ -1,4 +1,6 @@
 """View: 📋 Watchlist"""
+import html
+
 import pandas as pd
 import streamlit as st
 
@@ -7,6 +9,7 @@ from core.symbols import get_tv_symbol
 from services.user_store import load_watchlist, save_watchlist
 from ui.decision_panel import render_alert_inbox, valuation_inputs
 from ui.icons import render_header
+from ui.sticky import sticky
 
 
 def render(ctx):
@@ -22,7 +25,10 @@ def render(ctx):
     st.write("Track and prune your high-conviction ideas. A thesis without an invalidation level is just a gamble.")
     
     wl_df = load_watchlist()
-    if wl_df.empty:
+    if st.session_state.get("watchlist_load_failed"):
+        st.error("Your watchlist could not be read, so it cannot be shown. That is not an empty list: nothing was deleted. "
+                 "Reload the page to retry; saving stays blocked until it loads.", icon="🛑")
+    elif wl_df.empty:
         st.info("Your watchlist is empty. Open **Stock Analysis**, pick a stock and use **Save Idea to Watchlist Pipeline** at the bottom.")
     else:
         # Display summary metrics
@@ -92,7 +98,12 @@ def render(ctx):
             valid_tickers = [t for t in wl_df["Ticker"].unique() if pd.notna(t) and str(t).strip() != ""]
             if valid_tickers:
                 preview_ticker = st.selectbox("Select a ticker to view Mini Chart and News:", valid_tickers)
-                if preview_ticker:
+                if preview_ticker and not sticky(
+                        st.toggle, "Load the chart and the news (TradingView · Yahoo Finance)", False, "wl_preview_on",
+                        help="Both load from the provider in your browser / this server only when switched on; they are not "
+                             "part of the warehouse snapshot and never feed a Decision."):
+                    st.caption("Not loaded: nothing is requested until you switch this on.")
+                elif preview_ticker:
                     tv_sym = get_tv_symbol(preview_ticker)
                     
                     c_chart, c_news = st.columns([1, 1])
@@ -150,11 +161,12 @@ def render(ctx):
                         if _news_items_wl:
                             _news_rows = ""
                             for _t, _l, _p in _news_items_wl[:15]:
-                                _t_esc = _t.replace("'", "\\'").replace('"', "&quot;")
+                                if not _l.lower().startswith(("http://", "https://")):
+                                    continue                                    # never a javascript: / data: link
                                 _news_rows += f"""
-                                <a href="{_l}" target="_blank" class="news-item">
-                                  <div class="news-title">{_t_esc}</div>
-                                  <div class="news-date">{_p}</div>
+                                <a href="{html.escape(_l, quote=True)}" target="_blank" rel="noopener noreferrer" class="news-item">
+                                  <div class="news-title">{html.escape(_t)}</div>
+                                  <div class="news-date">{html.escape(_p)}</div>
                                 </a>"""
                         else:
                             _news_rows = "<div style='color:#667788;padding:20px;text-align:center;'>No news available for this symbol.</div>"
@@ -175,6 +187,6 @@ def render(ctx):
                           .news-title {{ color:#e8eaf6; font-size:0.82rem; line-height:1.4; margin-bottom:4px; }}
                           .news-date  {{ color:#667788; font-size:0.70rem; }}
                         </style>
-                        <div class="news-header">📰 {preview_ticker} — Latest News</div>
+                        <div class="news-header">📰 {html.escape(str(preview_ticker))} — Latest News</div>
                         <div class="news-scroll">{_news_rows}</div>
                         """, height=430)

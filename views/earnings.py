@@ -103,7 +103,8 @@ def _pending(events, cal_all, now, days) -> pd.DataFrame:
 def render(ctx):
     prices_full, companies = ctx["prices_full"], ctx["companies_full"]
     m_df, fe = ctx["m_df"], ctx.get("forward_estimates_full", pd.DataFrame())
-    render_header("calendar", "Earnings reports (ER)", "Beat / miss history · price reactions · upcoming reports · AI note")
+    render_header("calendar", "Earnings reports (ER)",
+                  subtitle="Beat / miss history · price reactions · upcoming reports · AI note")
 
     events = svc.load_earnings_events(ctx.get("data_version"))
     cal_all = _calendar_dates(ctx.get("earnings_cal"))

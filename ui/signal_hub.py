@@ -6,6 +6,7 @@ that all execute); TradingView is read from the ETL's discovery snapshot, a live
 panels that show converted amounts, one lookup per currency, and an unknown rate shows the native amount.
 The badge counts the user's own items (action / review), not market observations.
 """
+import html
 import time
 from datetime import date
 
@@ -182,13 +183,18 @@ def _needs_review(items, hub):
         return
     for it in items:
         colour, tag = _SEV[it["severity"]]
-        who = "" if it["ticker"] == "—" else f"<b>{it['ticker']}</b> · "
+        who = "" if it["ticker"] == "—" else f"<b>{_e(it['ticker'])}</b> · "
         st.markdown(f"<div style='border-left:4px solid {colour};padding:4px 8px;margin-bottom:6px;'>"
-                    f"<span style='color:{colour};font-weight:700;font-size:0.75rem;'>{tag} · {it['kind']}</span>"
-                    f" <span style='color:#8899aa;font-size:0.72rem;'>({it['scope']})</span> {_chip(it['decision'])}<br>"
-                    f"{who}{it['message']}<br><span style='color:#8899aa;font-size:0.7rem;'>source: {it['source']}"
-                    + (f" · as of {it['data_as_of']}" if it["data_as_of"] else "") + "</span></div>",
+                    f"<span style='color:{colour};font-weight:700;font-size:0.75rem;'>{tag} · {_e(it['kind'])}</span>"
+                    f" <span style='color:#8899aa;font-size:0.72rem;'>({_e(it['scope'])})</span> {_chip(it['decision'])}<br>"
+                    f"{who}{_e(it['message'])}<br><span style='color:#8899aa;font-size:0.7rem;'>source: {_e(it['source'])}"
+                    + (f" · as of {_e(it['data_as_of'])}" if it["data_as_of"] else "") + "</span></div>",
                     unsafe_allow_html=True)
+
+
+def _e(v) -> str:
+    """Plain text from data, safe inside the HTML this hub builds."""
+    return html.escape(str(v))
 
 
 def _decision_changes(hub):
@@ -267,7 +273,7 @@ def _earnings_panel(earnings_cal, companies_full, dec):
                 return "N/A"
             return f"€{v * fx / scale:,.2f}{unit}" if fx else f"{v / scale:,.2f}{unit} {ccy}"
         name = r["company"] if pd.notnull(r["company"]) else r["ticker"]
-        st.markdown(f"<b>{pd.Timestamp(r['earnings_date']):%b %d}</b> · {name} ({r['ticker']}) {_chip(dec.get(r['ticker']))}<br>"
+        st.markdown(f"<b>{pd.Timestamp(r['earnings_date']):%b %d}</b> · {_e(name)} ({_e(r['ticker'])}) {_chip(dec.get(r['ticker']))}<br>"
                     f"<span style='color:#8899aa;font-size:0.78rem;'>EPS est. {money(r['eps_avg'])} · revenue est. "
                     f"{money(r['rev_avg'], 1e9, 'B')}</span>", unsafe_allow_html=True)
 

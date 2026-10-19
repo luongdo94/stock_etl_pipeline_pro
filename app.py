@@ -169,7 +169,11 @@ reco_df["upside_str"] = reco_df["upside_pct"].apply(lambda x: f"{x:+.1f}%")
 
 # ── Ticker tape ─────────────────────────────────────────────────────────────────────────────
 import streamlit.components.v1 as components  # noqa: E402
-components.html("""
+from ui.sticky import sticky as _sticky  # noqa: E402
+# The tape loads a script from tradingview.com in the browser: only when asked (nothing is requested on open)
+if _sticky(st.sidebar.toggle, "Show the live ticker tape (loads TradingView)", False, "app_tape",
+           help="Off by default: the tape is not part of the warehouse snapshot and never feeds a Decision."):
+  components.html("""
 <div class="tradingview-widget-container">
   <div class="tradingview-widget-container__widget"></div>
   <script type="text/javascript" src="https://s3.tradingview.com/external-embedding/embed-widget-ticker-tape.js" async>

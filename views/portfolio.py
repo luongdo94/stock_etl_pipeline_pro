@@ -263,6 +263,8 @@ def render(ctx):
 
     p_tickers = st.session_state.portfolio_tickers
 
+    if not p_tickers:
+        st.info("🎯 Add your first holding with “Add Trade” or Import above; the Decision of each line appears here.")
     if p_tickers:
         latest_prices = (_now_px[_now_px["ticker"].isin(p_tickers)].sort_values("date")
                          .groupby("ticker")["price_close"].last().to_dict())
@@ -305,19 +307,25 @@ def render(ctx):
                     "Stop (orig)": st.session_state.get("portfolio_stops", {}).get(t, float("nan")),
                     "Target (%)": st.session_state.get("portfolio_targets", {}).get(t, float("nan")),
                     "Region": meta.get("Region", "US"),
-                    "Market Cap (B)": meta.get("MCap (B)", 0),
-                    "Z-Score": meta.get("Z-Score", 0.0),
-                    "RSI (14)": meta.get("RSI (14)", 50.0),
+                    "Market Cap (B)": meta.get("MCap (B)", float("nan")),      # unknown stays unknown
+                    "Z-Score": meta.get("Z-Score", float("nan")),
+                    "RSI (14)": meta.get("RSI (14)", float("nan")),
                     "Smart Money": _sm_emoji + _sm,
-                    "Price (€)": latest_prices.get(t, 0),
+                    "Price (€)": latest_prices.get(t, float("nan")),
                     "Shares": st.session_state.portfolio_shares.get(t, 10.0),
-                    "Cost Basis (€)": st.session_state.portfolio_cost.get(t, latest_prices.get(t, 0))
+                    "Cost Basis (€)": st.session_state.portfolio_cost.get(t, latest_prices.get(t, float("nan")))
                 })
             st.session_state.portfolio_df = pd.DataFrame(init_data)
         # the grid is kept across reruns; its prices follow the loaded snapshot's latest close on every run
         _pdf = st.session_state.portfolio_df
         if "Ticker" in _pdf.columns and "Price (€)" in _pdf.columns:
             _pdf["Price (€)"] = _pdf["Ticker"].map(latest_prices).fillna(_pdf["Price (€)"])
+        if "Ticker" in _pdf.columns and "Action" in _pdf.columns and "Ticker" in m_df.columns:
+            _cur = m_df.drop_duplicates("Ticker").set_index("Ticker")["Decision"].to_dict()
+            _emoji = lambda d: ("🔵 " if "RESEARCH" in d else "🟢 " if "BUY" in d else "🔴 " if "AVOID" in d    # noqa: E731
+                                else "🟡 " if "HOLD" in d else "⚪ ")
+            _pdf["Action"] = [_emoji(_cur.get(t, "NOT ENOUGH DATA")) + holding_action(_cur.get(t, "NOT ENOUGH DATA"), held=True)
+                              for t in _pdf["Ticker"]]
 
         # 2. BULK DATA EDITOR
         render_header("layers", "Capital Allocation Grid", level="#####")
@@ -327,7 +335,11 @@ def render(ctx):
         disp_df["Total Cost (€)"] = disp_df["Cost Basis (€)"] * disp_df["Shares"]
         disp_df["Market Value"] = disp_df["Price (€)"] * disp_df["Shares"]
         disp_df["Unrealized PnL (€)"] = disp_df["Market Value"] - disp_df["Total Cost (€)"]
-        disp_df["Unrealized PnL (%)"] = (disp_df["Unrealized PnL (€)"] / disp_df["Total Cost (€)"]).replace([np.inf, -np.inf], 0).fillna(0) * 100
+        disp_df["Unrealized PnL (%)"] = (disp_df["Unrealized PnL (€)"] / disp_df["Total Cost (€)"]).replace([np.inf, -np.inf], np.nan) * 100   # no cost / no price: blank, not 0 %
+        _no_px = disp_df.loc[disp_df["Price (€)"].isna(), "Ticker"].tolist()
+        if _no_px:
+            st.warning(f"No price in this snapshot for {', '.join(map(str, _no_px))}: their value, weight and P&L are unknown and "
+                       f"left out of the totals below, so the NAV shown is incomplete.", icon="⚠️")
         
         _cash_eur = float(st.session_state.get("portfolio_cash_eur", 0.0) or 0.0)
         _t_val = disp_df["Market Value"].sum()
@@ -594,6 +606,7 @@ def render(ctx):
 
         edited_df["Market Value"] = edited_df["Price (€)"] * edited_df["Shares"]
         total_p_val = edited_df["Market Value"].sum()
+        _no_value = bool(edited_df["Market Value"].isna().any())        # a line without a price: its value is unknown
 
         # Data-quality eligibility first (R3-K2): portfolio risk needs a return for every holding on the same dates. A
         # missing return used to be filled with 0% — a stale or halted line then looked riskless.
@@ -608,7 +621,7 @@ def render(ctx):
                          f"horizon for {', '.join(map(str, _ineligible))} (a missing return is unknown, not 0%). Widen the "
                          "date range, refresh the data or remove the line.", icon="🛑")
 
-        if total_p_val > 0 and not _ineligible:
+        if total_p_val > 0 and not _ineligible and not _no_value:
             # NAV = holdings at market + cash: every weight, cap and rebalance is measured on it (R4-F01). Without
             # the cash, a 4-name book with 60% cash re-read as 25% per name after the first rebalance.
             nav_eur = float(total_p_val + _cash_eur)
@@ -1496,10 +1509,13 @@ def render(ctx):
                 st.plotly_chart(fig_risk_b, use_container_width=True)
     
     
-            elif not _ineligible:
-                st.warning("⚠️ Total portfolio value is 0. Please enter the number of shares owned to activate the analysis.")
-        else:
-            st.info("🎯 Start by selecting tickers at the top to build your institutional-grade portfolio.")
+            else:
+                st.info("The efficient frontier compares several holdings: add a second one to see it.")
+        elif _no_value:
+            st.error("Portfolio analytics are blocked: a holding has no price in this snapshot, so the NAV and the weights "
+                     "would be wrong. Refresh the data or remove the line.", icon="🛑")
+        elif not _ineligible:
+            st.warning("⚠️ Total portfolio value is 0. Please enter the number of shares owned to activate the analysis.")
 
 
         st.markdown("---")

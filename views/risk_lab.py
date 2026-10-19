@@ -22,14 +22,15 @@ def _tile(title, value, sub="", colour="#fff", border="#3498db"):
 
 
 def _news_sentiment(company, ticker):
-    """Mean FinBERT sentiment of the latest Google News headlines (0 when none are found)."""
+    """(mean FinBERT sentiment of the latest Google News headlines, number of headlines); (None, 0) when none are found -
+    no headlines is not a neutral reading."""
     import urllib.parse
 
     import feedparser
     q = urllib.parse.quote(f"{company or ticker} stock when:7d")
     feed = feedparser.parse(f"https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en")
     titles = [e.get("title", "").split(" - ")[0] for e in feed.entries[:10]]
-    return (analyze_sentiment_finbert(titles) if titles else 0.0), len(titles)
+    return (analyze_sentiment_finbert(titles) if titles else None), len(titles)
 
 
 def render(ctx):
@@ -39,7 +40,7 @@ def render(ctx):
     format_ticker = ctx["format_ticker"]
     prices_full = ctx["prices_full"]
 
-    render_header("zap", "Risk Lab — how far can the price wander?", "Volatility risk range · no direction forecast")
+    render_header("zap", "Risk Lab — how far can the price wander?", subtitle="Volatility risk range · no direction forecast")
     st.info("🎲 This tab does **not** predict where a stock will go. It estimates how wide the range of outcomes is "
             "(GJR-GARCH volatility, fat-tailed Monte Carlo, zero drift) and checks that range against past outcomes. "
             "The neural price forecasts that used to be here were removed: on 12 real stocks none beat a no-change forecast. "
@@ -164,11 +165,15 @@ def render(ctx):
     try:
         sent, n_titles = _news_sentiment(company, ticker)
     except Exception:
-        sent, n_titles = 0.0, 0
+        sent, n_titles = None, None                          # the lookup failed: unknown, not Neutral
     sm = get_sm_spirit_unified_v2(df, sector=str(sector) if sector else "Unknown")
     k1, k2, k3 = st.columns(3)
-    mood = "Bullish" if sent > 0.1 else "Bearish" if sent < -0.1 else "Neutral"
-    k1.metric("News sentiment (FinBERT)", mood, delta=f"{sent:.2f} · {n_titles} headlines", delta_color="off")
+    if sent is None:
+        k1.metric("News sentiment (FinBERT)", "Unavailable" if n_titles is None else "No headlines",
+                  delta="lookup failed" if n_titles is None else "none in the last 7 days", delta_color="off")
+    else:
+        mood = "Bullish" if sent > 0.1 else "Bearish" if sent < -0.1 else "Neutral"
+        k1.metric("News sentiment (FinBERT)", mood, delta=f"{sent:.2f} · {n_titles} headlines", delta_color="off")
     k2.metric("Volume flow", f"{sm['signal']} ({sm['strength']}/100)",
               delta=(f"{sm['layer']}" if sm["layer"] != "NONE" else "no signal"), delta_color="off")
     k3.metric("Horizon", f"{horizon} trading days", delta=f"{n_sims:,} paths", delta_color="off")

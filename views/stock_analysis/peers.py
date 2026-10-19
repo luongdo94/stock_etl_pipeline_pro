@@ -1,5 +1,7 @@
 """Peer comparison table."""
 
+import html
+
 import pandas as pd
 import streamlit as st
 
@@ -269,7 +271,7 @@ def render(dd, ctx):
                 val = row_data.get(col_key)
                 bg  = _cell_bg(val, col_key, is_avg)
                 if col_key == "company":
-                    text = str(val)[:28] if val else "—"
+                    text = html.escape(str(val)[:28]) if val else "—"
                     col_cells += f"<td style='padding:8px 10px; text-align:left; {bg}'>{text}</td>"
                 elif col_key == "market_cap":
                     col_cells += f"<td style='padding:8px 10px; text-align:center; {bg}'>{_fmt_cap(val)}</td>"

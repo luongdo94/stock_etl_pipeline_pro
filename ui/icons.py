@@ -20,16 +20,25 @@ SVG_ICONS = {
     "handshake": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><path d="m11 17 2 2 6-7"></path><path d="m18 18 2-2 4-4"></path><path d="m3 10 8-8"></path><path d="m3 14 5-5"></path><path d="m7 18 5-5"></path><path d="m11 22 5-5"></path><path d="m18 10-2-2-6 7"></path></svg>',
     "flask": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><path d="M9 2h6"></path><path d="M12 2v14"></path><path d="M12 22a7 7 0 1 0 0-14 7 7 0 0 0 0 14z"></path></svg>',
     "trophy": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"></path><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"></path><path d="M4 22h16"></path><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"></path><path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"></path><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"></path></svg>',
-    "alert": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>'
+    "alert": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"></path><path d="M12 9v4"></path><path d="M12 17h.01"></path></svg>',
+    "zap": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>',
+    "book": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>',
+    "pulse": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>',
+    "cpu": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>',
+    "trending-up": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>',
+    "list": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>',
+    "alert-triangle": '<svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round" style="margin-right:8px;vertical-align:middle;opacity:0.8;"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
 }
 
 
-def render_header(icon_key, text, level="####", color="#e8eaf6"):
-    """Renders a premium monochromatic header with an SVG icon."""
+def render_header(icon_key, text, level="####", color="#e8eaf6", subtitle=None):
+    """Renders a premium monochromatic header with an SVG icon (and an optional one-line subtitle under it)."""
     icon_svg = SVG_ICONS.get(icon_key, "")
     html = f"<div style='display:flex; align-items:center; margin-bottom:12px; color:{color};'>" \
            f"{icon_svg}<span style='font-size:1.15rem; font-weight:700; letter-spacing:0.02em;'>{text}</span></div>"
     st.markdown(html, unsafe_allow_html=True)
+    if subtitle:
+        st.caption(subtitle)
 
 
 def get_flat_svg(key: str, size: int = 18, color: str = "currentColor", margin: str = "8px") -> str:
