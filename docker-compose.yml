@@ -43,7 +43,17 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: sqlite:////opt/airflow/state/airflow.db
       AIRFLOW__SCHEDULER__DAG_DIR_LIST_INTERVAL: "60"
       TZ: Europe/Berlin
-    command: standalone
+    # With AIRFLOW_ADMIN_PASSWORD in .env the admin account ("admin") gets THAT password on every start (created, then reset); without it Airflow makes a random one (docker exec ... cat /opt/airflow/standalone_admin_password.txt).
+    entrypoint: ["bash", "-c"]
+    command:
+      - |
+        airflow db migrate
+        if [ -n "$$AIRFLOW_ADMIN_PASSWORD" ]; then
+          # "users create" exits 0 even when admin exists, so the reset always follows
+          airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@localhost             --password "$$AIRFLOW_ADMIN_PASSWORD" >/dev/null 2>&1
+          airflow users reset-password --username admin --password "$$AIRFLOW_ADMIN_PASSWORD" >/dev/null 2>&1
+        fi
+        exec airflow standalone
     restart: unless-stopped
 
 volumes:
