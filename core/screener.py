@@ -238,6 +238,7 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
             "Ticker": ticker,
             "Company": row['company'],
             "Sector": row['sector'],
+            "Peer group": _sc.get("peer_group", ""),        # who the Quality / Value percentiles were ranked against
             "Decision": _dec.stance,
             "Confidence": _dec.confidence,
             "MoS (%)": round(_mos, 0) if _mos is not None else float("nan"),   # numeric column → blank, not "None"

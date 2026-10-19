@@ -406,6 +406,22 @@ def _ref(f):
     return f["is_reference"] if "is_reference" in f.columns else None
 
 
+def peer_group_labels(f: pd.DataFrame, min_size: int) -> pd.Series:
+    """Which peer group each ticker's percentiles are ranked in, as text: 'industry: Telecom Services (14)', 'sector: ...'
+    or 'whole universe (n)'. Same rule as peer_percentile (smallest of industry, sector, universe with >= min_size
+    reference members); a metric a stock lacks can still fall to a larger group, so this is the group in the usual case."""
+    ref = f["is_reference"].astype(bool) if "is_reference" in f.columns else pd.Series(True, index=f.index)
+    out = pd.Series("", index=f.index, dtype=object)
+    for level in ("industry", "sector"):
+        key = f[level].fillna("").astype(str)
+        n = key[ref].groupby(key[ref]).size()
+        size = key.map(n).fillna(0).astype(int)
+        todo = (out == "") & (key != "") & (size >= min_size)
+        out[todo] = [f"{level}: {k} ({s})" for k, s in zip(key[todo], size[todo])]
+    out[out == ""] = f"whole universe ({int(ref.sum())})"
+    return out
+
+
 def quality_components(f: pd.DataFrame, rules: dict) -> pd.DataFrame:
     q, mp = rules["quality"], rules["peers"]["min_size"]
     b = q["bands"]
@@ -608,6 +624,7 @@ def score_universe(companies: pd.DataFrame, annual_fin: pd.DataFrame = None, pri
         "quality": quality.round(), "value": value.round(), "momentum": momentum.round(), "revisions": revisions.round(),
         "adv_eur": f["adv_eur"], "sbc_adjusted": f["sbc_adjusted"],
         "quality_coverage": (q_cov * 100).round(), "value_coverage": (v_cov * 100).round(),
+        "peer_group": peer_group_labels(f, rules["peers"]["min_size"]),
         "flags": rows_flags, "missing": rows_missing, "components": rows_comps, "metrics": rows_metrics,
     }, index=f.index)
     return out

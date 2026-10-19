@@ -63,6 +63,18 @@ def answer_summary(dd, today: Optional[date] = None) -> dict:
     return {"stance": d.stance, "confidence": d.confidence, "why": why, "change": change, "data": data}
 
 
+def validation_note(d):
+    """One visible line when a BUY rests on signals the Track Record has not validated (the evidence gate is the owner's
+    choice; the size shown is a risk limit, not a measure of conviction). None for every other case."""
+    if getattr(d, "stance", None) != "BUY CANDIDATE":
+        return None
+    if not any("not yet validated" in str(n).lower() for n in getattr(d, "confidence_notes", []) or []):
+        return None
+    return ("⚠️ Not yet validated: the Track Record cannot yet show that BUY signals earn excess returns, so this is a "
+            "candidate for research. A position size, if shown, is a risk limit (stop distance and a 10 % cap), not a "
+            "measure of conviction.")
+
+
 def render(dd, ctx):
     a = answer_summary(dd)
     sc, cc = _STANCE_COLORS.get(a["stance"], "#8899aa"), _CONF_COLORS.get(a["confidence"], "#8899aa")
@@ -84,3 +96,6 @@ def render(dd, ctx):
              <ul style='margin:2px 0 0 16px; padding:0; font-size:0.82rem;'>{li(a['data'])}</ul></div>
       </div>
     </div>""", unsafe_allow_html=True)
+    note = validation_note(dd.extra["decision"])
+    if note:
+        st.caption(note)

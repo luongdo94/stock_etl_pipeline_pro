@@ -304,6 +304,8 @@ def _selected_panel(shown, ctx):
         st.markdown("**Data**")
         issue = r.get("Data issue")
         st.markdown(f"- {issue}" if issue else "- no data issue flagged")
+        if isinstance(r.get("Peer group"), str) and r["Peer group"]:
+            st.markdown(f"- Scores ranked against **{r['Peer group']}**")
         for x in sv.as_list(r.get("_confidence_notes"))[:3]:
             st.markdown(f"- {x}")
     ok = sel in set(ctx["current_universe"])

@@ -243,3 +243,50 @@ def test_erp_and_required_margin_are_read_from_the_config_at_the_call(monkeypatc
     assert val.cost_of_equity(1.0, risk_free=0.04) == 0.10                         # beta 1, ERP 6 %
     assert val.cost_of_equity(1.0, risk_free=0.04, erp=0.05) == 0.09               # an explicit value still wins
     assert val.valuation_verdict(0.30) != "UNDERVALUED" and val.valuation_verdict(0.45) == "UNDERVALUED"
+
+
+def test_snapshot_rows_record_where_the_peer_groups_the_rate_and_the_code_came_from(tmp_path):
+    from etl import snapshot
+    from tests.synthetic_warehouse import build
+    db = build(str(tmp_path / "dw.duckdb"))
+    rows = snapshot.build_snapshot(db)
+    assert {"universe_hash", "code_rev", "rf_source"} <= set(rows.columns)
+    assert rows["universe_hash"].nunique() == 1 and rows["universe_hash"].iloc[0] != "unknown"
+    assert rows["rf_source"].iloc[0] in ("configured fallback",) or rows["rf_source"].iloc[0].startswith("stored US10Y")
+    a = pd.DataFrame({"ticker": ["A", "B"], "sector": ["Banks", "Retail"], "industry": ["x", "y"]})
+    assert snapshot.universe_hash(a) == snapshot.universe_hash(a.iloc[::-1])          # order does not matter
+    assert snapshot.universe_hash(a) != snapshot.universe_hash(a.assign(sector=["Banks", "Fintech"]))   # a sector move does
+
+
+def test_stress_script_restores_the_valuation_module_and_reaches_the_screener_rules():
+    import sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts" / "tools"))
+    import stress_buy as sb
+    from core import decision as dec, screener as scr, valuation as val
+    cap, coe, rules = val.GROWTH_CAP, val.cost_of_equity, scr.load_rules
+    with sb.assumptions(0.06, 0.09, None, 0.40):
+        assert val.GROWTH_CAP == 0.06 and val.cost_of_equity(1.0, risk_free=0.0) >= 0.09
+        assert scr.load_rules()["valuation"]["required_margin_of_safety"] == 0.40       # the name the screener calls
+    assert (val.GROWTH_CAP, val.cost_of_equity, scr.load_rules) == (cap, coe, rules)
+    assert dec.load_rules()["valuation"]["required_margin_of_safety"] != 0.40
+
+
+def test_peer_group_labels_follow_the_same_rule_as_the_percentiles():
+    from core import scoring
+    f = pd.DataFrame({"industry": ["I1"] * 5 + ["I2"] * 2 + ["I3"], "sector": ["S1"] * 5 + ["S2"] * 2 + ["S3"],
+                      "is_reference": [True] * 5 + [True, False] + [True]}, index=list("abcdefgh"))
+    got = scoring.peer_group_labels(f, 5)
+    assert got["a"] == "industry: I1 (5)"
+    assert got["f"] == got["g"] == "whole universe (7)"                # I2 / S2: 1 reference member < 5, no group fits
+    f2 = f.assign(industry=["I1"] * 3 + ["I9"] * 2 + ["I2"] * 2 + ["I3"], sector=["S1"] * 5 + ["S2"] * 2 + ["S3"])
+    assert scoring.peer_group_labels(f2, 5)["a"] == "sector: S1 (5)"   # industry too small -> the sector
+
+
+def test_unvalidated_buy_says_so_in_the_answer_block():
+    from types import SimpleNamespace as NS
+    from views.stock_analysis.answer import validation_note
+    buy = NS(stance="BUY CANDIDATE", confidence_notes=["Signals not yet validated against forward returns (see Track Record)."])
+    assert "Not yet validated" in validation_note(buy)
+    assert validation_note(NS(stance="HOLD / WATCH", confidence_notes=buy.confidence_notes)) is None
+    assert validation_note(NS(stance="BUY CANDIDATE", confidence_notes=["thin coverage"])) is None

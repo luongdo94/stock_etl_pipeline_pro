@@ -51,6 +51,28 @@ _DDL = """
 """
 
 
+def universe_hash(companies: pd.DataFrame) -> str:
+    """Hash of the EFFECTIVE sector / industry assignment the scores used (after overrides and aliases): the peer groups and
+    the scoring treatment follow from it, and the rule files alone do not show that they changed."""
+    if companies is None or companies.empty or "ticker" not in companies.columns:
+        return "unknown"
+    c = companies.drop_duplicates("ticker").sort_values("ticker")
+    rows = [f"{t}|{s}|{i}" for t, s, i in zip(c["ticker"], c.get("sector", ""), c.get("industry", ""))]
+    text = chr(10).join(rows)
+    return hashlib.sha1(text.encode("utf-8")).hexdigest()[:12]
+
+
+def code_revision() -> str:
+    """Short git revision of the code that produced the snapshot ('' when git is not available)."""
+    try:
+        import subprocess
+        out = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=str(_CONFIG.parent), capture_output=True,
+                             text=True, timeout=5)
+        return out.stdout.strip() if out.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
 def rules_version() -> str:
     """Score definition + rule files the Decision used (stored with every snapshot row)."""
     parts = [SCORE_VERSION]
@@ -141,6 +163,10 @@ def build_snapshot(db_path: str = DB_PATH, track_db_path: str = TRACK_DB_PATH) -
     as_of = pd.to_datetime(prices["date"]).max().date()
     return pd.DataFrame({
         "knowledge_at": pd.Timestamp.now(), "run_id": RUN_ID, "rules_version": rules_version(),
+        # provenance (MODEL_ANALYSIS item 5): what the peer groups, the risk-free rate and the code were
+        "universe_hash": universe_hash(companies), "code_rev": code_revision(),
+        "rf_source": (f"stored US10Y {macro['US10Y']['val']:.2f}%" if (macro.get("US10Y") or {}).get("val")
+                      else "configured fallback"),
         "as_of_date": as_of,
         "ticker": table["Ticker"],
         "price_close": table["Price"].astype(float),
@@ -187,7 +213,8 @@ def save_snapshot(rows: pd.DataFrame, track_db_path: str = TRACK_DB_PATH, db_pat
         # older track-record files predate these columns; their rows keep NULL = earlier definitions
         for ddl in ("decision VARCHAR", "value INTEGER", "momentum INTEGER", "revisions INTEGER", "score_version VARCHAR",
                     "inputs VARCHAR", "knowledge_at TIMESTAMP", "run_id VARCHAR", "rules_version VARCHAR",
-                    "region VARCHAR", "market_cap_eur DOUBLE", "book_to_price DOUBLE", "beta DOUBLE"):
+                    "region VARCHAR", "market_cap_eur DOUBLE", "book_to_price DOUBLE", "beta DOUBLE",
+                    "universe_hash VARCHAR", "code_rev VARCHAR", "rf_source VARCHAR"):
             tconn.execute(f"ALTER TABLE signals.score_snapshots ADD COLUMN IF NOT EXISTS {ddl}")
         tconn.register("snap_rows", rows)
         # FIRST knowledge wins (audit A14): a re-run after the close (weekend news, a restatement) can no longer
