@@ -104,60 +104,14 @@ def _login_form(cm):
                  "Supabase login, run .\\start_dashboard.ps1 from the project directory.")
         st.stop()
 
-    st.markdown("""
-    <style>
-    /* HIDE DEFAULT STREAMLIT ARTIFACTS - AGGRESSIVE MODE (Active on Login) */
-    .stAppDeployButton, [data-testid="stAppDeployButton"] { visibility: hidden !important; display: none !important; }
-    header[data-testid="stHeader"], [data-testid="stHeader"], header { visibility: hidden !important; display: none !important; }
-    [data-testid="stToolbar"] { visibility: hidden !important; display: none !important; }
-    [data-testid="stSidebarNav"] { visibility: hidden !important; display: none !important; }
-    #stDecoration { visibility: hidden !important; display: none !important; }
-    footer { visibility: hidden !important; display: none !important; }
-    /* Push the UI up */
-    .block-container { padding-top: 1rem !important; }
-
-    .stApp {
-        background: radial-gradient(circle at top right, #1a1c2c, #0d0e14);
-        color: #e0e0e0;
-    }
-    [data-testid="stVerticalBlockBorderWrapper"] {
-        background: rgba(255, 255, 255, 0.03) !important;
-        backdrop-filter: blur(15px);
-        border: 1px solid rgba(255, 255, 255, 0.1) !important;
-        border-radius: 12px;
-        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
-    }
-    .stTextInput input {
-        background-color: rgba(0,0,0,0.2) !important;
-        border: 1px solid rgba(255,255,255,0.1) !important;
-        color: white !important;
-    }
-    [data-testid="baseButton-primary"] {
-        background: linear-gradient(135deg, #2563eb, #3b82f6) !important;
-        border: none !important;
-        border-radius: 6px;
-        font-weight: 600;
-        letter-spacing: 0.5px;
-    }
-    [data-testid="baseButton-primary"]:hover {
-        background: linear-gradient(135deg, #1d4ed8, #2563eb) !important;
-        box-shadow: 0 0 15px rgba(59, 130, 246, 0.5);
-    }
-    .gradient-text {
-        background: linear-gradient(90deg, #60a5fa, #c084fc);
-        -webkit-background-clip: text;
-        -webkit-text-fill-color: transparent;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
+    # Native inputs, buttons and menu follow the selected Light/Dark theme.
     st.markdown("<br><br>", unsafe_allow_html=True)
     st.markdown(
-        "<h1 style='text-align:center;'><span class='gradient-text'>Honest Quant Intelligence</span></h1>",
+        "<h1 style='text-align:center;'>Honest Quant Intelligence</h1>",
         unsafe_allow_html=True,
     )
     st.markdown(
-        "<p style='text-align:center; color:#8e95a3; font-size:1.1em;'>Secured Analytics Gateway</p><br>",
+        "<p style='text-align:center; color:inherit; font-size:1.1em;'>Sign in to your research workspace</p><br>",
         unsafe_allow_html=True,
     )
 
@@ -189,7 +143,7 @@ def _login_form(cm):
                             st.session_state["authenticated"] = True
                             st.session_state["user_id"] = resp.user.id
                             st.session_state["user_email"] = resp.user.email
-                            
+
                             # 3. Brief sleep to allow the component to send the set-cookie command to browser BEFORE rerun
                             time.sleep(0.5)
                             st.rerun()
@@ -270,7 +224,7 @@ def require_auth(cm=None):
         return
     if cm is None:
         cm = get_cookie_manager()
-    
+
     if "authenticated" not in st.session_state:
         st.session_state["authenticated"] = False
         st.session_state["user_id"] = None
@@ -282,7 +236,7 @@ def require_auth(cm=None):
     # Check cookie
     # stx.CookieManager gets all cookies instantly after 0.1s spin up
     raw = cm.get(_COOKIE_NAME)
-    
+
     if raw:
         data = _verify_session(raw)
         if data:

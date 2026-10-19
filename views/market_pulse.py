@@ -130,10 +130,10 @@ def _answer(ctx):
             if summ["rates_usd_flag"] else "")
     st.markdown(f"""
     <div style='border:1px solid {colour}55; border-left:5px solid {colour}; border-radius:10px; padding:12px 18px;
-                margin:6px 0 10px 0; background:rgba(255,255,255,0.03);'>
+                margin:6px 0 10px 0; background:var(--secondary-background-color, transparent);'>
       <div style='display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;'>
         <span style='color:{colour}; font-size:1.5rem; font-weight:900;'>{summ['label']}</span>
-        <span style='color:#8899aa; font-size:0.78rem;'>raw heuristic score {summ['score']}/{summ['max_score']}
+        <span style='color:inherit; font-size:0.78rem;'>raw heuristic score {summ['score']}/{summ['max_score']}
           · {"prices to " + f"{latest:%d %b %Y}" if latest is not None else "price date unknown"}</span>
       </div>
       <div style='color:#cfd8dc; font-size:0.82rem; margin-top:4px;'>{ctx['regime_advice']}</div>
@@ -285,11 +285,11 @@ def render(ctx):
         _asof = f" Stored {tv_sector_rotation['_extracted_at'].max():%d %b %Y %H:%M}."
     st.caption("Price change of the 11 US sector ETFs over the last month (1M performance, not fund flows — the data has no "
                "subscriptions or redemptions)." + _asof)
-    
+
     if not tv_sector_rotation.empty:
         # Prepare data for chart
         rot_df = tv_sector_rotation.sort_values("perf_1m", ascending=True).tail(11) # All 11 sectors
-        
+
         # Plotly Horizontal Bar Chart
         fig = px.bar(
             rot_df,
@@ -301,7 +301,7 @@ def render(ctx):
             color_continuous_scale=['#e74c3c', '#2c3e50', '#2ecc71'],
             color_continuous_midpoint=0
         )
-        
+
         fig.update_layout(
             height=400,
             margin=dict(l=0, r=0, t=20, b=0),
@@ -311,13 +311,13 @@ def render(ctx):
             plot_bgcolor='rgba(0,0,0,0)',
             paper_bgcolor='rgba(0,0,0,0)'
         )
-        
+
         fig.update_traces(
-            textposition='outside', 
+            textposition='outside',
             textfont_size=11,
             cliponaxis=False
         )
-        
+
         st.plotly_chart(fig, use_container_width=True)
     else:
         st.info("Sector ETF performance is not in this snapshot (it is collected by the ETL).")

@@ -1,9 +1,26 @@
 """Reusable metric tiles and the sector health matrix."""
 import html
+import math
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
+
+
+def format_value(value, spec="", *, prefix="", suffix="", reason=None):
+    """Plain display text. Missing/non-finite numbers are N/A; a real zero is preserved.
+
+    Escape the returned text at an HTML sink, not here (native widgets need plain text).
+    """
+    missing = value is None or value is pd.NA or value is pd.NaT
+    if not missing and not isinstance(value, str):
+        try:
+            missing = not math.isfinite(float(value))
+        except (TypeError, ValueError, OverflowError):
+            missing = True
+    if missing:
+        return "N/A" + (f" ({reason})" if reason else "")
+    return prefix + (format(value, spec) if spec else str(value)) + suffix
 
 
 def render_sector_health_matrix(m_df: pd.DataFrame):
@@ -16,16 +33,16 @@ def render_sector_health_matrix(m_df: pd.DataFrame):
 
     # 1. Aggregation — Group by Sector
     df_clean = m_df.copy()
-    
+
     # Ensure numeric types
     df_clean['PEG_Num'] = pd.to_numeric(df_clean['PEG'], errors='coerce')
     df_clean['Z_Num'] = pd.to_numeric(df_clean['Z-Score'], errors='coerce')
     df_clean['Upside_Num'] = pd.to_numeric(df_clean['Upside (%)'], errors='coerce')
-    
+
     # We clean PEG to exclude nonsensical negative values or massive outliers for the average
     # Negative PEG usually means negative earnings or negative growth, which breaks the PEG logic
     df_matrix = df_clean[df_clean['PEG_Num'] > 0].copy()
-    
+
     if df_matrix.empty:
         st.info("Insufficient sector data with positive PEG for matrix visualization.")
         return
@@ -36,16 +53,16 @@ def render_sector_health_matrix(m_df: pd.DataFrame):
         'Upside_Num': 'mean',
         'Ticker': 'count'
     }).reset_index()
-    
+
     sector_stats.columns = ['Sector', 'Avg_PEG', 'Avg_ZScore', 'Avg_Upside', 'Count']
-    
+
     # 2. Quadrant Definitions
     # X-axis: PEG (Valuation) — Lower is cheaper
     # Y-axis: Z-Score (Momentum) — Higher is stronger
-    
+
     fig = px.scatter(
-        sector_stats, 
-        x='Avg_PEG', 
+        sector_stats,
+        x='Avg_PEG',
         y='Avg_ZScore',
         size='Count',
         color='Avg_Upside',
@@ -67,16 +84,16 @@ def render_sector_health_matrix(m_df: pd.DataFrame):
 
     # Quadrant Labels (Positioned in corners)
     # Top-Left: High Momentum, Low PEG
-    fig.add_annotation(x=sector_stats['Avg_PEG'].min(), y=sector_stats['Avg_ZScore'].max(), 
+    fig.add_annotation(x=sector_stats['Avg_PEG'].min(), y=sector_stats['Avg_ZScore'].max(),
                        text="LEADERS (Strong + Fair Value)", showarrow=False, font=dict(color="#2ecc71", size=10), xanchor="left")
     # Top-Right: High Momentum, High PEG
-    fig.add_annotation(x=sector_stats['Avg_PEG'].max(), y=sector_stats['Avg_ZScore'].max(), 
+    fig.add_annotation(x=sector_stats['Avg_PEG'].max(), y=sector_stats['Avg_ZScore'].max(),
                        text="HYPE ZONE (Strong + Expensive)", showarrow=False, font=dict(color="#f1c40f", size=10), xanchor="right")
     # Bottom-Left: Low Momentum, Low PEG
-    fig.add_annotation(x=sector_stats['Avg_PEG'].min(), y=sector_stats['Avg_ZScore'].min(), 
+    fig.add_annotation(x=sector_stats['Avg_PEG'].min(), y=sector_stats['Avg_ZScore'].min(),
                        text="VALUE TRAP / DEEP VALUE", showarrow=False, font=dict(color="#3498db", size=10), xanchor="left")
     # Bottom-Right: Low Momentum, High PEG
-    fig.add_annotation(x=sector_stats['Avg_PEG'].max(), y=sector_stats['Avg_ZScore'].min(), 
+    fig.add_annotation(x=sector_stats['Avg_PEG'].max(), y=sector_stats['Avg_ZScore'].min(),
                        text="LAGGARDS (Weak + Expensive)", showarrow=False, font=dict(color="#e74c3c", size=10), xanchor="right")
 
     fig.update_traces(textposition='top center', marker=dict(line=dict(width=1, color='white')))
@@ -86,12 +103,12 @@ def render_sector_health_matrix(m_df: pd.DataFrame):
         xaxis=dict(gridcolor='rgba(255,255,255,0.05)', zeroline=False),
         yaxis=dict(gridcolor='rgba(255,255,255,0.05)', zeroline=False)
     )
-    
+
     st.plotly_chart(fig, use_container_width=True)
-    
+
     # 3. Methodology Footer
     st.markdown(f"""
-    <div style='background:rgba(255,255,255,0.03); padding:15px; border-radius:10px; font-size:0.8rem; border:1px solid rgba(255,255,255,0.1);'>
+    <div style='background:var(--secondary-background-color, transparent); padding:15px; border-radius:10px; font-size:0.8rem; border:1px solid rgba(128,128,128,0.25);'>
         <b>Matrix Methodology:</b><br>
         • <b>Vertical Axis (Z-Score):</b> Measures price momentum relative to historical standard deviations. > 0 is strong.<br>
         • <b>Horizontal Axis (PEG):</b> Measures valuation relative to growth. Lower is cheaper. Pivot set at median PEG ({peg_pivot:.2f}).<br>
@@ -112,16 +129,16 @@ def render_metric_row(label, value, delta=None, suffix="", is_pct=False, color_i
             d_text = f"{sign}{d_val:.1f}%" if is_pct else f"{sign}{d_val:.2f}{suffix}"
             delta_html = f"<span style='color:{color};font-size:0.72rem;font-weight:700;white-space:nowrap;'>{d_text}</span>"
         except:
-            delta_html = f"<span style='color:#888;font-size:0.72rem;'>{delta}</span>"
+            delta_html = f"<span style='color:inherit;font-size:0.72rem;'>{delta}</span>"
 
-    val_col = value_color if value_color else "#e8eaf6"
+    val_col = value_color if value_color else "inherit"
     tooltip_attr = f'title="{html.escape(str(help_text), quote=True)}"' if help_text else ""
     cursor_style = "cursor:help;" if help_text else ""
 
     st.markdown(f"""
         <div {tooltip_attr} style='display:flex;align-items:center;flex-wrap:wrap;row-gap:2px;{cursor_style}
-                    padding:5px 8px;border-bottom:1px solid rgba(255,255,255,0.05);'>
-            <span style='color:#8899aa;font-size:0.72rem;font-weight:600;text-transform:uppercase;
+                    padding:5px 8px;border-bottom:1px solid rgba(128,128,128,0.25);'>
+            <span style='color:inherit;font-size:0.72rem;font-weight:600;text-transform:uppercase;
                          letter-spacing:0.04em;white-space:nowrap;margin-right:auto;'>{label}</span>
             <span style='color:{val_col};font-size:0.88rem;font-weight:700;text-align:right;
                          white-space:nowrap;margin-left:8px;'>{value}{suffix}</span>
@@ -141,14 +158,14 @@ def render_metric_tile(label, value, delta=None, suffix="", is_pct=False, color_
             d_text = f"{sign}{d_val:.1f}%" if is_pct else f"{sign}{d_val:.2f}{suffix}"
             delta_html = f"<div style='color:{color};font-size:0.68rem;font-weight:700;margin-top:1px;'>{d_text}</div>"
         except:
-            delta_html = f"<div style='color:#888;font-size:0.68rem;'>{delta}</div>"
+            delta_html = f"<div style='color:inherit;font-size:0.68rem;'>{delta}</div>"
 
     tooltip_attr = f'title="{html.escape(str(help_text), quote=True)}"' if help_text else ""
     st.markdown(f"""
-        <div {tooltip_attr} style='background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);
+        <div {tooltip_attr} style='background:var(--secondary-background-color, transparent);border:1px solid rgba(128,128,128,0.25);
                     border-radius:6px;padding:5px 8px;margin-bottom:5px;text-align:center;cursor:help;'>
-            <div style='color:#8899aa;font-size:0.58rem;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:2px;'>{label}</div>
-            <div style='color:#e8eaf6;font-size:0.95rem;font-weight:700;display:flex;align-items:center;justify-content:center;'>{value}{suffix}</div>
+            <div style='color:inherit;font-size:0.8rem;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:2px;'>{label}</div>
+            <div style='color:inherit;font-size:0.95rem;font-weight:700;display:flex;align-items:center;justify-content:center;'>{value}{suffix}</div>
             {delta_html}
         </div>
     """, unsafe_allow_html=True)

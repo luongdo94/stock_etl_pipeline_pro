@@ -45,7 +45,7 @@ def _render_news(meta, ticker):
     if rec["scored"]:
         colour = {"BULLISH": "#2ecc71", "BEARISH": "#e74c3c", "NEUTRAL": "#f1c40f"}[rec["mood"]]
         icon = {"BULLISH": "🚀", "BEARISH": "📉", "NEUTRAL": "😴"}[rec["mood"]]
-        st.markdown(f"<div style='margin-bottom:12px;padding:8px 12px;background:rgba(255,255,255,0.04);border-radius:6px;border-left:3px solid {colour};font-size:0.85rem;'><b style='color:{colour};'>{icon} {rec['mood']}</b> &nbsp;·&nbsp; FinBERT: {rec['avg']:+.2f} on {len(rec['items'])} headlines</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='margin-bottom:12px;padding:8px 12px;background:var(--secondary-background-color, transparent);border-radius:6px;border-left:3px solid {colour};font-size:0.85rem;'><b style='color:{colour};'>{icon} {rec['mood']}</b> &nbsp;·&nbsp; FinBERT: {rec['avg']:+.2f} on {len(rec['items'])} headlines</div>", unsafe_allow_html=True)
     else:
         st.caption("Headlines are listed without a sentiment score (the model was not available).")
     st.caption(f"Fetched {rec['fetched_at']:%d %b %H:%M}. Headlines are context, not an input of the Decision.")
@@ -83,19 +83,19 @@ def render(dd, ctx):
     regime = ctx["regime"]
     layer_banner(3, "Risk intelligence hub", "#9b59b6", bottom=0)
     # ── RISK INTELLIGENCE HUB: Full-Width Top, then Split View ─────
-    render_header("zap", "AI Investment Intelligence: Unified Risk Audit", level="####")
+    render_header("zap", "AI news and risk review", level="####")
     st.caption("🧠 LLM narrative: it summarises the quantitative signals and news above in words. "
                "It is not an independent signal — the Decision Summary does not count it as a vote.")
-    st.caption("A multi-dimensional synthesis of Qualitative (NLP News) and Quantitative (Fundamental Pillars) risk factors to provide a unified investment verdict.")
+    st.caption("An on-request summary of news and quantitative context. Refer to the Decision Summary for the current recommendation.")
 
     # ── PART A (Full-Width): Audit Button + Cockpit + Conflict Banner ─
     _uv_data = st.session_state.get(f"unified_verdict_{deep_ticker}")
-    
+
     # Initialize safe defaults to prevent NameErrors in later blocks
     _nlp_score, _nlp_sent = 0, "N/A"
     _is_conflict, _ai_score_snap, _audit_time = False, 0, ""
     _unified_report = ""
-    
+
     if _uv_data:
         _nlp_score     = _uv_data.get("nlp_score", 0)
         _nlp_sent      = _uv_data.get("nlp_sentiment", "Neutral")
@@ -109,7 +109,7 @@ def render(dd, ctx):
     with col_lang:
         llm_language = st.selectbox("Language", ["English", "Vietnamese"], index=0, label_visibility="collapsed")
     with col_btn:
-        run_audit_btn = st.button("Run Real-Time AI Risk Audit", type="primary", use_container_width=True)
+        run_audit_btn = st.button("Run AI news and risk review", type="primary", use_container_width=True)
 
     if run_audit_btn:
         with st.spinner(f"Scanning news for {meta['company']}..."):
@@ -232,16 +232,16 @@ def render(dd, ctx):
 
 
     st.markdown("---")
-    
+
     # ── AI RISK COCKPIT ───────────────────
-    render_header("zap", "Real-Time AI Risk Audit", level="####")
+    render_header("zap", "AI news and risk review (on request)", level="####")
     st.caption("News tone and headline risk (NLP). The Quality score itself is in the score tiles at the top of the page.")
-    
+
     if not _uv_data:
         st.markdown("""
-        <div style='text-align:center; padding:40px 20px; color:#666; background:rgba(255,255,255,0.02); border-radius:10px; border:1px dashed rgba(255,255,255,0.1); margin-top:20px;'>
+        <div style='text-align:center; padding:40px 20px; color:inherit; background:var(--secondary-background-color, transparent); border-radius:10px; border:1px dashed rgba(255,255,255,0.1); margin-top:20px;'>
             <div style='font-size:2.5rem; filter:grayscale(1); opacity:0.3; margin-bottom:15px;'>🔍</div>
-            <div style='font-size:0.85rem;'>Click <b>'Run Real-Time AI Risk Audit'</b> above<br>to generate the CIO Deep Dive and Risk Scorecard.</div>
+            <div style='font-size:0.85rem;'>Click <b>'Run AI news and risk review'</b> above<br>to generate the CIO Deep Dive and Risk Scorecard.</div>
         </div>
         """, unsafe_allow_html=True)
 
@@ -255,32 +255,32 @@ def render(dd, ctx):
 <div style='
     display:grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
     gap:12px; margin:16px 0 10px 0;
-    background: rgba(255,255,255,0.02);
+    background:var(--secondary-background-color, transparent);
     backdrop-filter: blur(8px);
     padding: 1px; border-radius: 12px;
     {_pulse_style}
 '>
     <!-- Card 2: News Sentiment -->
-    <div style='padding:15px; background:rgba(255,255,255,0.01); border-radius:10px;'>
-        <div style='font-size:0.65rem; color:#8899aa; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;'>{SVG_ICONS["globe"]} News Tone</div>
+    <div style='padding:15px; background:var(--secondary-background-color, transparent); border-radius:10px;'>
+        <div style='font-size:0.65rem; color:inherit; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;'>{SVG_ICONS["globe"]} News Tone</div>
         <div style='display:flex; align-items:center; gap:8px;'>
             <span style='font-size:1.2rem; font-weight:600; color:{_s_color};'>{_nlp_sent}</span>
         </div>
-        <div style='margin-top:8px; font-size:0.7rem; color:#666;'>Extracting sentiment from latest financial headlines</div>
+        <div style='margin-top:8px; font-size:0.7rem; color:inherit;'>Extracting sentiment from latest financial headlines</div>
     </div>
     <!-- Card 3: Risk Exposure -->
-    <div style='padding:15px; background:rgba(255,255,255,0.01); border-radius:10px;'>
-        <div style='font-size:0.65rem; color:#8899aa; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;'>{SVG_ICONS["risk"]} Risk Exposure</div>
+    <div style='padding:15px; background:var(--secondary-background-color, transparent); border-radius:10px;'>
+        <div style='font-size:0.65rem; color:inherit; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;'>{SVG_ICONS["risk"]} Risk Exposure</div>
         <div style='display:flex; align-items:baseline; gap:6px;'>
             <span style='font-size:1.4rem; font-weight:700; color:{_r_color};'>{_nlp_score}</span>
-            <span style='font-size:0.75rem; color:#666;'>/100</span>
+            <span style='font-size:0.75rem; color:inherit;'>/100</span>
         </div>
-        <div style='width:100%; height:3px; background:rgba(255,255,255,0.05); border-radius:2px; margin-top:8px;'>
+        <div style='width:100%; height:3px; background:var(--secondary-background-color, transparent); border-radius:2px; margin-top:8px;'>
             <div style='width:{_nlp_score}%; height:100%; background:{_r_color}; border-radius:2px;'></div>
         </div>
     </div>
 </div>
-<div style='font-size:0.62rem; color:#556677; text-align:right; margin-bottom:12px; letter-spacing:0.5px;'>
+<div style='font-size:0.62rem; color:inherit; text-align:right; margin-bottom:12px; letter-spacing:0.5px;'>
     SYNCHRONIZED AUDIT TIMESTAMP: {_audit_time} &nbsp;&middot;&nbsp; <b>DYNAMIC OVERLAY V12.1</b>
 </div>
 """, unsafe_allow_html=True)
@@ -299,14 +299,14 @@ def render(dd, ctx):
 <span style='font-size:1.4rem; line-height:1; padding-top:2px;'>⚠️</span>
 <div>
     <div style='color:#e67e22; font-weight:900; font-size:0.75rem; text-transform:uppercase; letter-spacing:2px; margin-bottom:4px;'>⚡ News vs Quality Conflict</div>
-    <div style='color:#ddd; font-size:0.85rem; line-height:1.5;'>{_conf_dir}</div>
+    <div style='color:inherit; font-size:0.85rem; line-height:1.5;'>{_conf_dir}</div>
 </div>
     </div>
     """, unsafe_allow_html=True)
 
     # ── PART B: Full-Width Narrative & 50/50 Split (News | Radar) ──────
-    st.markdown("<hr style='border:0; height:1px; background:rgba(255,255,255,0.08); margin:24px 0;'>", unsafe_allow_html=True)
-    
+    st.markdown("<hr style='border:0; height:1px; background:var(--secondary-background-color, transparent); margin:24px 0;'>", unsafe_allow_html=True)
+
     # Detailed Audit Narrative (Full Width, only when audit has been run)
     if _uv_data:
         st.markdown("<div style='color:#3498db; font-size:1.1rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:12px; border-bottom:1px solid rgba(52,152,219,0.3); padding-bottom:6px;'>🧠 CIO AI Deep Dive & Scenario Analysis</div>", unsafe_allow_html=True)
@@ -341,7 +341,7 @@ def render(dd, ctx):
 
 
     with quant_col:
-        
+
         # Radar of the sub-scores behind Quality (and the Value / Momentum scores); unknown axes are left out
         _cmp = dd.scores.get("components") or {}
         def _avg(keys):
@@ -392,5 +392,3 @@ def render(dd, ctx):
         )
         with st.container():
             st.plotly_chart(fig_radar, use_container_width=True)
-
-

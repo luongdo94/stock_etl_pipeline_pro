@@ -5,12 +5,16 @@ import streamlit as st
 
 from services.db import load_data_health
 from ui.icons import render_header
+from ui.sticky import sticky_choice
 
 _STATUS_COLOR = {"SUCCESS": "#2ecc71", "FAILED": "#e74c3c"}
 
 
-def _runs(runs: pd.DataFrame):
+def _runs(runs: pd.DataFrame, unavailable: bool = False):
     st.markdown("##### ETL runs")
+    if unavailable:
+        st.warning("Could not load recorded ETL runs — status UNKNOWN. Reload the page to retry.")
+        return
     if runs.empty:
         st.info("No ETL run recorded in this warehouse yet.")
         return
@@ -55,8 +59,11 @@ def _dq(dq: pd.DataFrame, unavailable: bool = False):
         st.dataframe(failing[["check_name", "violations", "is_critical"]], hide_index=True, width="stretch")
 
 
-def _sources(rec: pd.DataFrame):
+def _sources(rec: pd.DataFrame, unavailable: bool = False):
     st.markdown("##### Independent sources")
+    if unavailable:
+        st.warning("Could not load source reconciliation — status UNKNOWN. Reload the page to retry.")
+        return
     st.caption("Yahoo's numbers checked against sources that do not depend on it: the last close against TradingView "
                "(all markets) and annual revenue / net income against SEC EDGAR filings (US filers, rotating sample; needs "
                "SEC_USER_AGENT). A disagreement is a reason to check the ticker, not proof that Yahoo is wrong.")
@@ -81,8 +88,11 @@ def _sources(rec: pd.DataFrame):
                                     "diff_pct": st.column_config.NumberColumn("diff %", format="%+.2f")})
 
 
-def _pit(pit: pd.DataFrame):
+def _pit(pit: pd.DataFrame, unavailable: bool = False):
     st.markdown("##### Point-in-time statement dates")
+    if unavailable:
+        st.warning("Could not load point-in-time statement dates — status UNKNOWN. Reload the page to retry.")
+        return
     st.caption("When each statement became public: the SEC filing date, else the earnings release, else period end + a "
                "conservative lag. Backtests and historical scores use a statement only from that date (no look-ahead).")
     if pit.empty or pit["available_source"].isna().all():
@@ -92,8 +102,13 @@ def _pit(pit: pd.DataFrame):
     st.dataframe(p, width="stretch")
 
 
-def _identity(sec: pd.DataFrame, sym: pd.DataFrame, life: pd.DataFrame):
+def _identity(sec: pd.DataFrame, sym: pd.DataFrame, life: pd.DataFrame, failed=()):
     st.markdown("##### Securities: symbol changes, delistings, inactive listings")
+    missing = sorted(set(failed) & {"securities", "symbols", "lifecycle"})
+    if missing:
+        st.warning("Could not load security data: " + ", ".join(missing) + ". Status UNKNOWN; reload the page to retry.")
+        if sec.empty and life.empty:
+            return
     if sec.empty and life.empty:
         st.info("The security master is built by the next ETL run.")
         return
@@ -127,7 +142,7 @@ def _exceptions(exc: pd.DataFrame, unavailable: bool = False):
         return
     counts = exc.groupby("stage")["ticker"].nunique().sort_values(ascending=False)
     st.caption(" · ".join(f"{s}: {n}" for s, n in counts.items()))
-    stage = st.selectbox("Stage", ["All"] + counts.index.tolist(), key="dh_stage")
+    stage = sticky_choice("Stage", ["All"] + counts.index.tolist(), "All", "dh_stage")
     view = exc if stage == "All" else exc[exc["stage"] == stage]
     st.dataframe(view.sort_values(["stage", "ticker"]), hide_index=True, width="stretch")
 
@@ -158,18 +173,19 @@ def render(ctx):
     """Render the 🩺 Data Health tab. ctx is the context dict built in app.py."""
     render_header("activity", "Data Health — Can Today's Numbers Be Trusted?")
     h = load_data_health()
+    st.caption(f"Recorded warehouse status · snapshot {ctx.get('data_version', 'unknown')}; this page does not run the ETL.")
     _freshness(ctx, h)
     st.markdown("---")
-    _runs(h["runs"])
+    _runs(h["runs"], "runs" in h["failed"])
     st.markdown("---")
     left, right = st.columns(2)
     with left:
         _dq(h["dq"], "dq" in h["failed"])
     with right:
-        _pit(h["pit"])
+        _pit(h["pit"], "pit" in h["failed"])
     st.markdown("---")
-    _sources(h["reconciliation"])
+    _sources(h["reconciliation"], "reconciliation" in h["failed"])
     st.markdown("---")
-    _identity(h["securities"], h["symbols"], h["lifecycle"])
+    _identity(h["securities"], h["symbols"], h["lifecycle"], h["failed"])
     st.markdown("---")
     _exceptions(h["exceptions"], "exceptions" in h["failed"])

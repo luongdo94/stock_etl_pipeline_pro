@@ -13,7 +13,7 @@ def render(dd, ctx):
     # ── OWNERSHIP & SHORT SQUEEZE RISK ──────────────────────────────
     st.markdown("---")
     render_header("search", "Ownership & Short-Squeeze Risk")
-    
+
     def _frac(v):
         """A fraction, or None when the provider did not report it (0 is a real value; unknown is not 0)."""
         try:
@@ -82,7 +82,7 @@ def render(dd, ctx):
             st.plotly_chart(fig_short, use_container_width=True)
 
         ratio_txt = "N/A" if short_ratio is None else f"{short_ratio:.1f} days"
-        st.markdown(f"<p style='text-align:center; color:#bbb; font-size:1rem;'>Short Ratio (Days to Cover): <b>{ratio_txt}</b></p>", unsafe_allow_html=True)
+        st.markdown(f"<p style='text-align:center; color:inherit; font-size:1rem;'>Short Ratio (Days to Cover): <b>{ratio_txt}</b></p>", unsafe_allow_html=True)
 
     _render_insider_activity(dd)
 
@@ -102,7 +102,7 @@ def _render_insider_activity(dd):
     c1, c2, c3 = st.columns(3)
     net_pct = ins.get("net_pct")
     c1.markdown(f"<div style='color:{_INSIDER_COLOR[status]};font-size:1.3rem;font-weight:800;'>{status}</div>"
-                f"<div style='color:#8899aa;font-size:0.75rem;'>net "
+                f"<div style='color:inherit;font-size:0.75rem;'>net "
                 f"{'n/a' if net_pct is None else f'{net_pct:+.2f}% of insider holdings'}</div>", unsafe_allow_html=True)
     c2.metric("Shares bought", f"{ins.get('buys') or 0:,.0f}")
     c3.metric("Shares sold", f"{ins.get('sells') or 0:,.0f}")

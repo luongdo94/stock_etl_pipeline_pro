@@ -76,40 +76,40 @@ def render(dd, ctx):
             _pe_str    = f"{_fwd_pe:.1f}x" if _fwd_pe else "N/A"
             _delta_str = f"vs Trail {_trail_pe:.1f}x" if _trail_pe else ""
             st.markdown(f"""
-            <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08);
+            <div style='background:var(--secondary-background-color, transparent); border:1px solid rgba(128,128,128,0.25);
                         border-radius:8px; padding:12px; text-align:center;'>
-                <div style='color:#8899aa; font-size:0.65rem; text-transform:uppercase;'>Forward P/E (NTM)</div>
+                <div style='color:inherit; font-size:0.65rem; text-transform:uppercase;'>Forward P/E (NTM)</div>
                 <div style='color:{_pe_color}; font-size:1.4rem; font-weight:900; font-family:monospace;'>{_pe_str}</div>
-                <div style='color:#556677; font-size:0.65rem;'>{_delta_str}</div>
+                <div style='color:inherit; font-size:0.65rem;'>{_delta_str}</div>
             </div>""", unsafe_allow_html=True)
 
         with kc2:
             _epsg_color = "#2ecc71" if _eps_g_cy and _eps_g_cy > 0 else "#e74c3c"
             st.markdown(f"""
-            <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08);
+            <div style='background:var(--secondary-background-color, transparent); border:1px solid rgba(128,128,128,0.25);
                         border-radius:8px; padding:12px; text-align:center;'>
-                <div style='color:#8899aa; font-size:0.65rem; text-transform:uppercase;'>EPS Growth (CY)</div>
+                <div style='color:inherit; font-size:0.65rem; text-transform:uppercase;'>EPS Growth (CY)</div>
                 <div style='color:{_epsg_color}; font-size:1.4rem; font-weight:900; font-family:monospace;'>{f"{_eps_g_cy*100:+.1f}%" if _eps_g_cy is not None else "N/A"}</div>
-                <div style='color:#556677; font-size:0.65rem;'>NTY: {f"{_eps_g_ny*100:+.1f}%" if _eps_g_ny is not None else "N/A"}</div>
+                <div style='color:inherit; font-size:0.65rem;'>NTY: {f"{_eps_g_ny*100:+.1f}%" if _eps_g_ny is not None else "N/A"}</div>
             </div>""", unsafe_allow_html=True)
 
         with kc3:
             _revg_color = "#2ecc71" if _rev_g_cy and _rev_g_cy > 0 else "#e74c3c"
             st.markdown(f"""
-            <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08);
+            <div style='background:var(--secondary-background-color, transparent); border:1px solid rgba(128,128,128,0.25);
                         border-radius:8px; padding:12px; text-align:center;'>
-                <div style='color:#8899aa; font-size:0.65rem; text-transform:uppercase;'>Rev Growth (CY)</div>
+                <div style='color:inherit; font-size:0.65rem; text-transform:uppercase;'>Rev Growth (CY)</div>
                 <div style='color:{_revg_color}; font-size:1.4rem; font-weight:900; font-family:monospace;'>{f"{_rev_g_cy*100:+.1f}%" if _rev_g_cy is not None else "N/A"}</div>
-                <div style='color:#556677; font-size:0.65rem;'>NTY: {f"{_rev_g_ny*100:+.1f}%" if _rev_g_ny is not None else "N/A"}</div>
+                <div style='color:inherit; font-size:0.65rem;'>NTY: {f"{_rev_g_ny*100:+.1f}%" if _rev_g_ny is not None else "N/A"}</div>
             </div>""", unsafe_allow_html=True)
 
         with kc4:
             st.markdown(f"""
-            <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08);
+            <div style='background:var(--secondary-background-color, transparent); border:1px solid rgba(128,128,128,0.25);
                         border-radius:8px; padding:12px; text-align:center;'>
-                <div style='color:#8899aa; font-size:0.65rem; text-transform:uppercase;'>Analyst Coverage</div>
-                <div style='color:#e8eaf6; font-size:1.4rem; font-weight:900; font-family:monospace;'>{int(_n_analysts) if _n_analysts else "N/A"}</div>
-                <div style='color:#556677; font-size:0.65rem;'>analysts covering</div>
+                <div style='color:inherit; font-size:0.65rem; text-transform:uppercase;'>Analyst Coverage</div>
+                <div style='color:inherit; font-size:1.4rem; font-weight:900; font-family:monospace;'>{int(_n_analysts) if _n_analysts else "N/A"}</div>
+                <div style='color:inherit; font-size:0.65rem;'>analysts covering</div>
             </div>""", unsafe_allow_html=True)
 
         # ── ROW 1b: the near term and the revenue line (shown nowhere else) ─────
@@ -181,29 +181,28 @@ def render(dd, ctx):
             _delta_color = "#2ecc71" if _eps_delta_30d and _eps_delta_30d > 0 else "#e74c3c"
 
             st.markdown(f"""
-            <div style='background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08);
+            <div style='background:var(--secondary-background-color, transparent); border:1px solid rgba(128,128,128,0.25);
                         border-radius:8px; padding:16px; height:260px; box-sizing:border-box;'>
-                <div style='color:#8899aa; font-size:0.7rem; font-weight:700;
+                <div style='color:inherit; font-size:0.7rem; font-weight:700;
                             text-transform:uppercase; margin-bottom:14px;'>Analyst Revision Sentiment (30d)</div>
                 <div style='display:flex; justify-content:space-between;
-                            font-size:0.72rem; color:#8899aa; margin-bottom:4px;'>
+                            font-size:0.72rem; color:inherit; margin-bottom:4px;'>
                     <span>⬆️ Upgrades: <b style='color:#2ecc71;'>{_up if _up_known else "N/A"}</b></span>
                     <span>⬇️ Downgrades: <b style='color:#e74c3c;'>{_down if _down_known else "N/A"}</b></span>
                 </div>
-                <div style='background:rgba(255,255,255,0.08); border-radius:4px;
+                <div style='background:var(--secondary-background-color, transparent); border-radius:4px;
                             height:14px; overflow:hidden; display:flex;'>
                     <div style='width:{_up_pct:.0f}%; background:#2ecc71; border-radius:4px 0 0 4px;'></div>
                     <div style='width:{_down_pct:.0f}%; background:#e74c3c; border-radius:0 4px 4px 0;'></div>
                 </div>
-                <div style='margin-top:20px; border-top:1px solid rgba(255,255,255,0.07); padding-top:14px;'>
-                    <div style='color:#8899aa; font-size:0.65rem; text-transform:uppercase; margin-bottom:6px;'>EPS Estimate Drift (30d)</div>
+                <div style='margin-top:20px; border-top:1px solid rgba(128,128,128,0.25); padding-top:14px;'>
+                    <div style='color:inherit; font-size:0.65rem; text-transform:uppercase; margin-bottom:6px;'>EPS Estimate Drift (30d)</div>
                     <div style='color:{_delta_color}; font-size:1.6rem; font-weight:900; font-family:monospace;'>
                         {f"€{_eps_delta_30d:+.3f}" if _eps_delta_30d is not None else "N/A"}
                     </div>
-                    <div style='color:#556677; font-size:0.65rem; margin-top:2px;'>
+                    <div style='color:inherit; font-size:0.65rem; margin-top:2px;'>
                         {"No 30-day change reported" if _eps_delta_30d is None else "Analysts raising estimates ↑" if _eps_delta_30d > 0 else "Analysts cutting estimates ↓" if _eps_delta_30d < 0 else "Estimates unchanged"}
                     </div>
                 </div>
             </div>
             """, unsafe_allow_html=True)
-

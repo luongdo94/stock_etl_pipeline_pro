@@ -31,7 +31,7 @@ SVG_ICONS = {
 }
 
 
-def render_header(icon_key, text, level="####", color="#e8eaf6", subtitle=None):
+def render_header(icon_key, text, level="####", color="currentColor", subtitle=None):
     """Renders a premium monochromatic header with an SVG icon (and an optional one-line subtitle under it)."""
     icon_svg = SVG_ICONS.get(icon_key, "")
     html = f"<div style='display:flex; align-items:center; margin-bottom:12px; color:{color};'>" \

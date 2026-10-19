@@ -46,8 +46,8 @@ def _render_quality_measures(scores: dict, card_style: str, header_style: str):
         s = comp.get(sub)
         with col:
             st.markdown(f"<div style='{card_style}'><div style='{header_style}'>{label}</div>"
-                        f"<div style='color:#e8eaf6;font-size:1.15rem;font-weight:800;padding:0 8px;'>{txt}</div>"
-                        f"<div style='color:#8899aa;font-size:0.7rem;padding:2px 8px 6px 8px;' title='{help_text}'>"
+                        f"<div style='color:inherit;font-size:1.15rem;font-weight:800;padding:0 8px;'>{txt}</div>"
+                        f"<div style='color:inherit;font-size:0.7rem;padding:2px 8px 6px 8px;' title='{help_text}'>"
                         f"{'score ' + format(s, '.0f') + '/100' if s is not None else 'not scored'} · {help_text}</div>"
                         f"</div>", unsafe_allow_html=True)
 
@@ -63,9 +63,9 @@ def render(dd, ctx):
     layer_banner(4, "Deep diagnostics & raw data", "#e74c3c")
     render_header("activity", "Diagnostic Metrics Portfolio")
 
-    _card_style = "background:rgba(255,255,255,0.03);border:1px solid rgba(255,255,255,0.08);border-radius:10px;padding:10px 4px 4px 4px;margin-bottom:4px;"
+    _card_style = "background:var(--secondary-background-color, transparent);border:1px solid rgba(128,128,128,0.25);border-radius:10px;padding:10px 4px 4px 4px;margin-bottom:4px;"
     _header_style = "color:#aabbcc;font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;padding:0 8px 6px 8px;"
-    
+
     # Missing values must read "N/A" — not "nan%", and not "0.0%" painted red as if it were a fact
     def _num(v):
         try:
@@ -89,15 +89,15 @@ def render(dd, ctx):
             elif m_cap >= 1e12: m_cap_txt = f"€{m_cap/1e12:.2f}T"
             elif m_cap >= 1e9: m_cap_txt = f"€{m_cap/1e9:.1f}B"
             else: m_cap_txt = f"€{m_cap/1e6:.0f}M"
-            
+
             render_metric_row("Market Cap", m_cap_txt)
             pe_val = f"{meta['pe_ratio']:.1f}" if pd.notnull(meta['pe_ratio']) else "N/A"
             render_metric_row("P/E (trailing)", pe_val, help_text="Forward P/E is in the Analyst expectations section")
-            
+
             peg_raw = meta.get('peg_ratio', 0)
             peg_col = "#2ecc71" if pd.notnull(peg_raw) and 0 < peg_raw <= 1.0 else ("#e74c3c" if pd.notnull(peg_raw) and peg_raw > 2.0 else None)
             render_metric_row("PEG", f"{peg_raw:.2f}" if pd.notnull(peg_raw) else "N/A", value_color=peg_col)
-            
+
             ev_raw = _num(meta.get('ev_to_ebitda'))
             ev_col = None if ev_raw is None else ("#2ecc71" if 0 < ev_raw <= 10 else ("#e74c3c" if ev_raw > 20 else None))
             render_metric_row("EV/EBITDA", _txt(ev_raw, "{:.2f}x"), value_color=ev_col, help_text="🟢 <10x (Value) | 🔴 >20x (Expensive)")
@@ -109,7 +109,7 @@ def render(dd, ctx):
 
         with kcol2:
             st.markdown(f"<div style='{_card_style}'><div style='{_header_style}'>Profit & Returns</div>", unsafe_allow_html=True)
-            
+
             div_val = _num(meta.get('dividend_yield_pct'))
             div_col = "#2ecc71" if div_val is not None and div_val > 4 else None
             render_metric_row("Div Yield", _txt(div_val, "{:.2f}%"), value_color=div_col, help_text="🟢 > 4% (High Yielding)")
@@ -160,14 +160,14 @@ def render(dd, ctx):
                 debt_eq_txt = "0.00x"                           # no debt reported as such
             else:
                 debt_eq_txt = "N/A"                             # unknown, not "no debt"
-            
+
             curr_rat  = _num(meta.get('current_ratio'))
             quick_rat = _num(meta.get('quick_ratio'))
-            
+
             # Liquidity Status Colors
             c_col = None if curr_rat is None else ("#2ecc71" if curr_rat > 1.5 else ("#e74c3c" if curr_rat < 1.0 else "#f39c12"))
             q_col = None if quick_rat is None else ("#2ecc71" if quick_rat > 1.0 else ("#e74c3c" if quick_rat < 0.7 else "#f39c12"))
-            
+
             _ebitda_val, _debt_val = _num(meta.get('ebitda')), _num(meta.get('total_debt'))
             # gross debt / EBITDA; unknown when either is missing or EBITDA is not positive (0 is a value only for debt)
             debt_ebitda = (_debt_val / _ebitda_val) if (_ebitda_val is not None and _ebitda_val > 0
@@ -193,7 +193,7 @@ def render(dd, ctx):
             _tgt = _num(target_p)
             render_metric_row("Analyst Target (not in Decision)", _txt(_tgt if _tgt else None, "€{:.2f}"),
                               delta=upside if _tgt else None, is_pct=True)
-            
+
             pe_5y_avg    = _num(meta.get('pe_5y_avg'))
             pe_cur       = _num(meta.get('pe_ratio'))
             pe_known     = pe_5y_avg is not None and pe_5y_avg > 0
@@ -224,13 +224,13 @@ def render(dd, ctx):
                         e_date_str = e_date_obj.strftime('%b %d, %y')
                 else:
                     e_date_str = "TBD"
-                
+
                 _e_ccy = meta.get('currency', 'USD')
                 _e_fx = stored_fx_rate(_e_ccy)
-                
+
                 _raw_eps = e_row.iloc[0]['eps_avg']
                 eps_est = float(_raw_eps) * _e_fx if pd.notnull(_raw_eps) and _e_fx else None      # no rate → N/A
-                
+
                 _raw_rev = e_row.iloc[0]['rev_avg']
                 rev_est = float(_raw_rev) * _e_fx if pd.notnull(_raw_rev) and _e_fx else None
             else:
@@ -241,7 +241,7 @@ def render(dd, ctx):
             st.markdown(f"<div style='{_card_style}'><div style='{e_header}'>Earnings & Events</div>", unsafe_allow_html=True)
             render_metric_row("Report Date", e_date_str)
             render_metric_row("EPS Est",     f"€{eps_est:.2f}" if pd.notnull(eps_est) else "N/A")
-            
+
             if pd.notnull(rev_est) and rev_est > 0:
                 if rev_est >= 1e9: rev_txt = f"€{rev_est/1e9:.1f}B"
                 else: rev_txt = f"€{rev_est/1e6:.0f}M"

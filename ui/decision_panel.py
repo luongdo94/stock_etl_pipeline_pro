@@ -30,12 +30,12 @@ def _cached_evidence(snapshots: pd.DataFrame, prices: pd.DataFrame) -> dict:
 
 def _score_tile(title, sub, score, colour):
     shown = "N/A" if score is None else f"{score:.0f}"
-    return (f"<div style='flex:1; min-width:150px; background:rgba(255,255,255,0.03); padding:10px 12px; "
+    return (f"<div style='flex:1; min-width:150px; background:var(--secondary-background-color, transparent); padding:10px 12px; "
             f"border-radius:8px; border-top:3px solid {colour};'>"
-            f"<div style='font-size:0.65em; color:#aab; text-transform:uppercase; letter-spacing:1px;'>{title}</div>"
+            f"<div style='font-size:0.65em; color:inherit; text-transform:uppercase; letter-spacing:1px;'>{title}</div>"
             f"<div style='font-weight:900; font-size:1.3em; color:{colour};'>{shown}"
-            f"<span style='font-size:0.55em; color:#667;'> /100</span></div>"
-            f"<div style='font-size:0.65em; color:#778;'>{sub}</div></div>")
+            f"<span style='font-size:0.55em; color:inherit;'> /100</span></div>"
+            f"<div style='font-size:0.65em; color:inherit;'>{sub}</div></div>")
 
 
 def _rev_sub(scores):
@@ -85,20 +85,20 @@ def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, re
     fmt = lambda v, s="%": f"{v:+.1f}{s}" if v is not None else "N/A"
     st.markdown(f"""
     <div style='border:1px solid {sc}55; border-left:5px solid {sc}; border-radius:10px;
-                padding:14px 18px; margin:6px 0 14px 0; background:rgba(255,255,255,0.03);'>
+                padding:14px 18px; margin:6px 0 14px 0; background:var(--secondary-background-color, transparent);'>
       <div style='display:flex; justify-content:space-between; flex-wrap:wrap; gap:10px;'>
-        <div><div style='color:#8899aa; font-size:0.7rem; text-transform:uppercase; letter-spacing:1px;'>Decision Summary</div>
+        <div><div style='color:inherit; font-size:0.7rem; text-transform:uppercase; letter-spacing:1px;'>Decision Summary</div>
              <div style='color:{sc}; font-size:1.6rem; font-weight:900;'>{d.stance}</div>
              <div style='color:{cc}; font-size:0.8rem; font-weight:700;'>Confidence: {d.confidence}</div></div>
         <div style='display:grid; grid-template-columns:repeat(4, auto); gap:6px 22px; text-align:right;'>
-          <div style='color:#8899aa; font-size:0.7rem;'>Model IRR, base ({_H}y, gross)</div>
-          <div style='color:#8899aa; font-size:0.7rem;'>Bear-case loss</div>
-          <div style='color:#8899aa; font-size:0.7rem;'>Reward / Risk</div>
-          <div style='color:#8899aa; font-size:0.7rem;'>Suggested size</div>
-          <div style='color:#fff; font-weight:800;'>{fmt(d.horizon_irr_pct)}</div>
+          <div style='color:inherit; font-size:0.7rem;'>Model IRR, base ({_H}y, gross)</div>
+          <div style='color:inherit; font-size:0.7rem;'>Bear-case loss</div>
+          <div style='color:inherit; font-size:0.7rem;'>Reward / Risk</div>
+          <div style='color:inherit; font-size:0.7rem;'>Suggested size</div>
+          <div style='color:inherit; font-weight:800;'>{fmt(d.horizon_irr_pct)}</div>
           <div style='color:#e74c3c; font-weight:800;'>{("-" + format(d.bear_case_loss_pct, ".1f") + "%") if d.bear_case_loss_pct else ("none" if d.horizon_irr_pct is not None else "N/A")}</div>
-          <div style='color:#fff; font-weight:800;'>{f"{d.reward_risk:.1f}x" if d.reward_risk is not None else ("no upside" if (d.net_expected_return_pct is not None and d.net_expected_return_pct <= 0) else "N/A")}</div>
-          <div style='color:#fff; font-weight:800;'>{f"{d.position['size_pct']:.1f}% of portfolio" if d.position['size_pct'] else "—"}</div>
+          <div style='color:inherit; font-weight:800;'>{f"{d.reward_risk:.1f}x" if d.reward_risk is not None else ("no upside" if (d.net_expected_return_pct is not None and d.net_expected_return_pct <= 0) else "N/A")}</div>
+          <div style='color:inherit; font-weight:800;'>{f"{d.position['size_pct']:.1f}% of portfolio" if d.position['size_pct'] else "—"}</div>
         </div>
       </div>
     </div>""", unsafe_allow_html=True)
@@ -229,11 +229,11 @@ def _render_financial_valuation(meta, price, vin, companies=None):
         v = value(roe + d_roe, r + d_r)
         mos = v / price - 1 if v else None
         body = (f"€{v:,.2f}</div><div style='color:{color}; font-weight:700;'>{mos:+.0%} vs price · "
-                f"{val.valuation_verdict(mos)}") if v else "n/a</div><div style='color:#8899aa;'>inputs missing"
-        col.markdown(f"""<div style='border-top:3px solid {color}; background:rgba(255,255,255,0.03);
+                f"{val.valuation_verdict(mos)}") if v else "n/a</div><div style='color:inherit;'>inputs missing"
+        col.markdown(f"""<div style='border-top:3px solid {color}; background:var(--secondary-background-color, transparent);
             border-radius:8px; padding:10px 12px;'>
-            <div style='color:#8899aa; font-size:0.7rem; text-transform:uppercase;'>{key} · ROE {max(roe + d_roe, 0):.1%} · r {max(r + d_r, tg + 0.01):.1%}</div>
-            <div style='color:#fff; font-size:1.5rem; font-weight:800;'>{body}</div></div>""", unsafe_allow_html=True)
+            <div style='color:inherit; font-size:0.7rem; text-transform:uppercase;'>{key} · ROE {max(roe + d_roe, 0):.1%} · r {max(r + d_r, tg + 0.01):.1%}</div>
+            <div style='color:inherit; font-size:1.5rem; font-weight:800;'>{body}</div></div>""", unsafe_allow_html=True)
     implied = tg + (price / bv) * (r - tg)
     st.markdown(f"**Reverse model:** at €{price:,.2f} (book €{bv:,.2f}, P/B {price / bv:.2f}x) the market prices in a "
                 f"perpetual ROE of **{implied:.1%}** (normalised ROE today {roe:.1%}, fading to {r:.1%} in "
@@ -305,10 +305,10 @@ def render_valuation_section(*, meta, price, vin, relval, companies=None):
     for col, key, color in zip(cols, ("bear", "base", "bull"), ("#e74c3c", "#3498db", "#2ecc71")):
         s = scen[key]
         mos = s.value_per_share / price - 1 if s.value_per_share else None
-        col.markdown(f"""<div style='border-top:3px solid {color}; background:rgba(255,255,255,0.03);
+        col.markdown(f"""<div style='border-top:3px solid {color}; background:var(--secondary-background-color, transparent);
             border-radius:8px; padding:10px 12px;'>
-            <div style='color:#8899aa; font-size:0.7rem; text-transform:uppercase;'>{key} · g {s.growth:+.0%} · r {s.discount_rate:.1%}</div>
-            <div style='color:#fff; font-size:1.5rem; font-weight:800;'>€{s.value_per_share:,.2f}</div>
+            <div style='color:inherit; font-size:0.7rem; text-transform:uppercase;'>{key} · g {s.growth:+.0%} · r {s.discount_rate:.1%}</div>
+            <div style='color:inherit; font-size:1.5rem; font-weight:800;'>€{s.value_per_share:,.2f}</div>
             <div style='color:{color}; font-weight:700;'>{mos:+.0%} vs price · {val.valuation_verdict(mos)}</div></div>""",
                      unsafe_allow_html=True)
     _render_model_risk(vin, scen, price)
@@ -339,8 +339,8 @@ def _render_model_risk(vin: dict, scen: dict, price: float):
     probs = vin.get("probabilities") or val.scenario_probabilities()
     c1, c2, c3 = st.columns(3)
     with c1:
-        color = "#e74c3c" if ts is not None and ts > TERMINAL_SHARE_WARN else "#e8eaf6"
-        st.markdown(f"<div style='color:#8899aa;font-size:0.7rem;text-transform:uppercase;'>Value after year "
+        color = "#e74c3c" if ts is not None and ts > TERMINAL_SHARE_WARN else "inherit"
+        st.markdown(f"<div style='color:inherit;font-size:0.7rem;text-transform:uppercase;'>Value after year "
                     f"{val.EXPLICIT_YEARS}</div><div style='color:{color};font-size:1.3rem;font-weight:800;'>"
                     f"{'n/a' if ts is None else f'{ts:.0%}'}</div>", unsafe_allow_html=True)
         st.caption("Share of the base value that comes from the terminal value."
@@ -348,8 +348,8 @@ def _render_model_risk(vin: dict, scen: dict, price: float):
                       if ts is not None and ts > TERMINAL_SHARE_WARN else ""))
     with c2:
         share, net = refi.get("share_of_fcfe"), refi.get("net_repayment")
-        color = "#e74c3c" if share is not None and share >= val.REFINANCING_STRESS_SHARE else "#e8eaf6"
-        st.markdown(f"<div style='color:#8899aa;font-size:0.7rem;text-transform:uppercase;'>Net debt repayment / FCFE"
+        color = "#e74c3c" if share is not None and share >= val.REFINANCING_STRESS_SHARE else "inherit"
+        st.markdown(f"<div style='color:inherit;font-size:0.7rem;text-transform:uppercase;'>Net debt repayment / FCFE"
                     f"</div><div style='color:{color};font-size:1.3rem;font-weight:800;'>"
                     f"{'n/a' if share is None else f'{share:.0%}'}</div>", unsafe_allow_html=True)
         st.caption("FCFE assumes maturing debt is refinanced (net borrowing = 0). "
@@ -358,8 +358,8 @@ def _render_model_risk(vin: dict, scen: dict, price: float):
                       f"{val.REFINANCING_STRESS_SHARE:.0%}+ the DCF is not actionable."))
     with c3:
         ev = val.expected_value(scen)
-        st.markdown(f"<div style='color:#8899aa;font-size:0.7rem;text-transform:uppercase;'>Probability-weighted value"
-                    f"</div><div style='color:#e8eaf6;font-size:1.3rem;font-weight:800;'>"
+        st.markdown(f"<div style='color:inherit;font-size:0.7rem;text-transform:uppercase;'>Probability-weighted value"
+                    f"</div><div style='color:inherit;font-size:1.3rem;font-weight:800;'>"
                     f"{'n/a' if ev is None else f'€{ev:,.2f}'}</div>", unsafe_allow_html=True)
         st.caption(f"Weights bear {probs['bear']:.0%} · base {probs['base']:.0%} · bull {probs['bull']:.0%} "
                    f"(decision_rules.yaml → valuation.scenario_probabilities), on the scenarios above"
@@ -374,5 +374,3 @@ def render_alert_inbox(items: list, title: str = "🔔 Alerts & Sell-Discipline 
                  "ENTRY ZONE": "🟢", "EARNINGS SOON": "⏳", "RULE": "🔔"}
         for it in items:
             st.markdown(f"{icons.get(it['kind'], '•')} **{it['kind']}** — {it['message']}")
-
-

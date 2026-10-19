@@ -13,9 +13,9 @@ def _hex_rgb(h):
 
 
 def _pillar(title, label, colour, extra=""):
-    return (f"<div style='flex:1; background:rgba(255,255,255,0.03); padding:12px; border-radius:8px; "
+    return (f"<div style='flex:1; background:var(--secondary-background-color, transparent); padding:12px; border-radius:8px; "
             f"border-top:3px solid {colour}; min-width:14%'>"
-            f"<div style='font-size:0.65em; color:#aab; text-transform:uppercase; letter-spacing:1px;'>{title}</div>"
+            f"<div style='font-size:0.65em; color:inherit; text-transform:uppercase; letter-spacing:1px;'>{title}</div>"
             f"<div style='font-weight:900; font-size:0.9em; color:{colour}; margin-top:8px;'>{label}</div>{extra}</div>")
 
 
@@ -46,25 +46,25 @@ def render(dd, ctx):
                    f"border:1px solid rgba({rgb},0.25); border-radius:8px;'>"
                    f"<div style='font-size:0.7em; color:{colour}; font-weight:700; text-transform:uppercase; "
                    f"letter-spacing:1.5px; margin-bottom:10px;'>Why the price holds the Signal back</div>"
-                   f"<ul style='margin:0; padding-left:18px; color:#ccc; font-size:0.82em;'>{items}</ul></div>")
+                   f"<ul style='margin:0; padding-left:18px; color:inherit; font-size:0.82em;'>{items}</ul></div>")
 
-    sm_extra = (f"<div style='font-size:0.65em; color:#888; margin-top:4px;'>Strength: {dd.sm['strength']}/100</div>"
-                f"<div style='font-size:0.6em; color:#666; margin-top:2px;'>Points: {r['sm_points']:.2f}</div>")
+    sm_extra = (f"<div style='font-size:0.65em; color:inherit; margin-top:4px;'>Strength: {dd.sm['strength']}/100</div>"
+                f"<div style='font-size:0.6em; color:inherit; margin-top:2px;'>Points: {r['sm_points']:.2f}</div>")
     pillars = "".join([
         _pillar("Technical Trend", r["p_trend"], r["p_trend_c"]),
         _pillar("Volume flow", r["sm_label"], r["p_sm_c"], sm_extra),
     ])
     bg = _hex_rgb(dd.act_color)
     st.markdown(f"""
-    <div style='background:rgba(10,15,25,0.6); border:1px solid rgba(255,255,255,0.1); border-radius:12px; padding:20px; margin-bottom:25px;'>
+    <div style='background:var(--secondary-background-color, transparent); border:1px solid rgba(128,128,128,0.25); border-radius:12px; padding:20px; margin-bottom:25px;'>
         <div style='display:flex; justify-content:space-between; text-align:center; margin-bottom:20px; flex-wrap:wrap; gap:10px;'>{pillars}</div>
         <div style='background:rgba({bg},0.12); border-left:6px solid {dd.act_color}; padding:20px; border-radius:8px; box-shadow:0 4px 15px rgba(0,0,0,0.3);'>
-            <div style='font-size:0.75em; color:#bbb; text-transform:uppercase; letter-spacing:2px; margin-bottom:6px;'>Timing context (Signal) — the recommendation is the Decision Summary above</div>
+            <div style='font-size:0.75em; color:inherit; text-transform:uppercase; letter-spacing:2px; margin-bottom:6px;'>Timing context (Signal) — the recommendation is the Decision Summary above</div>
             <div style='font-size:1.6em; font-weight:900; color:{dd.act_color}; margin-bottom:8px; text-shadow: 0px 2px 10px rgba({bg}, 0.5);'>{timing_arrow(dd.act_str)} {dd.act_str}</div>
-            <div style='color:#e0e0e0; font-size:1.0em; line-height:1.5; margin-bottom:12px;'>{dd.act_desc}</div>
-            <div style='color:#8899aa; font-size:0.78em; margin-bottom:12px;'>Counted: {chips} &nbsp;·&nbsp; points {r['pts']:.1f}</div>
+            <div style='color:inherit; font-size:1.0em; line-height:1.5; margin-bottom:12px;'>{dd.act_desc}</div>
+            <div style='color:inherit; font-size:0.78em; margin-bottom:12px;'>Counted: {chips} &nbsp;·&nbsp; points {r['pts']:.1f}</div>
             <hr style='border:0; height:1px; background:linear-gradient(90deg, rgba(255,255,255,0.15), transparent); margin-bottom:15px;'>
-            <div style='font-family:"Courier New", monospace; font-size:0.95em; background:rgba(0,0,0,0.4); padding:12px; border-radius:6px;'>
+            <div style='font-family:"Courier New", monospace; font-size:0.95em; background:var(--secondary-background-color, transparent); padding:12px; border-radius:6px;'>
                 <span style='color:#2ecc71;'><b>SUPPORT:</b> €{dd.s1:.2f} (price €{dd.cur_p:.2f})</span>
             </div>
             {rr_html}

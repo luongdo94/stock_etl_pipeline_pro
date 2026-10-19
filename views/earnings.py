@@ -1,12 +1,16 @@
 """View: 🗓️ Earnings — earnings-report (ER) analysis: upcoming reports, a stock's beat / miss and reaction history,
 an AI note on the latest report, and a universe study of what prices did after surprises."""
-import numpy as np
+import html
+
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
 from core import earnings as er
 from services import earnings as svc
+
+from ui.components import format_value
+from ui.sticky import sticky, sticky_choice, sticky_radio
 from ui.icons import render_header
 
 MIN_REGION = 15          # smaller regions are pooled so a "market" benchmark is not the stock itself
@@ -19,16 +23,14 @@ def _region_map(companies: pd.DataFrame) -> dict:
 
 
 def _pct(x, digits=1, signed=True):
-    if x is None or (isinstance(x, float) and np.isnan(x)):
-        return "—"
-    return f"{x * 100:+.{digits}f}%" if signed else f"{x * 100:.{digits}f}%"
+    return format_value(x, f"+.{digits}%" if signed else f".{digits}%")
 
 
-def _tile(title, value, sub="", border="#3498db", colour="#fff"):
-    return (f"<div style='background:rgba(255,255,255,0.04); border-radius:8px; padding:10px 12px; border-top:2px solid {border};'>"
-            f"<div style='color:#8899aa; font-size:0.68rem; text-transform:uppercase; margin-bottom:4px;'>{title}</div>"
-            f"<div style='color:{colour}; font-weight:800; font-size:1.05rem;'>{value}</div>"
-            f"<div style='color:#8899aa; font-size:0.65rem;'>{sub}</div></div>")
+def _tile(title, value, sub="", border="#3498db", colour="inherit"):
+    return (f"<div style='background:var(--secondary-background-color, transparent); border-radius:8px; padding:10px 12px; border-top:2px solid {border};'>"
+            f"<div style='color:inherit; font-size:0.8rem; text-transform:uppercase; margin-bottom:4px;'>{html.escape(str(title))}</div>"
+            f"<div style='color:{colour}; font-weight:800; font-size:1.05rem;'>{html.escape(format_value(value))}</div>"
+            f"<div style='color:inherit; font-size:0.8rem;'>{html.escape(str(sub))}</div></div>")
 
 
 def _local(ts, ticker):
@@ -123,13 +125,14 @@ def render(ctx):
     reactions = svc.universe_reactions(events, prices_full[["date", "ticker", "price_close", "daily_return_pct"]],
                                        region_of, rows_key=(ctx.get("data_version"), len(events), len(prices_full)))
     names = companies.set_index("ticker")["company"].to_dict()
-    verdict = m_df.set_index("Ticker")["Verdict"].to_dict() if "Verdict" in m_df.columns else {}
+    verdict = m_df.set_index("Ticker")["Decision"].to_dict() if "Decision" in m_df.columns else {}
 
-    tab_up, tab_stock, tab_study = st.tabs(["📅 Upcoming reports", "🔍 Single stock", "📊 Do surprises predict drift?"])
+    section = sticky_choice("Earnings section", ["Upcoming reports", "Single stock", "Surprise study"],
+                            "Upcoming reports", "er_section")
 
     # ── upcoming ────────────────────────────────────────────────────────────────────────────
-    with tab_up:
-        days = st.slider("Look ahead (days)", 3, 30, 14, key="er_days")
+    if section == "Upcoming reports":
+        days = sticky(st.slider, "Look ahead (days)", 14, "er_days", min_value=3, max_value=30)
         now = pd.Timestamp.now(tz="UTC")
         # both sources (events table + the calendar the Decision's earnings gate reads); a date-only entry stays
         # upcoming for its whole local day
@@ -176,11 +179,11 @@ def render(ctx):
                        "says little.")
 
     # ── single stock ────────────────────────────────────────────────────────────────────────
-    with tab_stock:
+    elif section == "Single stock":
         universe = sorted(set(events["ticker"]) | set(cal_all["ticker"]))     # either source knows the stock
         default = st.session_state.get("active_ticker")
         idx = universe.index(default) if default in universe else 0
-        t = st.selectbox("Stock", universe, index=idx, format_func=ctx["format_ticker"], key="er_ticker")
+        t = sticky_choice("Stock", universe, universe[idx], "er_ticker", format_func=ctx["format_ticker"])
         hist = events[events["ticker"] == t]
         rt = reactions[reactions["ticker"] == t].sort_values("reaction_day", ascending=False) if not reactions.empty else pd.DataFrame()
         b, mv, nxt = er.beat_summary(hist), er.expected_move(rt) if not rt.empty else {"n": 0, "median_abs": None, "max_abs": None}, er.next_event(hist)
@@ -197,13 +200,13 @@ def render(ctx):
             _tile(f"Beat rate ({b['n']}q)", _pct(b["beat_rate"], 0, False),
                   f"avg surprise {_pct(b['avg_surprise'])}" + (f" ({b['n_avg']}q; {b['n'] - b['n_avg']} near-zero "
                                                               "estimates excluded)" if b["n_avg"] < b["n"] else ""),
-                  "#2ecc71" if (b["beat_rate"] or 0) >= 0.5 else "#e74c3c"),
+                  "currentColor" if b["beat_rate"] is None else ("#2ecc71" if b["beat_rate"] >= 0.5 else "#e74c3c")),
             _tile("Current streak", f"{b['streak']} {b['streak_kind'] or ''}", "consecutive reports", "#f1c40f"),
-            _tile(f"Typical move ({mv['n']} reports)", f"±{_pct(mv['median_abs'], 1, False)}" if mv["median_abs"] else "—",
-                  f"largest {_pct(mv['max_abs'], 1, False)}" if mv.get("max_abs") else "", "#00ffcc"),
+            _tile(f"Typical move ({mv['n']} reports)", format_value(mv["median_abs"], ".1%", prefix="±"),
+                  f"largest {_pct(mv['max_abs'], 1, False)}" if mv.get("max_abs") is not None else "", "#00ffcc"),
             _tile("Decision", verdict.get(t, "—"), "from the Stock Scanner / Analysis", "#3498db"),
         ])
-        st.markdown(f"<div style='display:grid; grid-template-columns:repeat(5,1fr); gap:8px; margin:8px 0;'>{tiles}</div>",
+        st.markdown(f"<div style='display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr)); gap:8px; margin:8px 0;'>{tiles}</div>",
                     unsafe_allow_html=True)
         st.caption("Upcoming dates and times come from Yahoo and can be estimates until the company confirms them; "
                    "times are shown in the exchange's time zone.")
@@ -258,9 +261,9 @@ def render(ctx):
         # AI note
         st.markdown("---")
         render_header("zap", "AI note on the latest report", level="####")
-        lang = st.radio("Language", ["English", "Vietnamese"], horizontal=True, key="er_lang")
+        lang = sticky_radio("Language", ["English", "Vietnamese"], "English", "er_lang", horizontal=True)
         if not svc.api_key():
-            st.text_input("Cohere API key (kept only for this session)", type="password", key="cohere_api_key",
+            sticky(st.text_input, "Cohere API key (kept only for this session)", "", "cohere_api_key", type="password",
                           help="Or set COHERE_API_KEY in the environment.")
         last = rt.iloc[0] if not rt.empty else None
         facts = "\n".join(filter(None, [
@@ -315,7 +318,7 @@ def render(ctx):
                        "(e.g. 'Your Name your@email.com'); otherwise it falls back to recent headlines.")
 
     # ── universe study ──────────────────────────────────────────────────────────────────────
-    with tab_study:
+    elif section == "Surprise study":
         if reactions.empty:
             st.info("Not enough reaction history yet.")
         else:
@@ -340,4 +343,3 @@ def render(ctx):
                        "the surprise for weeks; it is well documented historically but has weakened in large caps. Reports of "
                        "the same quarter move together, so the t-statistics overstate certainty — treat this as a screen, "
                        "not a trading rule. Nothing here feeds the Decision.")
-

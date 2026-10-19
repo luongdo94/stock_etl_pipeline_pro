@@ -81,18 +81,18 @@ def render(dd, ctx):
     li = lambda items: "".join(f"<li>{i}</li>" for i in items) or "<li>—</li>"      # noqa: E731
     st.markdown(f"""
     <div style='border:1px solid {sc}55; border-left:5px solid {sc}; border-radius:10px; padding:12px 18px;
-                margin:6px 0 10px 0; background:rgba(255,255,255,0.03);'>
+                margin:6px 0 10px 0; background:var(--secondary-background-color, transparent);'>
       <div style='display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;'>
         <span style='color:{sc}; font-size:1.5rem; font-weight:900;'>{a['stance']}</span>
         <span style='color:{cc}; font-size:0.8rem; font-weight:700;'>Confidence: {a['confidence']}</span>
-        <span style='color:#8899aa; font-size:0.75rem;'>the same Decision as the Scanner and the assistant</span>
+        <span style='color:inherit; font-size:0.75rem;'>the same Decision as the Scanner and the assistant</span>
       </div>
       <div style='display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:6px 24px; margin-top:8px;'>
-        <div><div style='color:#8899aa; font-size:0.68rem; text-transform:uppercase;'>Why</div>
+        <div><div style='color:inherit; font-size:0.68rem; text-transform:uppercase;'>Why</div>
              <ul style='margin:2px 0 0 16px; padding:0; font-size:0.82rem;'>{li(a['why'])}</ul></div>
-        <div><div style='color:#8899aa; font-size:0.68rem; text-transform:uppercase;'>What could change it</div>
+        <div><div style='color:inherit; font-size:0.68rem; text-transform:uppercase;'>What could change it</div>
              <ul style='margin:2px 0 0 16px; padding:0; font-size:0.82rem;'>{li(a['change'])}</ul></div>
-        <div><div style='color:#8899aa; font-size:0.68rem; text-transform:uppercase;'>Data confidence</div>
+        <div><div style='color:inherit; font-size:0.68rem; text-transform:uppercase;'>Data confidence</div>
              <ul style='margin:2px 0 0 16px; padding:0; font-size:0.82rem;'>{li(a['data'])}</ul></div>
       </div>
     </div>""", unsafe_allow_html=True)

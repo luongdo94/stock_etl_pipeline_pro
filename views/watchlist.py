@@ -9,7 +9,7 @@ from core.symbols import get_tv_symbol
 from services.user_store import load_watchlist, save_watchlist
 from ui.decision_panel import render_alert_inbox, valuation_inputs
 from ui.icons import render_header
-from ui.sticky import sticky
+from ui.sticky import forget, sticky, sticky_choice
 
 
 def render(ctx):
@@ -23,7 +23,7 @@ def render(ctx):
 
     render_header("calendar", "Watchlist & Idea Pipeline")
     st.write("Track and prune your high-conviction ideas. A thesis without an invalidation level is just a gamble.")
-    
+
     wl_df = load_watchlist()
     if st.session_state.get("watchlist_load_failed"):
         st.error("Your watchlist could not be read, so it cannot be shown. That is not an empty list: nothing was deleted. "
@@ -44,17 +44,30 @@ def render(ctx):
         render_alert_inbox(watchlist_triggers(wl_df, _latest, _iv)
                            + earnings_soon(earnings_cal, wl_df["Ticker"].dropna().unique()))
 
-        st.markdown("### Active Candidates Pipeline")
+        st.markdown("### Research ideas")
         _w1, _w2, _w3, _w4 = st.columns(4)
         _w1.metric("Total Ideas", len(wl_df))
-        _w2.metric("Active (Triggered)", len(wl_df[wl_df["Status"].str.contains("ACTIVE", na=False)]))
+        _w2.metric("Active ideas", len(wl_df[wl_df["Status"].str.contains("ACTIVE", na=False)]))
         _w3.metric("Pending", len(wl_df[wl_df["Status"].str.contains("PENDING", na=False)]))
         _w4.metric("Invalidated", len(wl_df[wl_df["Status"].str.contains("INVALIDATED", na=False)]))
         st.markdown("---")
-        
+
+        decisions = (ctx["m_df"].drop_duplicates("Ticker").set_index("Ticker")["Decision"].to_dict()
+                     if {"Ticker", "Decision"} <= set(ctx["m_df"].columns) else {})
+        dated = prices_full.sort_values("date").groupby("ticker").tail(1).set_index("ticker")["date"].to_dict()
+        st.caption(f"Current Decision: loaded warehouse snapshot {ctx.get('data_version', 'unknown')}. "
+                   "Idea status is your workflow choice and does not follow the technical Signal.")
+        summary = wl_df[["Ticker", "Status"]].rename(columns={"Status": "Idea status"})
+        summary["Current Decision"] = summary["Ticker"].map(decisions).fillna("NOT ENOUGH DATA")
+        summary["Price bar date"] = summary["Ticker"].map(dated)
+        st.dataframe(summary, hide_index=True, width="stretch")
+        mode = sticky_choice("Edit ideas", ["Selected idea", "Bulk editor"], "Selected idea", "wl_edit_mode")
+        if mode == "Selected idea":
+            _edit_idea(wl_df, decisions)
+
         # Interactive Editor
         config = {
-            "Status": st.column_config.SelectboxColumn("Status", options=["🔵 PENDING", "🟢 ACTIVE", "🟡 REVIEW", "🔴 INVALIDATED", "⚫ CLOSED"], width="medium"),
+            "Status": st.column_config.SelectboxColumn("Idea status", options=["🔵 PENDING", "🟢 ACTIVE", "🟡 REVIEW", "🔴 INVALIDATED", "⚫ CLOSED"], width="medium"),
             "Ticker": st.column_config.TextColumn("Ticker", disabled=True, width="small"),
             "Entry Target": st.column_config.NumberColumn("Entry Target €", format="€%.2f"),
             "Invalidation Level": st.column_config.NumberColumn("Inval / Stop €", format="€%.2f"),
@@ -63,41 +76,42 @@ def render(ctx):
             "Catalyst": st.column_config.TextColumn("Catalyst", width="medium"),
             "Next Earnings": st.column_config.TextColumn("Next Earnings", width="small")
         }
-        
-        with st.form("watchlist_editor_form"):
-            st.caption("Double-click any cell to edit your notes, update Stop Loss levels or change Workflow Status. Click the trash icon to remove an idea.")
-            
-            # Type safety: Ensure text columns are explicitly strings before rendering in editor
-            _wl_df_safe = wl_df.copy()
-            for col in ["Thesis", "Catalyst", "Next Earnings"]:
-                if col in _wl_df_safe.columns:
-                    _wl_df_safe[col] = _wl_df_safe[col].fillna("").astype(str)
 
-            edited_df = st.data_editor(
-                _wl_df_safe,
-                column_config=config,
-                width="stretch",
-                num_rows="dynamic",
-                hide_index=True,
-                height=400
-            )
-            
-            if st.form_submit_button("💾 Synchronize Watchlist Changes", type="primary"):
-                try:
-                    # Filter out rows with empty Ticker (from dynamic row additions)
-                    clean_df = edited_df[edited_df["Ticker"].astype(str).str.strip() != ""]
-                    save_watchlist(clean_df)
-                    st.success("✅ Watchlist synced successfully! Database updated.")
-                    st.rerun()
-                except Exception as e:
-                    st.error(f"Failed to sync memory: {e}")
-                    
+        if mode == "Bulk editor":
+            with st.form("watchlist_editor_form"):
+                st.caption("Double-click any cell to edit your notes, update Stop Loss levels or change Workflow Status. Click the trash icon to remove an idea.")
+
+                # Type safety: Ensure text columns are explicitly strings before rendering in editor
+                _wl_df_safe = wl_df.copy()
+                for col in ["Thesis", "Catalyst", "Next Earnings"]:
+                    if col in _wl_df_safe.columns:
+                        _wl_df_safe[col] = _wl_df_safe[col].fillna("").astype(str)
+
+                edited_df = st.data_editor(
+                    _wl_df_safe,
+                    column_config=config,
+                    width="stretch",
+                    num_rows="dynamic",
+                    hide_index=True,
+                    height=400
+                )
+
+                if st.form_submit_button("💾 Synchronize Watchlist Changes", type="primary"):
+                    try:
+                        # Filter out rows with empty Ticker (from dynamic row additions)
+                        clean_df = edited_df[edited_df["Ticker"].astype(str).str.strip() != ""]
+                        save_watchlist(clean_df)
+                        st.success("✅ Watchlist synced successfully! Database updated.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Failed to sync memory: {e}")
+
         st.markdown("---")
         st.markdown("### 🔎 Quick Preview")
         if not wl_df.empty and "Ticker" in wl_df.columns:
             valid_tickers = [t for t in wl_df["Ticker"].unique() if pd.notna(t) and str(t).strip() != ""]
             if valid_tickers:
-                preview_ticker = st.selectbox("Select a ticker to view Mini Chart and News:", valid_tickers)
+                preview_ticker = sticky_choice("Select a ticker to view Mini Chart and News:", valid_tickers, valid_tickers[0], "wl_preview_ticker")
                 if preview_ticker and not sticky(
                         st.toggle, "Load the chart and the news (TradingView · Yahoo Finance)", False, "wl_preview_on",
                         help="Both load from the provider in your browser / this server only when switched on; they are not "
@@ -105,7 +119,7 @@ def render(ctx):
                     st.caption("Not loaded: nothing is requested until you switch this on.")
                 elif preview_ticker:
                     tv_sym = get_tv_symbol(preview_ticker)
-                    
+
                     c_chart, c_news = st.columns([1, 1])
                     with c_chart:
                         import streamlit.components.v1 as components
@@ -136,7 +150,7 @@ def render(ctx):
                           </script>
                         </div>
                         """, height=420)
-                        
+
                     with c_news:
                         import xml.etree.ElementTree as _ET
                         import urllib.request as _urllib
@@ -144,6 +158,7 @@ def render(ctx):
                         _yf_ticker = preview_ticker.replace("^", "%5E")
                         _rss_url = f"https://feeds.finance.yahoo.com/rss/2.0/headline?s={_yf_ticker}&region=US&lang=en-US"
                         _news_items_wl = []
+                        _news_error = False
                         try:
                             _req = _urllib.Request(_rss_url, headers={"User-Agent": "Mozilla/5.0"})
                             with _urllib.urlopen(_req, timeout=4) as _resp:
@@ -156,37 +171,57 @@ def render(ctx):
                                     if _title and _link:
                                         _news_items_wl.append((_title, _link, _pub))
                         except Exception:
-                            pass
+                            _news_error = True
 
-                        if _news_items_wl:
-                            _news_rows = ""
-                            for _t, _l, _p in _news_items_wl[:15]:
-                                if not _l.lower().startswith(("http://", "https://")):
-                                    continue                                    # never a javascript: / data: link
-                                _news_rows += f"""
-                                <a href="{html.escape(_l, quote=True)}" target="_blank" rel="noopener noreferrer" class="news-item">
-                                  <div class="news-title">{html.escape(_t)}</div>
-                                  <div class="news-date">{html.escape(_p)}</div>
-                                </a>"""
-                        else:
-                            _news_rows = "<div style='color:#667788;padding:20px;text-align:center;'>No news available for this symbol.</div>"
+                        st.markdown(f"**{preview_ticker} — Yahoo Finance headlines**")
+                        st.caption(f"External context, fetched {pd.Timestamp.now(tz='UTC'):%Y-%m-%d %H:%M UTC}; outside the snapshot.")
+                        if _news_error:
+                            st.warning("Could not load headlines. This is not an empty news feed.")
+                        elif not _news_items_wl:
+                            st.info("No news available for this symbol.")
+                        for title, link, published in _news_items_wl[:15]:
+                            if link.lower().startswith(("http://", "https://")):
+                                st.markdown(f"<a href='{html.escape(link, quote=True)}' target='_blank' rel='noopener noreferrer'>"
+                                            f"{html.escape(title)}</a>", unsafe_allow_html=True)
+                                st.caption(published)
 
-                        components.html(f"""
-                        <style>
-                          body {{ margin:0; background:transparent; font-family:'Inter',sans-serif; }}
-                          .news-header {{ color:#9b59b6; font-size:0.72rem; font-weight:800;
-                            text-transform:uppercase; letter-spacing:1.5px;
-                            padding:10px 14px 8px; border-bottom:1px solid rgba(155,89,182,0.3); }}
-                          .news-scroll {{ height:390px; overflow-y:auto; }}
-                          .news-scroll::-webkit-scrollbar {{ width:4px; }}
-                          .news-scroll::-webkit-scrollbar-thumb {{ background:rgba(155,89,182,0.4); border-radius:2px; }}
-                          .news-item {{ display:block; padding:10px 14px;
-                            border-bottom:1px solid rgba(255,255,255,0.05);
-                            text-decoration:none; transition:background 0.15s; }}
-                          .news-item:hover {{ background:rgba(155,89,182,0.1); }}
-                          .news-title {{ color:#e8eaf6; font-size:0.82rem; line-height:1.4; margin-bottom:4px; }}
-                          .news-date  {{ color:#667788; font-size:0.70rem; }}
-                        </style>
-                        <div class="news-header">📰 {html.escape(str(preview_ticker))} — Latest News</div>
-                        <div class="news-scroll">{_news_rows}</div>
-                        """, height=430)
+
+def _edit_idea(wl_df, decisions):
+    """One native form for narrow screens; the existing schema and save guard stay in the store."""
+    tickers = wl_df["Ticker"].dropna().unique().tolist()
+    if not tickers:
+        return
+    ticker = sticky_choice("Idea to edit", tickers, tickers[0], "wl_edit_ticker")
+    row = wl_df[wl_df["Ticker"] == ticker].iloc[0]
+    pre = f"wl_edit_{ticker}_"
+    statuses = ["🔵 PENDING", "🟢 ACTIVE", "🟡 REVIEW", "🔴 INVALIDATED", "⚫ CLOSED"]
+    saved_status = row["Status"] if pd.notna(row["Status"]) else statuses[0]
+    if saved_status not in statuses:
+        statuses.append(saved_status)  # preserve legacy workflow text unless the user explicitly changes it
+    st.write(f"Current Decision: **{decisions.get(ticker, 'NOT ENOUGH DATA')}**")
+    with st.form(pre + "form"):
+        status = sticky_choice("Idea status", statuses, saved_status, pre + "status")
+        text = {}
+        for name in ("Thesis", "Catalyst"):
+            value = row.get(name)
+            text[name] = sticky(st.text_area, name, "" if pd.isna(value) else str(value), pre + name)
+        levels = {}
+        for name in ("Entry Target", "Invalidation Level", "Take Profit"):
+            value = row.get(name)
+            levels[name] = sticky(st.number_input, name + " (€)", float(value) if pd.notna(value) else None,
+                                  pre + name, step=1.0)
+        st.caption("These are your idea levels; they are separate from the Decision's thesis stop.")
+        save = st.form_submit_button("Save idea changes", type="primary")
+    if save:
+        edited = wl_df.copy()
+        changes = {"Status": status, **text, **levels}
+        for name, value in changes.items():
+            edited.loc[edited["Ticker"] == ticker, name] = value
+        try:
+            save_watchlist(edited)
+        except Exception as exc:
+            st.error(f"Could not save idea: {exc}. Your edits are kept here.")
+        else:
+            forget(pre)
+            st.toast("Watchlist idea saved.")
+            st.rerun()

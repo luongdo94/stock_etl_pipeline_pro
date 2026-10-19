@@ -120,7 +120,7 @@ def render(dd, ctx):
         # ── Dynamic Column Definitions based on Business Type ─────────
         _sector_lower = str(_ticker_sector).lower()
         _industry_lower = str(_ticker_industry).lower()
-        
+
         if any(x in _sector_lower or x in _industry_lower for x in ['software', 'saas', 'cyber', 'ai', 'data', 'technology services', 'it services', 'cloud', 'internet']):
             b_type = 'saas'
         elif any(x in _sector_lower or x in _industry_lower for x in ['semi', 'industrial', 'manufacturing', 'machinery', 'hardware', 'electronic', 'aerospace', 'auto']):
@@ -246,13 +246,13 @@ def render(dd, ctx):
 
 
         group_header = "".join(
-            f"<th colspan='{span}' style='padding:4px 10px; text-align:center; color:#64748b; font-size:0.72rem; border-bottom:1px solid rgba(255,255,255,0.06); font-weight:600; text-transform:uppercase; letter-spacing:0.5px;'>{label}</th>"
+            f"<th colspan='{span}' style='padding:4px 10px; text-align:center; color:inherit; font-size:0.72rem; border-bottom:1px solid rgba(128,128,128,0.25); font-weight:600; text-transform:uppercase; letter-spacing:0.5px;'>{label}</th>"
             for label, span in _group_spans
         )
 
         # ── Column header row ──────────────────────────────────────────
-        header_cells = "<th style='padding:6px 10px; color:#94a3b8; text-align:left; font-size:0.8rem; white-space:nowrap;'>Ticker</th>" + "".join(
-            f"<th style='padding:6px 10px; color:#94a3b8; text-align:{'left' if k in ('company','market_cap') else 'center'}; font-size:0.8rem; white-space:nowrap;'>{lbl}</th>"
+        header_cells = "<th style='padding:6px 10px; color:inherit; text-align:left; font-size:0.8rem; white-space:nowrap;'>Ticker</th>" + "".join(
+            f"<th style='padding:6px 10px; color:inherit; text-align:{'left' if k in ('company','market_cap') else 'center'}; font-size:0.8rem; white-space:nowrap;'>{lbl}</th>"
             for k, lbl, *_ in _COL_DEFS
         )
 
@@ -262,7 +262,7 @@ def render(dd, ctx):
             is_sel = row_data.get("is_selected", False)
             is_avg = (ticker_idx == "AVG")
             row_bg = "background:rgba(99,132,255,0.12); font-weight:700;" if is_sel else (
-                     "background:rgba(255,255,255,0.04); font-style:italic; font-weight:600;" if is_avg else "")
+                     "background:var(--secondary-background-color, transparent); font-style:italic; font-weight:600;" if is_avg else "")
             label  = f"★ {ticker_idx}" if is_sel else ticker_idx
 
             td_ticker = f"<td style='padding:8px 10px; color:#a78bfa; font-weight:700; white-space:nowrap;'>{label}</td>"
@@ -286,16 +286,16 @@ def render(dd, ctx):
             html_rows.append(f"<tr style='{row_bg}'>{td_ticker}{col_cells}</tr>")
 
         html_table = f"""
-        <div style="overflow-x:auto; border-radius:12px; border:1px solid rgba(255,255,255,0.08); margin-bottom:12px;">
-        <table style="width:100%; border-collapse:collapse; font-size:0.85rem; color:#e2e8f0;">
+        <div style="overflow-x:auto; border-radius:12px; border:1px solid rgba(128,128,128,0.25); margin-bottom:12px;">
+        <table style="width:100%; border-collapse:collapse; font-size:0.85rem; color:inherit;">
           <thead>
-            <tr style="border-bottom:1px solid rgba(255,255,255,0.06);">{group_header}</tr>
-            <tr style="border-bottom:1px solid rgba(255,255,255,0.1);">{header_cells}</tr>
+            <tr style="border-bottom:1px solid rgba(128,128,128,0.25);">{group_header}</tr>
+            <tr style="border-bottom:1px solid rgba(128,128,128,0.25);">{header_cells}</tr>
           </thead>
           <tbody>{"".join(html_rows)}</tbody>
         </table>
         </div>
-        <div style="font-size:0.78rem; color:#64748b; margin-top:-4px; margin-bottom:16px;">
+        <div style="font-size:0.78rem; color:inherit; margin-top:-4px; margin-bottom:16px;">
           🟢 = above {_match_level} avg &nbsp;|&nbsp; 🔴 = below avg &nbsp;|&nbsp; ★ = selected ticker
         </div>
         """

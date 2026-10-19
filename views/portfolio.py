@@ -21,7 +21,8 @@ from core.ledger import adjustments_from_edit, realized_pnl, trade as ledger_tra
 from core.stress import estimate_sensitivities, historical_replay, load_scenarios, scenario_losses
 from services.user_store import (append_trades, load_portfolio_with_cash, load_trades, save_portfolio_checked,
                                  save_portfolio_to_db)
-from ui.components import render_metric_tile
+from ui.components import format_value, render_metric_tile
+from ui.sticky import sticky, sticky_choice, sticky_radio
 from ui.decision_panel import render_alert_inbox
 from ui.icons import render_header
 import pandas as pd, io
@@ -34,6 +35,55 @@ def _known(v, nd):
     except (TypeError, ValueError):
         return None
     return round(v, nd) if v == v else None
+
+
+def _summary_values(shares, costs, cash, latest):
+    """Saved-book presentation only; no optimisation or policy decisions."""
+    tickers = list(shares)
+    qty = pd.Series(shares, dtype=float).reindex(tickers)
+    values = pd.Series(latest, dtype=float).reindex(tickers) * qty
+    basis = pd.Series(costs, dtype=float).reindex(tickers) * qty
+    complete = bool(np.isfinite(values).all())
+    cost_known = bool(np.isfinite(basis).all())
+    return {"nav": float(values.sum() + cash) if complete else None,
+            "known_value": float(values[np.isfinite(values)].sum()), "cash": cash,
+            "pnl": float(values.sum() - basis.sum()) if complete and cost_known else None,
+            "priced": int(np.isfinite(values).sum()), "holdings": len(tickers)}
+
+
+def _render_summary(ctx, prices):
+    latest = prices.sort_values("date").groupby("ticker")["price_close"].last().to_dict()
+    summary = _summary_values(st.session_state.get("portfolio_shares", {}),
+                              st.session_state.get("portfolio_cost", {}),
+                              float(st.session_state.get("portfolio_cash_eur", 0.0) or 0.0), latest)
+    if st.session_state.get("portfolio_load_failed"):
+        st.warning("Saved portfolio summary unavailable until the portfolio can be read.")
+        return
+    c1, c2, c3 = st.columns(3)
+    c1.metric("NAV (holdings + cash)", format_value(summary["nav"], ",.2f", prefix="€"))
+    c2.metric("Cash", format_value(summary["cash"], ",.2f", prefix="€"))
+    c3.metric("Unrealised P&L", format_value(summary["pnl"], "+,.2f", prefix="€"))
+    st.caption(f"Saved holdings · priced {summary['priced']} of {summary['holdings']} · "
+               f"warehouse snapshot {ctx.get('data_version', 'unknown')} · latest stored closes, dates below.")
+    if summary["nav"] is None:
+        st.warning(f"NAV incomplete: known holdings €{summary['known_value']:,.2f}; missing prices are not zero.")
+    if summary["pnl"] is None:
+        st.caption("P&L: N/A — a price or cost basis is missing.")
+    held = list(st.session_state.get("portfolio_shares", {}))
+    dated = prices[prices["ticker"].isin(held)].sort_values("date").groupby("ticker").tail(1)
+    if not dated.empty:
+        with st.expander("Valuation dates and source"):
+            st.dataframe(dated[["ticker", "date", "price_close"]], hide_index=True, width="stretch")
+            st.caption("Source: loaded warehouse, EUR closes. Different listings may have different last-bar dates.")
+    from ui.signal_hub import PREVIEW_KEY
+    feed = st.session_state.get(PREVIEW_KEY)
+    st.markdown("**Needs review · shared SIGNAL feed**")
+    if not feed or not feed.get("readable"):
+        st.caption("Unavailable: personal review items have not been loaded reliably.")
+    else:
+        st.caption(f"{feed['n']} item(s) across your portfolio and watchlist · loaded snapshot {feed['version']}")
+        for item in feed["top"]:
+            st.write(f"{item['severity']} · {item['ticker']} · {item['kind']}: {item['message']}")
 
 
 def render(ctx):
@@ -51,14 +101,7 @@ def render(ctx):
     selected_horizon = ctx['selected_horizon']
     t_end = ctx['t_end']
     t_start = ctx['t_start']
-    render_header("package", "Professional Bulk Portfolio Suite", level="###")
-    _held = list(st.session_state.get("portfolio_shares", {}).keys())
-    _alert_rules = load_alert_rules()   # one Supabase round-trip per render
-    _latest_snap = latest_snapshot(prices_full)
-    render_alert_inbox(evaluate_rules(_alert_rules, _latest_snap)
-                       + position_stop_triggers(st.session_state.get("portfolio_stops", {}), _latest_snap)
-                       + earnings_soon(earnings_cal, _held))
-
+    render_header("package", "Portfolio", level="###")
     def _thesis_stops():
         """Today's Decision thesis stop per ticker — recorded ONCE when a position is opened (P1/5)."""
         if m_df is None or m_df.empty or "_thesis_stop" not in m_df.columns:
@@ -86,7 +129,7 @@ def render(ctx):
 
     if st.session_state.get("_ledger_warning"):
         st.warning(f"Trade ledger: {st.session_state.pop('_ledger_warning')} — the portfolio itself was saved.", icon="📒")
-    st.write("Craft your portfolio by selecting tickers and entering your holdings below. High-density quantitative analysis will follow.")
+    st.caption("Read the saved portfolio first; select Holdings to record trades or edit. All amounts are in EUR.")
 
     # 1. LOCAL TICKER SELECTION
     # holdings, trade prices and NAV use the latest close of the full history; the sidebar range only changes the
@@ -95,7 +138,7 @@ def render(ctx):
     all_available_tickers = sorted(_now_px["ticker"].unique().tolist())
     indices = ["^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"]
     stock_tickers = [t for t in all_available_tickers if t not in indices]
-    
+
     # --- 1. PORTFOLIO PERSISTENCE (SUPABASE SYNC) ---
     if 'portfolio_db_synced' not in st.session_state:
         db_portfolio, st.session_state.portfolio_cash_eur = load_portfolio_with_cash()   # cash is part of NAV (R4-F01)
@@ -122,155 +165,166 @@ def render(ctx):
     _sel_version = st.session_state.get('_portfolio_version', 0)
     p_tickers = st.session_state.portfolio_tickers
 
-    # --- 2. Portfolio Management Tools (New Layout) ---
-    tc1, tc2 = st.columns(2)
-    
-    with tc1:
-        # --- CSV / Excel Portfolio Importer ---
-        with st.popover("📂 Import Portfolio", width="stretch"):
-            st.markdown("**Format:** `ticker` (Required), `shares`, `cost` (Optional)")
-            uploaded_file = st.file_uploader("Select file", type=["csv", "xlsx"], label_visibility="collapsed")
-            import_mode = st.radio("Mode", ["Overwrite", "Merge (Accumulate)"], horizontal=True, label_visibility="collapsed")
-            
-            if uploaded_file is not None:
-                if st.button("▶ Start Import", key="do_import_btn", type="primary", width="stretch"):
-                    try:
-                        pass  # hoisted to module level: import pandas as pd, io
-                        if uploaded_file.name.endswith('.csv'):
-                            raw_bytes = uploaded_file.read()
-                            decoded = raw_bytes.decode('utf-8-sig', errors='replace')
-                            first_line = next((l for l in decoded.splitlines() if l.strip()), "")
-                            counts = {sep: first_line.count(sep) for sep in [',', ';', '\t']}
-                            best_sep = max(counts, key=counts.get)
-                            idf = pd.read_csv(io.StringIO(decoded), sep=best_sep)
-                            if len(idf.columns) == 1 and best_sep in str(idf.columns[0]):
-                                stripped = '\n'.join(line.strip().strip('"') for line in decoded.splitlines() if line.strip())
-                                idf = pd.read_csv(io.StringIO(stripped), sep=best_sep)
-                        else:
-                            idf = pd.read_excel(uploaded_file)
-                        
-                        idf.columns = [str(c).lower().replace('\ufeff', '').strip() for c in idf.columns]
-                        if 'symbol' in idf.columns and 'ticker' not in idf.columns:
-                            idf.rename(columns={'symbol': 'ticker'}, inplace=True)
-                            
-                        if 'ticker' in idf.columns:
-                            s_col = 'shares' if 'shares' in idf.columns else None
-                            c_col = 'cost' if 'cost' in idf.columns else ('cost_basis' if 'cost_basis' in idf.columns else None)
-                            mapped_success, missing_tickers = [], []
+    _render_summary(ctx, _now_px)
+    _sections = ["Overview", "Holdings", "Health", "Risk & income", "Rebalance", "AI review", "Activity"]
+    _section = sticky_choice("Portfolio section", _sections, "Overview", "pf_section")
+    _alert_rules = []
+    if _section == "Activity":
+        _alert_rules = load_alert_rules()
+        _render_alert_center(ctx, _alert_rules)
+        _render_trade_ledger()
+        return
 
-                            # ── OVERWRITE: wipe existing portfolio first ──────
-                            if import_mode == "Overwrite":
-                                st.session_state.portfolio_shares = {}
-                                st.session_state.portfolio_cost   = {}
-                            
-                            for _, r in idf.iterrows():
-                                raw_t = str(r['ticker']).upper().strip()
-                                final_t = next((target for target in stock_tickers if target == raw_t or target.startswith(f"{raw_t}.")), None)
-                                if raw_t == "NOVO B": final_t = "NVO" if "NVO" in stock_tickers else None
-                                
-                                if final_t:
-                                    mapped_success.append(final_t)
-                                    new_sh   = float(r[s_col])   if s_col and pd.notna(r[s_col])   else 0.0
-                                    new_cost = float(r[c_col])   if c_col and pd.notna(r[c_col])   else 0.0
-                                    
-                                    if import_mode == "Merge (Accumulate)" and final_t in st.session_state.portfolio_shares:
-                                        old_sh = st.session_state.portfolio_shares[final_t]
-                                        old_c  = st.session_state.portfolio_cost.get(final_t, 0.0)
-                                        total_sh = old_sh + new_sh
-                                        if total_sh > 0:
-                                            avg_c = ((old_sh * old_c) + (new_sh * new_cost)) / total_sh
-                                            st.session_state.portfolio_shares[final_t] = total_sh
-                                            st.session_state.portfolio_cost[final_t]   = avg_c
-                                    else:
-                                        if new_sh   > 0: st.session_state.portfolio_shares[final_t] = new_sh
-                                        if new_cost > 0: st.session_state.portfolio_cost[final_t]   = new_cost
-                                elif raw_t not in ("NAN", "") and raw_t:
-                                    missing_tickers.append(raw_t)
-                                    
-                            if mapped_success:
-                                valid = [t for t in mapped_success if t in stock_tickers]
+    if _section == "Holdings":
+        # --- 2. Portfolio Management Tools (New Layout) ---
+        tc1, tc2 = st.columns(2)
+
+        with tc1:
+            # --- CSV / Excel Portfolio Importer ---
+            with st.popover("📂 Import Portfolio", width="stretch"):
+                st.markdown("**Format:** `ticker` (Required), `shares`, `cost` (Optional)")
+                uploaded_file = st.file_uploader("Select file", type=["csv", "xlsx"], label_visibility="collapsed")
+                import_mode = sticky_radio("Mode", ["Overwrite", "Merge (Accumulate)"], "Overwrite", "pf_import_mode", horizontal=True, label_visibility="collapsed")
+
+                if uploaded_file is not None:
+                    if st.button("▶ Start Import", key="do_import_btn", type="primary", width="stretch"):
+                        try:
+                            pass  # hoisted to module level: import pandas as pd, io
+                            if uploaded_file.name.endswith('.csv'):
+                                raw_bytes = uploaded_file.read()
+                                decoded = raw_bytes.decode('utf-8-sig', errors='replace')
+                                first_line = next((l for l in decoded.splitlines() if l.strip()), "")
+                                counts = {sep: first_line.count(sep) for sep in [',', ';', '\t']}
+                                best_sep = max(counts, key=counts.get)
+                                idf = pd.read_csv(io.StringIO(decoded), sep=best_sep)
+                                if len(idf.columns) == 1 and best_sep in str(idf.columns[0]):
+                                    stripped = '\n'.join(line.strip().strip('"') for line in decoded.splitlines() if line.strip())
+                                    idf = pd.read_csv(io.StringIO(stripped), sep=best_sep)
+                            else:
+                                idf = pd.read_excel(uploaded_file)
+
+                            idf.columns = [str(c).lower().replace('\ufeff', '').strip() for c in idf.columns]
+                            if 'symbol' in idf.columns and 'ticker' not in idf.columns:
+                                idf.rename(columns={'symbol': 'ticker'}, inplace=True)
+
+                            if 'ticker' in idf.columns:
+                                s_col = 'shares' if 'shares' in idf.columns else None
+                                c_col = 'cost' if 'cost' in idf.columns else ('cost_basis' if 'cost_basis' in idf.columns else None)
+                                mapped_success, missing_tickers = [], []
+
+                                # ── OVERWRITE: wipe existing portfolio first ──────
                                 if import_mode == "Overwrite":
-                                    # Replace entirely — no legacy tickers retained
-                                    st.session_state.portfolio_tickers = list(dict.fromkeys(valid))
-                                else:
-                                    # Merge — keep existing tickers, append new ones
-                                    st.session_state.portfolio_tickers = list(dict.fromkeys(st.session_state.portfolio_tickers + valid))
-                                st.session_state['_portfolio_version'] += 1
-                                st.session_state['_import_toast'] = f"✅ Imported {len(valid)} assets!"
-                                if missing_tickers:
-                                    st.session_state['_import_warnings'] = f"Skipped {len(missing_tickers)} unsupported: {', '.join(missing_tickers[:5])}"
-                                st.rerun()
-                    except Exception as e:
-                        st.error(f"Import failed: {e}")
-    
-    with tc2:
-        # --- Manual Transaction Tool ---
-        with st.popover("➕ Add Trade", width="stretch"):
-            st.caption("Register a manual transaction")
-            mt_type   = st.radio("Transaction Type", ["🟢 Buy", "🔴 Sell"], horizontal=True, key="mt_type_radio")
-            
-            _avail_tickers = st.session_state.portfolio_tickers if "Sell" in mt_type else stock_tickers
-            if "Sell" in mt_type and not _avail_tickers:
-                st.info("Your portfolio is empty.")
-                mt_ticker = None
-            else:
-                if "Sell" in mt_type:
-                    def _fmt(t):
-                        return f"{t} (Owned: {st.session_state.portfolio_shares.get(t, 0):.4g})"
-                    mt_ticker = st.selectbox("Select Asset", _avail_tickers, format_func=_fmt, key="mt_tick_sel")
-                    _owned = st.session_state.portfolio_shares.get(mt_ticker, 0)
-                    st.caption(f"Available to sell: **{_owned:.4g}** shares")
-                else:
-                    mt_ticker = st.selectbox("Select Asset", _avail_tickers, format_func=format_ticker, key="mt_tick_sel")
-                
-            mt_shares = st.number_input("Shares", min_value=0.0001, value=1.0, step=1.0, key="mt_shares_input")
-            
-            # Every trade has a cash leg: buys pay from cash (or a declared deposit), sells credit cash
-            _last_px = float(_now_px[_now_px["ticker"] == mt_ticker]["price_close"].iloc[-1]) \
-                if mt_ticker and (_now_px["ticker"] == mt_ticker).any() else 1.0
-            mt_price = st.number_input("Purchase Price" if "Buy" in mt_type else "Sale Price", min_value=0.0001,
-                                       value=_last_px, step=0.01, key=f"mt_price_input_{mt_type}_{mt_ticker}")
-            mt_from_cash = True
-            if "Buy" in mt_type:
-                mt_from_cash = st.checkbox("Pay from portfolio cash (untick only if new money was deposited for it)",
-                                           value=True, key="mt_from_cash")
-            st.caption(f"Cash available: €{float(st.session_state.get('portfolio_cash_eur', 0.0) or 0.0):,.2f} · "
-                       f"commission {load_decision_rules()['costs']['commission_pct']:.2f}% applied.")
+                                    st.session_state.portfolio_shares = {}
+                                    st.session_state.portfolio_cost   = {}
 
-            if st.button("Confirm Transaction", type="primary", use_container_width=True, disabled=(mt_ticker is None)):
-                _side = "BUY" if "Buy" in mt_type else "SELL"
-                _t = record_trade(st.session_state.portfolio_shares, st.session_state.portfolio_cost,
-                                  st.session_state.get("portfolio_cash_eur", 0.0), mt_ticker, _side, mt_shares,
-                                  mt_price, cost_pct=float(load_decision_rules()["costs"]["commission_pct"]) / 100,
-                                  fund_from_cash=mt_from_cash)
-                if _t["error"]:
-                    st.warning(f"⚠️ {_t['error']}")
-                elif _save(_t["shares"], _t["costs"], _t["cash"]):        # persist first, then change the session
-                    st.session_state.portfolio_shares = _t["shares"]
-                    st.session_state.portfolio_cost = _t["costs"]
-                    st.session_state.portfolio_cash_eur = _t["cash"]
-                    st.session_state.portfolio_tickers = [t for t in dict.fromkeys(
-                        st.session_state.portfolio_tickers + [mt_ticker]) if t in _t["shares"]]
-                    st.session_state['_portfolio_version'] += 1
-                    st.session_state.pop("_save_error", None)
-                    _fee_pct = float(load_decision_rules()["costs"]["commission_pct"]) / 100
-                    _record([ledger_trade(mt_ticker, _side, mt_shares, mt_price, mt_shares * mt_price * _fee_pct,
-                                          _t["cash"], "manual" if mt_from_cash else "manual (new deposit)")])
-                    st.toast(f"✅ {_side} {mt_shares:.4g} {mt_ticker} @ €{mt_price:,.2f} · cash €{_t['cash']:,.2f}")
-                    st.rerun()
+                                for _, r in idf.iterrows():
+                                    raw_t = str(r['ticker']).upper().strip()
+                                    final_t = next((target for target in stock_tickers if target == raw_t or target.startswith(f"{raw_t}.")), None)
+                                    if raw_t == "NOVO B": final_t = "NVO" if "NVO" in stock_tickers else None
+
+                                    if final_t:
+                                        mapped_success.append(final_t)
+                                        new_sh   = float(r[s_col])   if s_col and pd.notna(r[s_col])   else 0.0
+                                        new_cost = float(r[c_col])   if c_col and pd.notna(r[c_col])   else 0.0
+
+                                        if import_mode == "Merge (Accumulate)" and final_t in st.session_state.portfolio_shares:
+                                            old_sh = st.session_state.portfolio_shares[final_t]
+                                            old_c  = st.session_state.portfolio_cost.get(final_t, 0.0)
+                                            total_sh = old_sh + new_sh
+                                            if total_sh > 0:
+                                                avg_c = ((old_sh * old_c) + (new_sh * new_cost)) / total_sh
+                                                st.session_state.portfolio_shares[final_t] = total_sh
+                                                st.session_state.portfolio_cost[final_t]   = avg_c
+                                        else:
+                                            if new_sh   > 0: st.session_state.portfolio_shares[final_t] = new_sh
+                                            if new_cost > 0: st.session_state.portfolio_cost[final_t]   = new_cost
+                                    elif raw_t not in ("NAN", "") and raw_t:
+                                        missing_tickers.append(raw_t)
+
+                                if mapped_success:
+                                    valid = [t for t in mapped_success if t in stock_tickers]
+                                    if import_mode == "Overwrite":
+                                        # Replace entirely — no legacy tickers retained
+                                        st.session_state.portfolio_tickers = list(dict.fromkeys(valid))
+                                    else:
+                                        # Merge — keep existing tickers, append new ones
+                                        st.session_state.portfolio_tickers = list(dict.fromkeys(st.session_state.portfolio_tickers + valid))
+                                    st.session_state['_portfolio_version'] += 1
+                                    st.session_state['_import_toast'] = f"✅ Imported {len(valid)} assets!"
+                                    if missing_tickers:
+                                        st.session_state['_import_warnings'] = f"Skipped {len(missing_tickers)} unsupported: {', '.join(missing_tickers[:5])}"
+                                    st.rerun()
+                        except Exception as e:
+                            st.error(f"Import failed: {e}")
+
+        with tc2:
+            # --- Manual Transaction Tool ---
+            with st.popover("➕ Add Trade", width="stretch"):
+                st.caption("Register a manual transaction")
+                mt_type   = sticky_radio("Transaction Type", ["🟢 Buy", "🔴 Sell"], "🟢 Buy", "mt_type_radio", horizontal=True)
+
+                _avail_tickers = st.session_state.portfolio_tickers if "Sell" in mt_type else stock_tickers
+                if not _avail_tickers:
+                    st.info("No holdings to sell." if "Sell" in mt_type else "No price-backed assets available to add.")
+                    mt_ticker = None
                 else:
-                    st.error(f"Trade NOT recorded — {st.session_state.get('_save_error')}", icon="🛑")
+                    if "Sell" in mt_type:
+                        def _fmt(t):
+                            return f"{t} (Owned: {st.session_state.portfolio_shares.get(t, 0):.4g})"
+                        mt_ticker = sticky_choice("Select Asset", _avail_tickers, _avail_tickers[0], "mt_tick_sel", format_func=_fmt)
+                        _owned = st.session_state.portfolio_shares.get(mt_ticker, 0)
+                        st.caption(f"Available to sell: **{_owned:.4g}** shares")
+                    else:
+                        mt_ticker = sticky_choice("Select Asset", _avail_tickers, _avail_tickers[0], "mt_tick_sel", format_func=format_ticker)
+
+                mt_shares = sticky(st.number_input, "Shares", 1.0, "mt_shares_input", min_value=0.0001, step=1.0)
+
+                # Every trade has a cash leg: buys pay from cash (or a declared deposit), sells credit cash
+                _last_px = float(_now_px[_now_px["ticker"] == mt_ticker]["price_close"].iloc[-1]) \
+                    if mt_ticker and (_now_px["ticker"] == mt_ticker).any() else 1.0
+                mt_price = sticky(st.number_input, "Purchase Price" if "Buy" in mt_type else "Sale Price", _last_px,
+                                  f"mt_price_input_{mt_type}_{mt_ticker}", min_value=0.0001, step=0.01)
+                mt_from_cash = True
+                if "Buy" in mt_type:
+                    mt_from_cash = sticky(st.checkbox, "Pay from portfolio cash (untick only if new money was deposited for it)",
+                                          True, "mt_from_cash")
+                st.caption(f"Cash available: €{float(st.session_state.get('portfolio_cash_eur', 0.0) or 0.0):,.2f} · "
+                           f"commission {load_decision_rules()['costs']['commission_pct']:.2f}% applied.")
+
+                if st.button("Confirm Transaction", type="primary", use_container_width=True, disabled=(mt_ticker is None)):
+                    _side = "BUY" if "Buy" in mt_type else "SELL"
+                    _t = record_trade(st.session_state.portfolio_shares, st.session_state.portfolio_cost,
+                                      st.session_state.get("portfolio_cash_eur", 0.0), mt_ticker, _side, mt_shares,
+                                      mt_price, cost_pct=float(load_decision_rules()["costs"]["commission_pct"]) / 100,
+                                      fund_from_cash=mt_from_cash)
+                    if _t["error"]:
+                        st.warning(f"⚠️ {_t['error']}")
+                    elif _save(_t["shares"], _t["costs"], _t["cash"]):        # persist first, then change the session
+                        st.session_state.portfolio_shares = _t["shares"]
+                        st.session_state.portfolio_cost = _t["costs"]
+                        st.session_state.portfolio_cash_eur = _t["cash"]
+                        st.session_state.portfolio_tickers = [t for t in dict.fromkeys(
+                            st.session_state.portfolio_tickers + [mt_ticker]) if t in _t["shares"]]
+                        st.session_state['_portfolio_version'] += 1
+                        st.session_state.pop("_save_error", None)
+                        _fee_pct = float(load_decision_rules()["costs"]["commission_pct"]) / 100
+                        _record([ledger_trade(mt_ticker, _side, mt_shares, mt_price, mt_shares * mt_price * _fee_pct,
+                                              _t["cash"], "manual" if mt_from_cash else "manual (new deposit)")])
+                        st.toast(f"✅ {_side} {mt_shares:.4g} {mt_ticker} @ €{mt_price:,.2f} · cash €{_t['cash']:,.2f}")
+                        st.rerun()
+                    else:
+                        st.error(f"Trade NOT recorded — {st.session_state.get('_save_error')}", icon="🛑")
 
     p_tickers = st.session_state.portfolio_tickers
 
     if not p_tickers:
-        st.info("🎯 Add your first holding with “Add Trade” or Import above; the Decision of each line appears here.")
+        st.info("🎯 Add your first holding: select Holdings, then use “Add Trade” or Import; the Decision of each line appears here.")
     if p_tickers:
         latest_prices = (_now_px[_now_px["ticker"].isin(p_tickers)].sort_values("date")
                          .groupby("ticker")["price_close"].last().to_dict())
-        
+
         _cur_version = st.session_state.get('_portfolio_version', 0)
-        
+
         # Build Initial DataFrame for Editor (ONLY if tickers list changed, version bumped, or structure missing/stale)
         if 'last_portfolio_version' not in st.session_state or \
            st.session_state.last_portfolio_version != _cur_version or \
@@ -283,21 +337,21 @@ def render(ctx):
            "Region" not in st.session_state.portfolio_df.columns or \
            "Target (%)" not in st.session_state.portfolio_df.columns or \
            "Stop (orig)" not in st.session_state.portfolio_df.columns:
-            
+
             st.session_state.last_portfolio_tickers = p_tickers
             st.session_state.last_portfolio_version = _cur_version
             init_data = []
             for t in p_tickers:
                 # Enrich with m_df data for professional look
                 meta = m_df[m_df["Ticker"] == t].iloc[0] if not m_df[m_df["Ticker"] == t].empty else {}
-                
+
                 # The single recommendation (same as Scanner / Stock Analysis), not the technical Signal
                 _act = meta.get("Decision", "NOT ENOUGH DATA")
                 _act_emoji = "🔵 " if "RESEARCH" in _act else "🟢 " if "BUY" in _act else "🔴 " if "AVOID" in _act else "🟡 " if "HOLD" in _act else "⚪ "
-                
+
                 _sm = meta.get("Smart Money", "Neutral")
                 _sm_emoji = "🟢 " if "ACCUMULATION" in _sm else "🔴 " if "DISTRIBUTION" in _sm else "⚪ "
-                
+
                 init_data.append({
                     "Ticker": t,
                     "Company": meta.get("Company", t),
@@ -319,17 +373,18 @@ def render(ctx):
         # the grid is kept across reruns; its prices follow the loaded snapshot's latest close on every run
         _pdf = st.session_state.portfolio_df
         if "Ticker" in _pdf.columns and "Price (€)" in _pdf.columns:
-            _pdf["Price (€)"] = _pdf["Ticker"].map(latest_prices).fillna(_pdf["Price (€)"])
+            _pdf["Price (€)"] = _pdf["Ticker"].map(latest_prices)
         if "Ticker" in _pdf.columns and "Action" in _pdf.columns and "Ticker" in m_df.columns:
             _cur = m_df.drop_duplicates("Ticker").set_index("Ticker")["Decision"].to_dict()
             _emoji = lambda d: ("🔵 " if "RESEARCH" in d else "🟢 " if "BUY" in d else "🔴 " if "AVOID" in d    # noqa: E731
                                 else "🟡 " if "HOLD" in d else "⚪ ")
+            _pdf["Current Decision"] = [_cur.get(t, "NOT ENOUGH DATA") for t in _pdf["Ticker"]]
             _pdf["Action"] = [_emoji(_cur.get(t, "NOT ENOUGH DATA")) + holding_action(_cur.get(t, "NOT ENOUGH DATA"), held=True)
                               for t in _pdf["Ticker"]]
 
         # 2. BULK DATA EDITOR
-        render_header("layers", "Capital Allocation Grid", level="#####")
-        
+
+
         # ── FEAT 1: Inline Position-Level PnL Breakdown ──
         disp_df = st.session_state.portfolio_df.copy()
         disp_df["Total Cost (€)"] = disp_df["Cost Basis (€)"] * disp_df["Shares"]
@@ -340,7 +395,7 @@ def render(ctx):
         if _no_px:
             st.warning(f"No price in this snapshot for {', '.join(map(str, _no_px))}: their value, weight and P&L are unknown and "
                        f"left out of the totals below, so the NAV shown is incomplete.", icon="⚠️")
-        
+
         _cash_eur = float(st.session_state.get("portfolio_cash_eur", 0.0) or 0.0)
         _t_val = disp_df["Market Value"].sum()
         _t_cost = disp_df["Total Cost (€)"].sum()
@@ -349,46 +404,53 @@ def render(ctx):
         disp_df["Contribution (%)"] = (disp_df["Unrealized PnL (€)"] / _t_cost * 100).fillna(0) if _t_cost > 0 else 0
         disp_df["Drift (pp)"] = disp_df["Weight (%)"] - disp_df["Target (%)"]   # NaN where no target is set
 
-        with st.form("portfolio_builder_main_form"):
-            # KEY FIX: The data_editor should be the ONLY way to change weights for the current tickers
-            edited_df = st.data_editor(
-                disp_df,
-                column_config={
-                    "Ticker": st.column_config.TextColumn("Ticker", disabled=True),
-                    "Company": st.column_config.TextColumn("Company", disabled=True),
-                    "Action": st.column_config.TextColumn("Decision", disabled=True,
-                                                      help="Same Decision as the Scanner and the Stock Analysis Decision Summary"),
-                    "Region": st.column_config.TextColumn("Region", disabled=True),
-                    "Z-Score": st.column_config.NumberColumn("Z-Score", format="%.2f", disabled=True),
-                    "RSI (14)": st.column_config.NumberColumn("RSI", format="%.1f", disabled=True),
-                    "Smart Money": st.column_config.TextColumn("Smart Money", disabled=True),
-                    "Price (€)": st.column_config.NumberColumn("Market Price", format="€%.2f", disabled=True),
-                    "Shares": st.column_config.NumberColumn("Shares", min_value=0.0, step=0.01, format="%.4g"),
-                    "Cost Basis (€)": st.column_config.NumberColumn("Unit Cost", min_value=0.0, step=0.01, format="€%.2f"),
-                    "Stop (orig)": st.column_config.NumberColumn("Original stop", format="€%.2f", disabled=True,
-                                                                 help="Thesis stop recorded when the position was opened; never moved by a later recomputation."),
-                    "Total Cost (€)": st.column_config.NumberColumn("Total Cost", format="€%.2f", disabled=True),
-                    "Market Value": st.column_config.NumberColumn("Market Value", format="€%.2f", disabled=True),
-                    "Unrealized PnL (€)": st.column_config.NumberColumn("PnL (€)", format="€%.2f", disabled=True),
-                    "Unrealized PnL (%)": st.column_config.NumberColumn("PnL (%)", format="%.2f%%", disabled=True),
-                    "Contribution (%)": st.column_config.NumberColumn("Contribution", format="%.2f%%", disabled=True),
-                    "Weight (%)": st.column_config.NumberColumn("Weight", format="%.2f%%", disabled=True),
-                    "Target (%)": st.column_config.NumberColumn("Target", min_value=0.0, max_value=100.0, step=0.5,
-                                                                format="%.1f%%",
-                                                                help="Your target weight (% of NAV). Leave empty for no target."),
-                    "Drift (pp)": st.column_config.NumberColumn("Drift", format="%+.1f pp", disabled=True,
-                                                                help="Weight minus target, percentage points of NAV.")
-                },
-                column_order=["Ticker", "Company", "Action", "Shares", "Cost Basis (€)", "Price (€)", "Stop (orig)", "Total Cost (€)", "Market Value", "Unrealized PnL (€)", "Unrealized PnL (%)", "Z-Score", "RSI (14)", "Smart Money", "Contribution (%)", "Weight (%)", "Target (%)", "Drift (pp)"],
-                hide_index=True,
-                width="stretch",
-                key=f"p_portfolio_editor_v{_cur_version}"
-            )
-            
-            cash_in = st.number_input("Cash (€) — part of NAV; weights and caps are measured on equity + cash",
-                                      min_value=0.0, value=_cash_eur, step=100.0, key=f"p_cash_v{_cur_version}")
-            # PASSIVE SYNC: Use a button to lock in changes and update Database
-            recompute = st.form_submit_button("Save & Calculate", width="stretch", type="primary")
+        if _section == "Holdings":
+            render_header("layers", "Capital Allocation Grid", level="#####")
+            st.caption("Updates your saved portfolio. No broker order is sent.")
+        recompute = False
+        edited_df = st.session_state.portfolio_df.copy()
+        if _section == "Holdings":
+            with st.form("portfolio_builder_main_form"):
+                # KEY FIX: The data_editor should be the ONLY way to change weights for the current tickers
+                edited_df = st.data_editor(
+                    disp_df,
+                    column_config={
+                        "Ticker": st.column_config.TextColumn("Ticker", disabled=True),
+                        "Company": st.column_config.TextColumn("Company", disabled=True),
+                        "Current Decision": st.column_config.TextColumn("Current Decision", disabled=True),
+                        "Action": st.column_config.TextColumn("For your holding", disabled=True,
+                                                          help="Meaning of the current Decision for an existing holding"),
+                        "Region": st.column_config.TextColumn("Region", disabled=True),
+                        "Z-Score": st.column_config.NumberColumn("Z-Score", format="%.2f", disabled=True),
+                        "RSI (14)": st.column_config.NumberColumn("RSI", format="%.1f", disabled=True),
+                        "Smart Money": st.column_config.TextColumn("Smart Money", disabled=True),
+                        "Price (€)": st.column_config.NumberColumn("Market Price", format="€%.2f", disabled=True),
+                        "Shares": st.column_config.NumberColumn("Shares", min_value=0.0, step=0.01, format="%.4g"),
+                        "Cost Basis (€)": st.column_config.NumberColumn("Unit Cost", min_value=0.0, step=0.01, format="€%.2f"),
+                        "Stop (orig)": st.column_config.NumberColumn("Original stop", format="€%.2f", disabled=True,
+                                                                     help="Thesis stop recorded when the position was opened; never moved by a later recomputation."),
+                        "Total Cost (€)": st.column_config.NumberColumn("Total Cost", format="€%.2f", disabled=True),
+                        "Market Value": st.column_config.NumberColumn("Market Value", format="€%.2f", disabled=True),
+                        "Unrealized PnL (€)": st.column_config.NumberColumn("PnL (€)", format="€%.2f", disabled=True),
+                        "Unrealized PnL (%)": st.column_config.NumberColumn("PnL (%)", format="%.2f%%", disabled=True),
+                        "Contribution (%)": st.column_config.NumberColumn("Contribution", format="%.2f%%", disabled=True),
+                        "Weight (%)": st.column_config.NumberColumn("Weight", format="%.2f%%", disabled=True),
+                        "Target (%)": st.column_config.NumberColumn("Target", min_value=0.0, max_value=100.0, step=0.5,
+                                                                    format="%.1f%%",
+                                                                    help="Your target weight (% of NAV). Leave empty for no target."),
+                        "Drift (pp)": st.column_config.NumberColumn("Drift", format="%+.1f pp", disabled=True,
+                                                                    help="Weight minus target, percentage points of NAV.")
+                    },
+                    column_order=["Ticker", "Company", "Current Decision", "Action", "Shares", "Cost Basis (€)", "Price (€)", "Stop (orig)", "Total Cost (€)", "Market Value", "Unrealized PnL (€)", "Unrealized PnL (%)", "Z-Score", "RSI (14)", "Smart Money", "Contribution (%)", "Weight (%)", "Target (%)", "Drift (pp)"],
+                    hide_index=True,
+                    width="stretch",
+                    key=f"p_portfolio_editor_v{_cur_version}"
+                )
+
+                cash_in = sticky(st.number_input, "Cash (€) — part of NAV; weights and caps are measured on equity + cash",
+                                 _cash_eur, f"p_cash_v{_cur_version}", min_value=0.0, step=100.0)
+                # PASSIVE SYNC: Use a button to lock in changes and update Database
+                recompute = st.form_submit_button("Save & Calculate", width="stretch", type="primary")
 
         if recompute:
             shares_dict = edited_df.set_index("Ticker")["Shares"].to_dict()
@@ -415,15 +477,18 @@ def render(ctx):
         else:
             edited_df = st.session_state.portfolio_df.copy()
 
+        _review_spec = {"snapshot": ctx.get("data_version"),
+                        "holdings": sorted(st.session_state.get("portfolio_shares", {}).items()),
+                        "costs": sorted(st.session_state.get("portfolio_cost", {}).items()), "cash": _cash_eur}
         # ── CIO BOARD MEETING (AI Portfolio Review) ──────────────────────────────
         _pf_cohere_key = (
             os.environ.get("COHERE_API_KEY", "")
             or st.session_state.get("cohere_api_key", "")
         )
-        if _pf_cohere_key:
+        if _section == "AI review" and _pf_cohere_key:
             _pf_lang_col, _pf_btn_col = st.columns([1, 4])
             with _pf_lang_col:
-                _pf_language = st.selectbox("Language", ["English", "Vietnamese"], index=0, key="pf_review_lang", label_visibility="collapsed")
+                _pf_language = sticky_choice("Language", ["English", "Vietnamese"], "English", "pf_review_lang", label_visibility="collapsed")
             with _pf_btn_col:
                 _run_pf_review = st.button("🤖 Request CIO Portfolio Review", type="secondary", use_container_width=True, key="run_portfolio_review_btn")
 
@@ -588,6 +653,8 @@ def render(ctx):
                     )
                 st.session_state["portfolio_cio_review"] = {
                     "report": _pf_report,
+                    "spec": _review_spec,
+                    "at": pd.Timestamp.now(tz="UTC"),
                     "prompt": _pf_prompt,
                     "payload": _pf_payload,
                     "macro_ctx": _pf_macro_ctx,
@@ -599,10 +666,23 @@ def render(ctx):
             if _stored_review and _stored_review.get("report"):
                 st.markdown("---")
                 render_header("cpu", "CIO Board Meeting — Portfolio Review", level="#####")
+                if _stored_review.get("spec") != _review_spec:
+                    st.warning("Stale AI review: holdings, cash, costs or snapshot differ (or its original spec is unknown). Request a new review to refresh.")
+                st.caption(f"Saved AI review · created {_stored_review.get('at', 'unknown')} · snapshot {(_stored_review.get('spec') or {}).get('snapshot', 'unknown')}")
                 st.markdown(_stored_review["report"])
                 with st.expander("🔍 Debug: Raw Portfolio Review Prompt"):
                     st.code(_stored_review.get("prompt", ""), language="markdown")
 
+
+        if _section in ("Overview", "Holdings", "AI review"):
+            if _section == "Overview":
+                st.dataframe(disp_df[["Ticker", "Current Decision", "Action", "Market Value", "Weight (%)"]],
+                             hide_index=True, width="stretch",
+                             column_config={"Action": "For your holding"})
+                st.caption("Select Holdings to edit, or a review section for analytics. Values use the loaded snapshot.")
+            elif _section == "AI review" and not _pf_cohere_key:
+                st.info("AI review is unavailable: no API key configured.")
+            return
 
         edited_df["Market Value"] = edited_df["Price (€)"] * edited_df["Shares"]
         total_p_val = edited_df["Market Value"].sum()
@@ -629,7 +709,7 @@ def render(ctx):
             weights = (edited_df["Market Value"] / nav_eur).values
             current_tickers = edited_df["Ticker"].tolist()
             n_assets = len(current_tickers)
-    
+
             # ── 4. PERFORMANCE ENGINE (Weighted) ──
             # Use filtered 'prices' to follow the global date filter
             # Dates on which every holding has a return (complete case, checked above) — no zero-filling
@@ -670,408 +750,418 @@ def render(ctx):
                     return {t: (float(v) if pd.notna(v) else None) for t, v in m_df.set_index("Ticker")[name].items()}
                 return rebalance_limits(current_tickers, nav_now, _col("_adv_eur"), _col("_stop_distance_pct"),
                                         load_decision_rules())
-            
+
             # ── Pre-compute matrices for Optimizer & Analytics ──
             cov_matrix = ret_matrix.cov() * 252
             # Expected returns for the optimisers: trailing means shrunk 50% toward their average.
             # Raw trailing means make Max-Sharpe / Max-Return pile into last year's winners.
             hist_rets  = shrink_expected_returns(ret_matrix.mean() * 252, intensity=0.5)
-    
-            # Show Total Summary
-            total_cost_basis = (edited_df["Cost Basis (€)"] * edited_df["Shares"]).sum()
-            total_pnl = total_p_val - total_cost_basis
-            pnl_pct = (total_pnl / total_cost_basis * 100) if total_cost_basis > 0 else 0
-    
-            port_daily = (ret_matrix * weights).sum(axis=1)
-            cum_returns = (1 + port_daily).cumprod()
-    
-            # Risk Metrics
-            risk_free = 0.04 / 252
-            excess_returns = port_daily - risk_free
-            sharpe = (excess_returns.mean() / excess_returns.std()) * np.sqrt(252) if excess_returns.std() > 0 else 0
-            running_max = cum_returns.cummax()
-            drawdown = (cum_returns / running_max) - 1
-            max_dd = drawdown.min() * 100
-            vol = port_daily.std() * np.sqrt(252) * 100
-            confidence_level = 0.05
-            var_95 = np.percentile(port_daily, confidence_level * 100) * 100
-            cvar_95 = port_daily[port_daily <= np.percentile(port_daily, confidence_level * 100)].mean() * 100
-    
-            # ═══════════════════════════════════════════════════════════════════
-            # LAYER 1 · PORTFOLIO HEALTH DASHBOARD
-            # ═══════════════════════════════════════════════════════════════════
-            render_header("activity", "Portfolio Health Dashboard")
-            l1_left, l1_right = st.columns([1, 2])
-            with l1_left:
-                st.metric("NAV (holdings + cash)", f"€{nav_eur:,.2f}",
-                          delta=f"holdings €{total_p_val:,.2f} · cash €{_cash_eur:,.2f}", delta_color="off")
-                st.metric("Total Cost Basis",   f"€{total_cost_basis:,.2f}")
-                st.metric("Overall PnL",         f"€{total_pnl:,.2f}", delta=f"{pnl_pct:.2f}%")
-                st.markdown("<br>", unsafe_allow_html=True)
-    
-                # Risk tiles stacked vertically
-                render_metric_tile("Weighted Return", f"{(cum_returns.iloc[-1]-1)*100:.1f}%", delta=(cum_returns.iloc[-1]-1)*100)
-                st.caption(f"Timeframe: {selected_horizon}")
-                if sharpe > 2.0: s_label, s_color = "💎 ELITE", "#00ffcc"
-                elif sharpe > 1.5: s_label, s_color = "🟢 STRONG", "#2ecc71"
-                elif sharpe > 1.0: s_label, s_color = "🟡 OK", "#f1c40f"
-                else: s_label, s_color = "🔴 POOR", "#e74c3c"
-                render_metric_tile("Sharpe Ratio", f"{sharpe:.2f} · {s_label}", help_text="< 1.0 Poor | 1.0–1.5 Acceptable | 1.5–2.0 Strong | > 2.0 Elite")
-                render_metric_tile("Max Drawdown",  f"{max_dd:.1f}%")
-                render_metric_tile("Annual Vol",    f"{vol:.1f}%")
-                render_metric_tile("VaR 95% (1-day)",  f"{var_95:.2f}%")
-                render_metric_tile("CVaR 95% (1-day)", f"{cvar_95:.2f}%")
-    
-            with l1_right:
-                # ── Benchmark Growth Simulation ──────────────────────────────
-                render_header("chart", "Growth Simulation vs Benchmark", level="#####")
-                bench_options = {
-                    "S&P 500 (SPY)": "SPY",
-                    "Nasdaq 100 (QQQ)": "QQQ",
-                    "DAX 40 (^GDAXI)": "^GDAXI",
-                    "MSCI World (IWDA.AS)": "IWDA.AS"
-                }
-                sel_bench_label = st.selectbox("Select Performance Benchmark", options=list(bench_options.keys()), index=0, key="bench_l1")
-                sel_bench_ticker = bench_options[sel_bench_label]
-    
-                # Both portfolio and benchmark start from the same initial capital (total cost basis).
-                # This gives a fair apples-to-apples comparison of % growth from the same starting point.
-                initial_investment = total_cost_basis if total_cost_basis > 0 else total_p_val
-                
-                backtest_df = pd.DataFrame({'date': cum_returns.index, 'cum_return': cum_returns.values})
-                backtest_df["portfolio_value"] = backtest_df["cum_return"] * initial_investment
-    
-                fig_bt = go.Figure()
-                fig_bt.add_trace(go.Scatter(
-                    x=backtest_df["date"], y=backtest_df["portfolio_value"],
-                    name="Your Portfolio", line=dict(color="#00ffcc", width=3)
-                ))
-    
-                bench_prices = prices_full[
-                    (prices_full["ticker"] == sel_bench_ticker) &
-                    (prices_full["date"] >= t_start) &
-                    (prices_full["date"] <= t_end)
-                ].sort_values("date")
-                if not bench_prices.empty:
-                    bench_prices = bench_prices[bench_prices["date"].isin(cum_returns.index)]
-                    if not bench_prices.empty and bench_prices["daily_return_pct"].notna().any():
-                        bench_daily = bench_prices["daily_return_pct"].fillna(0) / 100
-                        # same anchor as the portfolio line (cum_returns keeps its first return): dividing by the
-                        # first value dropped the benchmark's first day (audit F18)
-                        bench_cum   = (1 + bench_daily).cumprod()
-                        bench_prices = bench_prices.copy()
-                        bench_prices["bench_value"] = bench_cum.values * initial_investment
-                        fig_bt.add_trace(go.Scatter(
-                            x=bench_prices["date"], y=bench_prices["bench_value"],
-                            name=sel_bench_label, line=dict(color="#f1c40f", width=2, dash="dot")
-                        ))
-                fig_bt.update_layout(
-                    template="plotly_dark", height=500,
-                    yaxis_title="Value (€)", margin=dict(t=10, l=10, r=10, b=10)
-                )
-                st.plotly_chart(fig_bt, use_container_width=True)
-    
-            st.markdown("<br>", unsafe_allow_html=True)
 
-            # ── FEAT 2: Historical Stress Test (Beta-weighted Drawdown) ──
-            # Calculate Portfolio Beta against SPY
-            bench_spy = prices_full[(prices_full["ticker"] == "SPY") & (prices_full["date"].isin(port_daily.index))].sort_values("date")
-            bench_spy_daily = bench_spy.set_index("date")["daily_return_pct"].fillna(0) / 100
-            align_df = pd.concat([port_daily, bench_spy_daily], axis=1).dropna()
-            port_beta = align_df.iloc[:, 0].cov(align_df.iloc[:, 1]) / align_df.iloc[:, 1].var() if (len(align_df) > 30 and align_df.iloc[:, 1].var() > 0) else 1.0
+            if _section == "Health":
+                # Show Total Summary
+                total_cost_basis = (edited_df["Cost Basis (€)"] * edited_df["Shares"]).sum()
+                total_pnl = total_p_val - total_cost_basis
+                pnl_pct = (total_pnl / total_cost_basis * 100) if total_cost_basis > 0 else 0
 
-            _render_stress_and_ledger(ctx, current_tickers, weights, nav_eur, _pol_meta, port_beta,
-                                      ret_matrix, _stances, _sizing_limits, _portfolio_policy, latest_prices)
-            st.markdown("---")
-    
-            # ═══════════════════════════════════════════════════════════════════
-            # LAYER 2 · STRUCTURAL DIAGNOSIS
-            # ═══════════════════════════════════════════════════════════════════
-            render_header("globe", "Structural Diagnosis — Exposure & Correlation")
-            l2c1, l2c2 = st.columns([1, 1])
+                port_daily = (ret_matrix * weights).sum(axis=1)
+                cum_returns = (1 + port_daily).cumprod()
 
-            with l2c1:
-                render_header("globe", "Portfolio Exposure — Region × Sector", level="#####")
-                # Sunburst: inner ring = Region, outer ring = Sector
-                fig_sun = px.sunburst(
-                    edited_df,
-                    path=["Region", "Sector"],
-                    values="Market Value",
-                    color="Sector",
-                    color_discrete_sequence=px.colors.qualitative.Pastel,
-                )
-                fig_sun.update_traces(
-                    textinfo="label+percent parent",
-                    insidetextorientation="radial",
-                    hovertemplate="<b>%{label}</b><br>Value: €%{value:,.0f}<br>Share: %{percentParent:.1%}<extra></extra>",
-                )
-                fig_sun.update_layout(
-                    template="plotly_dark",
-                    height=360,
-                    margin=dict(l=0, r=0, t=10, b=0),
-                    paper_bgcolor="rgba(0,0,0,0)",
-                    plot_bgcolor="rgba(0,0,0,0)",
-                )
-                st.plotly_chart(fig_sun, use_container_width=True)
-                st.caption("Inner ring = Region · Outer ring = Sector")
+                # Risk Metrics
+                risk_free = 0.04 / 252
+                excess_returns = port_daily - risk_free
+                sharpe = (excess_returns.mean() / excess_returns.std()) * np.sqrt(252) if excess_returns.std() > 0 else 0
+                running_max = cum_returns.cummax()
+                drawdown = (cum_returns / running_max) - 1
+                max_dd = drawdown.min() * 100
+                vol = port_daily.std() * np.sqrt(252) * 100
+                confidence_level = 0.05
+                var_95 = np.percentile(port_daily, confidence_level * 100) * 100
+                cvar_95 = port_daily[port_daily <= np.percentile(port_daily, confidence_level * 100)].mean() * 100
 
-            with l2c2:
-                render_header("activity", "Asset Correlation Matrix", level="#####")
-                corr_matrix = ret_matrix.corr()
-                mean_corr = (corr_matrix.values.sum() - n_assets) / (n_assets**2 - n_assets) if n_assets > 1 else 0
-                if mean_corr > 0.45:
-                    st.warning(f"⚠️ High Correlation ({mean_corr:.2f}) — risk concentration!")
-                fig_corr = px.imshow(
-                    corr_matrix, text_auto=".2f",
-                    color_continuous_scale="RdBu_r", zmin=-1, zmax=1,
-                    template="plotly_dark", aspect="auto"
-                )
-                fig_corr.update_layout(height=360, margin=dict(l=0, r=0, t=10, b=0))
-                st.plotly_chart(fig_corr, use_container_width=True)
+            if _section == "Health":
+                # ═══════════════════════════════════════════════════════════════════
+                # LAYER 1 · PORTFOLIO HEALTH DASHBOARD
+                # ═══════════════════════════════════════════════════════════════════
+                render_header("activity", "Portfolio Health Dashboard")
+                l1_left, l1_right = st.columns([1, 2])
+                with l1_left:
+                    st.metric("NAV (holdings + cash)", f"€{nav_eur:,.2f}",
+                              delta=f"holdings €{total_p_val:,.2f} · cash €{_cash_eur:,.2f}", delta_color="off")
+                    _cost_known = bool(np.isfinite(edited_df["Cost Basis (€)"]).all())
+                    st.metric("Total Cost Basis", format_value(total_cost_basis if _cost_known else None, ",.2f", prefix="€"))
+                    st.metric("Overall PnL", format_value(total_pnl if _cost_known else None, ",.2f", prefix="€"),
+                              delta=format_value(pnl_pct if _cost_known and total_cost_basis > 0 else None, ".2f", suffix="%"))
+                    st.markdown("<br>", unsafe_allow_html=True)
 
-            _render_factor_tilts(ctx, dict(zip(current_tickers, weights)))
-            st.markdown("<br>", unsafe_allow_html=True)
+                    # Risk tiles stacked vertically
+                    render_metric_tile("Weighted Return", f"{(cum_returns.iloc[-1]-1)*100:.1f}%", delta=(cum_returns.iloc[-1]-1)*100)
+                    st.caption(f"Timeframe: {selected_horizon}")
+                    if sharpe > 2.0: s_label, s_color = "💎 ELITE", "#00ffcc"
+                    elif sharpe > 1.5: s_label, s_color = "🟢 STRONG", "#2ecc71"
+                    elif sharpe > 1.0: s_label, s_color = "🟡 OK", "#f1c40f"
+                    else: s_label, s_color = "🔴 POOR", "#e74c3c"
+                    render_metric_tile("Sharpe Ratio", f"{sharpe:.2f} · {s_label}", help_text="< 1.0 Poor | 1.0–1.5 Acceptable | 1.5–2.0 Strong | > 2.0 Elite")
+                    render_metric_tile("Max Drawdown",  f"{max_dd:.1f}%")
+                    render_metric_tile("Annual Vol",    f"{vol:.1f}%")
+                    render_metric_tile("VaR 95% (1-day)",  f"{var_95:.2f}%")
+                    render_metric_tile("CVaR 95% (1-day)", f"{cvar_95:.2f}%")
 
+                with l1_right:
+                    # ── Benchmark Growth Simulation ──────────────────────────────
+                    render_header("chart", "Growth Simulation vs Benchmark", level="#####")
+                    bench_options = {
+                        "S&P 500 (SPY)": "SPY",
+                        "Nasdaq 100 (QQQ)": "QQQ",
+                        "DAX 40 (^GDAXI)": "^GDAXI",
+                        "MSCI World (IWDA.AS)": "IWDA.AS"
+                    }
+                    sel_bench_label = sticky_choice("Select Performance Benchmark", list(bench_options), next(iter(bench_options)), "bench_l1")
+                    sel_bench_ticker = bench_options[sel_bench_label]
 
-            # ═══════════════════════════════════════════════════════════════════
-            # LAYER 2.5 · DIVIDEND & INCOME TRACKER
-            # ═══════════════════════════════════════════════════════════════════
-            render_header("trending-up", "Dividend & Income Tracker")
+                    # Both portfolio and benchmark start from the same initial capital (total cost basis).
+                    # This gives a fair apples-to-apples comparison of % growth from the same starting point.
+                    initial_investment = total_cost_basis if total_cost_basis > 0 else total_p_val
 
-            
-            # Build dividend data per portfolio ticker
-            SPECIAL_DIV_THRESHOLD = 8.0  # Yield% > 8 → NOT verified as recurring (a yield alone cannot identify a special dividend)
-            div_rows = []
-            for t in current_tickers:
-                meta_row = m_df[m_df["Ticker"] == t]
-                if meta_row.empty:
-                    continue
-                meta = meta_row.iloc[0]
+                    backtest_df = pd.DataFrame({'date': cum_returns.index, 'cum_return': cum_returns.values})
+                    backtest_df["portfolio_value"] = backtest_df["cum_return"] * initial_investment
 
-                cur_price = latest_prices.get(t, 0.0)
-                yield_pct = float(meta.get("Yield (%)", 0) or 0)
-                shares    = st.session_state.portfolio_shares.get(t, 0.0)
-                cost      = st.session_state.portfolio_cost.get(t, 0.0)
+                    fig_bt = go.Figure()
+                    fig_bt.add_trace(go.Scatter(
+                        x=backtest_df["date"], y=backtest_df["portfolio_value"],
+                        name="Your Portfolio", line=dict(color="#00ffcc", width=3)
+                    ))
 
-                if yield_pct <= 0 or cur_price <= 0:
-                    continue
-
-                dps         = cur_price * yield_pct / 100
-                proj_income = dps * shares
-                yoc         = (dps / cost * 100) if cost > 0 else 0
-                is_special  = yield_pct > SPECIAL_DIV_THRESHOLD
-
-                div_rows.append({
-                    "Ticker":           t,
-                    "Company":          meta.get("Company", t),
-                    "Sector":           meta.get("Sector", "N/A"),
-                    "Shares":           shares,
-                    "Price (€)":        cur_price,
-                    "DPS (€)":          round(dps, 4),
-                    "Cost Basis (€)":   cost,
-                    "Cur. Yield (%)":   round(yield_pct, 2),
-                    "YOC (%)":          round(yoc, 2),
-                    "Proj. Income (€)": round(proj_income, 2),
-                    "Special":          is_special,
-                    "Type":             "⚠️ Unverified" if is_special else "✅ Regular",
-                })
-
-            div_df = pd.DataFrame(div_rows).sort_values("Cur. Yield (%)", ascending=False) if div_rows else pd.DataFrame()
-            has_special = (not div_df.empty) and div_df["Special"].any()
-
-            # Fetch ex-dividend / payout dates — reads from DB (Cloud-safe, no Yahoo IP block)
-            if not div_df.empty:
-                cal_tickers = tuple(sorted(div_df["Ticker"].tolist()))
-                cal_data = fetch_dividend_calendar(cal_tickers, companies_df=companies)
-                div_df["Ex-Date"]  = div_df["Ticker"].map(lambda t: cal_data.get(t, {}).get("ex_date", "—"))
-                div_df["Pay Date"] = div_df["Ticker"].map(lambda t: cal_data.get(t, {}).get("pay_date", "—"))
-            
-            if div_df.empty:
-                st.info("ℹ️ No dividend-paying assets found. Add assets like UNH, UPS, JNJ, or MSFT to track income.")
-            else:
-                # KPI tiles use ONLY regular dividends to avoid inflating projections
-                # All projected dividends count (audit A13); high-yield lines are reported as UNVERIFIED, not dropped
-                reg_df = div_df
-                total_annual_income  = reg_df["Proj. Income (€)"].sum()
-                unverified_income    = div_df.loc[div_df["Special"], "Proj. Income (€)"].sum()
-                total_cost_basis_div = (reg_df["Cost Basis (€)"] * reg_df["Shares"]).sum()
-                portfolio_yoc        = (total_annual_income / total_cost_basis_div * 100) if total_cost_basis_div > 0 else 0
-                monthly_income       = total_annual_income / 12
-                div_pct_of_portfolio = (total_annual_income / nav_eur * 100) if nav_eur > 0 else 0
-
-                if has_special:
-                    special_tickers = ", ".join(div_df[div_df["Special"]]["Ticker"].tolist())
-                    st.warning(
-                        f"⚠️ **Unverified dividends** · {special_tickers} — trailing yield above 8%. A high yield alone does not "
-                        f"tell a special payout from a high regular dividend, so these lines ARE included below; "
-                        f"€{unverified_income:,.0f} of the projected annual income is unverified. Check the dividend history "
-                        f"before relying on it. Monthly income = annual ÷ 12 (an average, not a payment calendar). "
-                        f"Data source: yfinance trailing 12-month yield."
+                    bench_prices = prices_full[
+                        (prices_full["ticker"] == sel_bench_ticker) &
+                        (prices_full["date"] >= t_start) &
+                        (prices_full["date"] <= t_end)
+                    ].sort_values("date")
+                    if not bench_prices.empty:
+                        bench_prices = bench_prices[bench_prices["date"].isin(cum_returns.index)]
+                        if not bench_prices.empty and bench_prices["daily_return_pct"].notna().any():
+                            bench_daily = bench_prices["daily_return_pct"].fillna(0) / 100
+                            # same anchor as the portfolio line (cum_returns keeps its first return): dividing by the
+                            # first value dropped the benchmark's first day (audit F18)
+                            bench_cum   = (1 + bench_daily).cumprod()
+                            bench_prices = bench_prices.copy()
+                            bench_prices["bench_value"] = bench_cum.values * initial_investment
+                            fig_bt.add_trace(go.Scatter(
+                                x=bench_prices["date"], y=bench_prices["bench_value"],
+                                name=sel_bench_label, line=dict(color="#f1c40f", width=2, dash="dot")
+                            ))
+                    fig_bt.update_layout(
+                        template="plotly_dark", height=500,
+                        yaxis_title="Value (€)", margin=dict(t=10, l=10, r=10, b=10)
                     )
-                
-                # ── Summary KPI Tiles ──
-                d1, d2, d3, d4, d5 = st.columns(5)
-                with d1:
-                    render_metric_tile("Proj. Annual Income", f"€{total_annual_income:,.2f}",
-                                       help_text="Sum of (DPS × Shares) for regular dividend payers only")
-                with d2:
-                    render_metric_tile("Monthly Income", f"€{monthly_income:,.2f}",
-                                       help_text="Annual income ÷ 12")
-                with d3:
-                    render_metric_tile("Portfolio YOC", f"{portfolio_yoc:.2f}%",
-                                       help_text="Total projected income ÷ Total cost basis of dividend payers")
-                with d4:
-                    render_metric_tile("Dividend Payers", f"{len(div_df)} / {n_assets}",
-                                       help_text="Stocks with a positive forward dividend yield")
-                with d5:
-                    # Show upcoming payout date if available
-                    today_dt = pd.Timestamp.today().normalize()
-                    upcoming_list = []
-                    for _, row in div_df.iterrows():
-                        if row.get("Pay Date", "—") != "—" and not row["Special"]:
-                            try:
-                                p_date = pd.to_datetime(row["Pay Date"])
-                                if p_date >= today_dt:
-                                    upcoming_list.append((p_date, f"{row['Ticker']}: {row['Pay Date']}"))
-                            except Exception:
-                                pass
-                    upcoming_list.sort(key=lambda x: x[0])
-                    next_pay_str = upcoming_list[0][1] if upcoming_list else "—"
-                    
-                    render_metric_tile("Next Pay Date", next_pay_str,
-                                       help_text="Nearest upcoming dividend payout date among regular payers (future dates only)")
-                
+                    st.plotly_chart(fig_bt, use_container_width=True)
+
                 st.markdown("<br>", unsafe_allow_html=True)
 
-                
-                # ── Table (Full Width) ──
-                render_header("list", "Income Breakdown", level="#####")
-                display_div = div_df[[
-                    "Ticker", "Type", "Shares", "DPS (€)", "Cur. Yield (%)", "YOC (%)", "Proj. Income (€)", "Ex-Date", "Pay Date"
-                ]].copy()
-                st.dataframe(
-                    display_div,
-                    column_config={
-                        "Ticker":           st.column_config.TextColumn("Ticker"),
-                        "Type":             st.column_config.TextColumn("Type",
-                                                help="Regular = recurring dividend · Special? = likely one-time, excluded from KPIs"),
-                        "Shares":           st.column_config.NumberColumn("Shares", format="%.2f"),
-                        "DPS (€)":          st.column_config.NumberColumn("DPS", format="€%.4f"),
-                        "Cur. Yield (%)":   st.column_config.NumberColumn("Cur. Yield", format="%.2f%%"),
-                        "YOC (%)":          st.column_config.NumberColumn("YOC", format="%.2f%%",
-                                                help="Yield on Cost = DPS ÷ Your Avg. Cost Basis"),
-                        "Proj. Income (€)": st.column_config.NumberColumn("Annual Income", format="€%.2f"),
-                        "Ex-Date":          st.column_config.TextColumn("Ex-Div Date",
-                                                help="Last ex-dividend date (from yfinance, refreshed every 24h)"),
-                        "Pay Date":         st.column_config.TextColumn("Pay Date",
-                                                help="Last dividend payout date (from yfinance, refreshed every 24h)"),
-                    },
-                    hide_index=True,
-                    width="stretch",
-                    height=min(320, 40 + len(div_df) * 35),
-                )
-                st.caption("ℹ️ YOC = DPS ÷ Avg. cost basis · Dates fetched on-demand from yfinance, cached 24h · KPI tiles exclude ⚠️ Special?")
-            
-            st.markdown("---")
-            
+            if _section == "Risk & income":
+                port_daily = (ret_matrix * weights).sum(axis=1)
+                # ── FEAT 2: Historical Stress Test (Beta-weighted Drawdown) ──
+                # Calculate Portfolio Beta against SPY
+                bench_spy = prices_full[(prices_full["ticker"] == "SPY") & (prices_full["date"].isin(port_daily.index))].sort_values("date")
+                bench_spy_daily = bench_spy.set_index("date")["daily_return_pct"].fillna(0) / 100
+                align_df = pd.concat([port_daily, bench_spy_daily], axis=1).dropna()
+                port_beta = align_df.iloc[:, 0].cov(align_df.iloc[:, 1]) / align_df.iloc[:, 1].var() if (len(align_df) > 30 and align_df.iloc[:, 1].var() > 0) else 1.0
+
+                _render_stress_and_ledger(ctx, current_tickers, weights, nav_eur, _pol_meta, port_beta,
+                                          ret_matrix, _stances, _sizing_limits, _portfolio_policy, latest_prices)
+                st.markdown("---")
+
+                # ═══════════════════════════════════════════════════════════════════
+                # LAYER 2 · STRUCTURAL DIAGNOSIS
+                # ═══════════════════════════════════════════════════════════════════
+                render_header("globe", "Structural Diagnosis — Exposure & Correlation")
+                l2c1, l2c2 = st.columns([1, 1])
+
+                with l2c1:
+                    render_header("globe", "Portfolio Exposure — Region × Sector", level="#####")
+                    # Sunburst: inner ring = Region, outer ring = Sector
+                    fig_sun = px.sunburst(
+                        edited_df,
+                        path=["Region", "Sector"],
+                        values="Market Value",
+                        color="Sector",
+                        color_discrete_sequence=px.colors.qualitative.Pastel,
+                    )
+                    fig_sun.update_traces(
+                        textinfo="label+percent parent",
+                        insidetextorientation="radial",
+                        hovertemplate="<b>%{label}</b><br>Value: €%{value:,.0f}<br>Share: %{percentParent:.1%}<extra></extra>",
+                    )
+                    fig_sun.update_layout(
+                        template="plotly_dark",
+                        height=360,
+                        margin=dict(l=0, r=0, t=10, b=0),
+                        paper_bgcolor="rgba(0,0,0,0)",
+                        plot_bgcolor="rgba(0,0,0,0)",
+                    )
+                    st.plotly_chart(fig_sun, use_container_width=True)
+                    st.caption("Inner ring = Region · Outer ring = Sector")
+
+                with l2c2:
+                    render_header("activity", "Asset Correlation Matrix", level="#####")
+                    corr_matrix = ret_matrix.corr()
+                    mean_corr = (corr_matrix.values.sum() - n_assets) / (n_assets**2 - n_assets) if n_assets > 1 else 0
+                    if mean_corr > 0.45:
+                        st.warning(f"⚠️ High Correlation ({mean_corr:.2f}) — risk concentration!")
+                    fig_corr = px.imshow(
+                        corr_matrix, text_auto=".2f",
+                        color_continuous_scale="RdBu_r", zmin=-1, zmax=1,
+                        template="plotly_dark", aspect="auto"
+                    )
+                    fig_corr.update_layout(height=360, margin=dict(l=0, r=0, t=10, b=0))
+                    st.plotly_chart(fig_corr, use_container_width=True)
+
+                _render_factor_tilts(ctx, dict(zip(current_tickers, weights)))
+                st.markdown("<br>", unsafe_allow_html=True)
+
+
+                # ═══════════════════════════════════════════════════════════════════
+                # LAYER 2.5 · DIVIDEND & INCOME TRACKER
+                # ═══════════════════════════════════════════════════════════════════
+                render_header("trending-up", "Dividend & Income Tracker")
+
+
+                # Build dividend data per portfolio ticker
+                SPECIAL_DIV_THRESHOLD = 8.0  # Yield% > 8 → NOT verified as recurring (a yield alone cannot identify a special dividend)
+                div_rows = []
+                for t in current_tickers:
+                    meta_row = m_df[m_df["Ticker"] == t]
+                    if meta_row.empty:
+                        continue
+                    meta = meta_row.iloc[0]
+
+                    cur_price = latest_prices.get(t, 0.0)
+                    yield_pct = float(meta.get("Yield (%)", 0) or 0)
+                    shares    = st.session_state.portfolio_shares.get(t, 0.0)
+                    cost      = st.session_state.portfolio_cost.get(t, 0.0)
+
+                    if yield_pct <= 0 or cur_price <= 0:
+                        continue
+
+                    dps         = cur_price * yield_pct / 100
+                    proj_income = dps * shares
+                    yoc         = (dps / cost * 100) if cost > 0 else 0
+                    is_special  = yield_pct > SPECIAL_DIV_THRESHOLD
+
+                    div_rows.append({
+                        "Ticker":           t,
+                        "Company":          meta.get("Company", t),
+                        "Sector":           meta.get("Sector", "N/A"),
+                        "Shares":           shares,
+                        "Price (€)":        cur_price,
+                        "DPS (€)":          round(dps, 4),
+                        "Cost Basis (€)":   cost,
+                        "Cur. Yield (%)":   round(yield_pct, 2),
+                        "YOC (%)":          round(yoc, 2),
+                        "Proj. Income (€)": round(proj_income, 2),
+                        "Special":          is_special,
+                        "Type":             "⚠️ Unverified" if is_special else "Trailing yield ≤ 8%",
+                    })
+
+                div_df = pd.DataFrame(div_rows).sort_values("Cur. Yield (%)", ascending=False) if div_rows else pd.DataFrame()
+                has_special = (not div_df.empty) and div_df["Special"].any()
+
+                # Fetch ex-dividend / payout dates — reads from DB (Cloud-safe, no Yahoo IP block)
+                if not div_df.empty:
+                    cal_tickers = tuple(sorted(div_df["Ticker"].tolist()))
+                    cal_data = (fetch_dividend_calendar(cal_tickers, companies_df=companies)
+                                if {"ex_dividend_date", "pay_date"} <= set(companies.columns) else {})
+                    div_df["Ex-Date"]  = div_df["Ticker"].map(lambda t: cal_data.get(t, {}).get("ex_date", "—"))
+                    div_df["Pay Date"] = div_df["Ticker"].map(lambda t: cal_data.get(t, {}).get("pay_date", "—"))
+
+                if div_df.empty:
+                    st.info("ℹ️ No dividend-paying assets found. Add assets like UNH, UPS, JNJ, or MSFT to track income.")
+                else:
+                    # Projections use all stored trailing yields; recurrence has not been verified.
+                    # All projected dividends count (audit A13); high-yield lines are reported as UNVERIFIED, not dropped
+                    reg_df = div_df
+                    total_annual_income  = reg_df["Proj. Income (€)"].sum()
+                    unverified_income    = div_df.loc[div_df["Special"], "Proj. Income (€)"].sum()
+                    total_cost_basis_div = (reg_df["Cost Basis (€)"] * reg_df["Shares"]).sum()
+                    portfolio_yoc        = (total_annual_income / total_cost_basis_div * 100) if total_cost_basis_div > 0 else 0
+                    monthly_income       = total_annual_income / 12
+                    div_pct_of_portfolio = (total_annual_income / nav_eur * 100) if nav_eur > 0 else 0
+
+                    if has_special:
+                        special_tickers = ", ".join(div_df[div_df["Special"]]["Ticker"].tolist())
+                        st.warning(
+                            f"⚠️ **Unverified dividends** · {special_tickers} — trailing yield above 8%. A high yield alone does not "
+                            f"tell a special payout from a high regular dividend, so these lines ARE included below; "
+                            f"€{unverified_income:,.0f} of the projected annual income is unverified. Check the dividend history "
+                            f"before relying on it. Monthly income = annual ÷ 12 (an average, not a payment calendar). "
+                            f"Data source: yfinance trailing 12-month yield."
+                        )
+
+                    # ── Summary KPI Tiles ──
+                    d1, d2, d3, d4, d5 = st.columns(5)
+                    with d1:
+                        render_metric_tile("Proj. Annual Income", f"€{total_annual_income:,.2f}",
+                                           help_text="Sum of (DPS × Shares) using stored trailing yields, including unverified lines")
+                    with d2:
+                        render_metric_tile("Average per month", f"€{monthly_income:,.2f}",
+                                           help_text="Annual income ÷ 12")
+                    with d3:
+                        render_metric_tile("Portfolio YOC", f"{portfolio_yoc:.2f}%",
+                                           help_text="Total projected income ÷ Total cost basis of dividend payers")
+                    with d4:
+                        render_metric_tile("Dividend Payers", f"{len(div_df)} / {n_assets}",
+                                           help_text="Stocks with a positive stored trailing dividend yield")
+                    with d5:
+                        # Show upcoming payout date if available
+                        today_dt = pd.Timestamp.today().normalize()
+                        upcoming_list = []
+                        for _, row in div_df.iterrows():
+                            if row.get("Pay Date", "—") != "—" and not row["Special"]:
+                                try:
+                                    p_date = pd.to_datetime(row["Pay Date"])
+                                    if p_date >= today_dt:
+                                        upcoming_list.append((p_date, f"{row['Ticker']}: {row['Pay Date']}"))
+                                except Exception:
+                                    pass
+                        upcoming_list.sort(key=lambda x: x[0])
+                        next_pay_str = upcoming_list[0][1] if upcoming_list else "—"
+
+                        render_metric_tile("Next Pay Date", next_pay_str,
+                                           help_text="Nearest stored future payout date among lines with trailing yield ≤ 8%; recurrence unverified")
+
+                    st.markdown("<br>", unsafe_allow_html=True)
+
+
+                    # ── Table (Full Width) ──
+                    render_header("list", "Income Breakdown", level="#####")
+                    display_div = div_df[[
+                        "Ticker", "Type", "Shares", "DPS (€)", "Cur. Yield (%)", "YOC (%)", "Proj. Income (€)", "Ex-Date", "Pay Date"
+                    ]].copy()
+                    st.dataframe(
+                        display_div,
+                        column_config={
+                            "Ticker":           st.column_config.TextColumn("Ticker"),
+                            "Type":             st.column_config.TextColumn("Type",
+                                                    help="Yield above 8% is flagged unverified; all lines count in income. Lower yield does not verify recurrence."),
+                            "Shares":           st.column_config.NumberColumn("Shares", format="%.2f"),
+                            "DPS (€)":          st.column_config.NumberColumn("DPS", format="€%.4f"),
+                            "Cur. Yield (%)":   st.column_config.NumberColumn("Cur. Yield", format="%.2f%%"),
+                            "YOC (%)":          st.column_config.NumberColumn("YOC", format="%.2f%%",
+                                                    help="Yield on Cost = DPS ÷ Your Avg. Cost Basis"),
+                            "Proj. Income (€)": st.column_config.NumberColumn("Annual Income", format="€%.2f"),
+                            "Ex-Date":          st.column_config.TextColumn("Ex-Div Date",
+                                                    help="Stored ex-dividend date from the loaded warehouse"),
+                            "Pay Date":         st.column_config.TextColumn("Pay Date",
+                                                    help="Stored payout date from the loaded warehouse"),
+                        },
+                        hide_index=True,
+                        width="stretch",
+                        height=min(320, 40 + len(div_df) * 35),
+                    )
+                    st.caption("ℹ️ YOC = DPS ÷ Avg. cost basis · Dates from the loaded warehouse; unavailable dates stay blank · Income uses stored trailing yield, includes unverified lines")
+
+                st.markdown("---")
+
             # ═══════════════════════════════════════════════════════════════════
             # LAYER 3 · STRATEGIC REBALANCING & OPTIMIZATION
             # ═══════════════════════════════════════════════════════════════════
 
 
-    
-            # ── 4.7. REBALANCING OPTIMIZER ───────────────────────────────────────────
-            st.markdown("### 📊 Portfolio Rebalancing Hub")
-            
-            with st.expander("Rebalancing Rulebook", expanded=False):
-                st.markdown(f"""
-                **1. Decision per holding** (same logic as the Scanner and the Stock Analysis Decision Summary)
-                * **BUY CANDIDATE:** base-case DCF value ≥ 25% above price, reward/risk ≥ 2 after costs, confidence not low,
-                  every data / quality / liquidity gate passed, no conflict — AND validated forward-return evidence.
-                * **RESEARCH CANDIDATE:** passes every BUY gate but the signals are not yet validated (Track Record): no size.
-                * **HOLD / WATCH:** no sufficient margin of safety either way, a blocked gate or an open conflict, or the DCF is not informative.
-                * **AVOID / TRIM:** price is above even the bull-case value (fresh data only).
-                * **NOT ENOUGH DATA:** no usable cash-flow valuation (e.g. banks, negative free cash flow).
 
-                These are triage labels: they do not know your tax lots or target weights.
+            if _section == "Rebalance":
+                # ── 4.7. REBALANCING OPTIMIZER ───────────────────────────────────────────
+                st.markdown("### 📊 Portfolio Rebalancing Hub")
 
-                **2. Optimisers** — all use trailing returns of the selected horizon (dates on which every holding traded),
-                a sample covariance and 50%-shrunk trailing means, and one cap of {_opt_cap:.0%} per name. None is validated
-                out of sample, none knows spreads, liquidity or taxes, and past covariance understates crisis correlation.
-                * **Minimum Volatility:** lowest trailing variance.
-                * **Risk Parity:** equal contribution to trailing variance.
-                * **Equal Weight:** 1/N, no estimated inputs.
-                * **Max Sharpe:** highest trailing return per unit of trailing risk — very sensitive to the sample period.
-                * **Maximum Return:** highest trailing returns up to the cap — a momentum bet on the sample.
-                """)
-    
-            if 'pending_optimization' not in st.session_state:
-                st.session_state.pending_optimization = None
-            if 'pending_opt_strategy' not in st.session_state:
-                st.session_state.pending_opt_strategy = None
-    
-            # ── Strategy Controls ──────────────────────────────────────────────
-            strat_col, min_w_col, _ = st.columns([2, 1, 1])
-            with strat_col:
-                strategy_options = {
-                    "🛡️ Minimum Volatility (Lowest Risk)":   "min_vol",
-                    "⚖️ Risk Parity (Strategic Balance)":   "risk_parity",
-                    "🌐 Equal Weight (Max Diversification)": "equal_weight",
-                    "🚀 Max Sharpe (Risk-Adjusted Growth)":  "max_sharpe",
-                    "🎯 Maximum Return (Highest Growth)":    "max_return",
+                _rules_for_copy = load_decision_rules()
+                _evidence_on = bool((_rules_for_copy.get("evidence") or {}).get("require_validated_evidence_for_buy", True))
+                with st.expander("Rebalancing Rulebook", expanded=False):
+                    st.markdown(f"""
+                    **1. Decision per holding** (same logic as the Scanner and the Stock Analysis Decision Summary)
+                    * **BUY CANDIDATE:** passes the current valuation, reward/risk, confidence, data, quality and liquidity gates, with no open conflict.
+                    * **Evidence requirement: {'On' if _evidence_on else 'Off'}.**
+                      {'Without validated Track Record evidence, an otherwise eligible stock is RESEARCH CANDIDATE with no size.' if _evidence_on else 'BUY can appear before validation. Evidence status is unchanged; confidence remains capped at MEDIUM without validation.'}
+                    * **HOLD / WATCH:** no sufficient margin of safety either way, a blocked gate or an open conflict, or the DCF is not informative.
+                    * **AVOID / TRIM:** price is above even the bull-case value (fresh data only).
+                    * **NOT ENOUGH DATA:** no usable or informative valuation with the required inputs.
+
+                    These are triage labels: they do not know your tax lots or target weights.
+
+                    **2. Optimisers** — all use trailing returns of the selected horizon (dates on which every holding traded),
+                    a sample covariance and 50%-shrunk trailing means, and one cap of {_opt_cap:.0%} per name. None is validated
+                    out of sample, none knows spreads, liquidity or taxes, and past covariance understates crisis correlation.
+                    * **Minimum Volatility:** lowest trailing variance.
+                    * **Risk Parity:** equal contribution to trailing variance.
+                    * **Equal Weight:** 1/N, no estimated inputs.
+                    * **Max Sharpe:** highest trailing return per unit of trailing risk — very sensitive to the sample period.
+                    * **Maximum Return:** highest trailing returns up to the cap — a momentum bet on the sample.
+                    """)
+
+                if 'pending_optimization' not in st.session_state:
+                    st.session_state.pending_optimization = None
+                if 'pending_opt_strategy' not in st.session_state:
+                    st.session_state.pending_opt_strategy = None
+
+                # ── Strategy Controls ──────────────────────────────────────────────
+                strat_col, min_w_col, _ = st.columns([2, 1, 1])
+                with strat_col:
+                    strategy_options = {
+                        "🛡️ Minimum Volatility (Lowest Risk)":   "min_vol",
+                        "⚖️ Risk Parity (Strategic Balance)":   "risk_parity",
+                        "🌐 Equal Weight (Max Diversification)": "equal_weight",
+                        "🚀 Max Sharpe (Risk-Adjusted Growth)":  "max_sharpe",
+                        "🎯 Maximum Return (Highest Growth)":    "max_return",
+                    }
+                    sel_strategy_label = sticky_choice(
+                        "Optimization Strategy",
+                        list(strategy_options), list(strategy_options)[2], "pf_strategy",
+                        help="Choose how to distribute capital: from lowest risk (Min Vol) to highest growth (Max Return)."
+                    )
+                    sel_strategy = strategy_options[sel_strategy_label]
+
+                with min_w_col:
+                    min_weight_pct = sticky(st.slider,
+                        "Min Weight / Ticker (%)", 2, "pf_min_weight",
+                        min_value=0, max_value=10, step=1,
+                        help="Floor constraint: no ticker will be weighted below this level. Prevents the optimizer from fully selling out a position."
+                    )
+                    min_w = min_weight_pct / 100.0
+
+                # ── Strategy Descriptions ──────────────────────────────────────────
+                _strategy_descriptions = {
+                    "min_vol": (
+                        "**🛡️ Minimum Volatility** — Lowest variance of the TRAILING sample covariance, regardless of "
+                        "expected returns. Past covariance is not a crisis forecast: correlations rise in sell-offs."
+                    ),
+                    "risk_parity": (
+                        "**⚖️ Risk Parity** — Allocates capital so each asset contributes **equally** to trailing portfolio "
+                        "variance. High-volatility assets receive less capital; stable assets receive more."
+                    ),
+                    "equal_weight": (
+                        "**🌐 Equal Weight (1/N)** — Splits capital evenly across all holdings; no estimated inputs, so no "
+                        "estimation error in the weights."
+                    ),
+                    "max_sharpe": (
+                        "**🚀 Max Sharpe (mean-variance)** — Maximises trailing return per unit of trailing risk, with "
+                        "historical means shrunk 50% toward their average. Highly sensitive to the sample period; results "
+                        "concentrate in past winners."
+                    ),
+                    "max_return": (
+                        "**🎯 Maximum Return** — Fills the highest trailing (shrunk) returns up to the position cap with no "
+                        "regard for volatility. A momentum bet on the sample period. **Use with caution.**"
+                    ),
                 }
-                sel_strategy_label = st.selectbox(
-                    "Optimization Strategy",
-                    options=list(strategy_options.keys()), index=2,
-                    help="Choose how to distribute capital: from lowest risk (Min Vol) to highest growth (Max Return)."
+                _strategy_descriptions = {k: v + (f" Every optimiser is capped at {_opt_cap:.0%} per name (Decision "
+                                                  f"max_position_pct, absolute)"
+                                                  f"{f'; with {n_assets} holdings at most {_invest:.0%} is invested and {1 - _invest:.0%} stays cash' if _cap_binding else ''}"
+                                                  "; a position can only grow when its Decision is BUY CANDIDATE; none of "
+                                                  "the optimisers is validated out of sample.")
+                                          for k, v in _strategy_descriptions.items()}
+                st.markdown(
+                    f"<div style='background:var(--secondary-background-color, transparent); padding:10px 14px; border-radius:8px; "
+                    f"border-left:3px solid #00d4ff; margin-bottom:12px; font-size:0.83rem;'>"
+                    f"{_strategy_descriptions[sel_strategy]}</div>",
+                    unsafe_allow_html=True
                 )
-                sel_strategy = strategy_options[sel_strategy_label]
-    
-            with min_w_col:
-                min_weight_pct = st.slider(
-                    "Min Weight / Ticker (%)",
-                    min_value=0, max_value=10, value=2, step=1,
-                    help="Floor constraint: no ticker will be weighted below this level. Prevents the optimizer from fully selling out a position."
-                )
-                min_w = min_weight_pct / 100.0
-    
-            # ── Strategy Descriptions ──────────────────────────────────────────
-            _strategy_descriptions = {
-                "min_vol": (
-                    "**🛡️ Minimum Volatility** — Lowest variance of the TRAILING sample covariance, regardless of "
-                    "expected returns. Past covariance is not a crisis forecast: correlations rise in sell-offs."
-                ),
-                "risk_parity": (
-                    "**⚖️ Risk Parity** — Allocates capital so each asset contributes **equally** to trailing portfolio "
-                    "variance. High-volatility assets receive less capital; stable assets receive more."
-                ),
-                "equal_weight": (
-                    "**🌐 Equal Weight (1/N)** — Splits capital evenly across all holdings; no estimated inputs, so no "
-                    "estimation error in the weights."
-                ),
-                "max_sharpe": (
-                    "**🚀 Max Sharpe (mean-variance)** — Maximises trailing return per unit of trailing risk, with "
-                    "historical means shrunk 50% toward their average. Highly sensitive to the sample period; results "
-                    "concentrate in past winners."
-                ),
-                "max_return": (
-                    "**🎯 Maximum Return** — Fills the highest trailing (shrunk) returns up to the position cap with no "
-                    "regard for volatility. A momentum bet on the sample period. **Use with caution.**"
-                ),
-            }
-            _strategy_descriptions = {k: v + (f" Every optimiser is capped at {_opt_cap:.0%} per name (Decision "
-                                              f"max_position_pct, absolute)"
-                                              f"{f'; with {n_assets} holdings at most {_invest:.0%} is invested and {1 - _invest:.0%} stays cash' if _cap_binding else ''}"
-                                              "; a position can only grow when its Decision is BUY CANDIDATE; none of "
-                                              "the optimisers is validated out of sample.")
-                                      for k, v in _strategy_descriptions.items()}
-            st.markdown(
-                f"<div style='background:rgba(255,255,255,0.03); padding:10px 14px; border-radius:8px; "
-                f"border-left:3px solid #00d4ff; margin-bottom:12px; font-size:0.83rem;'>"
-                f"{_strategy_descriptions[sel_strategy]}</div>",
-                unsafe_allow_html=True
-            )
-    
+
             # ── Core Optimization Functions ────────────────────────────────────
             # Every optimiser: 0 ≤ floor ≤ w_i ≤ cap (absolute Decision cap), Σw = _invest ≤ 1, rest cash (R4-01).
             def _box(n_assets, min_w):
@@ -1090,7 +1180,7 @@ def render(ctx):
                     p_vol = np.sqrt(np.dot(w.T, np.dot(cov_matrix, w)))
                     p_sharpe = (p_ret - 0.04) / p_vol if p_vol > 0 else 0
                     return p_ret, p_vol, p_sharpe
-    
+
                 floor, cap, init_w = _box(n_assets, min_w)
                 bounds = tuple((floor, cap) for _ in range(n_assets))
                 constraints = [
@@ -1099,7 +1189,7 @@ def render(ctx):
                 result = minimize(lambda w: -portfolio_stats(w)[2], init_w,
                                   method='SLSQP', bounds=bounds, constraints=constraints)
                 return _checked(result, init_w)
-    
+
             def _run_risk_parity(cov_matrix, n_assets, min_w):
                 """Risk Parity: equalize marginal risk contribution of each asset."""
                 def risk_contributions(w, cov):
@@ -1107,12 +1197,12 @@ def render(ctx):
                     marginal  = np.dot(cov, w) / port_vol
                     contrib   = w * marginal
                     return contrib
-    
+
                 def rp_objective(w):
                     rc = risk_contributions(w, cov_matrix.values)
                     target = 1.0 / n_assets
                     return np.sum((rc / rc.sum() - target) ** 2)
-    
+
                 floor, cap, init_w = _box(n_assets, min_w)
                 bounds = tuple((floor, cap) for _ in range(n_assets))   # same absolute cap as every optimiser
                 constraints = [{'type': 'eq', 'fun': lambda x: np.sum(x) - _invest}]
@@ -1154,7 +1244,7 @@ def render(ctx):
                     if remaining <= 1e-9:
                         break
                 return w
-    
+
             def _rebalance_table(tickers, cur_w, target_w, pol, last_px, nav):
                 """Proposal rows after the policy: the optimiser's raw target is kept for re-checking at Apply."""
                 rows = []
@@ -1187,173 +1277,181 @@ def render(ctx):
                              "Est. Value (€)": float("nan"), "Policy": "unallocated (cap / blocked increases)"})
                 return pd.DataFrame(rows)
 
-            # ── Action Buttons ─────────────────────────────────────────────────
-            act_col1, act_col2 = st.columns([1, 1])
-            with act_col1:
-                if st.button("🚀 GENERATE OPTIMAL REBALANCE", width="stretch", type="primary"):
-                    try:
-                        if sel_strategy == "min_vol":
-                            opt_weights = _run_min_vol(cov_matrix, n_assets, min_w)
-                        elif sel_strategy == "risk_parity":
-                            opt_weights = _run_risk_parity(cov_matrix, n_assets, min_w)
-                        elif sel_strategy == "equal_weight":
-                            opt_weights = _run_equal_weight(n_assets)
-                        elif sel_strategy == "max_sharpe":
-                            opt_weights = _run_max_sharpe(hist_rets, cov_matrix, n_assets, min_w)
-                        else:  # max_return
-                            opt_weights = _run_max_return(hist_rets, n_assets, min_w)
-    
-                        # One gate for every proposal (R4-01): absolute cap, increases only for BUY CANDIDATEs
-                        _pol = rebalance_policy(current_tickers, weights, opt_weights, _stances, _max_pos_pct,
-                                                limits=_sizing_limits(nav_eur), portfolio=_portfolio_policy)
-                        st.session_state.pending_optimization = _rebalance_table(
-                            current_tickers, weights, opt_weights, _pol, latest_prices, nav_eur)
-                        st.session_state.pending_opt_strategy = sel_strategy_label
-                        st.rerun()
-    
-                    except Exception as e:
-                        st.error(f"Optimization failed: {e}")
-    
-            with act_col2:
-                pass
-                # csv = edited_df.to_csv(index=False).encode('utf-8')
-                # st.download_button(
-                #     label="📥 DOWNLOAD PORTFOLIO (CSV)",
-                #     data=csv,
-                #     file_name=f"portfolio_{datetime.now().strftime('%Y%m%d')}.csv",
-                #     mime="text/csv",
-                #     width="stretch"
-                # )
-    
-            # ── Display Suggestions ────────────────────────────────────────────
-            if st.session_state.pending_optimization is not None:
-                st.markdown("---")
-                _used_strategy = st.session_state.pending_opt_strategy or "Unknown Strategy"
-                st.info(f"🎯 **Suggested Rebalancing · Strategy: {_used_strategy}**")
-    
-                # ── Expected metrics after rebalancing ──────────────────────
-                _pend = st.session_state.pending_optimization
-                _pend_assets = _pend[_pend["Ticker"] != "CASH"].set_index("Ticker").reindex(current_tickers)
-                _opt_w_arr = np.nan_to_num(_pend_assets["Optimal Weight %"].to_numpy(dtype=float)) / 100
-                try:
-                    _exp_ret  = np.sum(hist_rets.values * _opt_w_arr) * 100
-                    _exp_vol  = np.sqrt(np.dot(_opt_w_arr.T, np.dot(cov_matrix, _opt_w_arr))) * 100
-                    _exp_srp  = (_exp_ret/100 - 0.04) / (_exp_vol/100) if _exp_vol > 0 else 0
-                    _curr_ret = np.sum(hist_rets.values * weights) * 100
-                    _curr_vol = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights))) * 100
-                    _curr_srp = (_curr_ret/100 - 0.04) / (_curr_vol/100) if _curr_vol > 0 else 0
-    
-                    _m1, _m2, _m3, _m4 = st.columns(4)
-                    with _m1: render_metric_tile("Expected Annual Return", f"{_exp_ret:.1f}%", delta=_exp_ret - _curr_ret)
-                    with _m2: render_metric_tile("Expected Annual Vol",    f"{_exp_vol:.1f}%")
-                    with _m3: render_metric_tile("Expected Sharpe",        f"{_exp_srp:.2f}", delta=_exp_srp - _curr_srp)
-                    with _m4: render_metric_tile("Min Weight Floor",       f"{min_weight_pct}%")
-                    st.markdown("<br>", unsafe_allow_html=True)
-                except Exception:
-                    pass  # metrics are optional - skip on error
-    
-                # ── Action summary bar ──────────────────────────────────────
-                _sell_count = (st.session_state.pending_optimization["Action"] == "SELL").sum()
-                _buy_count  = (st.session_state.pending_optimization["Action"] == "BUY").sum()
-                _hold_count = (st.session_state.pending_optimization["Action"] == "HOLD").sum()
-                st.markdown(
-                    f"<div style='font-size:0.82rem; margin-bottom:8px;'>Summary: "
-                    f"<span style='color:#2ecc71; font-weight:700;'>▲ {_buy_count} BUY</span> &nbsp;|&nbsp; "
-                    f"<span style='color:#3498db; font-weight:700;'>— {_hold_count} HOLD</span> &nbsp;|&nbsp; "
-                    f"<span style='color:#e74c3c; font-weight:700;'>▼ {_sell_count} SELL</span></div>",
-                    unsafe_allow_html=True
-                )
-    
-                # ── Rebalancing table ───────────────────────────────────────
-                st.dataframe(
-                    st.session_state.pending_optimization,
-                    column_config={
-                        "Current Weight %": st.column_config.NumberColumn(format="%.2f%%"),
-                        "Optimal Weight %": st.column_config.NumberColumn(format="%.2f%%"),
-                        "Target Weight %":  st.column_config.NumberColumn("Optimiser target %", format="%.2f%%"),
-                        "Policy":           st.column_config.TextColumn("Policy (R4-01)"),
-                        "Current Shares":   st.column_config.NumberColumn(format="%.2f"),
-                        "Optimal Shares":   st.column_config.NumberColumn(format="%.2f"),
-                        "Delta Shares":     st.column_config.NumberColumn(format="%+.2f"),
-                        "Est. Value (€)":   st.column_config.NumberColumn(format="€%+.2f"),
-                        "Action":           st.column_config.TextColumn("Action"),
-                    },
-                    hide_index=True, width="stretch"
-                )
-    
-                # ── DISCARD / APPLY buttons ────────────────────────────────
-                sc1, sc2, sc3 = st.columns([2, 1, 1])
-                with sc2:
-                    if st.button("❌ DISCARD", width="stretch"):
-                        st.session_state.pending_optimization = None
-                        st.session_state.pending_opt_strategy = None
-                        st.rerun()
-                with sc3:
-                    if st.button("✅ APPLY REBALANCE", width="stretch", type="primary"):
-                        # Re-check NOW against the current Decisions, cap and holdings — never trust the stored
-                        # proposal alone (a stance or a rule may have changed since Generate) (R4-01)
-                        _target = np.nan_to_num(_pend_assets["Target Weight %"].to_numpy(dtype=float)) / 100 \
-                            if "Target Weight %" in _pend_assets.columns else _opt_w_arr
-                        _rules_now = load_decision_rules()
-                        # current NAV, ADV, stops and rules → current sizing limits (R4-F02)
-                        _pol_now = rebalance_policy(current_tickers, weights, _target, _stances,
-                                                    float(_rules_now["risk"]["max_position_pct"]),
+            if _section == "Rebalance":
+                # ── Action Buttons ─────────────────────────────────────────────────
+                act_col1, act_col2 = st.columns([1, 1])
+                with act_col1:
+                    if st.button("🚀 GENERATE OPTIMAL REBALANCE", width="stretch", type="primary"):
+                        try:
+                            if sel_strategy == "min_vol":
+                                opt_weights = _run_min_vol(cov_matrix, n_assets, min_w)
+                            elif sel_strategy == "risk_parity":
+                                opt_weights = _run_risk_parity(cov_matrix, n_assets, min_w)
+                            elif sel_strategy == "equal_weight":
+                                opt_weights = _run_equal_weight(n_assets)
+                            elif sel_strategy == "max_sharpe":
+                                opt_weights = _run_max_sharpe(hist_rets, cov_matrix, n_assets, min_w)
+                            else:  # max_return
+                                opt_weights = _run_max_return(hist_rets, n_assets, min_w)
+
+                            # One gate for every proposal (R4-01): absolute cap, increases only for BUY CANDIDATEs
+                            _pol = rebalance_policy(current_tickers, weights, opt_weights, _stances, _max_pos_pct,
                                                     limits=_sizing_limits(nav_eur), portfolio=_portfolio_policy)
-                        # Conserve assets: target weights of the post-trade NAV, costs paid, rest kept as cash (R4-F01)
-                        _cur_shares = edited_df.set_index("Ticker")["Shares"].astype(float).to_dict()
-                        _res = apply_rebalance(current_tickers, _cur_shares, latest_prices, _cash_eur,
-                                               _pol_now["weights"],
-                                               cost_pct=float(_rules_now["costs"]["commission_pct"]) / 100)
-                        new_shares_dict = _res["shares"]
-                        _old_cost = st.session_state.get("portfolio_cost", {})
-                        new_cost_dict = {}
-                        for t in current_tickers:            # weighted-average cost: bought shares at today's price
-                            o_sh, n_sh = float(_cur_shares.get(t, 0.0)), float(new_shares_dict.get(t, 0.0))
-                            o_c = float(_old_cost.get(t, latest_prices.get(t, 0.0)))
-                            new_cost_dict[t] = ((o_sh * o_c + (n_sh - o_sh) * latest_prices[t]) / n_sh
-                                                if n_sh > o_sh and n_sh > 0 else o_c)
-                        # Persist FIRST; only a confirmed save changes the session (a failed or unknown save keeps
-                        # the proposal and the old holdings — the session must never look synced when it is not)
-                        _new_stops = opening_stops(st.session_state.get("portfolio_stops", {}), new_shares_dict,
-                                                   _thesis_stops())
-                        _ok, _msg = save_portfolio_checked(new_shares_dict, new_cost_dict, _res["cash"], _new_stops)
-                        if not _ok:
-                            st.session_state["_apply_error"] = _msg
-                        else:
-                            st.session_state.pop("_apply_error", None)
-                            _record(trades_from_diff(_cur_shares, new_shares_dict, latest_prices,
-                                                     float(_rules_now["costs"]["commission_pct"]) / 100, "rebalance",
-                                                     _res["cash"], str(st.session_state.get("pending_opt_strategy") or "")))
-                            st.session_state.portfolio_shares = new_shares_dict
-                            st.session_state.portfolio_cost = new_cost_dict
-                            st.session_state.portfolio_cash_eur = _res["cash"]
-                            st.session_state.portfolio_stops = _new_stops
-                            for idx, row in st.session_state.portfolio_df.iterrows():
-                                st.session_state.portfolio_df.at[idx, "Shares"] = new_shares_dict.get(row["Ticker"], 0)
-                                st.session_state.portfolio_df.at[idx, "Cost Basis (€)"] = new_cost_dict.get(
-                                    row["Ticker"], row["Cost Basis (€)"])
-                            st.session_state['_portfolio_version'] += 1
+                            st.session_state.pending_optimization = _rebalance_table(
+                                current_tickers, weights, opt_weights, _pol, latest_prices, nav_eur)
+                            st.session_state.pending_opt_strategy = sel_strategy_label
+                            st.session_state["_pending_opt_spec"] = dict(_review_spec, strategy=sel_strategy_label, min_weight=min_weight_pct,
+                                                                      range_start=t_start, range_end=t_end)
+                            st.rerun()
+
+                        except Exception as e:
+                            st.error(f"Optimization failed: {e}")
+
+                with act_col2:
+                    pass
+                    # csv = edited_df.to_csv(index=False).encode('utf-8')
+                    # st.download_button(
+                    #     label="📥 DOWNLOAD PORTFOLIO (CSV)",
+                    #     data=csv,
+                    #     file_name=f"portfolio_{datetime.now().strftime('%Y%m%d')}.csv",
+                    #     mime="text/csv",
+                    #     width="stretch"
+                    # )
+
+                # ── Display Suggestions ────────────────────────────────────────────
+                if st.session_state.pending_optimization is not None:
+                    st.markdown("---")
+                    _used_strategy = st.session_state.pending_opt_strategy or "Unknown Strategy"
+                    _proposal_spec = dict(_review_spec, strategy=sel_strategy_label, min_weight=min_weight_pct,
+                                          range_start=t_start, range_end=t_end)
+                    if st.session_state.get("_pending_opt_spec") != _proposal_spec:
+                        st.warning("Stale proposal: controls, saved holdings or snapshot changed. Generate again to review current inputs; Apply still re-checks the current policy.")
+                    st.info(f"🎯 **Suggested Rebalancing · Strategy: {_used_strategy}**")
+
+                    # ── Expected metrics after rebalancing ──────────────────────
+                    _pend = st.session_state.pending_optimization
+                    _pend_assets = _pend[_pend["Ticker"] != "CASH"].set_index("Ticker").reindex(current_tickers)
+                    _opt_w_arr = np.nan_to_num(_pend_assets["Optimal Weight %"].to_numpy(dtype=float)) / 100
+                    try:
+                        _exp_ret  = np.sum(hist_rets.values * _opt_w_arr) * 100
+                        _exp_vol  = np.sqrt(np.dot(_opt_w_arr.T, np.dot(cov_matrix, _opt_w_arr))) * 100
+                        _exp_srp  = (_exp_ret/100 - 0.04) / (_exp_vol/100) if _exp_vol > 0 else 0
+                        _curr_ret = np.sum(hist_rets.values * weights) * 100
+                        _curr_vol = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights))) * 100
+                        _curr_srp = (_curr_ret/100 - 0.04) / (_curr_vol/100) if _curr_vol > 0 else 0
+
+                        _m1, _m2, _m3, _m4 = st.columns(4)
+                        with _m1: render_metric_tile("Trailing annualised return (shrunk)", f"{_exp_ret:.1f}%", delta=_exp_ret - _curr_ret)
+                        with _m2: render_metric_tile("Trailing annualised volatility",    f"{_exp_vol:.1f}%")
+                        with _m3: render_metric_tile("Trailing Sharpe (model input)",        f"{_exp_srp:.2f}", delta=_exp_srp - _curr_srp)
+                        with _m4: render_metric_tile("Min Weight Floor",       f"{min_weight_pct}%")
+                        st.markdown("<br>", unsafe_allow_html=True)
+                    except Exception:
+                        pass  # metrics are optional - skip on error
+
+                    # ── Action summary bar ──────────────────────────────────────
+                    _sell_count = (st.session_state.pending_optimization["Action"] == "SELL").sum()
+                    _buy_count  = (st.session_state.pending_optimization["Action"] == "BUY").sum()
+                    _hold_count = (st.session_state.pending_optimization["Action"] == "HOLD").sum()
+                    st.markdown(
+                        f"<div style='font-size:0.82rem; margin-bottom:8px;'>Summary: "
+                        f"<span style='color:#2ecc71; font-weight:700;'>▲ {_buy_count} BUY</span> &nbsp;|&nbsp; "
+                        f"<span style='color:#3498db; font-weight:700;'>— {_hold_count} HOLD</span> &nbsp;|&nbsp; "
+                        f"<span style='color:#e74c3c; font-weight:700;'>▼ {_sell_count} SELL</span></div>",
+                        unsafe_allow_html=True
+                    )
+
+                    # ── Rebalancing table ───────────────────────────────────────
+                    st.dataframe(
+                        st.session_state.pending_optimization,
+                        column_config={
+                            "Current Weight %": st.column_config.NumberColumn(format="%.2f%%"),
+                            "Optimal Weight %": st.column_config.NumberColumn(format="%.2f%%"),
+                            "Target Weight %":  st.column_config.NumberColumn("Optimiser target %", format="%.2f%%"),
+                            "Policy":           st.column_config.TextColumn("Policy (R4-01)"),
+                            "Current Shares":   st.column_config.NumberColumn(format="%.2f"),
+                            "Optimal Shares":   st.column_config.NumberColumn(format="%.2f"),
+                            "Delta Shares":     st.column_config.NumberColumn(format="%+.2f"),
+                            "Est. Value (€)":   st.column_config.NumberColumn(format="€%+.2f"),
+                            "Action":           st.column_config.TextColumn("Action"),
+                        },
+                        hide_index=True, width="stretch"
+                    )
+
+                    # ── DISCARD / APPLY buttons ────────────────────────────────
+                    sc1, sc2, sc3 = st.columns([2, 1, 1])
+                    with sc2:
+                        if st.button("❌ DISCARD", width="stretch"):
                             st.session_state.pending_optimization = None
                             st.session_state.pending_opt_strategy = None
-                            st.toast(f"✅ Portfolio saved (in the app, not a broker order) · NAV €{_res['nav_after']:,.2f} "
-                                     f"(costs €{_res['cost']:,.2f}) · cash €{_res['cash']:,.2f}"
-                                     + (f" · {len(_pol_now['blocked'])} increase(s) blocked" if _pol_now["blocked"] else ""),
-                                     icon="🎯")
-                        st.rerun()
-                if st.session_state.get("_apply_error"):
-                    st.error(f"Rebalance NOT applied — {st.session_state['_apply_error']} The proposal is kept; "
-                             "your holdings are unchanged.", icon="🛑")
-    
-            st.markdown("---")
-    
+                            st.rerun()
+                    with sc3:
+                        if st.button("✅ APPLY REBALANCE", width="stretch", type="primary"):
+                            # Re-check NOW against the current Decisions, cap and holdings — never trust the stored
+                            # proposal alone (a stance or a rule may have changed since Generate) (R4-01)
+                            _target = np.nan_to_num(_pend_assets["Target Weight %"].to_numpy(dtype=float)) / 100 \
+                                if "Target Weight %" in _pend_assets.columns else _opt_w_arr
+                            _rules_now = load_decision_rules()
+                            # current NAV, ADV, stops and rules → current sizing limits (R4-F02)
+                            _pol_now = rebalance_policy(current_tickers, weights, _target, _stances,
+                                                        float(_rules_now["risk"]["max_position_pct"]),
+                                                        limits=_sizing_limits(nav_eur), portfolio=_portfolio_policy)
+                            # Conserve assets: target weights of the post-trade NAV, costs paid, rest kept as cash (R4-F01)
+                            _cur_shares = edited_df.set_index("Ticker")["Shares"].astype(float).to_dict()
+                            _res = apply_rebalance(current_tickers, _cur_shares, latest_prices, _cash_eur,
+                                                   _pol_now["weights"],
+                                                   cost_pct=float(_rules_now["costs"]["commission_pct"]) / 100)
+                            new_shares_dict = _res["shares"]
+                            _old_cost = st.session_state.get("portfolio_cost", {})
+                            new_cost_dict = {}
+                            for t in current_tickers:            # weighted-average cost: bought shares at today's price
+                                o_sh, n_sh = float(_cur_shares.get(t, 0.0)), float(new_shares_dict.get(t, 0.0))
+                                o_c = float(_old_cost.get(t, latest_prices.get(t, 0.0)))
+                                new_cost_dict[t] = ((o_sh * o_c + (n_sh - o_sh) * latest_prices[t]) / n_sh
+                                                    if n_sh > o_sh and n_sh > 0 else o_c)
+                            # Persist FIRST; only a confirmed save changes the session (a failed or unknown save keeps
+                            # the proposal and the old holdings — the session must never look synced when it is not)
+                            _new_stops = opening_stops(st.session_state.get("portfolio_stops", {}), new_shares_dict,
+                                                       _thesis_stops())
+                            _ok, _msg = save_portfolio_checked(new_shares_dict, new_cost_dict, _res["cash"], _new_stops)
+                            if not _ok:
+                                st.session_state["_apply_error"] = _msg
+                            else:
+                                st.session_state.pop("_apply_error", None)
+                                _record(trades_from_diff(_cur_shares, new_shares_dict, latest_prices,
+                                                         float(_rules_now["costs"]["commission_pct"]) / 100, "rebalance",
+                                                         _res["cash"], str(st.session_state.get("pending_opt_strategy") or "")))
+                                st.session_state.portfolio_shares = new_shares_dict
+                                st.session_state.portfolio_cost = new_cost_dict
+                                st.session_state.portfolio_cash_eur = _res["cash"]
+                                st.session_state.portfolio_stops = _new_stops
+                                for idx, row in st.session_state.portfolio_df.iterrows():
+                                    st.session_state.portfolio_df.at[idx, "Shares"] = new_shares_dict.get(row["Ticker"], 0)
+                                    st.session_state.portfolio_df.at[idx, "Cost Basis (€)"] = new_cost_dict.get(
+                                        row["Ticker"], row["Cost Basis (€)"])
+                                st.session_state['_portfolio_version'] += 1
+                                st.session_state.pending_optimization = None
+                                st.session_state.pending_opt_strategy = None
+                                st.toast(f"✅ Portfolio saved (in the app, not a broker order) · NAV €{_res['nav_after']:,.2f} "
+                                         f"(costs €{_res['cost']:,.2f}) · cash €{_res['cash']:,.2f}"
+                                         + (f" · {len(_pol_now['blocked'])} increase(s) blocked" if _pol_now["blocked"] else ""),
+                                         icon="🎯")
+                            st.rerun()
+                    if st.session_state.get("_apply_error"):
+                        st.error(f"Rebalance NOT applied — {st.session_state['_apply_error']} The proposal is kept; "
+                                 "your holdings are unchanged.", icon="🛑")
+
+                st.markdown("---")
+
             # ── 5. ADVANCED ANALYTICS (Efficient Frontier & Risk) ──────────
-            if len(current_tickers) > 1:
+            if _section == "Rebalance" and len(current_tickers) > 1 and st.button(
+                    "Build efficient frontier (2,000 simulations)", key="pf_frontier"):
                 render_header("activity", "Markowitz Efficient Frontier — Strategy Tactical Map")
-    
+
                 curr_r = np.sum(hist_rets.values * weights)
                 curr_v = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights)))
                 curr_sharpe = (curr_r - 0.04) / curr_v if curr_v > 0 else 0
-    
+
                 # ── Efficient Frontier (Monte Carlo simulation background) ────
                 st.info(
                     "ℹ️ Each dot represents a randomly weighted portfolio. "
@@ -1369,9 +1467,9 @@ def render(ctx):
                     sim_res[0, i] = v_rnd
                     sim_res[1, i] = r_rnd
                     sim_res[2, i] = (r_rnd - 0.04) / v_rnd if v_rnd > 0 else 0
-    
+
                 fig_mpt = go.Figure()
-    
+
                 # ── Background: Monte Carlo cloud ─────────────────────────────
                 fig_mpt.add_trace(go.Scatter(
                     x=sim_res[0, :], y=sim_res[1, :], mode="markers",
@@ -1383,7 +1481,7 @@ def render(ctx):
                     name="Simulated Portfolios",
                     hovertemplate="Vol: %{x:.1%}<br>Return: %{y:.1%}<extra></extra>"
                 ))
-    
+
                 # ── Compute & plot The Big 5 strategies ───────────────────────
                 _default_min_w = max(0.02, 1.0 / (n_assets * 5))  # sensible floor for EF display
                 _big5 = []
@@ -1427,7 +1525,7 @@ def render(ctx):
                     ]
                 except Exception:
                     pass  # skip if optimizer fails (e.g. single asset)
-    
+
                 for strat in _big5:
                     w_s = strat["w"]
                     r_s = np.sum(hist_rets.values * w_s)
@@ -1454,7 +1552,7 @@ def render(ctx):
                             "<extra></extra>"
                         ),
                     ))
-    
+
                 # ── Current portfolio star ─────────────────────────────────────
                 fig_mpt.add_trace(go.Scatter(
                     x=[curr_v], y=[curr_r], mode="markers+text",
@@ -1491,14 +1589,14 @@ def render(ctx):
                     )],
                 )
                 st.plotly_chart(fig_mpt, use_container_width=True)
-    
+
                 st.markdown("---")
                 # ── Risk Contribution ─────────────────────────────────────────
                 render_header("risk", "Global Risk Contribution", level="#####")
                 mctr         = np.dot(cov_matrix, weights) / (curr_v if curr_v > 0 else 1)
                 risk_contrib = weights * mctr
                 risk_pct     = risk_contrib / np.sum(np.abs(risk_contrib)) * 100
-    
+
                 fig_risk_b = px.bar(
                     x=current_tickers, y=risk_pct,
                     labels={"x": "Ticker", "y": "Risk Contribution (%)"},
@@ -1507,9 +1605,9 @@ def render(ctx):
                 )
                 fig_risk_b.update_layout(height=380)
                 st.plotly_chart(fig_risk_b, use_container_width=True)
-    
-    
-            else:
+
+
+            elif _section == "Rebalance" and len(current_tickers) == 1:
                 st.info("The efficient frontier compares several holdings: add a second one to see it.")
         elif _no_value:
             st.error("Portfolio analytics are blocked: a holding has no price in this snapshot, so the NAV and the weights "
@@ -1520,41 +1618,10 @@ def render(ctx):
 
         st.markdown("---")
 
-        # 6. ── ALERT CENTER (persisted per user in Supabase: sql/supabase/stock_alerts.sql) ──
-        render_header("activity", "Alert Center", level="###")
-        st.caption("Rules are saved to your account and checked against the latest warehouse data every "
-                   "time the dashboard loads (in-app; no e-mail delivery is configured).")
-        _rules = _alert_rules
-        _latest = latest_snapshot(prices_full)
-        _fired = {id(h["rule"]) for h in evaluate_rules(_rules, _latest)}
-        for _r in _rules:
-            _c1, _c2 = st.columns([6, 1])
-            _hit = "🔔 **TRIGGERED** — " if id(_r) in _fired else ""
-            _c1.markdown(f"{_hit}{_r['ticker']} · {_r['metric']} {_r['condition']} {float(_r['threshold']):,.2f}")
-            if _c2.button("Delete", key=f"del_alert_{_r['id']}"):
-                try:
-                    delete_alert_rule(_r["id"])
-                    st.rerun()
-                except Exception as _e:
-                    st.error(f"Could not delete rule: {_e}")
-        with st.form("alert_form"):
-            colX, colY, colZ = st.columns(3)
-            with colX: a_ticker = st.selectbox("Ticker", all_tickers, format_func=format_ticker)
-            with colY: a_metric = st.selectbox("Metric", list(ALERT_METRICS))
-            with colZ: a_condition = st.selectbox("Condition", ["above", "below"])
-            a_value = st.number_input("Threshold Value", value=100.0)
-            if st.form_submit_button("Save Alert Rule"):
-                try:
-                    add_alert_rule(a_ticker, a_metric, a_condition, a_value)
-                    st.success(f"✅ Saved: {a_ticker} {a_metric} {a_condition} {a_value:,.2f}")
-                    st.rerun()
-                except Exception as _e:
-                    st.error(f"Could not save the rule: {_e}")
-
 
 def _render_stress_and_ledger(ctx, tickers, weights, nav_eur, meta, port_beta, ret_matrix, stances, sizing_limits,
                               portfolio_policy, latest_prices):
-    """Scenario stress test, historical replay, target-weight drift and the trade ledger (P3/c)."""
+    """Scenario stress test, historical replay and target-weight drift (P3/c)."""
     prices_full = ctx["prices_full"]
     rules = load_decision_rules()
     w = {t: float(x) for t, x in zip(tickers, weights)}
@@ -1635,25 +1702,6 @@ def _render_stress_and_ledger(ctx, tickers, weights, nav_eur, meta, port_beta, r
                        "position cap, liquidity / stop sizing and the sector / currency / stress budgets. Execute with "
                        "➕ Add Trade so the ledger records it.")
 
-    # ── trade ledger ──
-    trades = load_trades()
-    with st.expander(f"📒 Trade ledger ({len(trades)} trades)", expanded=False):
-        if trades.empty:
-            st.caption("Every trade recorded with ➕ Add Trade, a rebalance or a grid edit appears here with its price, "
-                       "fees and the cash left. Cloud users: create the table once with sql/supabase/portfolio_trades.sql.")
-        else:
-            pnl = realized_pnl(trades)
-            c1, c2, c3 = st.columns(3)
-            c1.metric("Realised P&L (net of fees)", f"€{pnl['realized_eur'].sum():,.2f}")
-            c2.metric("Fees paid", f"€{pnl['fees_eur'].sum():,.2f}")
-            c3.metric("Trades", f"{len(trades)}", f"{trades['ticker'].nunique()} tickers", delta_color="off")
-            if (pnl["unmatched_qty"] > 0).any():
-                st.caption("Some sells exceed the shares bought in the ledger (positions opened before the ledger "
-                           "existed); their P&L counts only the recorded part.")
-            st.dataframe(trades.sort_values("traded_at", ascending=False), hide_index=True, width="stretch")
-            st.download_button("⬇️ Export ledger (CSV)", trades.to_csv(index=False).encode("utf-8"),
-                               file_name="trade_ledger.csv", mime="text/csv")
-
 
 def _render_factor_tilts(ctx, weights: dict):
     """Where the portfolio leans vs the average stock of the universe (P3 / exposure)."""
@@ -1678,3 +1726,59 @@ def _render_factor_tilts(ctx, weights: dict):
                "factor: high beta loses most in sell-offs, small size and value tilts earn (or lose) their premia over "
                "years, momentum reverses sharply in rebounds. Size uses log market cap; value book / price.")
 
+
+
+def _render_alert_center(ctx, _alert_rules):
+    prices_full, all_tickers = ctx["prices_full"], ctx["all_tickers"]
+    format_ticker = ctx["format_ticker"]
+    # 6. ── ALERT CENTER (persisted per user in Supabase: sql/supabase/stock_alerts.sql) ──
+    render_header("activity", "Alert Center", level="###")
+    st.caption("Rules are saved to your account and checked against the latest warehouse data every "
+               "time the dashboard loads (in-app; no e-mail delivery is configured).")
+    _rules = _alert_rules
+    _latest = latest_snapshot(prices_full)
+    _fired = {id(h["rule"]) for h in evaluate_rules(_rules, _latest)}
+    for _r in _rules:
+        _c1, _c2 = st.columns([6, 1])
+        _hit = "🔔 **TRIGGERED** — " if id(_r) in _fired else ""
+        _c1.markdown(f"{_hit}{_r['ticker']} · {_r['metric']} {_r['condition']} {float(_r['threshold']):,.2f}")
+        if _c2.button("Delete", key=f"del_alert_{_r['id']}"):
+            try:
+                delete_alert_rule(_r["id"])
+                st.rerun()
+            except Exception as _e:
+                st.error(f"Could not delete rule: {_e}")
+    with st.form("alert_form"):
+        colX, colY, colZ = st.columns(3)
+        with colX: a_ticker = sticky_choice("Ticker", all_tickers, all_tickers[0], "pf_alert_ticker", format_func=format_ticker)
+        with colY: a_metric = sticky_choice("Metric", list(ALERT_METRICS), next(iter(ALERT_METRICS)), "pf_alert_metric")
+        with colZ: a_condition = sticky_choice("Condition", ["above", "below"], "above", "pf_alert_condition")
+        a_value = sticky(st.number_input, "Threshold Value", 100.0, "pf_alert_threshold")
+        if st.form_submit_button("Save Alert Rule"):
+            try:
+                add_alert_rule(a_ticker, a_metric, a_condition, a_value)
+                st.success(f"✅ Saved: {a_ticker} {a_metric} {a_condition} {a_value:,.2f}")
+                st.rerun()
+            except Exception as _e:
+                st.error(f"Could not save the rule: {_e}")
+
+
+def _render_trade_ledger():
+    # ── trade ledger ──
+    trades = load_trades()
+    with st.expander(f"📒 Trade ledger ({len(trades)} trades)", expanded=False):
+        if trades.empty:
+            st.caption("Every trade recorded with ➕ Add Trade, a rebalance or a grid edit appears here with its price, "
+                       "fees and the cash left. Cloud users: create the table once with sql/supabase/portfolio_trades.sql.")
+        else:
+            pnl = realized_pnl(trades)
+            c1, c2, c3 = st.columns(3)
+            c1.metric("Realised P&L (net of fees)", f"€{pnl['realized_eur'].sum():,.2f}")
+            c2.metric("Fees paid", f"€{pnl['fees_eur'].sum():,.2f}")
+            c3.metric("Trades", f"{len(trades)}", f"{trades['ticker'].nunique()} tickers", delta_color="off")
+            if (pnl["unmatched_qty"] > 0).any():
+                st.caption("Some sells exceed the shares bought in the ledger (positions opened before the ledger "
+                           "existed); their P&L counts only the recorded part.")
+            st.dataframe(trades.sort_values("traded_at", ascending=False), hide_index=True, width="stretch")
+            st.download_button("⬇️ Export ledger (CSV)", trades.to_csv(index=False).encode("utf-8"),
+                               file_name="trade_ledger.csv", mime="text/csv")

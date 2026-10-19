@@ -26,8 +26,8 @@ def _save_form(ticker, act_str, act_desc, s1, stop_loss, tp1, next_earnings):
     st.write("**Idea Management & Catalyst Tracking**")
     c1, c2 = st.columns(2)
     with c1:
-        # suggested status from the Signal; the user's own choice wins once made
-        opt_status = sticky_choice("Status", STATUSES, STATUSES[1 if act_str in ("STRONG SETUP", "FAVOURABLE") else 0],
+        # Workflow starts pending; technical timing never activates an idea.
+        opt_status = sticky_choice("Idea status", STATUSES, STATUSES[0],
                                    pre + "status")
         opt_thesis = sticky(st.text_area, "Investment Thesis (Why buy/hold?)", act_desc, pre + "thesis", height=110)
     with c2:

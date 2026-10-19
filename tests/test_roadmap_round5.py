@@ -168,6 +168,7 @@ def test_apply_with_a_failing_save_keeps_the_proposal_and_the_holdings(tmp_path,
     at.session_state["user_id"] = "00000000-0000-0000-0000-000000000000"
     at.session_state["active_tab"] = "💼 Portfolio"
     at.run()
+    at.selectbox(key="pf_section").select("Rebalance").run()
     next(b for b in at.button if "GENERATE OPTIMAL REBALANCE" in str(b.label)).click().run()
     next(b for b in at.button if "APPLY REBALANCE" in str(b.label)).click().run()
     assert not at.exception, [e.value for e in at.exception]

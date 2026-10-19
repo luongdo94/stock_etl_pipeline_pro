@@ -125,6 +125,7 @@ def test_apply_rerun_and_reload_keep_nav_cash_and_ten_percent_weights(tmp_path, 
         return at
 
     def _generate_and_apply(at):
+        at.selectbox(key="pf_section").select("Rebalance").run()
         next(b for b in at.button if "GENERATE OPTIMAL REBALANCE" in str(b.label)).click().run()
         assert not at.exception, [e.value for e in at.exception]
         next(b for b in at.button if "APPLY REBALANCE" in str(b.label)).click().run()

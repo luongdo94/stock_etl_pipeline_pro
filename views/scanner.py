@@ -49,7 +49,7 @@ def style_opportunity_df(df):
         elif "FAVOURABLE" in val_str and "UN" not in val_str: return 'color: #27ae60; font-weight: bold'
         elif "BUY" in val_str: return 'color: #27ae60; font-weight: bold'
         elif "UNFAVOURABLE" in val_str or "SELL" in val_str or "AVOID" in val_str: return 'color: #e74c3c; font-weight: bold'
-        elif "NOT ENOUGH" in val_str: return 'color: #8899aa'
+        elif "NOT ENOUGH" in val_str: return 'color:inherit'
         elif "REDUCE" in val_str or "WEAKENING" in val_str: return 'color: #e67e22; font-weight: bold'
         return 'color: #f1c40f'  # HOLD
 
@@ -518,14 +518,14 @@ def render(ctx):
 
     # ── Score methodology (core/scoring.py, thresholds in config/scoring_rules.yaml) ─────────
     def _card(colour, title, body, extra):
-        return (f"<div style='background:rgba(255,255,255,0.03); border-left:3px solid {colour}; padding:10px 12px; border-radius:6px;'>"
+        return (f"<div style='background:var(--secondary-background-color, transparent); border-left:3px solid {colour}; padding:10px 12px; border-radius:6px;'>"
                 f"<div style='font-size:0.78rem; color:{colour}; font-weight:800;'>{title}</div>"
-                f"<div style='font-size:0.72rem; color:#bbb; margin-top:4px;'>{body}</div>"
-                f"<div style='font-size:0.68rem; color:#778; margin-top:6px;'>{extra}</div></div>")
+                f"<div style='font-size:0.72rem; color:inherit; margin-top:4px;'>{body}</div>"
+                f"<div style='font-size:0.68rem; color:inherit; margin-top:6px;'>{extra}</div></div>")
     with st.expander("ℹ️ How the scores work"):
         st.markdown(
-            "<div style='margin-top:16px; padding:14px 18px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:10px;'>"
-            "<div style='font-size:0.78rem; font-weight:700; color:#8899aa; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:10px;'>"
+            "<div style='margin-top:16px; padding:14px 18px; background:var(--secondary-background-color, transparent); border:1px solid rgba(128,128,128,0.25); border-radius:10px;'>"
+            "<div style='font-size:0.78rem; font-weight:700; color:inherit; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:10px;'>"
             f"Scores {SCORE_VERSION} — independent 0-100 numbers per stock, ranked against sector peers</div>"
             "<div style='display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:10px;'>"
             + _card("#2ecc71", "QUALITY — the business", "Return on capital 20 · margins 25 · growth &amp; stability 20 · balance sheet (net debt/EBITDA) 20 · FCF conversion 15. Banks/insurers: ROE, net margin, stability.",
@@ -535,7 +535,7 @@ def render(ctx):
             + _card("#f1c40f", "MOMENTUM — timing only", "12-1 month return rank across the universe (70%) + price above MA200 / golden cross (30%). RSI and Z-score are shown but not scored.",
                     "Measured in the stock's own currency. Never enters Quality or Value. A separate Revisions score tracks changes in analysts' estimates.")
             + "</div>"
-            "<div style='margin-top:8px; font-size:0.68rem; color:#667;'>Unknown inputs are excluded and the rest re-weighted — never scored as zero. "
+            "<div style='margin-top:8px; font-size:0.68rem; color:inherit;'>Unknown inputs are excluded and the rest re-weighted — never scored as zero. "
             "With less than 80% of a score's inputs observable it is pulled toward 50 (see Coverage in the Decision confidence). "
             "The Decision uses Quality as a floor (a BUY needs ≥ 50) and Value as a cross-check on the DCF. "
             "Whether any score predicts returns is tested on the Track Record tab.</div></div>", unsafe_allow_html=True)

@@ -9,6 +9,7 @@ from ui.icons import render_header
 def render(ctx):
     """Render the 📖 Docs tab. ctx is the context dict built in app.py."""
     rules = load_rules()
+    evidence_text = _evidence_requirement(rules)
     render_header("book", "Methodology & Known Limitations")
     st.write("What the numbers mean, where they come from, and what they cannot tell you. "
              "Everything here is decision support for your own judgement — not investment advice.")
@@ -77,23 +78,24 @@ def render(ctx):
         st.markdown(f"""
         - **Valuation**: 10-year FCF-to-equity DCF on normalised statement free cash flow **after stock-based
           compensation** (median of the last 3 years), cost of equity = risk-free rate **of the cash flows' currency**
-          (live US 10Y for USD; configured levels for EUR, JPY, GBP, CHF…) + Blume-adjusted β × {val.EQUITY_RISK_PREMIUM:.0%} ERP,
+          (stored US 10Y close for USD when available; configured levels otherwise, including EUR, JPY, GBP, CHF…) + Blume-adjusted β × {val.EQUITY_RISK_PREMIUM:.0%} ERP,
           growth anchored on the 3-year revenue CAGR and fading to that currency's long-run growth (USD 2.5%, EUR 2.0%, JPY 1.0%…).
-          **Banks and insurers** use a justified price-to-book model, (ROE − g) / (r − g) × book value, with ROE normalised over 4 years.
+          **Banks, insurers and other balance-sheet financials** use residual income on book value: normalised ROE
+          (median of up to 4 years) fades to the cost of equity over {val.RI_FADE_YEARS} years; retained earnings grow book value.
         - **BUY CANDIDATE**: base-case value ≥ {val.REQUIRED_MARGIN_OF_SAFETY:.0%} above price (value/price − 1, so the
           price is ≥ {1 - 1 / (1 + val.REQUIRED_MARGIN_OF_SAFETY):.0%} below value), reward/risk ≥
           {rules['risk']['min_reward_risk']:.0f} after costs, confidence not low, fresh dated data, liquidity known and
           ≥ EUR {(rules.get('liquidity') or {}).get('min_adv_eur_for_buy', 0) / 1e6:,.0f}M a day, no veto red flag
           (critical leverage, negative equity, debt without EBITDA, illiquid), no open conflict (collapsing momentum,
-          earnings within {rules['risk']['earnings_blackout_days']} days, an unfavourable timing context) — **and** validated
-          Track Record evidence. Without that evidence the same stock is a **RESEARCH CANDIDATE** with no size.
+          earnings within {rules['risk']['earnings_blackout_days']} days, an unfavourable timing context).
+          {evidence_text}
         - **AVOID / TRIM**: price above even the bull-case value, on fresh data. Otherwise **HOLD / WATCH**.
         - The model is reported as *not informative* — and cannot produce BUY/AVOID — when the price implies growth
           (or ROE) beyond its range, the value looks implausible, ROE is not above long-run growth, fewer than 3
           consecutive annual cash-flow statements exist, or stock comp, interest paid in financing or lease principal is
           unknown in any of those years (reported 0 counts; "not applicable" only with an issuer source recorded in
           `decision_rules.yaml`), or — for banks and insurers — no
-          capital-adequacy / asset-quality inputs exist (always the case today).
+          sourced capital-adequacy / asset-quality inputs exist or they fail the configured gates.
         - **Quality floor / Value cross-check**: a BUY CANDIDATE needs Quality ≥ {rules.get('scores', {}).get('min_quality_for_buy', 45):.0f}
           (cheap and weak is the classic value trap). If the DCF says cheap but the Value score (multiples vs peers)
           is below {rules.get('scores', {}).get('value_crosscheck_below', 30):.0f}, confidence is reduced. Red flags and thin data also lower confidence.
@@ -101,8 +103,9 @@ def render(ctx):
           (wider of technical support and bear-case value, at least {rules['risk'].get('min_stop_pct', 8):.0f}%),
           max {rules['risk']['max_position_pct']:.0f}% per position (the same absolute cap binds every portfolio
           optimiser — too few holdings leave cash — and a rebalance may only add to a BUY CANDIDATE), and
-          the exit-capacity cap when a NAV is configured. A stop is a trigger, not a guaranteed price; no portfolio-wide
-          stress-loss budget is enforced. All assumptions: `config/decision_rules.yaml`.
+          the exit-capacity cap when a NAV is configured. Portfolio additions and rebalances also use the configured
+          sector, currency and correlated-crash stress budgets (`portfolio` in the rule file). A stop is a trigger,
+          not a guaranteed price. All assumptions: `config/decision_rules.yaml`.
         - **Signal** (STRONG SETUP … UNFAVOURABLE: trend, quality, value, the Decision's reward/risk and volume flow),
           **Momentum**, **Revisions**, **Smart Money**, LLM narratives and ML forecasts are *context*; only the
           Decision is a recommendation. The 52-week position is shown but not scored.
@@ -145,3 +148,12 @@ def _methodology_qa():
     if last:
         from views.stock_analysis.research import _render_answer
         _render_answer({"q": last[0], "res": last[1], "hits": last[2]})
+
+
+def _evidence_requirement(rules):
+    enabled = bool((rules.get("evidence") or {}).get("require_validated_evidence_for_buy", True))
+    if enabled:
+        return ("**Evidence requirement: On.** Validated Track Record evidence is also required for BUY; "
+                "without it an otherwise eligible stock is a RESEARCH CANDIDATE with no size.")
+    return ("**Evidence requirement: Off.** BUY can appear before Track Record validation when the other gates pass. "
+            "Evidence status is unchanged; unvalidated signals remain unvalidated and confidence is capped at MEDIUM.")

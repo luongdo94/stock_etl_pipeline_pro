@@ -22,16 +22,15 @@ _SAVED_HORIZON, _SAVED_CUSTOM = "_range_horizon", "_range_custom"
 
 _CSS = """
 <style>
-[data-testid="stSidebar"] { background: #0a0e1a; }
-.sb-section-label { font-size: 0.72rem; letter-spacing: 0.08em; color: #8fa3b8; text-transform: uppercase;
-    margin: 12px 0 6px 0; border-bottom: 1px solid #1f2a3d; padding-bottom: 3px; font-weight: 700; }
-.sb-card { padding: 8px 10px; background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08);
-    border-radius: 6px; margin-bottom: 6px; font-size: 0.8rem; color: #dde4ee; line-height: 1.45; }
-.sb-muted { color: #9aabbd; font-size: 0.74rem; }
+.sb-section-label { font-size: 0.72rem; letter-spacing: 0.08em; color:inherit; text-transform: uppercase;
+    margin: 12px 0 6px 0; border-bottom: 1px solid rgba(128,128,128,0.25); padding-bottom: 3px; font-weight: 700; }
+.sb-card { padding: 8px 10px; background:var(--secondary-background-color, transparent); border: 1px solid rgba(128,128,128,0.25);
+    border-radius: 6px; margin-bottom: 6px; font-size: 0.8rem; color:inherit; line-height: 1.45; }
+.sb-muted { color:inherit; font-size: 0.74rem; }
 .sb-macro-row { display: flex; justify-content: space-between; align-items: center; padding: 4px 8px;
-    border-radius: 4px; margin-bottom: 3px; background: rgba(255,255,255,0.025);
-    border: 1px solid rgba(255,255,255,0.05); font-size: 0.8rem; color: #dde4ee; }
-.sb-macro-label { color: #9aabbd; font-size: 0.74rem; }
+    border-radius: 4px; margin-bottom: 3px; background:var(--secondary-background-color, transparent);
+    border: 1px solid rgba(128,128,128,0.25); font-size: 0.8rem; color:inherit; }
+.sb-macro-label { color:inherit; font-size: 0.74rem; }
 </style>
 """
 _LEVEL = {"OK": ("#2ecc71", "Up to date"), "WARN": ("#f1c40f", "Check"), "STALE": ("#e74c3c", "Stale"),

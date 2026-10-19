@@ -3,6 +3,8 @@
 It forecasts no direction. The neural price forecasts that used to live here did not beat a no-change forecast on real stocks
 (scripts/tools/ml_walkforward.py) and are archived at the commit `06b9bf9` of the git history. Nothing on this tab feeds the Decision Summary.
 """
+import html
+
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -11,14 +13,17 @@ import streamlit as st
 from core import risk_range as rr
 from core.smart_money import get_sm_spirit_unified_v2
 from services.ai import analyze_sentiment_finbert
+
+from ui.components import format_value
+from ui.sticky import sticky, sticky_choice
 from ui.icons import render_header
 
 
-def _tile(title, value, sub="", colour="#fff", border="#3498db"):
-    return (f"<div style='background:rgba(255,255,255,0.04); border-radius:8px; padding:10px 12px; border-top:2px solid {border};'>"
-            f"<div style='color:#8899aa; font-size:0.68rem; margin-bottom:4px; text-transform:uppercase;'>{title}</div>"
-            f"<div style='color:{colour}; font-weight:800; font-size:1.05rem;'>{value}</div>"
-            f"<div style='color:#8899aa; font-size:0.65rem;'>{sub}</div></div>")
+def _tile(title, value, sub="", colour="inherit", border="#3498db"):
+    return (f"<div style='background:var(--secondary-background-color, transparent); border-radius:8px; padding:10px 12px; border-top:2px solid {border};'>"
+            f"<div style='color:inherit; font-size:0.8rem; margin-bottom:4px; text-transform:uppercase;'>{html.escape(str(title))}</div>"
+            f"<div style='color:{colour}; font-weight:800; font-size:1.05rem;'>{html.escape(format_value(value))}</div>"
+            f"<div style='color:inherit; font-size:0.8rem;'>{html.escape(str(sub))}</div></div>")
 
 
 def _news_sentiment(company, ticker):
@@ -31,6 +36,14 @@ def _news_sentiment(company, ticker):
     feed = feedparser.parse(f"https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en")
     titles = [e.get("title", "").split(" - ")[0] for e in feed.entries[:10]]
     return (analyze_sentiment_finbert(titles) if titles else None), len(titles)
+
+
+def _stale_reason(previous, current):
+    changed = [name for name in ("ticker", "horizon", "paths", "calibration") if previous.get(name) != current.get(name)]
+    reasons = (["controls changed (" + ", ".join(changed) + ")"] if changed else [])
+    if previous.get("snapshot") != current.get("snapshot"):
+        reasons.append("the data snapshot was refreshed")
+    return "; ".join(reasons)
 
 
 def render(ctx):
@@ -46,52 +59,69 @@ def render(ctx):
             "The neural price forecasts that used to be here were removed: on 12 real stocks none beat a no-change forecast. "
             "Nothing here feeds the Decision Summary.")
 
-    with st.form("risk_lab_form"):
+    with st.container():
         c1, c2, c3 = st.columns([2, 1, 1])
         with c1:
-            if "risk_ticker_form" not in st.session_state:
-                at = st.session_state.get("active_ticker")
-                if at and at in current_universe:
-                    st.session_state["risk_ticker_form"] = at
-            ticker = st.selectbox("Select ticker", current_universe, format_func=format_ticker, index=None,
-                                  placeholder="Choose a ticker...", key="risk_ticker_form")
+            at = st.session_state.get("active_ticker")
+            ticker = sticky_choice("Select ticker", current_universe, at if at in current_universe else None,
+                                   "risk_ticker_form", format_func=format_ticker,
+                                   placeholder="Choose a ticker...")
         with c2:
-            horizon = st.slider("Horizon (trading days)", 5, 90, 21, key="risk_days_form")
+            horizon = sticky(st.slider, "Horizon (trading days)", 21, "risk_days_form", min_value=5, max_value=90)
         with c3:
-            n_sims = st.selectbox("Monte Carlo paths", [1000, 2000, 5000], index=1, key="risk_sims_form")
-        check = st.checkbox("Calibration check (re-fits the model on up to 60 earlier non-overlapping windows and tests "
-                            "the range)", value=True, key="risk_cal_form")
-        run = st.form_submit_button("🎲 COMPUTE RISK RANGE", width="stretch", type="primary")
+            n_sims = sticky_choice("Monte Carlo paths", [1000, 2000, 5000], 2000, "risk_sims_form")
+        check = sticky(st.checkbox, "Calibration check (re-fits the model on up to 60 earlier non-overlapping windows and tests "
+                            "the range)", True, "risk_cal_form")
+        run = st.button("🎲 COMPUTE RISK RANGE", width="stretch", type="primary", key="risk_compute")
 
-    if not (run and ticker):
+    spec = {"ticker": ticker, "horizon": horizon, "paths": n_sims, "calibration": check,
+            "snapshot": ctx.get("data_version")}
+    if run and ticker:
+        df = prices_full[prices_full["ticker"] == ticker].sort_values("date")
+        if len(df) < 150:
+            st.session_state.pop("_risk_run", None)
+            st.warning(f"Only {len(df)} days of history for {ticker}; at least 150 are needed.")
+            return
+        co = companies_full[companies_full["ticker"] == ticker]
+        sector = co.iloc[0]["sector"] if not co.empty else None
+        company = co.iloc[0]["company"] if not co.empty and "company" in co.columns else ticker
+        closes = df["price_close"].astype(float).reset_index(drop=True)
+        last = float(closes.iloc[-1])
+        returns = df["daily_return_pct"].dropna() / 100
+        try:
+            with st.spinner("Fitting volatility and simulating..."):
+                fit = rr.fit_volatility(returns, horizon)
+                sigma = fit["sigma"]
+                paths, sim_diag = rr.simulate_paths(last, sigma, n_sims, nu=fit["nu"], seed=42,
+                                                  garch=fit.get("garch"), return_diagnostics=True)
+                m = rr.risk_metrics(paths, last)
+                _max_w = max(0, (len(closes) - 1 - 250) // max(horizon, 1))
+                cov = rr.coverage_backtest(closes, horizon, windows=min(_max_w, 60), n_sims=500) if check else None
+                sm = get_sm_spirit_unified_v2(df, sector=str(sector) if sector else "Unknown")
+            st.session_state["_risk_run"] = {"spec": spec, "at": pd.Timestamp.now(tz="UTC"),
+                "df": df, "company": company, "last": last, "returns": returns, "fit": fit,
+                "paths": paths, "sim_diag": sim_diag, "metrics": m, "coverage": cov, "max_windows": _max_w, "sm": sm}
+        except Exception as exc:
+            st.session_state.pop("_risk_run", None)
+            st.error(f"Risk range unavailable ({type(exc).__name__}). No result was saved for this request.")
+            return
+    saved = st.session_state.get("_risk_run")
+    if not saved:
         st.caption("Pick a ticker and a horizon, then compute.")
         return
-
-    ticker, horizon = st.session_state.risk_ticker_form, st.session_state.risk_days_form
-    n_sims, check = st.session_state.risk_sims_form, bool(st.session_state.get("risk_cal_form", True))
-    df = prices_full[prices_full["ticker"] == ticker].sort_values("date")
-    if len(df) < 150:
-        st.warning(f"Only {len(df)} days of history for {ticker}; at least 150 are needed.")
-        return
-    co = companies_full[companies_full["ticker"] == ticker]
-    sector = co.iloc[0]["sector"] if not co.empty else None
-    company = co.iloc[0]["company"] if not co.empty and "company" in co.columns else ticker
-
-    closes = df["price_close"].astype(float).reset_index(drop=True)
-    last = float(closes.iloc[-1])
-    returns = df["daily_return_pct"].dropna() / 100
-    with st.spinner("Fitting volatility and simulating..."):
-        fit = rr.fit_volatility(returns, horizon)
-        sigma = fit["sigma"]
-        paths, sim_diag = rr.simulate_paths(last, sigma, n_sims, nu=fit["nu"], seed=42, garch=fit.get("garch"),
-                                            return_diagnostics=True)
-        m = rr.risk_metrics(paths, last)
-        # as many non-overlapping windows as the history allows (the verdict needs ≥ 30) — R2-07
-        _max_w = max(0, (len(closes) - 1 - 250) // max(horizon, 1))
-        cov = rr.coverage_backtest(closes, horizon, windows=min(_max_w, 60), n_sims=500) if check else None
-        if check and _max_w < rr.MIN_CALIBRATION_WINDOWS:
-            st.caption(f"Only {_max_w} non-overlapping {horizon}-day windows fit in the available history "
-                       f"(need {rr.MIN_CALIBRATION_WINDOWS}); shorten the horizon for a calibration verdict.")
+    why = _stale_reason(saved["spec"], spec)
+    if why:
+        st.warning(f"Stale result: {why}. Showing the saved run; press Compute to refresh.")
+    ticker, horizon = saved["spec"]["ticker"], saved["spec"]["horizon"]
+    n_sims, check = saved["spec"]["paths"], saved["spec"]["calibration"]
+    df, company, last, returns = saved["df"], saved["company"], saved["last"], saved["returns"]
+    fit, paths, sim_diag, m, cov = saved["fit"], saved["paths"], saved["sim_diag"], saved["metrics"], saved["coverage"]
+    sigma, sm = fit["sigma"], saved["sm"]
+    st.caption(f"Saved range for {ticker} · {horizon} trading days · {n_sims:,} paths · "
+               f"computed {saved['at']:%Y-%m-%d %H:%M UTC} · snapshot {saved['spec']['snapshot']}")
+    if check and saved["max_windows"] < rr.MIN_CALIBRATION_WINDOWS:
+        st.caption(f"Only {saved['max_windows']} non-overlapping {horizon}-day windows fit in the available history "
+                   f"(need {rr.MIN_CALIBRATION_WINDOWS}); shorten the horizon for a calibration verdict.")
 
     realised = float(returns.tail(21).std())
     avg_sigma = float(np.sqrt(np.mean(sigma ** 2)))
@@ -110,25 +140,25 @@ def render(ctx):
 
     # ── headline numbers ────────────────────────────────────────────────────────────────────
     tiles = "".join([
-        _tile("Volatility forecast", f"{rr.annualise(avg_sigma):.0%} / yr", f"{avg_sigma * 100:.2f}% a day · 21d realised "
+        _tile("Volatility forecast", format_value(rr.annualise(avg_sigma), ".0%", suffix=" / yr"), f"{avg_sigma * 100:.2f}% a day · 21d realised "
               f"{rr.annualise(realised):.0%}", border="#9b59b6"),
-        _tile(f"VaR 95% · {horizon}d", f"−{m['var95'] * 100:.1f}%", "loss exceeded in 1 of 20 outcomes", "#e74c3c", "#e74c3c"),
-        _tile("Expected shortfall 95%", f"−{m['es95'] * 100:.1f}%", "average loss in the worst 5%", "#e74c3c", "#c0392b"),
-        _tile("P(loss > 10%)", f"{m['prob_loss10']:.0%}", f"P(gain > 10%): {m['prob_gain10']:.0%}", "#f1c40f", "#f1c40f"),
+        _tile(f"VaR 95% · {horizon}d", format_value(m["var95"], ".1%", prefix="−"), "loss exceeded in 1 of 20 outcomes", "#e74c3c", "#e74c3c"),
+        _tile("Expected shortfall 95%", format_value(m["es95"], ".1%", prefix="−"), "average loss in the worst 5%", "#e74c3c", "#c0392b"),
+        _tile("P(loss > 10%)", format_value(m["prob_loss10"], ".0%"), f"P(gain > 10%): {m['prob_gain10']:.0%}", "#f1c40f", "#f1c40f"),
     ])
-    st.markdown(f"<div style='display:grid; grid-template-columns:repeat(4,1fr); gap:8px; margin:10px 0;'>{tiles}</div>",
+    st.markdown(f"<div style='display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr)); gap:8px; margin:10px 0;'>{tiles}</div>",
                 unsafe_allow_html=True)
 
     def pct(x):
-        return f"{(x / last - 1) * 100:+.1f}%"
+        return format_value((x / last - 1) * 100 if np.isfinite(x) and np.isfinite(last) and last > 0 else None, "+.1f", suffix="%")
     cards = "".join([
-        _tile("Current price", f"€{last:.2f}", "", border="#3498db"),
-        _tile("Low (P10)", f"€{m['p10']:.2f}", pct(m["p10"]), "#e74c3c", "#e74c3c"),
-        _tile("Median", f"€{m['p50']:.2f}", pct(m["p50"]), border="#8899aa"),
-        _tile("High (P90)", f"€{m['p90']:.2f}", pct(m["p90"]), "#2ecc71", "#2ecc71"),
-        _tile("90% interval", f"€{m['p5']:.2f} – €{m['p95']:.2f}", f"{pct(m['p5'])} to {pct(m['p95'])}", border="#00ffcc"),
+        _tile("Current price", format_value(last, ".2f", prefix="€"), f"Warehouse close · {pd.Timestamp(df['date'].iloc[-1]):%Y-%m-%d}", border="#3498db"),
+        _tile("Low (P10)", format_value(m["p10"], ".2f", prefix="€"), pct(m["p10"]), "#e74c3c", "#e74c3c"),
+        _tile("Median", format_value(m["p50"], ".2f", prefix="€"), pct(m["p50"]), border="#8899aa"),
+        _tile("High (P90)", format_value(m["p90"], ".2f", prefix="€"), pct(m["p90"]), "#2ecc71", "#2ecc71"),
+        _tile("90% interval", format_value(m["p5"], ".2f", prefix="€") + " – " + format_value(m["p95"], ".2f", prefix="€"), f"{pct(m['p5'])} to {pct(m['p95'])}", border="#00ffcc"),
     ])
-    st.markdown(f"<div style='display:grid; grid-template-columns:repeat(5,1fr); gap:8px; margin-bottom:6px;'>{cards}</div>",
+    st.markdown(f"<div style='display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr)); gap:8px; margin-bottom:6px;'>{cards}</div>",
                 unsafe_allow_html=True)
 
     # ── chart ───────────────────────────────────────────────────────────────────────────────
@@ -162,13 +192,20 @@ def render(ctx):
     # ── context ─────────────────────────────────────────────────────────────────────────────
     st.markdown("---")
     render_header("activity", "Context (not part of the range)")
-    try:
-        sent, n_titles = _news_sentiment(company, ticker)
-    except Exception:
-        sent, n_titles = None, None                          # the lookup failed: unknown, not Neutral
-    sm = get_sm_spirit_unified_v2(df, sector=str(sector) if sector else "Unknown")
+    if st.button("Load headline context", key="risk_news"):
+        try:
+            sent, n_titles = _news_sentiment(company, ticker)
+        except Exception:
+            sent, n_titles = None, None
+        saved["news"] = {"sent": sent, "n": n_titles, "at": pd.Timestamp.now(tz="UTC")}
+    news = saved.get("news")
+    sent, n_titles = (news["sent"], news["n"]) if news else (None, None)
+    if news:
+        st.caption(f"Google News / FinBERT · requested {news['at']:%Y-%m-%d %H:%M UTC} · external context, outside the snapshot.")
     k1, k2, k3 = st.columns(3)
-    if sent is None:
+    if not news:
+        k1.metric("News sentiment (FinBERT)", "Not loaded", delta="Load headline context to request it", delta_color="off")
+    elif sent is None:
         k1.metric("News sentiment (FinBERT)", "Unavailable" if n_titles is None else "No headlines",
                   delta="lookup failed" if n_titles is None else "none in the last 7 days", delta_color="off")
     else:

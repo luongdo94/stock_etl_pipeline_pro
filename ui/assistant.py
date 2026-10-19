@@ -13,7 +13,7 @@ _MAX_KEPT = 20
 _CSS = """<style>
 .st-key-assistant_fab {position: fixed; right: 1.6rem; bottom: 1.4rem; z-index: 999990; width: auto !important;}
 .st-key-assistant_fab button {border-radius: 999px; padding: 0.55rem 1.1rem; box-shadow: 0 6px 22px rgba(0,0,0,.45);
-  background: linear-gradient(135deg, #16a085, #2980b9); color: #fff; border: none; font-weight: 700;}
+   font-weight: 700;}
 </style>"""
 _SUGGEST = {
     "Stock Analysis": ["Why is {t} rated the way it is?", "What are the main risks in {t}'s 10-K?",

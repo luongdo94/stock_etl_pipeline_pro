@@ -167,7 +167,7 @@ def render(dd, ctx):
                      padding:4px 12px; border-radius:20px; font-size:0.82rem; font-weight:700;">
             {_sm_icon} Smart Money: {p_sm} ({p_sm_strength})
         </span>
-        <span style="background:rgba(255,255,255,0.04); border:1px solid rgba(255,255,255,0.12); color:#aaa;
+        <span style="background:var(--secondary-background-color, transparent); border:1px solid rgba(128,128,128,0.25); color:inherit;
                      padding:4px 12px; border-radius:20px; font-size:0.82rem;">
             Layer: {p_sm_layer}
         </span>
@@ -312,7 +312,7 @@ def render(dd, ctx):
             """, height=410)
 
             # Cross-Asset Comparison (Relative Strength vs Benchmark)
-            st.markdown("<div style='margin-top:12px; color:#667788; font-size:0.75rem; font-weight:700; text-transform:uppercase; letter-spacing:0.08em;'>📊 Relative Strength vs Key Benchmarks</div>", unsafe_allow_html=True)
+            st.markdown("<div style='margin-top:12px; color:inherit; font-size:0.75rem; font-weight:700; text-transform:uppercase; letter-spacing:0.08em;'>📊 Relative Strength vs Key Benchmarks</div>", unsafe_allow_html=True)
             _compare_syms = json.dumps([
                 {"symbol": "FOREXCOM:SPXUSD", "position": "SameScale"},
                 {"symbol": "FOREXCOM:NSXUSD", "position": "SameScale"},

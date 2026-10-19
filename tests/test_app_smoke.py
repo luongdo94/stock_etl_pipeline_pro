@@ -186,12 +186,18 @@ def test_earnings_tab_shows_history_upcoming_and_study(warehouse):
     at.session_state["active_ticker"] = "AAPL"
     at.run()
     assert not at.exception, [e.value for e in at.exception]
+    tables = [d.value for d in at.dataframe]
+    assert any("Typical move" in getattr(t, "columns", []) for t in tables)   # upcoming only
+    assert not any("Next report" in m.value for m in at.markdown)
+    at.selectbox(key="er_section").select("Single stock").run()
+    assert not at.exception, [e.value for e in at.exception]
     html = " ".join(m.value for m in at.markdown)
     assert "Beat rate" in html and "Typical move" in html and "Next report" in html
-    assert any("reports from" in m.value for m in at.markdown)               # universe drift study rendered
-    tables = [d.value for d in at.dataframe]
-    assert any("Surprise" in getattr(t, "columns", []) for t in tables)       # per-report history
-    assert any("Typical move" in getattr(t, "columns", []) for t in tables)   # upcoming reports
+    assert any("Surprise" in getattr(d.value, "columns", []) for d in at.dataframe)
+    at.selectbox(key="er_section").select("Surprise study").run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert any("reports from" in m.value for m in at.markdown)
+
 
 
 @pytest.mark.parametrize("tab", ["🔭 Stock Scanner", "💼 Portfolio", "📖 Docs"])
@@ -370,6 +376,8 @@ def test_cr10_the_earnings_tab_lists_the_calendar_when_the_events_table_is_empty
     up = next(d.value for d in at.dataframe if "Source" in getattr(d.value, "columns", []))
     assert up["Ticker"].tolist() == ["AAPL"] and up["Source"].tolist() == ["Yahoo calendar"]
     assert up["Session"].tolist() == ["time not announced"]
+    at.selectbox(key="er_section").select("Single stock").run()
+    assert not at.exception, [e.value for e in at.exception]
     assert any(o.startswith("AAPL") for o in at.selectbox(key="er_ticker").options)
 
 
@@ -390,6 +398,7 @@ def test_cr12_a_note_is_per_report_source_and_never_shown_after_a_mismatch(wareh
     at = _app("🗓️ Earnings")
     at.session_state["active_ticker"] = "AAPL"
     at.session_state["er_ticker"] = "AAPL"
+    at.session_state["_kept::er_section"] = "Single stock"
     at.run()
     shown = lambda: " ".join(m.value for m in at.markdown)                      # noqa: E731
     at.button(key="er_ai").click().run()

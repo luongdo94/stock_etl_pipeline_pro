@@ -25,11 +25,11 @@ def render_title_bar(model: dict):
     """Name, newest price date, freshness word (text, not only colour), warnings, and a closed 'Data details' block."""
     esc = html.escape
     st.markdown(f"""
-    <div style='padding:10px 16px; background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.06);
+    <div style='padding:10px 16px; background:var(--secondary-background-color, transparent); border:1px solid rgba(128,128,128,0.25);
                 border-radius:8px;'>
-        <div style='font-size:1.3rem; font-weight:900; color:#e8eaf6; font-family:"Courier New", monospace;
+        <div style='font-size:1.3rem; font-weight:900; color:inherit; font-family:"Courier New", monospace;
                     overflow-wrap:anywhere;'>{esc(model['title'])}</div>
-        <div style='display:flex; flex-wrap:wrap; gap:4px 16px; margin-top:4px; font-size:0.85rem; color:#aab;'>
+        <div style='display:flex; flex-wrap:wrap; gap:4px 16px; margin-top:4px; font-size:0.85rem; color:inherit;'>
             <span>{esc(model['prices'])}</span>
             <span>Data: <b style='color:{model['level_color']};'>{esc(model['level_word'])}</b></span>
         </div>

@@ -13,6 +13,8 @@ from datetime import date
 import pandas as pd
 import streamlit as st
 
+from ui.sticky import sticky, sticky_choice, sticky_segmented
+
 from core import market_regime as mr
 from core import signal_feed as feed
 
@@ -154,8 +156,8 @@ def render(*, m_df, prices_full, companies_full, reco_df, earnings_cal, advice, 
         if not pop.open:
             # closed: only the badge above was computed — no panel, no detail query, no FX (review SIG-R03)
             return
-        panel = st.segmented_control("Panel", PANELS, default=PANELS[0], key="sig_panel",
-                                     label_visibility="collapsed") or PANELS[0]
+        panel = sticky_segmented("Panel", PANELS, PANELS[0], "sig_panel",
+                                     label_visibility="collapsed")
         if panel == PANELS[0]:
             _needs_review(items, hub)
         elif panel == PANELS[1]:
@@ -186,8 +188,8 @@ def _needs_review(items, hub):
         who = "" if it["ticker"] == "—" else f"<b>{_e(it['ticker'])}</b> · "
         st.markdown(f"<div style='border-left:4px solid {colour};padding:4px 8px;margin-bottom:6px;'>"
                     f"<span style='color:{colour};font-weight:700;font-size:0.75rem;'>{tag} · {_e(it['kind'])}</span>"
-                    f" <span style='color:#8899aa;font-size:0.72rem;'>({_e(it['scope'])})</span> {_chip(it['decision'])}<br>"
-                    f"{who}{_e(it['message'])}<br><span style='color:#8899aa;font-size:0.7rem;'>source: {_e(it['source'])}"
+                    f" <span style='color:inherit;font-size:0.72rem;'>({_e(it['scope'])})</span> {_chip(it['decision'])}<br>"
+                    f"{who}{_e(it['message'])}<br><span style='color:inherit;font-size:0.7rem;'>source: {_e(it['source'])}"
                     + (f" · as of {_e(it['data_as_of'])}" if it["data_as_of"] else "") + "</span></div>",
                     unsafe_allow_html=True)
 
@@ -205,7 +207,7 @@ def _decision_changes(hub):
     user = hub["user"]
     mine = set(user["holdings"] or {}) | set((user["watchlist"]["Ticker"] if user["watchlist"] is not None
                                               and "Ticker" in user["watchlist"] else []))
-    only_mine = st.toggle("Only my names", value=False, key="sig_dc_mine")
+    only_mine = sticky(st.toggle, "Only my names", False, "sig_dc_mine")
     rows = [c for c in ch["changes"] if not only_mine or c["ticker"] in mine]
     st.caption(f"{ch['previous']} → {ch['as_of']}: {len(ch['changes'])} stance change(s).")
     data = [c for c in rows if c["cause"] != "rules"]           # incl. "rules+data": never hidden as methodology
@@ -214,7 +216,7 @@ def _decision_changes(hub):
         st.success("No stance changed.")
     for c in data:
         st.markdown(f"<b>{c['ticker']}</b> {c['from']} → <span style='color:{_DIR[c['direction']]};font-weight:700;'>"
-                    f"{c['to']}</span> <span style='color:#8899aa;font-size:0.8rem;'>— {c['cause']}: {c['detail']}</span>",
+                    f"{c['to']}</span> <span style='color:inherit;font-size:0.8rem;'>— {c['cause']}: {c['detail']}</span>",
                     unsafe_allow_html=True)
     if rule:
         up = sum(c["direction"] == "up" for c in rule)
@@ -231,7 +233,7 @@ def _market_panel(hub, advice, macro, items):
     st.caption("Technical observations — they describe the tape, they are not signals to act on. The chip is the "
                "computed Decision.")
     mine = {i["ticker"] for i in items} | set(hub["user"]["holdings"] or {})
-    show_highs = st.toggle("Include 52-week highs of other names", value=False, key="sig_mk_highs")
+    show_highs = sticky(st.toggle, "Include 52-week highs of other names", False, "sig_mk_highs")
     alerts = [a for a in mk["alerts"] if show_highs or a["type"] != "NEAR 52-WEEK HIGH" or a["ticker"] in mine]
     rows, total = feed.group_observations(alerts, dec, limit=25)
     st.markdown(f"**Observations** — showing {len(rows)} of {total} name(s)"
@@ -239,7 +241,7 @@ def _market_panel(hub, advice, macro, items):
     for r in rows:
         when = f" · {r['date']}" if r["date"] else ""
         st.markdown(f"<b>{r['ticker']}</b> {_chip(r['decision'])} <span style='font-size:0.8rem;'>"
-                    f"{' · '.join(r['labels'])}</span><br><span style='color:#8899aa;font-size:0.75rem;'>"
+                    f"{' · '.join(r['labels'])}</span><br><span style='color:inherit;font-size:0.75rem;'>"
                     f"{' | '.join(r['details'])}{when}</span>", unsafe_allow_html=True)
     st.markdown("---")
     c1, c2 = st.columns(2)
@@ -248,7 +250,7 @@ def _market_panel(hub, advice, macro, items):
             st.markdown(f"**{title}** (own last two sessions)")
             for _, r in frame.iterrows():
                 st.markdown(f"<b>{r['ticker']}</b> <span style='color:{colour};'>{r['chg_24h']:+.2f}%</span> "
-                            f"{_chip(dec.get(r['ticker']))} <span style='color:#8899aa;font-size:0.7rem;'>"
+                            f"{_chip(dec.get(r['ticker']))} <span style='color:inherit;font-size:0.7rem;'>"
                             f"{pd.Timestamp(r['last_date']).date()}</span>", unsafe_allow_html=True)
 
 
@@ -274,7 +276,7 @@ def _earnings_panel(earnings_cal, companies_full, dec):
             return f"€{v * fx / scale:,.2f}{unit}" if fx else f"{v / scale:,.2f}{unit} {ccy}"
         name = r["company"] if pd.notnull(r["company"]) else r["ticker"]
         st.markdown(f"<b>{pd.Timestamp(r['earnings_date']):%b %d}</b> · {_e(name)} ({_e(r['ticker'])}) {_chip(dec.get(r['ticker']))}<br>"
-                    f"<span style='color:#8899aa;font-size:0.78rem;'>EPS est. {money(r['eps_avg'])} · revenue est. "
+                    f"<span style='color:inherit;font-size:0.78rem;'>EPS est. {money(r['eps_avg'])} · revenue est. "
                     f"{money(r['rev_avg'], 1e9, 'B')}</span>", unsafe_allow_html=True)
 
 
@@ -321,9 +323,12 @@ def _insider_panel():
         st.info("No insider transactions in the warehouse yet.")
         return
     c1, c2, c3 = st.columns(3)
-    sel = c1.selectbox("Ticker", ["All"] + tickers, key="sig_insider_ticker")
-    tx_type = c2.selectbox("Type", ["All", "Buy", "Sale", "Award", "Exercise", "Gift", "Unknown"], key="sig_insider_type")
-    min_k = c3.number_input("Min value (K, USD)", min_value=0, max_value=10000, value=0, step=100, key="sig_insider_min")
+    with c1:
+        sel = sticky_choice("Ticker", ["All"] + tickers, "All", "sig_insider_ticker")
+    with c2:
+        tx_type = sticky_choice("Type", ["All", "Buy", "Sale", "Award", "Exercise", "Gift", "Unknown"], "All", "sig_insider_type")
+    with c3:
+        min_k = sticky(st.number_input, "Min value (K, USD)", 0, "sig_insider_min", min_value=0, max_value=10000, step=100)
     df = load_insider_transactions(ticker=None if sel == "All" else sel, tx_type=None if tx_type == "All" else tx_type,
                                    min_value_usd=min_k * 1000)
     if df.empty:

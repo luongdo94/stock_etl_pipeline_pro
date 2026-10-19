@@ -38,6 +38,8 @@ def test_a_single_positive_holding_gets_no_value_is_zero_warning(warehouse):
     at = _portfolio().run()
     assert not at.exception, [e.value for e in at.exception]
     assert not any("Total portfolio value is 0" in w.value for w in at.warning)
+    at.selectbox(key="pf_section").select("Rebalance").run()
+    assert not at.exception, [e.value for e in at.exception]
     assert any("add a second one" in i.value for i in at.info)
 
 

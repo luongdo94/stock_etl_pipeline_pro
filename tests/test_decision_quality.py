@@ -198,6 +198,7 @@ def test_portfolio_tab_shows_stress_targets_and_records_a_rebalance(tmp_path, mo
     at.session_state["authenticated"] = True
     at.session_state["user_id"] = "00000000-0000-0000-0000-000000000000"
     at.session_state["active_tab"] = "💼 Portfolio"
+    at.session_state["_kept::pf_section"] = "Risk & income"
     at.run()
     assert not at.exception, [e.value for e in at.exception]
     html = " ".join(m.value for m in at.markdown)
@@ -205,6 +206,7 @@ def test_portfolio_tab_shows_stress_targets_and_records_a_rebalance(tmp_path, mo
     tables = [d.value for d in at.dataframe]
     assert any("scenario" in getattr(t, "columns", []) for t in tables)
     assert any("Allowed %" in getattr(t, "columns", []) for t in tables)          # target section with 1 target
+    at.selectbox(key="pf_section").select("Rebalance").run()
     next(b for b in at.button if "GENERATE OPTIMAL REBALANCE" in str(b.label)).click().run()
     next(b for b in at.button if "APPLY REBALANCE" in str(b.label)).click().run()
     assert not at.exception, [e.value for e in at.exception]

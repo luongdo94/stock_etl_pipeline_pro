@@ -11,7 +11,7 @@ from core.track_record import evidence_headline
 from services import db
 from ui.components import render_metric_tile
 from ui.icons import render_header
-from ui.sticky import sticky
+from ui.sticky import sticky, sticky_choice
 
 RULES = [
     "Trend Following (MA20/50 Cross)",
@@ -118,7 +118,7 @@ def render(ctx):
         if gaps:
             st.warning(f"{gaps} trading day(s) without a return inside {rspec['ticker']}'s history were counted as 0% — "
                        f"read these results as indicative.", icon="⚠️")
-        st.markdown(f"<div style='border-left:4px solid #8899aa; padding:10px 14px; margin-bottom:12px; color:#bbb;'>"
+        st.markdown(f"<div style='border-left:4px solid #8899aa; padding:10px 14px; margin-bottom:12px; color:inherit;'>"
                     f"{lv.neutral_summary(results)}</div>", unsafe_allow_html=True)
         st.dataframe(comp, width="stretch", hide_index=True, column_config={
             "Return %": st.column_config.NumberColumn("Return", format="%.1f%%"),
@@ -132,7 +132,7 @@ def render(ctx):
         st.caption(lv.sample_meta(results[0]))
 
         names = [r["strategy"] for r in results]
-        pick = st.selectbox("Show details for", names, key="slab_pick")
+        pick = sticky_choice("Show details for", names, names[0], "slab_pick")
         r = next(x for x in results if x["strategy"] == pick)
         m = st.columns(5)
         with m[0]: render_metric_tile("Total return", lv.fmt(r["total_return"], "{:+.1f}", "%"), delta=r["total_return"])

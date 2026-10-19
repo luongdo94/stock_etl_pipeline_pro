@@ -188,6 +188,7 @@ def render(ctx):
     # one price basis: the stored return index (or the dashboard history), entry = first session after the call
     _sc = tr.since_call_frame(log, _px)
     log = log.assign(since_call_pct=_sc["ret"] * 100, entry_date=_sc["entry_date"], last_date=_sc["last_date"])
+    st.caption(f"Showing {min(300, len(log))} of {len(log)} changes.")
     st.dataframe(
         log[["as_of_date", "ticker", "previous_action", _call, "quality", "price_close", "entry_date", "since_call_pct", "last_date"]].head(300),
         hide_index=True, width="stretch",
