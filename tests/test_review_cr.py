@@ -214,3 +214,32 @@ def test_sector_aliases_keep_or_add_the_scoring_treatment_never_lose_it():
                 assert low(new) in members, f"{old} -> {new} would lose the '{name}' treatment"
     # the two deliberate gains: telecoms get the relaxed leverage bands, energy/mining names the cyclical normalisation
     assert low(al["Communications"]) in groups["leveraged_ok"] and low(al["Energy Minerals"]) in groups["cyclical"]
+
+
+def test_factor_controls_do_not_overwrite_the_value_and_momentum_scores():
+    """A snapshot has Value / Momentum SCORE columns: the controls used to collide with them (momentum_x / momentum_y,
+    Value replaced by book/price) and evidence_table raised KeyError on the real schema."""
+    import numpy as np
+    from core import factor_test as ft
+    rng = np.random.default_rng(0)
+    days, tick = pd.bdate_range("2025-01-01", periods=300), [f"T{i}" for i in range(30)]
+    px = pd.concat([pd.DataFrame({"date": days, "ticker": t, "price_close": 100 * np.exp(np.cumsum(rng.normal(0, 0.01, 300)))})
+                    for t in tick], ignore_index=True)
+    snap = pd.DataFrame({"as_of_date": days[260], "ticker": tick, "quality": rng.integers(20, 90, 30),
+                         "value": np.arange(30) + 100, "momentum": np.arange(30) + 200, "revisions": 50, "region": "US",
+                         "market_cap_eur": 1e10, "book_to_price": rng.uniform(0.1, 0.5, 30), "beta": 1.0,
+                         "knowledge_at": days[260]})
+    out = ft.factor_exposures(snap, px)
+    assert out["value"].tolist() == snap["value"].tolist() and out["momentum"].tolist() == snap["momentum"].tolist()
+    assert {"ctl_beta", "ctl_size", "ctl_value", "ctl_momentum"} <= set(out.columns)
+    assert not {"momentum_x", "momentum_y"} & set(out.columns)
+    ft.evidence_table(snap, px, horizons=(21,))                                  # no KeyError on the real schema
+
+
+def test_erp_and_required_margin_are_read_from_the_config_at_the_call(monkeypatch):
+    """The defaults were fixed at import: a process started before a config edit kept pricing with the old premium."""
+    from core import valuation as val
+    monkeypatch.setattr(val, "_valuation_config", lambda: {"equity_risk_premium": 0.06, "required_margin_of_safety": 0.40})
+    assert val.cost_of_equity(1.0, risk_free=0.04) == 0.10                         # beta 1, ERP 6 %
+    assert val.cost_of_equity(1.0, risk_free=0.04, erp=0.05) == 0.09               # an explicit value still wins
+    assert val.valuation_verdict(0.30) != "UNDERVALUED" and val.valuation_verdict(0.45) == "UNDERVALUED"

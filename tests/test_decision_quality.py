@@ -21,9 +21,9 @@ def _panel(days=80, n=80, alpha_weight=0.0, beta_weight=0.05):
         beta = RNG.uniform(0.5, 1.8, n)
         alpha = RNG.normal(0, 1, n)
         fwd = beta_weight * (beta - beta.mean()) / beta.std() + alpha_weight * alpha + RNG.normal(0, 0.05, n)
-        rows.append(pd.DataFrame({"as_of_date": d, "ticker": [f"T{i}" for i in range(n)], "beta_x": beta,
-                                  "size": RNG.normal(23, 1, n), "value": RNG.uniform(0.1, 1, n),
-                                  "momentum": RNG.normal(0, 0.2, n), "alpha_score": alpha,
+        rows.append(pd.DataFrame({"as_of_date": d, "ticker": [f"T{i}" for i in range(n)], "ctl_beta": beta,
+                                  "ctl_size": RNG.normal(23, 1, n), "ctl_value": RNG.uniform(0.1, 1, n),
+                                  "ctl_momentum": RNG.normal(0, 0.2, n), "alpha_score": alpha,
                                   "beta_score": beta + RNG.normal(0, 0.05, n), "fwd_21": fwd, "region": "US"}))
     return pd.concat(rows, ignore_index=True)
 
@@ -56,8 +56,8 @@ def test_exposures_are_point_in_time():
     snap = pd.DataFrame({"as_of_date": [dates[300]], "ticker": ["A"], "market_cap_eur": [1e10], "book_to_price": [0.5]})
     ex = ft.factor_exposures(snap, px).iloc[0]
     expected = px[(px.ticker == "A")].set_index("date")["price_close"]
-    assert ex["momentum"] == pytest.approx(expected.iloc[300 - 21] / expected.iloc[300 - 252] - 1)
-    assert ex["size"] == pytest.approx(np.log(1e10)) and ex["value"] == 0.5
+    assert ex["ctl_momentum"] == pytest.approx(expected.iloc[300 - 21] / expected.iloc[300 - 252] - 1)
+    assert ex["ctl_size"] == pytest.approx(np.log(1e10)) and ex["ctl_value"] == 0.5
 
 
 def test_top_quintile_pays_for_its_turnover():

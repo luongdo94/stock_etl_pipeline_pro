@@ -121,8 +121,10 @@ def _finite(x) -> Optional[float]:
     return x if np.isfinite(x) else None
 
 
-def cost_of_equity(beta=None, risk_free: float = RISK_FREE, erp: float = EQUITY_RISK_PREMIUM) -> float:
-    """CAPM with Blume-adjusted beta (⅔·β + ⅓, the standard pull toward 1), clipped to [0.6, 2.0]."""
+def cost_of_equity(beta=None, risk_free: float = RISK_FREE, erp: Optional[float] = None) -> float:
+    """CAPM with Blume-adjusted beta (⅔·β + ⅓, the standard pull toward 1), clipped to [0.6, 2.0]. The default ERP is read
+    from the config at the call (it used to be fixed at import, so a long-running process kept the old premium)."""
+    erp = _configured("equity_risk_premium", 0.05) if erp is None else erp
     b = _finite(beta)
     b = 1.0 if b is None or b <= 0 else float(np.clip(2 / 3 * b + 1 / 3, 0.6, 2.0))
     return risk_free + b * erp
@@ -593,8 +595,9 @@ def sensitivity_table(fcfe, shares, growths, rates, terminal_growth=TERMINAL_GRO
     return pd.DataFrame(data, index=[f"{g:+.0%}" for g in growths])
 
 
-def valuation_verdict(margin_of_safety: Optional[float], required: float = REQUIRED_MARGIN_OF_SAFETY) -> str:
-    """Margin of safety = value / price − 1. Undervalued only with the REQUIRED cushion."""
+def valuation_verdict(margin_of_safety: Optional[float], required: Optional[float] = None) -> str:
+    """Margin of safety = value / price − 1. Undervalued only with the REQUIRED cushion (config, read at the call)."""
+    required = _configured("required_margin_of_safety", 0.25) if required is None else required
     if margin_of_safety is None:
         return "NOT VALUED"
     if margin_of_safety >= required:

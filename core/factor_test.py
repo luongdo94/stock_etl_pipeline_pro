@@ -39,7 +39,9 @@ def _ns(s):
 
 def factor_exposures(snapshots: pd.DataFrame, prices: pd.DataFrame, benchmark: str = BENCHMARK,
                      beta_window: int = 252, mom_skip: int = 21, mom_window: int = 252) -> pd.DataFrame:
-    """snapshots + columns beta_x, size, value, momentum (point in time)."""
+    """snapshots + the control columns ctl_beta, ctl_size, ctl_value, ctl_momentum (point in time). The controls carry their
+    own names: a snapshot already has SCORE columns called value and momentum, and a control with the same name used to
+    overwrite the Value score and split momentum into momentum_x / momentum_y (the strict factor test then failed)."""
     snap = snapshots.copy()
     snap["as_of_date"] = _ns(snap["as_of_date"])
     px = prices[["date", "ticker", "price_close"]].dropna().copy()
@@ -61,15 +63,15 @@ def factor_exposures(snapshots: pd.DataFrame, prices: pd.DataFrame, benchmark: s
             continue
         p_skip, p_start = p - mom_skip, p - mom_window
         mom = (wide.iloc[p_skip] / wide.iloc[p_start] - 1) if p_start >= 0 else pd.Series(np.nan, index=wide.columns)
-        out.append(pd.DataFrame({"as_of_date": d, "ticker": wide.columns, "beta_x": beta.iloc[p].to_numpy(),
-                                 "momentum": mom.to_numpy()}))
-    ex = pd.concat(out, ignore_index=True) if out else pd.DataFrame(columns=["as_of_date", "ticker", "beta_x", "momentum"])
+        out.append(pd.DataFrame({"as_of_date": d, "ticker": wide.columns, "ctl_beta": beta.iloc[p].to_numpy(),
+                                 "ctl_momentum": mom.to_numpy()}))
+    ex = pd.concat(out, ignore_index=True) if out else pd.DataFrame(columns=["as_of_date", "ticker", "ctl_beta", "ctl_momentum"])
     snap = snap.merge(ex, on=["as_of_date", "ticker"], how="left")
     if "beta" in snap.columns:                                        # provider beta where the history is too short
-        snap["beta_x"] = snap["beta_x"].fillna(pd.to_numeric(snap["beta"], errors="coerce"))
+        snap["ctl_beta"] = snap["ctl_beta"].fillna(pd.to_numeric(snap["beta"], errors="coerce"))
     mcap = pd.to_numeric(snap["market_cap_eur"], errors="coerce") if "market_cap_eur" in snap.columns else np.nan
-    snap["size"] = np.log(mcap.where(mcap > 0)) if isinstance(mcap, pd.Series) else np.nan
-    snap["value"] = pd.to_numeric(snap["book_to_price"], errors="coerce") if "book_to_price" in snap.columns else np.nan
+    snap["ctl_size"] = np.log(mcap.where(mcap > 0)) if isinstance(mcap, pd.Series) else np.nan
+    snap["ctl_value"] = pd.to_numeric(snap["book_to_price"], errors="coerce") if "book_to_price" in snap.columns else np.nan
     return snap
 
 
@@ -90,7 +92,7 @@ def portfolio_tilts(weights: dict, companies: pd.DataFrame, prices: pd.DataFrame
     ex = factor_exposures(snap, prices, benchmark).set_index("ticker")
     w = pd.Series({t: float(v) for t, v in weights.items() if v and float(v) > 0})
     rows = []
-    for key, col in (("beta", "beta_x"), ("size", "size"), ("value", "value"), ("momentum", "momentum")):
+    for key, col in (("beta", "ctl_beta"), ("size", "ctl_size"), ("value", "ctl_value"), ("momentum", "ctl_momentum")):
         x = _winsor(pd.to_numeric(ex[col], errors="coerce"))
         sd = x.std()
         z = (x - x.mean()) / sd if sd and np.isfinite(sd) and sd > 0 else x * np.nan
@@ -122,7 +124,7 @@ def fama_macbeth(fr: pd.DataFrame, h: int, score_col: str = "quality", controls=
     full rank — otherwise a beta proxy regressed on nothing but itself would come back as "factor-adjusted alpha".
     Without it (exploratory table), controls that are missing on a day are dropped for that day and reported."""
     ret_col = ret_col or f"fwd_{h}"
-    ctrl_cols = {"beta": "beta_x", "size": "size", "value": "value", "momentum": "momentum"}
+    ctrl_cols = {"beta": "ctl_beta", "size": "ctl_size", "value": "ctl_value", "momentum": "ctl_momentum"}
     coefs, raw, days, used = [], [], [], set()
     skipped = 0
     for d, g in fr.dropna(subset=[score_col, ret_col]).groupby("as_of_date"):

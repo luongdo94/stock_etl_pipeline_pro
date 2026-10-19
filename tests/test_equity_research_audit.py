@@ -92,14 +92,14 @@ def test_f07_missing_controls_cannot_produce_a_controlled_premium():
         beta = rng.uniform(0.5, 1.8, 50)
         rows.append(pd.DataFrame({"as_of_date": d, "ticker": [f"T{i}" for i in range(50)],
                                   "score": beta + rng.normal(0, 0.1, 50),                  # a beta proxy
-                                  "beta_x": beta, "momentum": rng.normal(0, 0.2, 50),
+                                  "ctl_beta": beta, "ctl_momentum": rng.normal(0, 0.2, 50),
                                   "fwd_21": 0.05 * beta + rng.normal(0, 0.01, 50)}))       # no size / value at all
     fr = pd.concat(rows)
     strict = fama_macbeth(fr, 21, "score", require_controls=True)
     assert strict["premium"] is None and strict["days_skipped"] == 60 and not strict["identified"]
     loose = fama_macbeth(fr, 21, "score")
     assert loose["controls"] == ["beta", "momentum"] and loose["identified"] is False
-    exact = fama_macbeth(fr.assign(score=fr["beta_x"]), 21, "score")         # score == beta: not identified at all
+    exact = fama_macbeth(fr.assign(score=fr["ctl_beta"]), 21, "score")         # score == beta: not identified at all
     assert exact["premium"] is None and exact["days_skipped"] == 60
 
 
