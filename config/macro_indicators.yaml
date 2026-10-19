@@ -1,0 +1,48 @@
+# Economic indicators shown on Market Pulse: the latest release and the previous one (no consensus forecast: that is
+# licensed data). Free sources only, checked 2026-10-19:
+#   fred      https://fred.stlouisfed.org/graph/fredgraph.csv?id=<series>   (no key)
+#   eurostat  https://ec.europa.eu/eurostat/api/dissemination/statistics/1.0/data/<dataset>   (no key)
+# transform: level (value as published) | yoy (% vs 12 observations earlier) | mom (% vs the previous observation)
+#            | diff (change vs the previous observation)
+# max_age_days: older than this the row is shown as STALE (a source that stopped updating must not look current).
+#
+# NOT available for free and current (so not listed): China CPI, retail sales, industrial output, fixed-asset investment,
+# house prices (the NBS site blocks automated access from outside China, FRED/OECD copies stop in 2025, DBnomics' NBS
+# mirror lags ~8 months); Japan CPI and industrial production (FRED copies stop in 2021-2024; the official e-Stat API
+# needs a free registration key). Add them here once a source is chosen.
+indicators:
+  # ── United States (FRED) ─────────────────────────────────────────────────────────────────────────────────────────
+  - {id: us_gdp_qoq, region: US, name: "Real GDP, quarterly growth (annualised)", unit: "%", source: fred, series: A191RL1Q225SBEA, transform: level, frequency: quarterly, max_age_days: 200}
+  - {id: us_cpi_yoy, region: US, name: "CPI, year on year", unit: "%", source: fred, series: CPIAUCSL, transform: yoy, frequency: monthly, max_age_days: 75}
+  - {id: us_unemployment, region: US, name: "Unemployment rate", unit: "%", source: fred, series: UNRATE, transform: level, frequency: monthly, max_age_days: 75}
+  - {id: us_payrolls, region: US, name: "Non-farm payrolls, monthly change", unit: "thousand", source: fred, series: PAYEMS, transform: diff, frequency: monthly, max_age_days: 75}
+  - {id: us_retail_mom, region: US, name: "Retail sales, month on month", unit: "%", source: fred, series: RSAFS, transform: mom, frequency: monthly, max_age_days: 75}
+  - {id: us_industrial_yoy, region: US, name: "Industrial production, year on year", unit: "%", source: fred, series: INDPRO, transform: yoy, frequency: monthly, max_age_days: 75}
+  # ── Euro area ────────────────────────────────────────────────────────────────────────────────────────────────────
+  - {id: ea_hicp_yoy, region: EU, name: "HICP inflation, year on year", unit: "%", source: fred, series: CP0000EZ19M086NEST, transform: yoy, frequency: monthly, max_age_days: 75}
+  - {id: ea_gdp_qoq, region: EU, name: "Real GDP, quarter on quarter", unit: "%", source: fred, series: CLVMNACSCAB1GQEA19, transform: mom, frequency: quarterly, max_age_days: 200}
+  - id: ea_unemployment
+    region: EU
+    name: "Unemployment rate (euro area, seasonally adjusted)"
+    unit: "%"
+    source: eurostat
+    dataset: une_rt_m
+    params: {geo: EA21, s_adj: SA, age: TOTAL, unit: PC_ACT, sex: T}
+    transform: level
+    frequency: monthly
+    max_age_days: 90
+  - id: ea_industrial_yoy
+    region: EU
+    name: "Industrial production, year on year (euro area)"
+    unit: "%"
+    source: eurostat
+    dataset: sts_inpr_m
+    params: {geo: EA21, s_adj: CA, nace_r2: B-D, unit: PCH_SM}
+    transform: level
+    frequency: monthly
+    max_age_days: 90
+  # ── Japan ────────────────────────────────────────────────────────────────────────────────────────────────────────
+  - {id: jp_unemployment, region: JP, name: "Unemployment rate", unit: "%", source: fred, series: LRUNTTTTJPM156S, transform: level, frequency: monthly, max_age_days: 90}
+  - {id: jp_gdp_qoq, region: JP, name: "Real GDP, quarter on quarter", unit: "%", source: fred, series: NGDPRSAXDCJPQ, transform: mom, frequency: quarterly, max_age_days: 200}
+  # ── China ────────────────────────────────────────────────────────────────────────────────────────────────────────
+  - {id: cn_exports_yoy, region: CN, name: "Exports of goods (USD), year on year", unit: "%", source: fred, series: XTEXVA01CNM667S, transform: yoy, frequency: monthly, max_age_days: 90}

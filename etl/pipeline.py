@@ -571,6 +571,11 @@ def _run_pipeline_locked(lookback_days, force_full, fast_mode):
             if not is_incremental:
                 earnings_events.seed_from_production(conn, DB_PATH, changes)     # SeedError fails the run: no swap
             audit.rows_processed += earnings_events.load_earnings_events(conn, data.get("earnings_events"))
+            try:                                                  # context only: a source that is down never fails the run
+                from etl import macro_indicators
+                macro_indicators.refresh(conn)
+            except Exception as e:
+                logger.warning(f"   ⚠️ Economic indicators skipped: {type(e).__name__}: {e}")
             if rebased_full is not None:
                 replaced, skipped = replace_ticker_prices(conn, rebased_full, cfg["price_integrity"]["min_rebase_ratio"])
                 logger.info(f"   🔁 Rebased {len(replaced)} ticker histories ({len(skipped)} ignored)")

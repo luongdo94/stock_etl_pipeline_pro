@@ -4,6 +4,7 @@ One regime result (core.market_regime, the same one the header and SIGNAL show) 
 inputs that were unknown; the SPY trend and the breadth follow the sidebar range for display only. The external
 TradingView widgets load only when switched on. Nothing here is a forecast or an allocation: no exposure %, no factor tilt.
 """
+import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
@@ -171,6 +172,29 @@ def _your_review():
                 f"{more}<ul style='margin:2px 0 0 16px; padding:0;'>{lines}</ul></div>", unsafe_allow_html=True)
 
 
+def _economic_data(ctx):
+    """Latest release vs the previous one for the US, the euro area, Japan and China (stored by the ETL; no forecast)."""
+    from core.macro_view import REGION_NAMES, period_label, table_for_display
+    from services.db import load_macro_indicators
+    st.markdown("#### 🏛️ Economic data — latest release vs the previous one")
+    t = table_for_display(load_macro_indicators(ctx.get("data_version")))
+    if t.empty:
+        st.info("Economic indicators appear after the next ETL run (they are collected from FRED and Eurostat).")
+        return
+    show = pd.DataFrame({
+        "Region": t["region"].map(REGION_NAMES).fillna(t["region"]), "Indicator": t["name"],
+        "Period": [period_label(p, f) for p, f in zip(t["period"], t["frequency"])],
+        "Latest": t["value"], "Previous": t["previous_value"], "Change": t["change"], "Unit": t["unit"],
+        "Status": ["STALE — source stopped updating" if s else "" for s in t["stale"]], "Source": t["source"].str.upper()})
+    st.dataframe(show, hide_index=True, width="stretch", column_config={
+        "Latest": st.column_config.NumberColumn(format="%.2f"), "Previous": st.column_config.NumberColumn(format="%.2f"),
+        "Change": st.column_config.NumberColumn(format="%+.2f")})
+    st.caption("Actual and previous release only: consensus forecasts are licensed data and are not included. Context for "
+               "reading the market; it never feeds a Decision. China: only goods exports are available for free and current "
+               "(the statistics bureau's own releases are not reachable from outside China). Collected "
+               f"{pd.to_datetime(t['fetched_at']).max():%d %b %Y} from FRED and Eurostat.")
+
+
 def render(ctx):
     """Render the 🌐 Market Pulse tab. ctx is the context dict built in app.py."""
     breadth_ts_global = ctx['breadth_ts_global']
@@ -300,6 +324,8 @@ def render(ctx):
     st.markdown("---")
 
 
+    st.markdown("---")
+    _economic_data(ctx)
     st.markdown("---")
     st.markdown("#### 🌐 External market tools (TradingView)")
     import streamlit.components.v1 as _mp_comp

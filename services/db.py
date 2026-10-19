@@ -844,6 +844,17 @@ def load_decision_snapshots(generation=None) -> pd.DataFrame:
 
 
 @snapshot_cached(ttl=600)
+def load_macro_indicators(generation=None) -> pd.DataFrame:
+    """Latest + previous release of each economic indicator (raw.macro_indicators, written by the ETL). Empty when the
+    table is not in this snapshot (an older warehouse, or the cloud copy)."""
+    try:
+        with get_db_connection(read_only=True) as conn:
+            return conn.execute("SELECT * FROM raw.macro_indicators").df()
+    except Exception:
+        return pd.DataFrame()
+
+
+@snapshot_cached(ttl=600)
 def load_discovery(generation=None) -> pd.DataFrame:
     """Names the ETL's TradingView screens added to the universe (raw.universe: source, first_seen, last_seen) — the
     SIGNAL hub shows this snapshot instead of scanning TradingView live on every page load. Empty when the table is not
