@@ -73,12 +73,15 @@ def test_the_next_step_buttons_open_the_tabs_they_name(warehouse):
 
 
 @pytest.mark.smoke
-def test_the_header_and_the_page_show_the_same_regime(warehouse):
+def test_the_regime_is_stated_once_on_market_pulse_and_not_in_the_header(warehouse):
     at = _app("🌐 Market Pulse")
     at.run()
-    html = " ".join(m.value for m in at.markdown)
+    blocks = [m.value for m in at.markdown]
+    header = next(b for b in blocks if "Honest Quant Intelligence" in b)
+    html = " ".join(blocks)
     label = next(r for _, r, _, _ in mr.REGIMES if r in html)
-    assert html.count(label) >= 2                           # header chip and the answer block, one result
+    assert label not in header                              # the header names the data, not the market (HEADER_REDESIGN_IDEAS)
+    assert html.count(label) >= 1                           # Market Pulse states the one result
 
 
 # ── what is left of the Overview plan ────────────────────────────────────────────────────────────────────────────────

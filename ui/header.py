@@ -1,7 +1,7 @@
-"""Top header bar. The SIGNAL hub lives in ui/signal_hub.py."""
-import pandas as pd
-import streamlit as st
+"""Top header bar. The SIGNAL hub lives in ui/signal_hub.py; what the header says is built by core/header_context.py."""
+import html
 
+import streamlit as st
 
 TV_FILTERS = {
     "TV_VALUE_STOCKS": "Value Stocks",
@@ -12,29 +12,36 @@ TV_FILTERS = {
 }
 
 
-def render_title_bar(stock_count, quality_idx, regime, regime_color):
-    q_color = "#2ecc71" if quality_idx >= 65 else ("#f1c40f" if quality_idx >= 45 else "#e74c3c")
+def _md(text: str) -> str:
+    """A value shown as plain text inside markdown (a snapshot identity may contain * _ [ ] ` characters)."""
+    return "".join("\\" + c if c in "*_[]`<>#|" else c for c in str(text))
+
+
+def _go(tab: str):
+    st.session_state["active_tab"] = tab            # a callback: runs before the navigation widget is drawn
+
+
+def render_title_bar(model: dict):
+    """Name, newest price date, freshness word (text, not only colour), warnings, and a closed 'Data details' block."""
+    esc = html.escape
     st.markdown(f"""
-    <div style='display:flex; align-items:center; justify-content:space-between;
-                padding:10px 16px; background:rgba(255,255,255,0.02);
-                border:1px solid rgba(255,255,255,0.06); border-radius:8px; margin-bottom:0px;'>
-        <div>
-            <span style='font-size:1.3rem; font-weight:900; color:#e8eaf6; font-family: "Courier New", monospace;'>
-                Honest Quant Intelligence
-            </span>
-            <span style='font-size:0.72rem; color:#556677; margin-left:12px;'>
-                {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M')} UTC &nbsp;|&nbsp; {stock_count} Tickers
-            </span>
+    <div style='padding:10px 16px; background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.06);
+                border-radius:8px;'>
+        <div style='font-size:1.3rem; font-weight:900; color:#e8eaf6; font-family:"Courier New", monospace;
+                    overflow-wrap:anywhere;'>{esc(model['title'])}</div>
+        <div style='display:flex; flex-wrap:wrap; gap:4px 16px; margin-top:4px; font-size:0.85rem; color:#aab;'>
+            <span>{esc(model['prices'])}</span>
+            <span>Data: <b style='color:{model['level_color']};'>{esc(model['level_word'])}</b></span>
         </div>
-        <div style='display:flex; gap:12px; align-items:center;'>
-            <div style='text-align:center;'>
-                <div style='font-size:0.6rem; color:#445566; font-family:monospace; text-transform:uppercase; letter-spacing:0.1em;'>Quality Index</div>
-                <div style='font-size:1.1rem; font-weight:900; color:{q_color}; font-family:"Courier New",monospace;'>{quality_idx:.1f}<span style='font-size:0.75rem; color:#667788;'>/100</span></div>
-            </div>
-            <div style='text-align:center; padding-left:12px; border-left:1px solid #1a2233;'>
-                <div style='font-size:0.6rem; color:#445566; font-family:monospace; text-transform:uppercase; letter-spacing:0.1em;'>Market Context</div>
-                <div style='font-size:0.8rem; font-weight:700; color:{regime_color}; font-family:"Courier New",monospace;'>{regime}</div>
-            </div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    </div>""", unsafe_allow_html=True)
+    for w in model["warnings"]:
+        st.markdown(f"<div style='margin:4px 2px; color:#e74c3c; font-size:0.85rem; font-weight:700;'>⚠️ {esc(w)}</div>",
+                    unsafe_allow_html=True)
+    with st.expander("Data details"):
+        for label, text in model["details"]:
+            st.markdown(f"**{label}:** " + _md(text))
+        for note in model["notes"]:
+            st.caption(note)
+        c1, c2 = st.columns(2)
+        c1.button("Open Market Pulse", key="hdr_go_pulse", on_click=_go, args=("🌐 Market Pulse",), width="stretch")
+        c2.button("Open Data Health", key="hdr_go_health", on_click=_go, args=("🩺 Data Health",), width="stretch")

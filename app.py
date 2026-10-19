@@ -101,7 +101,8 @@ try:
     _n_exc = int(load_etl_exceptions()["ticker"].nunique())
 except Exception:
     _n_exc = 0
-sidebar.render_data_status(data_freshness(prices_full, companies_full, etl_audit, dq_warnings), _n_exc)
+_fresh = data_freshness(prices_full, companies_full, etl_audit, dq_warnings)     # ONE answer: the sidebar and the header
+sidebar.render_data_status(_fresh, _n_exc)
 _active = st.session_state.get("active_tab")
 selected_horizon, start_date, end_date = sidebar.render_horizon(prices_full["date"].min().date(),
                                                                 prices_full["date"].max().date(), _active)
@@ -142,7 +143,6 @@ conf_reason_str = ", ".join(_reasons) if _reasons else "No warning among the inp
 _regime = mr.regime_from_score(conf_score_global, _tnx_chg, _dxy_pct, _vix_val)
 regime, regime_ui_color, _macro_regime = _regime["regime"], _regime["color"], _regime["scoring_regime"]
 
-market_quality_idx = mr.cap_weighted_quality(reco_df)
 
 
 # ── Header ──────────────────────────────────────────────────────────────────────────────────
@@ -151,7 +151,9 @@ st.sidebar.markdown("---")
 auth.render_user_profile(cm)                         # account last
 head_l, head_r = st.columns([5, 1])
 with head_l:
-    header.render_title_bar(stock_count, market_quality_idx, regime, regime_ui_color)
+    from core.header_context import build_header_model  # noqa: E402
+    header.render_title_bar(build_header_model(fresh=_fresh, stock_count=stock_count, loaded_version=_loaded_version,
+                                               evaluated_on=pd.Timestamp.now().date()))
 with head_r:
     from ui import signal_hub  # noqa: E402 — fragment: a choice inside the hub reruns only the hub
     signal_hub.render(m_df=m_df, prices_full=prices_full, companies_full=companies_full, reco_df=reco_df,
