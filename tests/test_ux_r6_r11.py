@@ -209,3 +209,35 @@ def test_r11_holdings_lead_with_the_decision_and_exposure_without_dropping_data(
     assert seen["order"][:6] == ["Ticker", "Current Decision", "Action", "Market Value", "Weight (%)", "Shares"]
     assert {"Company", "Stop (orig)", "Z-Score", "RSI (14)", "Smart Money", "Target (%)"} <= set(seen["columns"])
     assert set(seen["order"]) <= set(seen["columns"])
+
+
+# ── the parts Codex left out: follow the researched stock (R8), import consequences (R9c) ────────────────────────────
+def _sym(label):
+    return str(label).split(":")[0]
+
+
+def test_r8_risk_lab_follows_the_stock_researched_elsewhere_but_keeps_a_manual_choice(warehouse):
+    at = _app("🎲 Risk Lab")
+    at.session_state["active_ticker"] = "AAPL"
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert _sym(at.selectbox(key="risk_ticker_form").value) == "AAPL"
+    other = next(_sym(t) for t in at.selectbox(key="risk_ticker_form").options if _sym(t) != "AAPL")
+    at.selectbox(key="risk_ticker_form").select(next(t for t in at.selectbox(key="risk_ticker_form").options if _sym(t) == other)).run()
+    at.run()
+    assert _sym(at.selectbox(key="risk_ticker_form").value) == other           # a manual choice survives reruns / tab visits
+    third = next(_sym(t) for t in at.selectbox(key="risk_ticker_form").options if _sym(t) not in ("AAPL", other))
+    at.session_state["active_ticker"] = third                            # the user researched another stock elsewhere
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert _sym(at.selectbox(key="risk_ticker_form").value) == third
+
+
+def test_r9_import_says_what_overwrite_and_merge_do_and_that_nothing_is_saved_yet(warehouse):
+    at = _portfolio(tickers=("AAPL",))
+    at.session_state["_kept::pf_section"] = "Holdings"
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    caps = [c.value for c in at.caption]
+    assert any("Overwrite replaces the 1 holding(s) now in this session" in c for c in caps)
+    assert any("changes this session only" in c for c in caps)

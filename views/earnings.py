@@ -10,7 +10,7 @@ from core import earnings as er
 from services import earnings as svc
 
 from ui.components import format_value
-from ui.sticky import sticky, sticky_choice, sticky_radio
+from ui.sticky import follow_active_ticker, sticky, sticky_choice, sticky_radio
 from ui.icons import render_header
 
 MIN_REGION = 15          # smaller regions are pooled so a "market" benchmark is not the stock itself
@@ -201,6 +201,7 @@ def render(ctx):
         universe = sorted(set(events["ticker"]) | set(cal_all["ticker"]))     # either source knows the stock
         default = st.session_state.get("active_ticker")
         idx = universe.index(default) if default in universe else 0
+        follow_active_ticker("er_ticker", universe)
         t = sticky_choice("Stock", universe, universe[idx], "er_ticker", format_func=ctx["format_ticker"])
         hist = events[events["ticker"] == t]
         rt = reactions[reactions["ticker"] == t].sort_values("reaction_day", ascending=False) if not reactions.empty else pd.DataFrame()

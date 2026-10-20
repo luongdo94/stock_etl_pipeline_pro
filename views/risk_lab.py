@@ -15,7 +15,7 @@ from core.smart_money import get_sm_spirit_unified_v2
 from services.ai import analyze_sentiment_finbert
 
 from ui.components import format_value
-from ui.sticky import sticky, sticky_choice
+from ui.sticky import follow_active_ticker, sticky, sticky_choice
 from ui.icons import render_header
 
 
@@ -63,6 +63,7 @@ def render(ctx):
         c1, c2, c3 = st.columns([2, 1, 1])
         with c1:
             at = st.session_state.get("active_ticker")
+            follow_active_ticker("risk_ticker_form", current_universe)
             ticker = sticky_choice("Select ticker", current_universe, at if at in current_universe else None,
                                    "risk_ticker_form", format_func=format_ticker,
                                    placeholder="Choose a ticker...")

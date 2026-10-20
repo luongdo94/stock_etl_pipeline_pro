@@ -29,6 +29,18 @@ def sticky_choice(label, options, default, key, **kw):
     return v
 
 
+def follow_active_ticker(key: str, universe) -> None:
+    """The stock being researched (active_ticker) moved on since this control last saw it, in another tab: the control's
+    remembered choice becomes that stock. A choice made on the control itself stays until active_ticker changes again, so
+    switching tabs never swaps the stock silently and a manual comparison is not undone."""
+    active = st.session_state.get("active_ticker")
+    seen_key = kept_key("seen_active::" + key)
+    if active in list(universe) and active != st.session_state.get(seen_key):
+        st.session_state[kept_key(key)] = active
+        st.session_state.pop(key, None)
+    st.session_state[seen_key] = active
+
+
 def forget(prefix: str) -> None:
     """Drop the remembered values (and the widget state) of every key that starts with `prefix`."""
     for k in [k for k in st.session_state if str(k).startswith(kept_key(prefix)) or str(k).startswith(prefix)]:

@@ -192,6 +192,11 @@ def render(ctx):
                 st.markdown("**Format:** `ticker` (Required), `shares`, `cost` (Optional)")
                 uploaded_file = st.file_uploader("Select file", type=["csv", "xlsx"], label_visibility="collapsed")
                 import_mode = sticky_radio("Mode", ["Overwrite", "Merge (Accumulate)"], "Overwrite", "pf_import_mode", horizontal=True, label_visibility="collapsed")
+                _n_now = len(st.session_state.get("portfolio_tickers", []))
+                st.caption(f"Overwrite replaces the {_n_now} holding(s) now in this session with the file's rows."
+                           if import_mode == "Overwrite" else
+                           "Merge adds the file's shares to matching holdings (average cost) and appends new ones.")
+                st.caption("The import changes this session only: review the grid, then press “Save & Calculate” to keep it.")
 
                 if uploaded_file is not None:
                     if st.button("▶ Start Import", key="do_import_btn", type="primary", width="stretch"):
@@ -257,7 +262,7 @@ def render(ctx):
                                         # Merge — keep existing tickers, append new ones
                                         st.session_state.portfolio_tickers = list(dict.fromkeys(st.session_state.portfolio_tickers + valid))
                                     st.session_state['_portfolio_version'] += 1
-                                    st.session_state['_import_toast'] = f"✅ Imported {len(valid)} assets!"
+                                    st.session_state['_import_toast'] = f"✅ Imported {len(valid)} assets! Not saved yet: review the grid, then “Save & Calculate”."
                                     if missing_tickers:
                                         st.session_state['_import_warnings'] = f"Skipped {len(missing_tickers)} unsupported: {', '.join(missing_tickers[:5])}"
                                     st.rerun()
