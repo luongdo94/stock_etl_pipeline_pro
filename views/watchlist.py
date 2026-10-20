@@ -78,7 +78,7 @@ def render(ctx):
         }
 
         if mode == "Bulk editor":
-            with st.form("watchlist_editor_form"):
+            with st.container():  # edits rerun so removal count is visible before Save
                 st.caption("Double-click any cell to edit your notes, update Stop Loss levels or change Workflow Status. Click the trash icon to remove an idea.")
 
                 # Type safety: Ensure text columns are explicitly strings before rendering in editor
@@ -96,7 +96,10 @@ def render(ctx):
                     height=400
                 )
 
-                if st.form_submit_button("💾 Synchronize Watchlist Changes", type="primary"):
+                removed = len(set(wl_df["Ticker"].dropna()) - set(edited_df["Ticker"].dropna()))
+                if removed:
+                    st.warning(f"Saving removes {removed} idea(s).")
+                if st.button("💾 Synchronize Watchlist Changes", type="primary"):
                     try:
                         # Filter out rows with empty Ticker (from dynamic row additions)
                         clean_df = edited_df[edited_df["Ticker"].astype(str).str.strip() != ""]

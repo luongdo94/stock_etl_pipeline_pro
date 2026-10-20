@@ -60,14 +60,15 @@ def _filings_tab(dd, lang):
     st.caption("Stored: " + ", ".join(f"{r.form} filed {pd.Timestamp(r.filed).date()}" for r in cov.head(7).itertuples())
                + (" — passages embedded for semantic search" if passages["embedding"].notna().any()
                   else " — word search only (no embeddings yet)"))
+    st.caption("Each preset or question calls the language model (Cohere); stored answers are shown without a new call.")
     cols = st.columns(len(_PRESET_LABELS))
     asked, sections = None, None
     for col, (key, label) in zip(cols, _PRESET_LABELS.items()):
-        if col.button(label, key=f"rag_preset_{key}_{t}", width="stretch"):
+        if col.button(label, key=f"rag_preset_{key}_{t}", width="stretch", help="Calls the language model (Cohere)."):
             asked, sections = research.PRESET_QUESTIONS[key], research.PRESET_SECTIONS.get(key)
     with st.form(f"rag_free_{t}", clear_on_submit=False):
         q = st.text_input("Your question about the filings", placeholder="e.g. How much revenue comes from China?")
-        if st.form_submit_button("Ask") and q.strip():
+        if st.form_submit_button("Ask — Calls the language model") and q.strip():
             asked = q.strip()
     if asked:
         with st.spinner("Searching the filings and writing a cited answer…"):
@@ -90,7 +91,7 @@ def _decision_tab(dd, lang):
                f"for a BUY CANDIDATE?")
     with st.form(f"rag_dec_{dd.ticker}"):
         q = st.text_input("Question about this result", value=default)
-        go = st.form_submit_button("Explain")
+        go = st.form_submit_button("Explain — Calls the language model")
     if go and q.strip():
         with st.spinner("Reading the Decision and the rules…"):
             try:

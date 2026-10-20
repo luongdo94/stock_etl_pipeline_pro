@@ -448,7 +448,10 @@ def render(ctx):
                         "Drift (pp)": st.column_config.NumberColumn("Drift", format="%+.1f pp", disabled=True,
                                                                     help="Weight minus target, percentage points of NAV.")
                     },
-                    column_order=["Ticker", "Company", "Current Decision", "Action", "Shares", "Cost Basis (€)", "Price (€)", "Stop (orig)", "Total Cost (€)", "Market Value", "Unrealized PnL (€)", "Unrealized PnL (%)", "Z-Score", "RSI (14)", "Smart Money", "Contribution (%)", "Weight (%)", "Target (%)", "Drift (pp)"],
+                    column_order=["Ticker", "Current Decision", "Action", "Market Value", "Weight (%)", "Shares",
+                                  "Price (€)", "Cost Basis (€)", "Target (%)", "Drift (pp)", "Company", "Stop (orig)",
+                                  "Total Cost (€)", "Unrealized PnL (€)", "Unrealized PnL (%)", "Z-Score", "RSI (14)",
+                                  "Smart Money", "Contribution (%)"],
                     hide_index=True,
                     width="stretch",
                     key=f"p_portfolio_editor_v{_cur_version}"
@@ -497,7 +500,7 @@ def render(ctx):
             with _pf_lang_col:
                 _pf_language = sticky_choice("Language", ["English", "Vietnamese"], "English", "pf_review_lang", label_visibility="collapsed")
             with _pf_btn_col:
-                _run_pf_review = st.button("🤖 Request CIO Portfolio Review", type="secondary", use_container_width=True, key="run_portfolio_review_btn")
+                _run_pf_review = st.button("🤖 Request CIO Portfolio Review — Calls the language model", type="secondary", use_container_width=True, key="run_portfolio_review_btn")
 
             if _run_pf_review:
                 from etl.llm_parser import analyze_portfolio_with_llm
@@ -1385,6 +1388,7 @@ def render(ctx):
                         hide_index=True, width="stretch"
                     )
 
+                    st.caption("Apply updates the holdings and cash saved in this app. It does not place broker orders.")
                     # ── DISCARD / APPLY buttons ────────────────────────────────
                     sc1, sc2, sc3 = st.columns([2, 1, 1])
                     with sc2:
@@ -1452,7 +1456,7 @@ def render(ctx):
 
             # ── 5. ADVANCED ANALYTICS (Efficient Frontier & Risk) ──────────
             if _section == "Rebalance" and len(current_tickers) > 1 and st.button(
-                    "Build efficient frontier (2,000 simulations)", key="pf_frontier"):
+                    "Build efficient frontier — Runs ~2,000 simulations on this server", key="pf_frontier"):
                 render_header("activity", "Markowitz Efficient Frontier — Strategy Tactical Map")
 
                 curr_r = np.sum(hist_rets.values * weights)

@@ -3269,6 +3269,23 @@ sector_overrides:
   CAH: Healthcare Distribution
   HSIC: Healthcare Distribution
   300502.SZ: Networking          # optical modules, not a producer of materials
+  # regulated electricity and medical instruments: same scoring treatment, clearer peers
+  PCG: Regulated Utilities
+  SOLV: Medical Devices
+  # the custody bank retains the financial table (rather than the capital-markets label)
+  BNY: Banks
+  # real-estate services are operating businesses, not REITs: remove REIT/capex/leverage treatment
+  CBRE: Business Services
+  CSGP: Business Services
+  # materials mining is cyclical; the generic Industrials label missed this treatment
+  MP: Basic Materials
+  # software, business services, hardware and laboratory tools: no scoring-group change
+  SAP.DE: SaaS
+  ADP: Business Services
+  HPQ: Enterprise Hardware
+  TXG: Life Science Tools
+  BESI.AS: Semiconductors
+  ACMR: Semiconductors
 
 # One sector name per kind of business (applied to every ticker, configured or discovered, after the overrides above).
 # The name decides the peer group and the scoring treatment (config/scoring_rules.yaml sector_groups), so the targets are

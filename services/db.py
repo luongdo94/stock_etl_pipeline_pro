@@ -845,13 +845,18 @@ def load_decision_snapshots(generation=None) -> pd.DataFrame:
 
 @snapshot_cached(ttl=600)
 def load_macro_indicators(generation=None) -> pd.DataFrame:
-    """Latest + previous release of each economic indicator (raw.macro_indicators, written by the ETL). Empty when the
-    table is not in this snapshot (an older warehouse, or the cloud copy)."""
+    """Stored economic observations; empty.attrs['unavailable'] distinguishes absent table from read failure."""
     try:
         with get_db_connection(read_only=True) as conn:
             return conn.execute("SELECT * FROM raw.macro_indicators").df()
+    except duckdb.CatalogException:
+        empty = pd.DataFrame()
+        empty.attrs["unavailable"] = "missing_table"
+        return empty
     except Exception:
-        return pd.DataFrame()
+        empty = pd.DataFrame()
+        empty.attrs["unavailable"] = "read_error"
+        return empty
 
 
 @snapshot_cached(ttl=600)

@@ -22,8 +22,6 @@ from views import scanner as scanner_view  # noqa: E402
 TABS = ["🌐 Market Pulse", "🔭 Stock Scanner", "🔬 Stock Analysis", "🗓️ Earnings", "🎲 Risk Lab",
         "🧪 Strategy Lab", "📈 Track Record", "📋 Watchlist", "💼 Portfolio", "🩺 Data Health", "📖 Docs"]
 
-pytestmark = pytest.mark.smoke
-
 
 @pytest.fixture(scope="module")
 def warehouse(tmp_path_factory):
@@ -31,15 +29,19 @@ def warehouse(tmp_path_factory):
     path = str(tmp_path_factory.mktemp("wh") / "stock_dw.duckdb")
     build(path)
     old_env, old_path = os.environ.get("STOCK_DW_PATH"), db.DB_PATH
+    old_remote = os.environ.get("SUPABASE_REMOTE_MODE")
     os.environ["STOCK_DW_PATH"] = path
     os.environ["SUPABASE_REMOTE_MODE"] = "false"
     db.DB_PATH = path  # services.db may already be imported by other tests
-    yield path
-    db.DB_PATH = old_path
-    if old_env is None:
-        os.environ.pop("STOCK_DW_PATH", None)
-    else:
-        os.environ["STOCK_DW_PATH"] = old_env
+    try:
+        yield path
+    finally:
+        db.DB_PATH = old_path
+        for key, value in (("STOCK_DW_PATH", old_env), ("SUPABASE_REMOTE_MODE", old_remote)):
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
 def _app(tab):
@@ -61,12 +63,14 @@ def _app(tab):
 
 
 @pytest.mark.parametrize("tab", TABS)
+@pytest.mark.smoke
 def test_tab_renders_without_exception(warehouse, tab):
     at = _app(tab).run()
     assert not at.exception, [e.value for e in at.exception]
     assert len(at.markdown) > 10  # header, KPI grid and tab body actually rendered
 
 
+@pytest.mark.smoke
 def test_strategy_lab_backtest_runs(warehouse):
     at = _app("🧪 Strategy Lab").run()
     run_btn = next(b for b in at.button if "Compare all rules" in (b.label or ""))
@@ -76,6 +80,7 @@ def test_strategy_lab_backtest_runs(warehouse):
     assert not any(("BEST RULE" in m.value) or ("NO RULE BEAT" in m.value) for m in at.markdown)
 
 
+@pytest.mark.smoke
 def test_unauthenticated_user_sees_login_only(warehouse):
     at = AppTest.from_file(os.path.join(ROOT, "app.py"), default_timeout=120)
     at.secrets["SUPABASE_URL"] = "http://127.0.0.1:9"
@@ -103,6 +108,7 @@ def stock_pages(at):
     return pages
 
 
+@pytest.mark.smoke
 def test_stock_analysis_shows_decision_summary(warehouse):
     at = _app("🔬 Stock Analysis")
     at.session_state["deep_ticker_selector"] = "AAPL"
@@ -112,12 +118,14 @@ def test_stock_analysis_shows_decision_summary(warehouse):
         or "No positive free cash flow" in pages["Business & value"]["infos"]
 
 
+@pytest.mark.smoke
 def test_track_record_tab_scores_history(warehouse):
     at = _app("📈 Track Record").run()
     assert not at.exception, [e.value for e in at.exception]
     assert any(m.label.startswith("IC") for m in at.metric)
 
 
+@pytest.mark.smoke
 def test_scanner_keeps_stocks_with_unknown_fundamentals(warehouse):
     """Missing forward P/E used to become 999 and every such stock vanished from the scanner."""
     at = _app("🔭 Stock Scanner")
@@ -135,6 +143,7 @@ def test_scanner_keeps_stocks_with_unknown_fundamentals(warehouse):
     assert pd.isna(t.at["KO", "P/E (Fwd)"])
     assert pd.isna(t.at["JNJ", "Net Debt/EBITDA"])
 
+@pytest.mark.smoke
 def test_decision_and_signal_never_contradict_across_the_universe(warehouse):
     """The scanner shows ONE label (Decision + timing arrow): AVOID / TRIM is never next to a supportive arrow, and the
     arrow always matches the Signal label that is available as an extra column."""
@@ -154,6 +163,7 @@ def test_decision_and_signal_never_contradict_across_the_universe(warehouse):
     bad = t[((decision == "AVOID / TRIM") & (arrow == "▲")) | ((decision == "BUY CANDIDATE") & (t["Action"] == "UNFAVOURABLE"))]
     assert bad.empty, bad[["Ticker", "Verdict", "Action"]].to_string()
 
+@pytest.mark.smoke
 def test_deep_dive_shows_each_number_once(warehouse):
     """Quality / Value / R-R / 52-week position / revisions / forward P/E / short interest each live in ONE place."""
     pages = stock_pages(_app("🔬 Stock Analysis"))
@@ -165,6 +175,7 @@ def test_deep_dive_shows_each_number_once(warehouse):
         assert kept in html or kept.replace("&", "&amp;") in html, kept
 
 
+@pytest.mark.smoke
 def test_risk_lab_computes_a_range_without_forecasting_direction(warehouse):
     at = _app("🎲 Risk Lab").run()
     assert not at.exception, [e.value for e in at.exception]
@@ -181,6 +192,7 @@ def test_risk_lab_computes_a_range_without_forecasting_direction(warehouse):
         assert gone not in html, gone
 
 
+@pytest.mark.smoke
 def test_earnings_tab_shows_history_upcoming_and_study(warehouse):
     at = _app("🗓️ Earnings")
     at.session_state["active_ticker"] = "AAPL"
@@ -201,6 +213,7 @@ def test_earnings_tab_shows_history_upcoming_and_study(warehouse):
 
 
 @pytest.mark.parametrize("tab", ["🔭 Stock Scanner", "💼 Portfolio", "📖 Docs"])
+@pytest.mark.smoke
 def test_the_floating_assistant_is_on_every_tab(warehouse, tab):
     at = _app(tab).run()
     assert not at.exception, [e.value for e in at.exception]
@@ -208,6 +221,7 @@ def test_the_floating_assistant_is_on_every_tab(warehouse, tab):
     assert "💬 Assistant" in labels
 
 
+@pytest.mark.smoke
 def test_a_question_in_the_assistant_is_answered_with_sources(warehouse, monkeypatch):
     from services import assistant
     seen = {}
@@ -224,13 +238,15 @@ def test_a_question_in_the_assistant_is_answered_with_sources(warehouse, monkeyp
     at = _app("🔭 Stock Scanner").run()
     at.chat_input(key="assistant_input").set_value("Quality of AAA?").run()
     assert not at.exception, [e.value for e in at.exception]
-    assert seen == {"q": "Quality of AAA?", "tab": "Stock Scanner", "tickers": seen["tickers"]} and seen["tickers"] > 0
+    assert seen["q"] == "Quality of AAA?" and seen["tab"] == "Stock Scanner"
+    assert seen["tickers"] > 0
     assert at.session_state["assistant_history"][-1]["q"] == "Quality of AAA?"
     assert any("Quality is 61.[1]" in m.value for m in at.markdown)
     assert at.session_state["assistant_llm_calls"] == 2
 
 
 @pytest.mark.parametrize("past_end", [False, True])
+@pytest.mark.smoke
 def test_the_sidebar_range_never_changes_the_decision(warehouse, monkeypatch, past_end):
     """SIDEBAR_REFACTOR_REVIEW 3.1: a Custom range ending in the past priced the Decision at that date with today's
     fundamentals (125 of 842 stances differed from the Scanner on the real warehouse, every BUY was lost).
@@ -284,6 +300,7 @@ def test_the_recorded_decision_is_read_point_in_time(monkeypatch):
     assert none["decision"] is None and none["first_snapshot"].date() == date(2026, 10, 13)
 
 
+@pytest.mark.smoke
 def test_a_chart_range_without_bars_keeps_the_decision_and_the_assistant(warehouse, monkeypatch):
     """SIDEBAR review F05: a range with no bar of the ticker (here a Saturday; also a listing newer than the range end)
     stopped the page and the assistant's get_decision before the Decision was built."""
@@ -314,6 +331,7 @@ def test_a_chart_range_without_bars_keeps_the_decision_and_the_assistant(warehou
     assert any("No price bars in the sidebar chart range" in i.value for i in at.info)
 
 
+@pytest.mark.smoke
 def test_the_portfolio_is_valued_at_the_latest_close_whatever_the_range(warehouse):
     """Codex note on 5325df3: Market Value / NAV used the range-filtered prices (a past range end = old prices)."""
     from datetime import timedelta
@@ -357,6 +375,7 @@ def test_a_snapshot_written_the_next_morning_was_not_known_that_day(monkeypatch)
     assert db.load_recorded_decision("A", date(2026, 10, 14))["decision"] is None          # NULL time: not placed
 
 
+@pytest.mark.smoke
 def test_cr10_the_earnings_tab_lists_the_calendar_when_the_events_table_is_empty(warehouse, monkeypatch):
     """COMMIT_REVIEW CR-10: with no events (empty table), the calendar dates still show in Upcoming, and a stock only the
     calendar knows can be chosen in Single stock."""
@@ -381,6 +400,7 @@ def test_cr10_the_earnings_tab_lists_the_calendar_when_the_events_table_is_empty
     assert any(o.startswith("AAPL") for o in at.selectbox(key="er_ticker").options)
 
 
+@pytest.mark.smoke
 def test_cr12_a_note_is_per_report_source_and_never_shown_after_a_mismatch(warehouse, monkeypatch):
     """COMMIT_REVIEW CR-12: same report + same source text keeps the note (no new LLM call); a changed source text writes a
     new note; a request whose release belongs to another quarter shows the warning and NOT the earlier note."""
@@ -414,6 +434,7 @@ def test_cr12_a_note_is_per_report_source_and_never_shown_after_a_mismatch(wareh
     assert state["calls"] == 2 and "NOTE-2" in shown() and "NOTE-1" not in shown()
 
 
+@pytest.mark.smoke
 def test_cr02_data_health_shows_the_same_last_good_run_as_the_sidebar(warehouse):
     import re
     at = _app("🩺 Data Health").run()

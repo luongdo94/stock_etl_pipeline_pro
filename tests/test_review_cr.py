@@ -5,6 +5,7 @@ import sys
 
 import numpy as np
 import pandas as pd
+import pytest
 
 sys.path.insert(0, os.path.dirname(__file__))
 from core import earnings as ce  # noqa: E402
@@ -40,14 +41,28 @@ def test_cr02_placeholder_list_cells_are_lists():
     assert sv.as_list(cell) == [] and sv.as_list(np.nan) == [] and sv.as_list(None) == [] and sv.as_list(["x"]) == ["x"]
 
 
-def test_cr03_preset_survives_a_tab_without_the_scanner(warehouse):
-    from core import scan_presets as presets
-    pick = next(p for p in presets.options() if p != presets.ALL)
+@pytest.mark.smoke
+def test_cr03_preset_survives_a_tab_without_the_scanner(warehouse, monkeypatch):
+    from views import scanner
+    real = scanner.render
+
+    def controlled(ctx):
+        table = ctx["m_df"].copy()
+        table["Flags"] = np.where(table["Ticker"].eq("AAPL"), "Loss-making", "")
+        return real(dict(ctx, m_df=table))
+    monkeypatch.setattr(scanner, "render", controlled)
+    pick = "🚩 Red Flags (any quality penalty)"
     at = _app("🔭 Stock Scanner")
-    at.session_state["_kept::scan_mode"] = pick                  # the widget key itself is gone (another tab was open)
-    at.run()
-    assert not at.exception, [e.value for e in at.exception]
-    assert at.session_state["_kept::scan_mode"] == pick
+    at.session_state["_kept::scan_view"] = "All"
+    at.session_state["_kept::scan_mode"] = pick
+    for tab in ("🔭 Stock Scanner", "📖 Docs", "🔭 Stock Scanner"):
+        at.session_state["active_tab"] = tab
+        at.run()
+        assert not at.exception, [e.value for e in at.exception]
+        if tab == "🔭 Stock Scanner":
+            assert at.selectbox(key="scan_mode").value == pick
+            result = next(d.value for d in at.dataframe if "Verdict" in d.value.columns)
+            assert result["Ticker"].tolist() == ["AAPL"]
 
 
 def _ev(est, act, surprise):
@@ -87,6 +102,7 @@ def test_cr06_dxy_move_is_the_native_index_not_the_eur_close():
     assert mr.dxy_5d_move(d2, 0.7) == 0.7 and mr.dxy_5d_move(d2, None) is None
 
 
+@pytest.mark.smoke
 def test_cr07_business_and_value_makes_no_provider_call(warehouse, monkeypatch):
     import yfinance as yf
     calls = []
@@ -100,11 +116,32 @@ def test_cr07_business_and_value_makes_no_provider_call(warehouse, monkeypatch):
     assert calls == []
 
 
-def test_cr07_stored_fx_rate(warehouse):
-    from services import market_data as md
-    assert md.stored_fx_rate("EUR") == 1.0
-    assert md.stored_fx_rate("EUR") == 1.0 and md.stored_fx_rate("") is None
-    assert md.stored_fx_rate("ZZZ") is None                       # unknown currency: None, never parity
+def test_cr07_stored_fx_rate_uses_the_latest_positive_rate_and_pence(monkeypatch):
+    import contextlib
+    import duckdb
+    import pytest
+    from services import db, market_data as md
+    with duckdb.connect() as conn:
+        conn.execute("CREATE SCHEMA raw")
+        conn.execute("CREATE TABLE raw.stock_prices (date DATE, currency VARCHAR, fx_rate DOUBLE)")
+        conn.executemany("INSERT INTO raw.stock_prices VALUES (?, ?, ?)", [
+            ("2026-10-14", "USD", 0.8), ("2026-10-16", "usd", 0.9),
+            ("2026-10-17", "USD", 0.0), ("2026-10-18", "USD", -1.0),
+            ("2026-10-15", "GBP", 1.1), ("2026-10-16", "GBP", 1.2),
+            ("2026-10-18", "JPY", 0.0), ("2026-10-18", "CAD", None)])
+        monkeypatch.setattr(md, "get_db_connection", lambda read_only=True: contextlib.nullcontext(conn))
+        monkeypatch.setattr(db, "_expected", lambda: None)
+        md._stored_fx.clear()
+        try:
+            assert md.stored_fx_rate("USD") == pytest.approx(0.9)
+            assert md.stored_fx_rate("GBP") == pytest.approx(1.2)
+            assert md.stored_fx_rate("GBp") == pytest.approx(0.012)
+            assert md.stored_fx_rate("GBX") == pytest.approx(0.012)
+            assert md.stored_fx_rate("EUR") == 1.0
+            for ccy in ("", "ZZZ", "JPY", "CAD"):
+                assert md.stored_fx_rate(ccy) is None
+        finally:
+            md._stored_fx.clear()
 
 
 def test_cr09_cr10_export_metadata_is_one_line_per_key_and_states_what_applied():
@@ -121,12 +158,12 @@ def test_cr11_give_up_raises_where_streamlit_only_returns():
         db._give_up("changed twice")
 
 
-def test_cr08_prune_keeps_leased_and_a_pruned_snapshot_is_not_cache_ready(tmp_path, monkeypatch):
+def test_cr08_snapshot_files_are_complete_only_when_every_named_file_exists(tmp_path, monkeypatch):
     from services import db
     monkeypatch.setattr(db, "_CACHE_DIR", tmp_path)
     (tmp_path / "v1").mkdir()
     m = {"version": "v1", "tables": {"raw.t": ["a.parquet"]}}
-    assert not db._files_complete(m)                              # no file: not ready, the connection falls back
+    assert not db._files_complete(m)                              # existence only; no lease/prune/read claim
     (tmp_path / "v1" / "a.parquet").write_bytes(b"x")
     assert db._files_complete(m)
 
@@ -169,15 +206,33 @@ def test_sector_overrides_in_the_config_name_real_sectors_and_move_banks_to_the_
     import yaml
     from pathlib import Path
     cfg = yaml.safe_load((Path(__file__).resolve().parent.parent / "config" / "tickers.yaml").read_text(encoding="utf-8"))
-    sectors = {m["sector"] for m in cfg["tickers"].values()}
+    sectors = {m["sector"] for m in cfg["tickers"].values()} | {"Healthcare Distribution"}
     ov = cfg["sector_overrides"]
     unknown = {s for s in ov.values() if s not in sectors}
-    assert unknown == {"Healthcare Distribution"}                  # the only sector this review creates
+    assert not unknown                                           # includes the established distributor sector
     groups = yaml.safe_load((Path(__file__).resolve().parent.parent / "config" / "scoring_rules.yaml").read_text(
         encoding="utf-8"))["sector_groups"]
     financial = set(groups["financial"])
     assert all(ov[t].lower() in financial for t in ("3328.HK", "NU", "SDF.AX", "LMND"))
-    assert all(ov[t].lower() not in financial for t in ("GPN", "FIS", "JKHY", "CPAY", "XYZ"))
+    payment_software = {"GPN", "FIS", "JKHY", "CPAY", "XYZ"}        # reviewed corrections from 19 Oct
+    assert all(ov[t].lower() not in financial for t in payment_software)
+    aliases = cfg["sector_aliases"]
+    for ticker, target in ov.items():
+        old = cfg["tickers"].get(ticker, {}).get("sector", "")
+        if aliases.get(old, old).lower() in financial and ticker not in payment_software:
+            assert aliases.get(target, target).lower() in financial, ticker
+    for ticker in ("3328.HK", "601328.SS", "601988.SS", "5876.TW", "VPB.VN", "2884.TW", "2892.TW",
+                   "NU", "SDF.AX", "BBSE3.SA", "LMND", "HG", "BNY"):
+        assert aliases.get(ov[ticker], ov[ticker]).lower() in financial, ticker
+
+
+def test_reviewed_sector_pairs_keep_operating_companies_out_of_reits():
+    import yaml
+    from pathlib import Path
+    cfg = yaml.safe_load((Path(__file__).resolve().parent.parent / "config" / "tickers.yaml").read_text(encoding="utf-8"))
+    expected = {"PCG": "Regulated Utilities", "SOLV": "Medical Devices", "BNY": "Banks",
+                "CBRE": "Business Services", "CSGP": "Business Services", "MP": "Basic Materials"}
+    assert {t: cfg["sector_overrides"][t] for t in expected} == expected
 
 
 def test_sector_aliases_rename_every_ticker_and_company_info():
@@ -207,6 +262,7 @@ def test_sector_aliases_keep_or_add_the_scoring_treatment_never_lose_it():
     al, sectors = cfg["sector_aliases"], {m["sector"] for m in cfg["tickers"].values()} | set(cfg["sector_overrides"].values())
     assert not set(al) & set(al.values())                                # no chains: a target is never itself renamed
     assert set(al.values()) <= sectors | {"Platform Software", "Electronic Technology", "Capital Markets"}   # (+ names only discovered tickers carry)
+    assert all(al.get(s, s) in sectors for s in cfg["sector_overrides"].values())
     low = lambda s: s.lower()                                            # noqa: E731
     for old, new in al.items():
         for name, members in groups.items():

@@ -69,6 +69,7 @@ def test_header_words_match_the_sidebar_badge():
     assert {k: v[0] for k, v in sidebar._LEVEL.items()} == hc.LEVEL_COLORS
 
 
+@pytest.mark.smoke
 def test_header_in_the_app_has_no_quality_index_regime_or_clock_and_navigates(warehouse):
     at = _app("🔬 Stock Analysis").run()
     assert not at.exception, [e.value for e in at.exception]

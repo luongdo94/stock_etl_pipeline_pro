@@ -3,6 +3,8 @@ import json
 import os
 import sys
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(__file__))
 from core import ai_review as ar  # noqa: E402
 from test_app_smoke import _app, warehouse  # noqa: E402,F401
@@ -48,6 +50,7 @@ def test_load_latest_takes_the_newest_file_that_holds_the_ticker(tmp_path):
     assert ar.load_latest("ABC", tmp_path)["as_of"] == "2026-10-16"
 
 
+@pytest.mark.smoke
 def test_overview_shows_the_review_with_its_date_and_disclaimer(warehouse, tmp_path, monkeypatch):
     (tmp_path / "2026-10-16.json").write_text(json.dumps(
         {"as_of": "2026-10-16", "generated_at": "2026-10-18T08:00:00", "reviews": {

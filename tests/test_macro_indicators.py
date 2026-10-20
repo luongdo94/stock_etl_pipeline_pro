@@ -85,6 +85,7 @@ def test_display_orders_by_region_and_flags_a_stale_source_not_a_fresh_one():
     assert mv.table_for_display(pd.DataFrame()).empty
 
 
+@pytest.mark.smoke
 def test_market_pulse_shows_the_table_when_stored_and_says_so_when_not(warehouse):
     from services import db
     with duckdb.connect(db.DB_PATH) as c:

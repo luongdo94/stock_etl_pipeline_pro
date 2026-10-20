@@ -40,8 +40,7 @@ def test_the_default_order_is_decision_then_quality_then_value_then_ticker_with_
 
 def test_sorting_by_a_metric_puts_unknown_last_in_both_directions():
     d = _df()
-    assert sv.sort_by(d, "Next ER (days)", True)["Ticker"].tolist()[-3:] == ["CCC", "EEE"] or \
-        sv.sort_by(d, "Next ER (days)", True)["Ticker"].iloc[-2:].isin(["CCC", "EEE"]).all()
+    assert sv.sort_by(d, "Next ER (days)", True)["Ticker"].tolist()[-2:] == ["CCC", "EEE"]
     assert sv.sort_by(d, "Quality", False)["Quality"].iloc[:2].tolist() == [80, 80]
     assert sv.sort_by(d, "Quality", False)["Quality"].iloc[-2:].isna().all() and sv.sort_by(d, "Quality", True)["Quality"].iloc[-2:].isna().all()
 

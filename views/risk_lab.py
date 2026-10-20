@@ -72,7 +72,9 @@ def render(ctx):
             n_sims = sticky_choice("Monte Carlo paths", [1000, 2000, 5000], 2000, "risk_sims_form")
         check = sticky(st.checkbox, "Calibration check (re-fits the model on up to 60 earlier non-overlapping windows and tests "
                             "the range)", True, "risk_cal_form")
-        run = st.button("🎲 COMPUTE RISK RANGE", width="stretch", type="primary", key="risk_compute")
+        run = st.button(f"🎲 COMPUTE RISK RANGE — Runs ~{n_sims:,} simulations on this server",
+                        width="stretch", type="primary", key="risk_compute")
+        st.caption("Calibration, when selected, also runs up to 60 model refits with 500 simulation paths each.")
 
     spec = {"ticker": ticker, "horizon": horizon, "paths": n_sims, "calibration": check,
             "snapshot": ctx.get("data_version")}
@@ -192,7 +194,7 @@ def render(ctx):
     # ── context ─────────────────────────────────────────────────────────────────────────────
     st.markdown("---")
     render_header("activity", "Context (not part of the range)")
-    if st.button("Load headline context", key="risk_news"):
+    if st.button("Load headline context — Contacts Google News", key="risk_news"):
         try:
             sent, n_titles = _news_sentiment(company, ticker)
         except Exception:

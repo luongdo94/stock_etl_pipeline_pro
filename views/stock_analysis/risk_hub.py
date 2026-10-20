@@ -1,5 +1,5 @@
 """Layer 3 — LLM risk audit, news sentiment (FinBERT) and quality radar."""
-from datetime import datetime
+from datetime import datetime, timezone
 import os
 
 import plotly.graph_objects as go
@@ -20,7 +20,20 @@ def _known(v):
     return "N/A" if f is None else f
 
 
-def _render_news(meta, ticker):
+def _saved_context(rec, ticker, snapshot):
+    saved = rec.get("snapshot")
+    when = rec.get("extracted_at") or rec.get("fetched_at") or "unknown"
+    if isinstance(when, str) and len(when) == 8 and when.count(":") == 2:
+        when = f"date unknown (recorded time {when})"
+    label = f"{rec.get('ticker', ticker)} · snapshot {saved or 'unknown'} · created/fetched {when}"
+    if saved is not None and snapshot is not None and saved != snapshot:
+        label += " · from a previous snapshot"
+    elif saved is None or snapshot is None:
+        label += " · snapshot provenance unknown"
+    return label
+
+
+def _render_news(meta, ticker, snapshot=None):
     """Headline sentiment, fetched when the user asks (it used to run on every page open: a request to Google News, and
     the ~440 MB FinBERT model on first use). The result is kept in the session per ticker."""
     from services.news import fetch_news_sentiment
@@ -32,10 +45,12 @@ def _render_news(meta, ticker):
                       "the model (~440 MB). Headline sentiment is context only — it does not feed the Decision."):
         with st.spinner(f"Reading headlines for {meta.get('company', ticker)}..."):
             rec = fetch_news_sentiment(meta.get("company", ticker), ticker, get_pipe=get_finbert_pipeline)
+        rec = dict(rec, ticker=ticker, snapshot=snapshot)
         st.session_state[key] = rec
     if not rec:
         st.caption("Not loaded — headlines and their sentiment are fetched only when you ask.")
         return
+    st.caption("Google News / FinBERT · " + _saved_context(rec, ticker, snapshot))
     if rec["error"] and not rec["items"]:
         st.caption(f"⚠️ News feed unavailable: {rec['error']}")
         return
@@ -90,6 +105,8 @@ def render(dd, ctx):
 
     # ── PART A (Full-Width): Audit Button + Cockpit + Conflict Banner ─
     _uv_data = st.session_state.get(f"unified_verdict_{deep_ticker}")
+    if _uv_data:
+        st.caption("Saved language-model review · " + _saved_context(_uv_data, deep_ticker, ctx.get("data_version")))
 
     # Initialize safe defaults to prevent NameErrors in later blocks
     _nlp_score, _nlp_sent = 0, "N/A"
@@ -219,7 +236,9 @@ def render(dd, ctx):
                         "nlp_insights":      llm_res.get("key_insights", []),
                         "nlp_sentiment":     _nst,
                         "nlp_score":         _ns,
-                        "extracted_at":      datetime.now().strftime("%H:%M:%S"),
+                        "extracted_at":      datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                        "ticker":            deep_ticker,
+                        "snapshot":          ctx.get("data_version"),
                         "is_conflict":       _conflict,
                         "ai_score_snap":     _qs,
                         # Debug prompts for in-UI inspection
@@ -337,7 +356,7 @@ def render(dd, ctx):
 
         # ── NEWS FEED (on request: Google News + FinBERT) ────────────────────────────────────────
         st.markdown("<div style='color:#f39c12; font-size:0.85rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-top:16px; margin-bottom:8px; border-bottom:1px solid rgba(243,156,18,0.3); padding-bottom:6px;'>📰 Market Sentiment (FinBERT)</div>", unsafe_allow_html=True)
-        _render_news(meta, deep_ticker)
+        _render_news(meta, deep_ticker, ctx.get("data_version"))
 
 
     with quant_col:

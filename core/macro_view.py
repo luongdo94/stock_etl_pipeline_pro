@@ -23,5 +23,12 @@ def table_for_display(df: pd.DataFrame, today=None) -> pd.DataFrame:
     d["age_days"] = (today - d["period"]).dt.days
     d["stale"] = d["age_days"] > d["max_age_days"]
     d["change"] = d["value"] - d["previous_value"]
+    d["previous_label"] = [
+        f"{v:.2f} ({period_label(p, f) if pd.notna(p) else 'period unknown'})" if pd.notna(v) else "N/A"
+        for v, p, f in zip(d["previous_value"], d["previous_period"], d["frequency"])]
+    d["collected_label"] = pd.to_datetime(d["fetched_at"], errors="coerce").map(
+        lambda p: f"Collected {p:%d %b %Y}" if pd.notna(p) else "Collection date unknown")
+    d["status_label"] = [f"STALE — observation period {age:.0f} d old" if stale else ""
+                         for age, stale in zip(d["age_days"], d["stale"])]
     d["_o"] = d["region"].map(ORDER).fillna(9)
     return d.sort_values(["_o", "id"], kind="mergesort").drop(columns="_o").reset_index(drop=True)

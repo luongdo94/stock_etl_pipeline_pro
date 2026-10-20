@@ -163,7 +163,6 @@ with head_r:
     from ui import signal_hub  # noqa: E402 — fragment: a choice inside the hub reruns only the hub
     signal_hub.render(m_df=m_df, prices_full=prices_full, companies_full=companies_full, reco_df=reco_df,
                       earnings_cal=earnings_cal, advice=_regime["advice"], macro=macro)
-st.markdown("<div style='margin-bottom:16px;'></div>", unsafe_allow_html=True)
 st.markdown("---")
 
 # Action label from the screener (single source of truth)
@@ -218,8 +217,6 @@ TABS = {
 }
 if st.session_state.get("active_tab") not in TABS:
     st.session_state["active_tab"] = next(iter(TABS))
-st.markdown("<p style='color:#8899aa; font-size:0.85rem; font-weight:600; margin-bottom:-10px; margin-top:10px;'>"
-            "🧭 NAVIGATION CHANNELS — SELECT A MODULE BELOW TO VIEW:</p>", unsafe_allow_html=True)
 active_tab = st.pills("Navigation", options=list(TABS), key="active_tab", label_visibility="collapsed") or next(iter(TABS))
 
 ctx = dict(

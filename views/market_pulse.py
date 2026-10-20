@@ -173,27 +173,31 @@ def _your_review():
 
 
 def _economic_data(ctx):
-    """Latest release vs the previous one for the US, the euro area, Japan and China (stored by the ETL; no forecast)."""
+    """Stored observation periods and their collection dates; no inferred release dates."""
     from core.macro_view import REGION_NAMES, period_label, table_for_display
     from services.db import load_macro_indicators
-    st.markdown("#### 🏛️ Economic data — latest release vs the previous one")
-    t = table_for_display(load_macro_indicators(ctx.get("data_version")))
+    st.markdown("#### 🏛️ Economic data — latest observation vs the previous one")
+    stored = load_macro_indicators(ctx.get("data_version"))
+    if stored.attrs.get("unavailable") == "read_error":
+        st.warning("Economic data could not be read. Reload to retry; this does not mean no observations were stored.")
+        return
+    t = table_for_display(stored)
     if t.empty:
-        st.info("Economic indicators appear after the next ETL run (they are collected from FRED and Eurostat).")
+        st.info("No economic observations are stored in this snapshot (the table may be absent or empty).")
         return
     show = pd.DataFrame({
         "Region": t["region"].map(REGION_NAMES).fillna(t["region"]), "Indicator": t["name"],
-        "Period": [period_label(p, f) for p, f in zip(t["period"], t["frequency"])],
-        "Latest": t["value"], "Previous": t["previous_value"], "Change": t["change"], "Unit": t["unit"],
-        "Status": ["STALE — source stopped updating" if s else "" for s in t["stale"]], "Source": t["source"].str.upper()})
+        "Observation period": [period_label(p, f) for p, f in zip(t["period"], t["frequency"])],
+        "Latest": t["value"], "Previous": t["previous_label"], "Change": t["change"], "Unit": t["unit"],
+        "Status": t["status_label"], "Source": t["source"].str.upper(), "Collection": t["collected_label"]})
     st.dataframe(show, hide_index=True, width="stretch", column_config={
-        "Latest": st.column_config.NumberColumn(format="%.2f"), "Previous": st.column_config.NumberColumn(format="%.2f"),
+        "Latest": st.column_config.NumberColumn(format="%.2f"),
+        "Previous": st.column_config.TextColumn(help="Previous stored value and its observation period, when known."),
         "Change": st.column_config.NumberColumn(format="%+.2f")})
-    st.caption("Actual and previous release only: consensus forecasts are licensed data and are not included. Context for "
-               "reading the market; it never feeds a Decision. Sources: FRED (US, Japan), Eurostat and FRED (euro area), the "
-               "National Bureau of Statistics' own English releases (China: read from the press-release text, so a change in "
-               "wording shows up as a stale row, not a wrong number). No national house-price figure exists for China. "
-               f"Collected {pd.to_datetime(t['fetched_at']).max():%d %b %Y}.")
+    st.caption("Observation period is the period measured; Collected is when this app retrieved each row, not its release date. "
+               "Release dates and consensus forecasts are not stored. STALE means the observation period is older than "
+               "the series' age limit, not that its source stopped updating. Context only; it never feeds a Decision. "
+               "Sources: FRED (US, Japan), Eurostat/FRED (euro area), NBS English releases (China).")
 
 
 def render(ctx):

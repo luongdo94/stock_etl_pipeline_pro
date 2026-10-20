@@ -70,6 +70,7 @@ def test_opening_the_page_fetches_no_news_and_loads_no_tradingview(warehouse, mo
 
 
 # ── only the chosen group is built, the choice survives ────────────────────────────────────────────────────────────
+@pytest.mark.smoke
 def test_only_the_chosen_group_runs_and_the_answer_block_is_always_there(warehouse, monkeypatch):
     import views.stock_analysis as sa
     ran = []
@@ -92,6 +93,7 @@ def test_only_the_chosen_group_runs_and_the_answer_block_is_always_there(warehou
         assert any("What could change it" in m.value for m in at.markdown), g          # the answer block, every group
 
 
+@pytest.mark.smoke
 def test_the_chosen_group_and_widget_state_survive_other_tabs_and_tickers(warehouse):
     at = _app("🔬 Stock Analysis")
     at.session_state["deep_ticker_selector"] = "AAPL"
@@ -115,6 +117,7 @@ def test_the_chosen_group_and_widget_state_survive_other_tabs_and_tickers(wareho
 
 
 # ── the answer block states the Decision, nothing new ─────────────────────────────────────────────────────────────
+@pytest.mark.smoke
 def test_the_answer_block_is_the_pages_decision(warehouse, monkeypatch):
     from views.stock_analysis import answer, context
     seen = {}
@@ -160,6 +163,7 @@ def test_what_could_change_it_lists_conflicts_warnings_invalidation_and_the_next
     assert "Price date unknown" in b["data"] and "Fundamentals refresh date unknown" in b["data"]
 
 
+@pytest.mark.smoke
 def test_the_panel_shows_the_decision_it_is_given_and_decides_itself_otherwise(warehouse, monkeypatch):
     """Header passes dd's Decision: the panel no longer decides a second time on the page."""
     from core import decision as dec
@@ -246,6 +250,7 @@ def _analyst_html(row, monkeypatch, rate):
         return re.sub(r"\s+", " ", " ".join(x.value for x in at.markdown))
 
 
+@pytest.mark.smoke
 def test_r12_one_sided_revision_counts_do_not_invent_the_other_side(warehouse, monkeypatch):
     import re
     nan = float("nan")
@@ -258,6 +263,7 @@ def test_r12_one_sided_revision_counts_do_not_invent_the_other_side(warehouse, m
     assert re.search(r"Downgrades: <b[^>]*>1</b>", flat) and "width:75%" in flat and "Estimates unchanged" in flat
 
 
+@pytest.mark.smoke
 def test_r10_an_unknown_eur_rate_gives_no_eur_amounts_and_no_parity(warehouse, monkeypatch):
     import re
     row = {"eps_est_next_y": 5.0, "eps_est_cur_y": 4.0, "cur_price": 100.0, "eps_trend_delta_30d": 0.2,
@@ -281,6 +287,7 @@ def test_r10_get_forex_rates_returns_none_not_one_when_the_lookup_fails(monkeypa
     assert market_data.get_forex_rates(target="GBP", source="GBp") == 0.01             # pence → pounds without a lookup
 
 
+@pytest.mark.smoke
 def test_r15_a_holding_without_a_price_is_held_but_makes_the_portfolio_unvalued(warehouse, monkeypatch):
     import views.stock_analysis.header as hd
     monkeypatch.setattr(hd, "read_portfolio_snapshot",
@@ -295,6 +302,7 @@ def test_r15_a_holding_without_a_price_is_held_but_makes_the_portfolio_unvalued(
     assert not any("Portfolio policy limits" in w.value for w in at.warning)          # no NAV, no weights from a €0 holding
 
 
+@pytest.mark.smoke
 def test_r09_the_watchlist_draft_survives_other_groups_and_is_not_written_until_save(warehouse, monkeypatch):
     from views.stock_analysis import watchlist_save as ws
     saved = []

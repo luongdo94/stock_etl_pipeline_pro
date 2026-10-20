@@ -63,6 +63,7 @@ def test_docs_describes_the_current_evidence_setting(enabled, word):
         assert "Evidence status is unchanged" in text
 
 
+@pytest.mark.smoke
 def test_portfolio_summary_and_unrequested_sections_do_no_heavy_work(warehouse, monkeypatch):
     from views import portfolio
     def forbidden(*a, **kw):
@@ -83,6 +84,7 @@ def test_portfolio_summary_and_unrequested_sections_do_no_heavy_work(warehouse, 
     assert any(b.key == "pf_frontier" for b in at.button)
 
 
+@pytest.mark.smoke
 def test_risk_result_survives_navigation_and_marks_new_spec_stale(warehouse, monkeypatch):
     from views import risk_lab
     original_render = risk_lab.render
@@ -119,6 +121,7 @@ def test_risk_result_survives_navigation_and_marks_new_spec_stale(warehouse, mon
     assert len(calls) == 1
 
 
+@pytest.mark.smoke
 def test_earnings_builds_only_selected_section_and_keeps_controls(warehouse, monkeypatch):
     from views import earnings
     def forbidden(*a, **kw):
@@ -162,6 +165,7 @@ def test_data_health_failed_read_is_not_next_etl(key):
     assert not any("next ETL" in i.value for i in at.info)
 
 
+@pytest.mark.smoke
 def test_watchlist_edit_keeps_workflow_and_does_not_save_derived_decision(warehouse, monkeypatch):
     from views import watchlist
     saved = []
@@ -214,6 +218,7 @@ def test_sticky_choice_survives_hidden_widget_and_removed_option():
 
 
 @pytest.mark.parametrize("section", ["Health", "Risk & income", "AI review", "Activity"])
+@pytest.mark.smoke
 def test_portfolio_selected_sections_render_with_their_dependencies(warehouse, monkeypatch, section):
     from views import portfolio
     monkeypatch.setattr(portfolio, "load_alert_rules", lambda: [])

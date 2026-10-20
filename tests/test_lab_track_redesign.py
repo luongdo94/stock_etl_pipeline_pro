@@ -3,6 +3,8 @@ run identity, one evidence status, sticky controls."""
 import os
 import sys
 
+import pytest
+
 import numpy as np
 import pandas as pd
 
@@ -66,16 +68,20 @@ def test_evidence_headline_has_four_states():
 
 def test_engine_reports_bars_and_time_in_market():
     from core.backtest import run_backtest_simulation
-    rng = np.random.default_rng(1)
-    n = 150
-    px = 100 * np.cumprod(1 + rng.normal(0, 0.01, n))
-    bars = pd.DataFrame({"date": pd.date_range("2024-01-01", periods=n), "price_close": px,
-                         "daily_return_pct": np.r_[0, np.diff(px) / px[:-1] * 100],
-                         "ma_20": pd.Series(px).rolling(20).mean().bfill(), "ma_50": pd.Series(px).rolling(50).mean().bfill(),
-                         "rsi": 50.0})
+    n = 65
+    bars = pd.DataFrame({"date": pd.date_range("2024-01-01", periods=n), "price_close": 100.0,
+                         "daily_return_pct": 0.0, "ma_20": 99.0, "ma_50": 100.0})
+    bars.loc[10:14, "ma_20"] = 101.0
+    # Cross at bar 10 -> fill at 11; death cross at 15 -> fill at 16.
+    # Returns are earned on bars 12, 13, 14, 15, 16: exactly five sessions.
     r = run_backtest_simulation("T", bars, "Trend Following (MA20/50 Cross)", 0.08, 0.25, 0.001, 10000,
                                 pd.DataFrame({"ticker": ["T"], "score": [50]}))
-    assert r["n_bars"] == n and 0 <= r["bars_held"] <= n
+    assert r["n_bars"] == 65 and r["bars_held"] == 5 and r["n_trades"] == 1
+    assert [t["Date"] for t in r["trade_log"]] == ["2024-01-12", "2024-01-17"]
+    bars["ma_20"] = 99.0
+    idle = run_backtest_simulation("T", bars, "Trend Following (MA20/50 Cross)", 0.08, 0.25, 0.001, 10000,
+                                   pd.DataFrame({"ticker": ["T"], "score": [50]}))
+    assert idle["bars_held"] == 0 and idle["n_trades"] == 0
 
 
 def test_since_call_frame_gives_entry_and_last_dates():
@@ -88,6 +94,7 @@ def test_since_call_frame_gives_entry_and_last_dates():
     assert tr.since_call_frame(log.iloc[0:0], px).empty
 
 
+@pytest.mark.smoke
 def test_strategy_lab_has_no_winner_banner_and_keeps_controls(warehouse):
     at = _app("🧪 Strategy Lab").run()
     assert not at.exception, [e.value for e in at.exception]
@@ -102,6 +109,7 @@ def test_strategy_lab_has_no_winner_banner_and_keeps_controls(warehouse):
     assert any("controls changed" in w.value for w in at.warning)          # old result is labelled, not passed off as new
 
 
+@pytest.mark.smoke
 def test_track_record_leads_with_evidence_and_remembers_horizon(warehouse):
     at = _app("📈 Track Record").run()
     assert not at.exception, [e.value for e in at.exception]

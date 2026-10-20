@@ -14,6 +14,20 @@ def render(ctx):
     st.write("What the numbers mean, where they come from, and what they cannot tell you. "
              "Everything here is decision support for your own judgement — not investment advice.")
 
+    st.markdown("""### Start here
+1. **Market Pulse** — read the market context and dates.
+2. **Scanner → Candidates** — find a stock worth researching.
+3. **Stock Analysis** — read its Decision, risks and sources before saving an idea.
+""")
+    st.markdown(f"""### Quick glossary
+- **Decision**: the app's single current recommendation from its rules and stored data.
+- **Quality / Value / Momentum**: business strength / price attractiveness / price trend (timing context).
+- **Margin of safety** = base value / price − 1; BUY needs ≥ {rules['valuation']['required_margin_of_safety']:.0%} under the current configuration, alongside the other gates.
+- **Confidence**: data completeness and consistency; not the probability of making a profit.
+- **Evidence (Track Record)**: has the BUY signal been validated against later returns? Separate from Confidence.
+- **Idea status vs Current Decision**: your saved workflow choice vs the app's current recommendation.
+- **N/A = unknown**, never zero.
+""")
     st.markdown("---")
     m_col1, m_col2 = st.columns(2)
 

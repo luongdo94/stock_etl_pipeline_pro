@@ -34,6 +34,7 @@ def test_every_header_icon_used_exists_and_a_subtitle_is_not_the_level():
     assert used - set(icons.SVG_ICONS) == set()
 
 
+@pytest.mark.smoke
 def test_a_single_positive_holding_gets_no_value_is_zero_warning(warehouse):
     at = _portfolio().run()
     assert not at.exception, [e.value for e in at.exception]
@@ -43,12 +44,14 @@ def test_a_single_positive_holding_gets_no_value_is_zero_warning(warehouse):
     assert any("add a second one" in i.value for i in at.info)
 
 
+@pytest.mark.smoke
 def test_an_empty_portfolio_says_how_to_start(warehouse):
     at = _portfolio(tickers=()).run()
     assert not at.exception, [e.value for e in at.exception]
     assert any("Add your first holding" in i.value for i in at.info)
 
 
+@pytest.mark.smoke
 def test_the_decision_of_a_held_line_follows_the_snapshot_not_the_grid_it_was_built_with(warehouse):
     at = _portfolio().run()
     assert not at.exception, [e.value for e in at.exception]
@@ -60,6 +63,7 @@ def test_the_decision_of_a_held_line_follows_the_snapshot_not_the_grid_it_was_bu
     assert "STALE ACTION" not in str(at.session_state["portfolio_df"]["Action"].tolist())
 
 
+@pytest.mark.smoke
 def test_a_holding_without_a_price_is_unknown_and_blocks_the_analytics(warehouse):
     at = _portfolio(tickers=("AAPL", "ZZZNOPRICE")).run()
     assert not at.exception, [e.value for e in at.exception]
@@ -80,6 +84,7 @@ def test_news_lookup_states_are_not_neutral():
         sys.modules.pop("feedparser", None)
 
 
+@pytest.mark.smoke
 def test_an_unreadable_watchlist_is_not_shown_as_empty(warehouse, monkeypatch):
     import pandas as pd
     from views import watchlist
@@ -96,6 +101,7 @@ def test_an_unreadable_watchlist_is_not_shown_as_empty(warehouse, monkeypatch):
 
 
 # ── step 2: nothing is requested on open; text from data is escaped ───────────────────────────────────────────────────
+@pytest.mark.smoke
 def test_the_ticker_tape_loads_only_when_asked(warehouse):
     at = _app("📖 Docs").run()
     assert not at.exception, [e.value for e in at.exception]
@@ -105,6 +111,7 @@ def test_the_ticker_tape_loads_only_when_asked(warehouse):
     assert len(at.get("iframe")) >= 1
 
 
+@pytest.mark.smoke
 def test_the_watchlist_preview_requests_nothing_until_switched_on(warehouse, monkeypatch):
     import pandas as pd
     from views import watchlist

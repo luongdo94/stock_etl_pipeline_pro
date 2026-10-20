@@ -33,6 +33,7 @@ def idea_store(monkeypatch):
 
 
 @pytest.mark.parametrize("existing", [True, False])
+@pytest.mark.smoke
 def test_r1_analysis_preserves_saved_idea_and_new_idea_defaults(warehouse, idea_store, existing):
     if not existing:
         idea_store["frame"] = idea_store["frame"].iloc[:0]
@@ -66,6 +67,7 @@ def test_r1_analysis_preserves_saved_idea_and_new_idea_defaults(warehouse, idea_
         assert any("Successfully added" in s.value for s in at.success)
 
 
+@pytest.mark.smoke
 def test_r1_draft_wins_and_reset_restores_saved_values(warehouse, idea_store):
     at = _app("🔬 Stock Analysis")
     at.session_state["deep_ticker_selector"] = "AAPL"
@@ -88,6 +90,7 @@ def test_r1_draft_wins_and_reset_restores_saved_values(warehouse, idea_store):
 
 
 @pytest.mark.parametrize("buy, read_error", [(True, False), (False, False), (True, True)])
+@pytest.mark.smoke
 def test_r2_buy_caption_uses_evidence_and_is_absent_without_buy(warehouse, monkeypatch, buy, read_error):
     from services import db
     from views import scanner
@@ -157,6 +160,7 @@ def _upcoming_tickers(at):
     return next(d.value["Ticker"].tolist() for d in at.dataframe if "Typical move" in d.value.columns)
 
 
+@pytest.mark.smoke
 def test_r4_held_watchlist_all_and_sticky_scope(warehouse, upcoming):
     at = _app("🗓️ Earnings")
     cache = at.session_state["_sig_user"]
@@ -176,6 +180,7 @@ def test_r4_held_watchlist_all_and_sticky_scope(warehouse, upcoming):
 
 
 @pytest.mark.parametrize("failed", [None, "holdings_ok", "watchlist_ok"])
+@pytest.mark.smoke
 def test_r4_empty_and_failed_lists_are_distinct(warehouse, upcoming, failed):
     at = _app("🗓️ Earnings")
     if failed:
@@ -190,6 +195,7 @@ def test_r4_empty_and_failed_lists_are_distinct(warehouse, upcoming, failed):
     assert any("No holdings" in c.value for c in at.caption) is (failed is None)
 
 
+@pytest.mark.smoke
 def test_r5_empty_snapshot_retry_only_clears_cache_and_reruns(warehouse, monkeypatch):
     from services import db, market_data
     import run
@@ -216,6 +222,7 @@ def test_r5_empty_snapshot_retry_only_clears_cache_and_reruns(warehouse, monkeyp
     assert at.button(key="retry_stored_snapshot").label == "Retry stored snapshot"
 
 
+@pytest.mark.smoke
 def test_r1_an_unreadable_watchlist_still_shows_the_form_and_saving_does_not_write(warehouse, monkeypatch):
     """The form must not disappear when the store cannot be read (it used to stop at an error): it is a draft, and the save
     guard reports the read problem."""

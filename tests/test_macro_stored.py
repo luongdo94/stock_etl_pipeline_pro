@@ -88,3 +88,18 @@ def test_the_live_button_fetches_once_shows_it_labelled_and_changes_no_decision_
     at.session_state["_live_markets"] = {**at.session_state["_live_markets"], "version": "an-older-snapshot"}   # fetched earlier
     at.run()
     assert "9.99%" not in " ".join(m.value for m in at.sidebar.markdown)                      # live values are not carried over
+
+
+def test_cloud_price_close_and_non_unit_scale_match_local_native_levels():
+    rows = [("^TNX", "2026-10-15", 5.0 * 0.9 / 0.01, 0.01, 0.9),
+            ("^TNX", "2026-10-16", 5.1 * 0.89 / 0.01, 0.01, 0.89)]
+    with _conn(rows) as local, _conn(rows) as cloud:
+        cloud.execute("ALTER TABLE raw.stock_prices RENAME COLUMN close TO price_close")
+        expected = md._get_macro_fallback_from_db(local)["US10Y"]
+        actual = md._get_macro_fallback_from_db(cloud)["US10Y"]
+    for result in (expected, actual):
+        assert result["val"] == pytest.approx(5.1)
+        assert result["chg"] == pytest.approx(0.1)
+        assert result["pct"] == pytest.approx(2.0)
+        assert (result["as_of"], result["prev_as_of"]) == ("2026-10-16", "2026-10-15")
+        assert result["source"] == "warehouse (stored close of 2026-10-16)"
