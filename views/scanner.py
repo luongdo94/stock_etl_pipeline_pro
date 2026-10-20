@@ -460,6 +460,15 @@ def render(ctx):
                 + (f" ({len(base)} before the refinements)" if n_before != len(ordered) and can_filter else "")
                 + (" — changes with a data or mixed cause first, methodology-only changes last." if view == "Changed"
                    else f" — sorted by {sort_label.lower()}."))
+    if view == "Candidates" and ordered["Decision"].eq("BUY CANDIDATE").any():
+        from core.track_record import evidence_headline
+        from services.db import evidence
+        try:
+            status = evidence_headline(evidence(ctx["prices_full"]))
+        except Exception:
+            status = "unavailable"
+        st.caption("BUY CANDIDATE means worth researching, not an order. "
+                   f"Track Record evidence that these signals earn excess returns: {status}.")
     if ordered.empty:
         if view == "Candidates":
             st.info("No stock is a candidate under the current rules in this scope — the rules were not loosened.")

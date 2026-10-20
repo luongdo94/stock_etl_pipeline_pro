@@ -132,13 +132,31 @@ def render(ctx):
 
     # ── upcoming ────────────────────────────────────────────────────────────────────────────
     if section == "Upcoming reports":
+        from core.scanner_views import held_tickers
+        from ui.signal_hub import _user_data
+        user = _user_data()
+        held = held_tickers(user["holdings"])
+        lists_ok = user["holdings_ok"] and user["watchlist_ok"]
+        default = "Held" if lists_ok and held else "All"
+        show = sticky_choice("Show", ["Held", "Watchlist", "All"] if lists_ok else ["All"],
+                             default, "er_show", disabled=not lists_ok)
+        if not lists_ok:
+            st.warning("Your lists could not be read")
+            show = "All"
+            st.caption("Showing All stored report dates while your lists are unavailable.")
+        elif not held:
+            st.caption("No holdings in your saved portfolio; All is the default.")
         days = sticky(st.slider, "Look ahead (days)", 14, "er_days", min_value=3, max_value=30)
         now = pd.Timestamp.now(tz="UTC")
         # both sources (events table + the calendar the Decision's earnings gate reads); a date-only entry stays
         # upcoming for its whole local day
         pending = _pending(events, cal_all, now, days)
+        if show != "All":
+            watchlist = user["watchlist"]
+            tickers = set(held) if show == "Held" else set(watchlist["Ticker"] if watchlist is not None else [])
+            pending = pending[pending["ticker"].isin(tickers)]
         if pending.empty:
-            st.info(f"No reports scheduled in the next {days} days for the tracked universe.")
+            st.info(f"No known report dates in the next {days} days for {show.lower()} stocks.")
         else:
             fe_i = fe.set_index("ticker") if not fe.empty and "ticker" in fe.columns else pd.DataFrame()
             rows = []

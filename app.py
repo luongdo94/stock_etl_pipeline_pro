@@ -69,7 +69,12 @@ st.session_state["_data_version"] = _loaded_version       # "Check for new data"
  hist_fcf_full, hist_fcf_q_full, etl_audit, total_universe_size, earnings_surprise_full,
  tv_sector_rotation, forward_estimates_full) = _frames
 if prices_full.empty:
-    st.error("The warehouse has no prices yet — run `python run.py` to load data.")
+    st.error("The stored snapshot has no prices. Data requires a successful ETL run and snapshot publication.")
+    st.caption("Retry reads the stored snapshot; it does not run ETL or call data providers.")
+    if st.button("Retry stored snapshot", key="retry_stored_snapshot"):
+        from services.db import clear_snapshot_caches
+        clear_snapshot_caches()
+        st.rerun()
     st.stop()
 
 # the market inputs STORED in this snapshot: no request to a provider on open, the same on every run of the snapshot

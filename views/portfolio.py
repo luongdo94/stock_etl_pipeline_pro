@@ -82,8 +82,15 @@ def _render_summary(ctx, prices):
         st.caption("Unavailable: personal review items have not been loaded reliably.")
     else:
         st.caption(f"{feed['n']} item(s) across your portfolio and watchlist · loaded snapshot {feed['version']}")
-        for item in feed["top"]:
+        k, n = len(feed["top"]), feed["total"]
+        if n > k:
+            st.caption(f"Showing {k} of {n}")
+        for i, item in enumerate(feed["top"]):
             st.write(f"{item['severity']} · {item['ticker']} · {item['kind']}: {item['message']}")
+            if item["ticker"] and item["ticker"] != "—":
+                from views.scanner import _open_analysis
+                st.button(f"Open {item['ticker']}", key=f"pf_review_open_{i}",
+                          on_click=_open_analysis, args=(item["ticker"],))
 
 
 def render(ctx):

@@ -23,39 +23,64 @@ def _draft_prefix(ticker: str) -> str:
 @st.fragment
 def _save_form(ticker, act_str, act_desc, s1, stop_loss, tp1, next_earnings):
     pre = _draft_prefix(ticker)
+    try:
+        wl_df = load_watchlist()
+    except Exception:                       # the form still works as a draft; saving reports the read problem itself
+        wl_df = pd.DataFrame(columns=["Ticker", "Added Date"])
+        st.session_state["watchlist_load_failed"] = True
+    existing = wl_df[wl_df["Ticker"] == ticker] if not st.session_state.get("watchlist_load_failed") else pd.DataFrame()
+    saved = existing.iloc[0] if not existing.empty else None
+    defaults = {"Status": STATUSES[0], "Thesis": act_desc, "Catalyst": "", "Entry Target": float(s1),
+                "Invalidation Level": float(stop_loss), "Take Profit": float(tp1)}
+    if saved is not None:
+        for k in defaults:
+            value = saved[k]
+            if pd.isna(value):
+                defaults[k] = "" if k in ("Thesis", "Catalyst") else None
+            else:
+                defaults[k] = float(value) if k in ("Entry Target", "Invalidation Level", "Take Profit") else value
     st.write("**Idea Management & Catalyst Tracking**")
     c1, c2 = st.columns(2)
     with c1:
-        # Workflow starts pending; technical timing never activates an idea.
-        opt_status = sticky_choice("Idea status", STATUSES, STATUSES[0],
+        # Saved workflow values seed the form; sticky drafts still take priority.
+        opt_status = sticky_choice("Idea status", STATUSES, defaults["Status"],
                                    pre + "status")
-        opt_thesis = sticky(st.text_area, "Investment Thesis (Why buy/hold?)", act_desc, pre + "thesis", height=110)
+        opt_thesis = sticky(st.text_area, "Investment Thesis (Why buy/hold?)", defaults["Thesis"], pre + "thesis", height=110)
     with c2:
-        opt_catalyst = sticky(st.text_input, "Upcoming Catalyst (Earnings, FDA, Macro, etc.)", "", pre + "catalyst",
+        opt_catalyst = sticky(st.text_input, "Upcoming Catalyst (Earnings, FDA, Macro, etc.)", defaults["Catalyst"], pre + "catalyst",
                               placeholder="e.g. Q4 Earnings expected positive...")
         k1, k2, k3 = st.columns(3)
         with k1:
-            opt_entry = sticky(st.number_input, "Entry (€)", float(s1), pre + "entry", step=1.0)
+            opt_entry = sticky(st.number_input, "Entry (€)", defaults["Entry Target"], pre + "entry", step=1.0)
         with k2:
-            opt_inval = sticky(st.number_input, "Inval / Stop (€)", float(stop_loss), pre + "inval", step=1.0)
+            opt_inval = sticky(st.number_input, "Inval / Stop (€)", defaults["Invalidation Level"], pre + "inval", step=1.0)
         with k3:
-            opt_tp = sticky(st.number_input, "Take Profit (€)", float(tp1), pre + "tp", step=1.0)
+            opt_tp = sticky(st.number_input, "Take Profit (€)", defaults["Take Profit"], pre + "tp", step=1.0)
         st.caption(f"Next Earnings: **{next_earnings}** · the levels above are technical levels, not the Decision's thesis stop")
+    if saved is not None:
+        st.caption(f"A saved idea for {ticker} exists: saving updates it (added {saved['Added Date']}, kept).")
     b1, b2, _ = st.columns([2, 1, 3])
-    if b2.button("Reset draft", key=pre + "reset", help="Back to the suggested values"):
+    if b2.button("Reset draft", key=pre + "reset", help="Back to the saved values, or suggestions for a new idea"):
         forget(pre)
         st.rerun(scope="fragment")
-    if b1.button("💾 Save Candidate to Watchlist", type="primary", key=pre + "save"):
+    if b1.button("💾 Update saved idea" if saved is not None else "💾 Save Candidate to Watchlist",
+                 type="primary", key=pre + "save"):
         try:
-            wl_df = load_watchlist()
-            wl_df = wl_df[wl_df["Ticker"] != ticker]                    # overwrite an existing row of this ticker
+            wl_df = load_watchlist()                                            # fresh: what is stored right now
+            current = wl_df[wl_df["Ticker"] == ticker]
+            added = current["Added Date"].iloc[0] if not current.empty else pd.Timestamp.now().strftime("%Y-%m-%d")
+            wl_df = wl_df[wl_df["Ticker"] != ticker]
             new_row = pd.DataFrame([{
                 "Ticker": ticker, "Status": opt_status, "Thesis": opt_thesis, "Catalyst": opt_catalyst,
-                "Entry Target": round(opt_entry, 2), "Invalidation Level": round(opt_inval, 2),
-                "Take Profit": round(opt_tp, 2), "Next Earnings": str(next_earnings),
-                "Added Date": pd.Timestamp.now().strftime("%Y-%m-%d")}])
+                "Entry Target": round(opt_entry, 2) if opt_entry is not None else None,
+                "Invalidation Level": round(opt_inval, 2) if opt_inval is not None else None,
+                "Take Profit": round(opt_tp, 2) if opt_tp is not None else None, "Next Earnings": str(next_earnings),
+                "Added Date": added}])
             save_watchlist(pd.concat([wl_df, new_row], ignore_index=True))
-            st.success(f"✅ Successfully added **{ticker}** to Watchlist Pipeline!")
+            if not current.empty:
+                st.success(f"Updated {ticker} in the Watchlist Pipeline.")
+            else:
+                st.success(f"✅ Successfully added **{ticker}** to Watchlist Pipeline!")
         except Exception as e:
             st.error(f"Error saving to watchlist: {e}")
 
