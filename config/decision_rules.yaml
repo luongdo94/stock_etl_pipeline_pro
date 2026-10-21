@@ -118,3 +118,6 @@ scores:
   momentum_conflict_below: 10   # Momentum score below this turns a would-be BUY into HOLD / WATCH with a named conflict.
                                 # Was 20: cheap stocks are low-momentum by construction (27% of the BUY pool); 10 = bottom decile
   coverage_counts_below: 80     # "missing inputs" lowers confidence only below this coverage (scores unshrunk above it)
+  avoid_spared_quality: 70      # price above the DCF bull case is AVOID only when there is also a weakness: a stock with
+  avoid_spared_momentum: 40     # Quality >= this AND Momentum >= this (both known) stays HOLD / WATCH. The DCF is cautious
+                                # (growth from past cash flow, high cost of equity); QCOM never traded near its base value.

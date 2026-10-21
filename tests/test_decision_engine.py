@@ -107,6 +107,14 @@ class TestDecision:
         assert self._d(base_value=80, bear_value=60, bull_value=110).stance == "HOLD / WATCH"
         assert self._d(base_value=80, bear_value=60, bull_value=95).stance == "AVOID / TRIM"
 
+    def test_avoid_is_spared_for_a_strong_rising_business(self):
+        over = dict(base_value=80, bear_value=60, bull_value=95)      # price 100 is above even the bull case
+        strong = self._d(quality_score=76, momentum_score=76, **over)
+        assert strong.stance == "HOLD / WATCH" and any("not a sell signal" in r for r in strong.reasons)
+        assert self._d(quality_score=60, momentum_score=76, **over).stance == "AVOID / TRIM"    # weak quality
+        assert self._d(quality_score=76, momentum_score=20, **over).stance == "AVOID / TRIM"    # weak momentum
+        assert self._d(quality_score=76, momentum_score=None, **over).stance == "AVOID / TRIM"  # unknown is not strength
+
     def test_overvalued_is_avoid(self):
         d = self._d(base_value=80)
         assert d.stance == "AVOID / TRIM"

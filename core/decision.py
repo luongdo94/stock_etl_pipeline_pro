@@ -23,7 +23,8 @@ _DEFAULT_RULES = {
     "valuation": {"required_margin_of_safety": 0.25, "stale_price_days": 5,
                   "stale_fundamentals_days": 35},
     "scores": {"min_quality_for_buy": 50, "value_crosscheck_below": 30, "min_coverage_pct": 60,
-               "min_market_cap_eur_for_buy": 2e9, "momentum_conflict_below": 10, "coverage_counts_below": 80},
+               "min_market_cap_eur_for_buy": 2e9, "momentum_conflict_below": 10, "coverage_counts_below": 80,
+               "avoid_spared_quality": 70, "avoid_spared_momentum": 40},
     "evidence": {"require_validated_evidence_for_buy": True},
     "portfolio": {},                       # aggregate budgets: core.portfolio_policy.DEFAULT_POLICY fills the gaps
     "liquidity": {"min_adv_eur_for_buy": 2e6, "portfolio_nav_eur": None, "max_participation": 0.10,
@@ -346,6 +347,13 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
             stance = HOLD
             reasons.append("Price looks above the bull-case value, but price or fundamentals are undated / stale — "
                            "refresh before trimming.")
+        elif (overpriced and q is not None and q >= float(sc.get("avoid_spared_quality", 70))
+              and mom is not None and mom >= float(sc.get("avoid_spared_momentum", 40))):
+            # The DCF uses cautious growth and a high cost of equity; for a strong, still-rising business "dearer than
+            # the DCF" alone is not a reason to trim. AVOID needs a weakness too (low quality, weak or unknown momentum).
+            stance = HOLD
+            reasons.append(f"Price is above the DCF value, but Quality {q:.0f} and Momentum {mom:.0f} show no weakness — "
+                           "expensive on the model's cautious assumptions, not a sell signal.")
         elif overpriced:
             # Symmetric with BUY (which needs a 25% cushion on the BASE case): only call AVOID when even
             # the BULL case cannot justify the price — a DCF is too uncertain for anything tighter.
