@@ -64,6 +64,8 @@ TABLES = (
      "SELECT * FROM raw.insider_transactions WHERE transaction_date >= CURRENT_DATE - INTERVAL 400 DAY", None, True),
     ("raw.insider_summary", "insider_summary", "SELECT * FROM raw.insider_summary", None, True),
     ("raw.earnings_events", "earnings_events", "SELECT * FROM raw.earnings_events", None, True),
+    # the consensus recorded before each report, so the Earnings tab can compare revenue with it (small: ~900 rows a week)
+    ("raw.estimate_snapshots", "estimate_snapshots", "SELECT * FROM raw.estimate_snapshots", None, True),
     ("raw.stock_prices", "macro_prices",
      "SELECT * FROM raw.stock_prices WHERE ticker IN (" + ", ".join(f"'{t}'" for t in MACRO_TICKERS) + ")", None, False),
 )
