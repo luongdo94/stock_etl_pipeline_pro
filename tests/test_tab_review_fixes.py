@@ -474,3 +474,27 @@ def test_c06_auth_recovery_path_resolves_and_stops(monkeypatch):
     text = " ".join(ui.messages)
     assert "./scripts/windows/start_dashboard.ps1" in text
     assert (Path(__file__).resolve().parents[1] / "scripts/windows/start_dashboard.ps1").is_file()
+
+
+def test_two_statements_in_one_calendar_quarter_do_not_break_the_fundamentals_layer(monkeypatch):
+    """AZO / DPZ: fiscal periods ending 30 Apr and 31 May both fall in 2026 Q2 — the FCF reindex used to raise."""
+    from views.stock_analysis import fundamentals as f
+    ui = UI()
+    monkeypatch.setattr(f, "st", ui)
+    monkeypatch.setattr(f, "layer_banner", lambda *a, **k: None)
+    monkeypatch.setattr(f, "load_ticker_provenance", lambda *a: {})
+    monkeypatch.setattr(f, "pit_caption", lambda *a: None)
+    dates = pd.to_datetime(["2025-04-30", "2025-07-31", "2026-04-30", "2026-05-31"])
+    q = pd.DataFrame({"ticker": "A", "report_date": dates, "year": dates.year, "quarter": dates.quarter,
+                      "revenue": [90., 95., 100., 101.], "eps": 1., "revenue_growth_yoy_pct": None,
+                      "eps_growth_yoy_pct": None})
+    fcf_q = pd.DataFrame({"ticker": "A", "year": [2025, 2025, 2026], "quarter": [2, 3, 2],
+                          "free_cash_flow": [10., 11., 12.], "operating_cash_flow": [20., 21., 22.]})
+    annual = pd.DataFrame({"year": [2024, 2025], "revenue": [90., 80.], "eps": [1., 2.],
+                           "revenue_growth_pct": [None, 0.], "eps_growth_pct": [None, 100.]})
+    f.render(NS(ticker="A", df_fin=annual, meta={}), dict(earnings_surprise_full=pd.DataFrame(),
+             hist_fcf_full=pd.DataFrame(), hist_fcf_q_full=fcf_q, quarterly_fin=q))
+    fcf = [t for fig in ui.charts for t in fig.data if str(t.name).startswith("FCF") or "Free Cash" in str(t.name)]
+    assert fcf, "the quarterly chart still renders"
+    y = list(fcf[-1].y)
+    assert pd.isna(y[-1]) and pd.isna(y[-2])        # the two 2026 Q2 statements: FCF ambiguous, left blank

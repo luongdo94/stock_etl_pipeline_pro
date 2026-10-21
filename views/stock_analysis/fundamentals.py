@@ -259,10 +259,15 @@ def render(dd, ctx):
                 else:
                     df_fin_q_plot['free_cash_flow'] = None
 
+                # Two statements in one calendar quarter (a fiscal calendar ending mid-month, e.g. AZO / DPZ) make the
+                # (year, quarter) key ambiguous: their FCF cannot be matched to one period, so it is left blank.
+                _dup = df_fin_q_plot.duplicated(['year', 'quarter'], keep=False)
+                df_fin_q_plot.loc[_dup, 'free_cash_flow'] = None
                 _growth_label = "YoY"
                 df_fin_q_plot['rev_growth'] = df_fin_q_plot.get('revenue_growth_yoy_pct')
                 df_fin_q_plot['eps_growth'] = df_fin_q_plot.get('eps_growth_yoy_pct')
-                prev = df_fin_q_plot.set_index(['year', 'quarter'])['free_cash_flow'].reindex(
+                _fcf_by_q = df_fin_q_plot[~_dup].set_index(['year', 'quarter'])['free_cash_flow']
+                prev = _fcf_by_q.reindex(
                     pd.MultiIndex.from_arrays([df_fin_q_plot['year'] - 1, df_fin_q_plot['quarter']])).to_numpy()
                 prev = pd.Series(prev, index=df_fin_q_plot.index, dtype=float).replace(0, float('nan'))
                 df_fin_q_plot['fcf_growth'] = (df_fin_q_plot['free_cash_flow'] - prev) / prev.abs() * 100
