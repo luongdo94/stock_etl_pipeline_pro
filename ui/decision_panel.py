@@ -2,6 +2,8 @@
 Decision Summary + Valuation sections of the Stock Analysis tab, and the alert inbox.
 All numbers come from core.valuation / core.decision / core.track_record; this module only renders.
 """
+import math
+
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -29,13 +31,22 @@ def _cached_evidence(snapshots: pd.DataFrame, prices: pd.DataFrame) -> dict:
 
 
 def _score_tile(title, sub, score, colour):
-    shown = "N/A" if score is None else f"{score:.0f}"
+    try:
+        known = score is not None and math.isfinite(float(score))
+    except (TypeError, ValueError):
+        known = False
+    # the number and the bar show the same rounded value; an unknown score has no bar (unknown is not 0)
+    val = round(float(score)) if known else None
+    shown = "N/A" if val is None else f"{val}"
+    bar = ("" if val is None else
+           f"<div style='height:3px; border-radius:2px; background:rgba(128,128,128,0.25); margin:5px 0 4px; "
+           f"overflow:hidden;'><div style='width:{max(0, min(100, val))}%; height:100%; background:{colour};'></div></div>")
     return (f"<div style='flex:1; min-width:150px; background:var(--secondary-background-color, transparent); padding:10px 12px; "
             f"border-radius:8px; border-top:3px solid {colour};'>"
             f"<div style='font-size:0.65em; color:inherit; text-transform:uppercase; letter-spacing:1px;'>{title}</div>"
-            f"<div style='font-weight:900; font-size:1.3em; color:{colour};'>{shown}"
+            f"<div style='font-weight:900; font-size:1.3em; color:{colour}; font-variant-numeric:tabular-nums;'>{shown}"
             f"<span style='font-size:0.55em; color:inherit;'> /100</span></div>"
-            f"<div style='font-size:0.65em; color:inherit;'>{sub}</div></div>")
+            f"{bar}<div style='font-size:0.65em; color:inherit;'>{sub}</div></div>")
 
 
 def _rev_sub(scores):

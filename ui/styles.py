@@ -16,5 +16,9 @@ def inject_global_css():
     st.markdown("""
     <style>
         .block-container { padding-top: 2rem; padding-bottom: 2rem; }
+        /* figures line up in columns (every digit the same width); no colour or font change */
+        table, th, td, [data-testid="stMetricValue"], [data-testid="stMetricDelta"] {
+            font-variant-numeric: tabular-nums;
+        }
     </style>
     """, unsafe_allow_html=True)
