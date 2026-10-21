@@ -31,7 +31,7 @@ def render(dd, ctx):
     _jumps = history_jumps(load_ticker_provenance(deep_ticker))
     for _j in _jumps.itertuples():
         st.warning(f"Price history: {_j.reason} — {_j.detail}. Returns, risk and backtests over that date may include "
-                   f"an unadjusted corporate action (spin-off, special dividend, ratio error).", icon="⚠️")
+                   f"an unadjusted corporate action (spin-off, special dividend, ratio error).")
     p_sm_layer = dd.sm["layer"]
     p_sm_strength = dd.sm["strength"]
     st.markdown("---")
@@ -113,7 +113,7 @@ def render(dd, ctx):
         ), row=2, col=1)
 
         fig_tech.update_layout(
-            title=dict(text=f"📈 {deep_ticker} — Technical Master Analysis", font=dict(size=20, color='#e8eaf6')),
+            title=dict(text=f"{deep_ticker} — Technical Master Analysis", font=dict(size=20, color='#e8eaf6')),
             height=740,
             xaxis_rangeslider_visible=False,
             hovermode="x unified",
@@ -160,12 +160,11 @@ def render(dd, ctx):
     # Smart Money reading, then the chart: the local chart first; TradingView only when asked for
     # Smart Money badge (our own volume-flow reading, not TradingView's)
     _sm_color = "#2ecc71" if p_sm == "ACCUMULATION" else "#e74c3c"
-    _sm_icon  = "📈" if p_sm == "ACCUMULATION" else "📉"
     _sm_badge_html = f"""
     <div style="display:flex; gap:10px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
         <span style="background:{_sm_color}22; border:1px solid {_sm_color}; color:{_sm_color};
                      padding:4px 12px; border-radius:20px; font-size:0.82rem; font-weight:700;">
-            {_sm_icon} Smart Money: {p_sm} ({p_sm_strength})
+            Smart Money: {p_sm} ({p_sm_strength})
         </span>
         <span style="background:var(--secondary-background-color, transparent); border:1px solid rgba(128,128,128,0.25); color:inherit;
                      padding:4px 12px; border-radius:20px; font-size:0.82rem;">
@@ -173,7 +172,7 @@ def render(dd, ctx):
         </span>
     </div>"""
     st.markdown(_sm_badge_html, unsafe_allow_html=True)
-    tech_tab_1, tech_tab_2 = st.tabs(["📊 Chart (local data)", "📈 TradingView (opt-in)"])
+    tech_tab_1, tech_tab_2 = st.tabs(["Chart (local data)", "TradingView (opt-in)"])
 
     with tech_tab_1:
         if fig_tech is None:
@@ -312,7 +311,7 @@ def render(dd, ctx):
             """, height=410)
 
             # Cross-Asset Comparison (Relative Strength vs Benchmark)
-            st.markdown("<div style='margin-top:12px; color:inherit; font-size:0.75rem; font-weight:700; text-transform:uppercase; letter-spacing:0.08em;'>📊 Relative Strength vs Key Benchmarks</div>", unsafe_allow_html=True)
+            st.markdown("<div style='margin-top:12px; color:inherit; font-size:0.75rem; font-weight:700; text-transform:uppercase; letter-spacing:0.08em;'>Relative Strength vs Key Benchmarks</div>", unsafe_allow_html=True)
             _compare_syms = json.dumps([
                 {"symbol": "FOREXCOM:SPXUSD", "position": "SameScale"},
                 {"symbol": "FOREXCOM:NSXUSD", "position": "SameScale"},
@@ -351,7 +350,7 @@ def render(dd, ctx):
     # ── COMMUNITY IDEAS / links (plain links: nothing is loaded until one is clicked) ───────────────────────────────
     _tv_base_ideas = get_tv_symbol(deep_ticker) or deep_ticker
     st.markdown(
-        f"[💡 Community ideas ↗](https://www.tradingview.com/symbols/{_tv_base_ideas}/ideas/) · "
-        f"[📈 Full chart ↗](https://www.tradingview.com/chart/?symbol={_tv_base_ideas}) · "
-        f"[🏢 Symbol profile ↗](https://www.tradingview.com/symbols/{_tv_base_ideas}/) &nbsp;—&nbsp; opens TradingView "
+        f"[Community ideas ↗](https://www.tradingview.com/symbols/{_tv_base_ideas}/ideas/) · "
+        f"[Full chart ↗](https://www.tradingview.com/chart/?symbol={_tv_base_ideas}) · "
+        f"[Symbol profile ↗](https://www.tradingview.com/symbols/{_tv_base_ideas}/) &nbsp;—&nbsp; opens TradingView "
         f"in a new tab (symbol {_tv_base_ideas}).")

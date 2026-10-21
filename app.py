@@ -33,7 +33,7 @@ from services.screener import get_master_screener_data
 from ui import header, sidebar
 from ui.styles import inject_global_css
 
-st.set_page_config(page_title="Honest Quant Intelligence", page_icon="📈", layout="wide",
+st.set_page_config(page_title="Honest Quant Intelligence", layout="wide",
                    initial_sidebar_state="expanded")
 
 # ── Auth (multi-tenant). require_auth may return before the cookie round-trip completes. ──
@@ -101,14 +101,42 @@ from core.freshness import data_freshness  # noqa: E402
 from services.db import load_etl_exceptions  # noqa: E402
 if prices_full["ticker"].nunique() < 50 and (
         os.environ.get("SUPABASE_REMOTE_MODE", "false").lower() == "true" or not os.path.exists(DB_PATH)):
-    st.toast("⚠️ The loaded data looks incomplete — use “Check for new data” in the sidebar.")
+    st.toast("The loaded data looks incomplete — use “Check for new data” in the sidebar.")
 try:
     _n_exc = int(load_etl_exceptions()["ticker"].nunique())
 except Exception:
     _n_exc = 0
 _fresh = data_freshness(prices_full, companies_full, etl_audit, dq_warnings)     # ONE answer: the sidebar and the header
 sidebar.render_data_status(_fresh, _n_exc)
-_active = st.session_state.get("active_tab")
+TABS = {
+    "🌐 Market Pulse": "market_pulse",
+    "🔭 Stock Scanner": "scanner",
+    "🔬 Stock Analysis": "stock_analysis",
+    "🗓️ Earnings": "earnings",
+    "🎲 Risk Lab": "risk_lab",
+    "🧪 Strategy Lab": "strategy_lab",
+    "📈 Track Record": "track_record",
+    "📋 Watchlist": "watchlist",
+    "💼 Portfolio": "portfolio",
+    "🩺 Data Health": "data_health",
+    "📖 Docs": "docs",
+}
+TAB_LABELS = {
+    "🌐 Market Pulse": "Market Pulse",
+    "🔭 Stock Scanner": "Scanner",
+    "🔬 Stock Analysis": "Stock Analysis",
+    "🗓️ Earnings": "Earnings",
+    "🎲 Risk Lab": "Risk Lab",
+    "🧪 Strategy Lab": "Strategy Lab",
+    "📈 Track Record": "Track Record",
+    "📋 Watchlist": "Watchlist",
+    "💼 Portfolio": "Portfolio",
+    "🩺 Data Health": "Data Health",
+    "📖 Docs": "Docs",
+}
+if st.session_state.get("active_tab") not in TABS:
+    st.session_state["active_tab"] = next(iter(TABS))
+_active = st.session_state["active_tab"]
 selected_horizon, start_date, end_date = sidebar.render_horizon(prices_full["date"].min().date(),
                                                                 prices_full["date"].max().date(), _active)
 
@@ -202,22 +230,8 @@ if _sticky(st.sidebar.toggle, "Show the live ticker tape (loads TradingView)", F
 """, height=55)
 
 # ── Navigation (decision-workflow order) ───────────────────────────────────────────────────
-TABS = {
-    "🌐 Market Pulse": "market_pulse",
-    "🔭 Stock Scanner": "scanner",
-    "🔬 Stock Analysis": "stock_analysis",
-    "🗓️ Earnings": "earnings",
-    "🎲 Risk Lab": "risk_lab",
-    "🧪 Strategy Lab": "strategy_lab",
-    "📈 Track Record": "track_record",
-    "📋 Watchlist": "watchlist",
-    "💼 Portfolio": "portfolio",
-    "🩺 Data Health": "data_health",
-    "📖 Docs": "docs",
-}
-if st.session_state.get("active_tab") not in TABS:
-    st.session_state["active_tab"] = next(iter(TABS))
-active_tab = st.pills("Navigation", options=list(TABS), key="active_tab", label_visibility="collapsed") or next(iter(TABS))
+active_tab = st.pills("Navigation", options=list(TABS), key="active_tab", label_visibility="collapsed",
+                      format_func=TAB_LABELS.__getitem__, required=True) or next(iter(TABS))
 
 ctx = dict(
     # data (full history)

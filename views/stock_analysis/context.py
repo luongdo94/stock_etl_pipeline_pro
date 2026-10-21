@@ -72,7 +72,7 @@ def build(ctx, deep_ticker):
 
     _meta_df = companies_full[companies_full["ticker"] == deep_ticker]
     if _meta_df.empty:
-        st.warning(f"⚠️ No fundamental data found for **{deep_ticker}** in the warehouse. Please run the pipeline to fetch data.", icon="⚠️")
+        st.warning(f"No fundamental data found for **{deep_ticker}** in the warehouse. Please run the pipeline to fetch data.")
         st.stop()
     meta = _meta_df.iloc[0]
     df_deep = prices[prices["ticker"] == deep_ticker].sort_values("date")
@@ -85,7 +85,7 @@ def build(ctx, deep_ticker):
     # empty; it must not stop the page or the assistant's get_decision before the Decision is built.
     _df_levels = prices_full[prices_full["ticker"] == deep_ticker].sort_values("date")
     if _df_levels.empty:
-        st.warning(f"⚠️ No price history found for **{deep_ticker}**. Please run the pipeline first.", icon="⚠️")
+        st.warning(f"No price history found for **{deep_ticker}**. Please run the pipeline first.")
         st.stop()
     df_now = _df_levels
 

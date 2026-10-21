@@ -115,7 +115,7 @@ class SnapshotUnstable(RuntimeError):
 def _give_up(message: str):
     """Stop the run: nothing is read from a snapshot that is not the session's. Never returns."""
     logger.warning(message)
-    st.error(message, icon="🔄")
+    st.error(message)
     st.stop()
     raise SnapshotUnstable(message)
 
@@ -387,7 +387,7 @@ def get_db_connection(read_only=False):
                         paths_str = ", ".join(f"'{p}'" for p in local_paths)
                         conn.execute(f"CREATE VIEW {table} AS SELECT * FROM read_parquet([{paths_str}])")
             except Exception as e:
-                st.warning(f"⚠️ Local cache read failed, falling back to S3: {e}")
+                st.warning(f"Local cache read failed, falling back to S3: {e}")
                 if conn is not None:
                     conn.close()
                 conn = None
@@ -493,7 +493,7 @@ def _source_unchanged(loaded) -> bool:
         return True
 
 
-@st.cache_data(ttl=600, show_spinner="📉 Loading Institutional Data Warehouse...")
+@st.cache_data(ttl=600, show_spinner="Loading Institutional Data Warehouse...")
 def load_snapshot(version=None) -> tuple:
     """(frames, version of the snapshot they were read from). `version` (data_version() at the call) keys the cache,
     so a new warehouse file / published manifest is loaded on the next run instead of after the TTL. The returned

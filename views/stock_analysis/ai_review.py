@@ -16,8 +16,8 @@ def render(dd, ctx):
     if not got:
         return
     r = got["review"]
-    badge = {"agrees": "🟢", "cautious": "🟡", "disagrees": "🔴"}[ar.agreement(got["decision"], r["label"])]
-    with st.expander(f"{badge} External AI review (ChatGPT): {r['label']} · confidence {r['confidence']} "
+    badge = {"agrees": "Agrees", "cautious": "Cautious", "disagrees": "Disagrees"}[ar.agreement(got["decision"], r["label"])]
+    with st.expander(f"{badge} · External AI review (ChatGPT): {r['label']} · confidence {r['confidence']} "
                      f"· snapshot {got['as_of']}"):
         st.caption(f"A language model's opinion on the {got['as_of']} snapshot (written {str(got['generated_at'])[:16]}, "
                    f"facts as of {html.escape(r['facts_as_of'])}). It is NOT the Decision and does not change it; it can "

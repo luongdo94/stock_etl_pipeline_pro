@@ -117,7 +117,7 @@ def _login_form(cm):
 
     col1, col2, col3 = st.columns([1, 2, 1])
     with col2:
-        tab_login, tab_signup = st.tabs(["🔑 Log In", "📝 Sign Up"])
+        tab_login, tab_signup = st.tabs(["Log In", "Sign Up"])
 
         with tab_login:
             with st.container(border=True):
@@ -149,7 +149,7 @@ def _login_form(cm):
                             st.rerun()
                     except Exception as e:
                         if "Invalid login credentials" in str(e):
-                            st.error("❌ Incorrect email or password.")
+                            st.error("Incorrect email or password.")
                         else:
                             st.error(f"System Error: {e}")
 
@@ -161,7 +161,7 @@ def _login_form(cm):
                         else:
                             try:
                                 supabase.auth.reset_password_email(reset_email)
-                                st.success("✅ Password reset link sent! Check your inbox.")
+                                st.success("Password reset link sent! Check your inbox.")
                             except Exception as e:
                                 st.error(f"Error sending reset link: {e}")
 
@@ -180,10 +180,10 @@ def _login_form(cm):
                             {"email": new_email, "password": new_password}
                         )
                         if resp.user:
-                            st.success("✅ Registration successful! You can now log in.")
+                            st.success("Registration successful! You can now log in.")
                     except Exception as e:
                         if "User already registered" in str(e):
-                            st.error("⚠️ Email is already registered.")
+                            st.error("Email is already registered.")
                         else:
                             st.error(f"Initialization Error: {e}")
 
@@ -263,15 +263,15 @@ def render_user_profile(cm=None):
         return
 
     if local_dev_mode():
-        st.sidebar.markdown("👤 **Local dev mode**")
+        st.sidebar.markdown("**Local dev mode**")
         st.sidebar.caption("No login. Watchlist, portfolio and alerts are saved to `warehouse/local_user/` on this machine.")
         return
 
     if cm is None:
         cm = get_cookie_manager()
-    st.sidebar.markdown(f"👤 **{st.session_state.get('user_email', 'User')}**")
+    st.sidebar.markdown(f"**{st.session_state.get('user_email', 'User')}**")
 
-    if st.sidebar.button("🚪 Logout", use_container_width=True):
+    if st.sidebar.button("Logout", use_container_width=True):
         cm.delete(_COOKIE_NAME, key="del_login_cookie")
         # Everything the session holds belongs to this user (assistant history with portfolio documents, portfolio and
         # watchlist state, research answers): none of it may survive into the next sign-in (review REV-01).

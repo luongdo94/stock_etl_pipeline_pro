@@ -43,7 +43,7 @@ def test_r1_analysis_preserves_saved_idea_and_new_idea_defaults(warehouse, idea_
     assert not at.exception, [e.value for e in at.exception]
     pre = f"wl_{at.session_state['user_id']}_AAPL_"
     assert at.selectbox(key=pre + "status").value == ("🟢 ACTIVE" if existing else "🔵 PENDING")
-    assert at.button(key=pre + "save").label == ("💾 Update saved idea" if existing else "💾 Save Candidate to Watchlist")
+    assert at.button(key=pre + "save").label == ("Update saved idea" if existing else "Save Candidate to Watchlist")
     thesis = at.text_area(key=pre + "thesis").value
     assert bool(thesis)
     if existing:

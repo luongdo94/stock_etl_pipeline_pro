@@ -58,7 +58,7 @@ def render(ctx):
     prices_full = ctx["prices_full"]
 
     render_header("zap", "Risk Lab — how far can the price wander?", subtitle="Volatility risk range · no direction forecast")
-    st.info("🎲 This tab does **not** predict where a stock will go. It estimates how wide the range of outcomes is "
+    st.info("This tab does **not** predict where a stock will go. It estimates how wide the range of outcomes is "
             "(GJR-GARCH volatility, fat-tailed Monte Carlo, zero drift) and checks that range against past outcomes. "
             "The neural price forecasts that used to be here were removed: on 12 real stocks none beat a no-change forecast. "
             "Nothing here feeds the Decision Summary.")
@@ -77,7 +77,7 @@ def render(ctx):
             n_sims = sticky_choice("Monte Carlo paths", [1000, 2000, 5000], 2000, "risk_sims_form")
         check = sticky(st.checkbox, "Calibration check (re-fits the model on up to 60 earlier non-overlapping windows and tests "
                             "the range)", True, "risk_cal_form")
-        run = st.button(f"🎲 COMPUTE RISK RANGE — Runs ~{n_sims:,} simulations on this server",
+        run = st.button(f"COMPUTE RISK RANGE — Runs ~{n_sims:,} simulations on this server",
                         width="stretch", type="primary", key="risk_compute")
         st.caption("Calibration, when selected, also runs up to 60 model refits with 500 simulation paths each.")
 

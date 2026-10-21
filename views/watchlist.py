@@ -10,6 +10,7 @@ from services.user_store import load_watchlist, save_watchlist
 from ui.decision_panel import render_alert_inbox, valuation_inputs
 from ui.icons import render_header
 from ui.sticky import forget, sticky, sticky_choice
+from ui.watchlist_status import STATUS_LABELS, UNKNOWN, restore_statuses, status_choices, status_for_save, status_label
 
 
 def render(ctx):
@@ -27,7 +28,7 @@ def render(ctx):
     wl_df = load_watchlist()
     if st.session_state.get("watchlist_load_failed"):
         st.error("Your watchlist could not be read, so it cannot be shown. That is not an empty list: nothing was deleted. "
-                 "Reload the page to retry; saving stays blocked until it loads.", icon="🛑")
+                 "Reload the page to retry; saving stays blocked until it loads.")
     elif wl_df.empty:
         st.info("Your watchlist is empty. Open **Stock Analysis**, pick a stock and use **Save Idea to Watchlist Pipeline** at the bottom.")
     else:
@@ -58,6 +59,7 @@ def render(ctx):
         st.caption(f"Current Decision: loaded warehouse snapshot {ctx.get('data_version', 'unknown')}. "
                    "Idea status is your workflow choice and does not follow the technical Signal.")
         summary = wl_df[["Ticker", "Status"]].rename(columns={"Status": "Idea status"})
+        summary["Idea status"] = summary["Idea status"].map(status_label)
         summary["Current Decision"] = summary["Ticker"].map(decisions).fillna("NOT ENOUGH DATA")
         summary["Price bar date"] = summary["Ticker"].map(dated)
         st.dataframe(summary, hide_index=True, width="stretch")
@@ -67,7 +69,7 @@ def render(ctx):
 
         # Interactive Editor
         config = {
-            "Status": st.column_config.SelectboxColumn("Idea status", options=["🔵 PENDING", "🟢 ACTIVE", "🟡 REVIEW", "🔴 INVALIDATED", "⚫ CLOSED"], width="medium"),
+            "Status": st.column_config.SelectboxColumn("Idea status", options=[*STATUS_LABELS.values(), UNKNOWN], width="medium"),
             "Ticker": st.column_config.TextColumn("Ticker", disabled=True, width="small"),
             "Entry Target": st.column_config.NumberColumn("Entry Target €", format="€%.2f"),
             "Invalidation Level": st.column_config.NumberColumn("Inval / Stop €", format="€%.2f"),
@@ -83,6 +85,7 @@ def render(ctx):
 
                 # Type safety: Ensure text columns are explicitly strings before rendering in editor
                 _wl_df_safe = wl_df.copy()
+                _wl_df_safe["Status"] = _wl_df_safe["Status"].map(status_label)
                 for col in ["Thesis", "Catalyst", "Next Earnings"]:
                     if col in _wl_df_safe.columns:
                         _wl_df_safe[col] = _wl_df_safe[col].fillna("").astype(str)
@@ -99,18 +102,17 @@ def render(ctx):
                 removed = len(set(wl_df["Ticker"].dropna()) - set(edited_df["Ticker"].dropna()))
                 if removed:
                     st.warning(f"Saving removes {removed} idea(s).")
-                if st.button("💾 Synchronize Watchlist Changes", type="primary"):
+                if st.button("Synchronize Watchlist Changes", type="primary"):
                     try:
-                        # Filter out rows with empty Ticker (from dynamic row additions)
-                        clean_df = edited_df[edited_df["Ticker"].astype(str).str.strip() != ""]
+                        clean_df = restore_statuses(edited_df, wl_df)
                         save_watchlist(clean_df)
-                        st.success("✅ Watchlist synced successfully! Database updated.")
+                        st.success("Watchlist synced successfully! Database updated.")
                         st.rerun()
                     except Exception as e:
                         st.error(f"Failed to sync memory: {e}")
 
         st.markdown("---")
-        st.markdown("### 🔎 Quick Preview")
+        st.markdown("### Quick Preview")
         if not wl_df.empty and "Ticker" in wl_df.columns:
             valid_tickers = [t for t in wl_df["Ticker"].unique() if pd.notna(t) and str(t).strip() != ""]
             if valid_tickers:
@@ -197,13 +199,11 @@ def _edit_idea(wl_df, decisions):
     ticker = sticky_choice("Idea to edit", tickers, tickers[0], "wl_edit_ticker")
     row = wl_df[wl_df["Ticker"] == ticker].iloc[0]
     pre = f"wl_edit_{ticker}_"
-    statuses = ["🔵 PENDING", "🟢 ACTIVE", "🟡 REVIEW", "🔴 INVALIDATED", "⚫ CLOSED"]
-    saved_status = row["Status"] if pd.notna(row["Status"]) else statuses[0]
-    if saved_status not in statuses:
-        statuses.append(saved_status)  # preserve legacy workflow text unless the user explicitly changes it
+    saved_status = UNKNOWN if pd.isna(row["Status"]) else row["Status"]
+    statuses = status_choices(saved_status)
     st.write(f"Current Decision: **{decisions.get(ticker, 'NOT ENOUGH DATA')}**")
     with st.form(pre + "form"):
-        status = sticky_choice("Idea status", statuses, saved_status, pre + "status")
+        status = sticky_choice("Idea status", statuses, saved_status, pre + "status", format_func=status_label)
         text = {}
         for name in ("Thesis", "Catalyst"):
             value = row.get(name)
@@ -217,7 +217,7 @@ def _edit_idea(wl_df, decisions):
         save = st.form_submit_button("Save idea changes", type="primary")
     if save:
         edited = wl_df.copy()
-        changes = {"Status": status, **text, **levels}
+        changes = {"Status": status_for_save(status_label(status), row["Status"]), **text, **levels}
         for name, value in changes.items():
             edited.loc[edited["Ticker"] == ticker, name] = value
         try:

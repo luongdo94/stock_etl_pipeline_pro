@@ -53,7 +53,7 @@ def _chart_range_note(dd, ctx=None):
     else:
         first = f" (the first snapshot was written {rec['first_snapshot']:%d %b %Y})" if rec["first_snapshot"] else ""
         then = f" No Decision had been recorded by the end of {end:%d %b %Y}{first}."
-    st.info(f"📅 The charts end on **{end:%d %b %Y}** (sidebar range). The Decision, prices and levels below use the "
+    st.info(f"The charts end on **{end:%d %b %Y}** (sidebar range). The Decision, prices and levels below use the "
             f"latest close of **{latest:%d %b %Y}** — the same Decision as the Scanner.{then}")
 
 

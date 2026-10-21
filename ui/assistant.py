@@ -115,8 +115,8 @@ def render(ctx):
     """The floating button and its chat. Call once per page run (app.py, after the tab)."""
     st.markdown(_CSS, unsafe_allow_html=True)
     with st.container(key="assistant_fab"):
-        with st.popover("💬 Assistant", width=460):
-            st.markdown("**💬 Research assistant** — answers from the app's data, your portfolio and SEC filings, "
+        with st.popover("Assistant", width=460):
+            st.markdown("**Research assistant** — answers from the app's data, your portfolio and SEC filings, "
                         "with sources. It explains the computed Decision; it never gives its own rating.")
             if not assistant.available():
                 st.info("Set COHERE_API_KEY in .env to use the assistant.")

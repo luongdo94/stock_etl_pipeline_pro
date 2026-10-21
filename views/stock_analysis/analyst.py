@@ -28,9 +28,9 @@ def render(dd, ctx):
 
     if _fe_df.empty:
         if _fe_err_msg:
-            st.warning(f"⚠️ Forward estimates error: `{_fe_err_msg}`")
+            st.warning(f"Forward estimates error: `{_fe_err_msg}`")
         else:
-            st.info("🔭 No analyst estimates available for this ticker yet. Run the full ETL pipeline to populate forward estimates.")
+            st.info("No analyst estimates available for this ticker yet. Run the full ETL pipeline to populate forward estimates.")
     else:
         _fe = _fe_df.iloc[0]
 
@@ -187,8 +187,8 @@ def render(dd, ctx):
                             text-transform:uppercase; margin-bottom:14px;'>Analyst Revision Sentiment (30d)</div>
                 <div style='display:flex; justify-content:space-between;
                             font-size:0.72rem; color:inherit; margin-bottom:4px;'>
-                    <span>⬆️ Upgrades: <b style='color:#2ecc71;'>{_up if _up_known else "N/A"}</b></span>
-                    <span>⬇️ Downgrades: <b style='color:#e74c3c;'>{_down if _down_known else "N/A"}</b></span>
+                    <span>Upgrades: <b style='color:#2ecc71;'>{_up if _up_known else "N/A"}</b></span>
+                    <span>Downgrades: <b style='color:#e74c3c;'>{_down if _down_known else "N/A"}</b></span>
                 </div>
                 <div style='background:var(--secondary-background-color, transparent); border-radius:4px;
                             height:14px; overflow:hidden; display:flex;'>

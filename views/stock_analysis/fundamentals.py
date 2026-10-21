@@ -38,7 +38,7 @@ def render(dd, ctx):
     st.markdown("---")
     layer_banner(6, "Fundamental trajectory & valuation", "#1abc9c", top=10)
     
-    tab_annual, tab_quarterly = st.tabs(["📊 Annual", "📉 Quarterly"])
+    tab_annual, tab_quarterly = st.tabs(["Annual", "Quarterly"])
     
     with tab_annual:
         if not df_fin.empty:
@@ -220,7 +220,7 @@ def render(dd, ctx):
                 margin=dict(l=20, r=20, t=60, b=20),
                 hovermode="x unified",
                 barmode="group",
-                title_text=f"📊 {deep_ticker} Annual Financial Performance (Revenue, FCF & EPS)",
+                title_text=f"{deep_ticker} Annual Financial Performance (Revenue, FCF & EPS)",
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
             )
             
@@ -230,7 +230,7 @@ def render(dd, ctx):
             st.plotly_chart(fig_fin, use_container_width=True)
             _pit = pit_caption(load_ticker_provenance(deep_ticker), "annual")
             if _pit:
-                st.caption("🕰️ " + _pit)
+                st.caption(_pit)
 
 
 
@@ -471,7 +471,7 @@ def render(dd, ctx):
                     margin=dict(l=20, r=20, t=60, b=20),
                     hovermode="x unified",
                     barmode="group",
-                    title_text=f"📊 {deep_ticker} Quarterly Financial Performance (Revenue, FCF & EPS) — Growth: {_growth_label}",
+                    title_text=f"{deep_ticker} Quarterly Financial Performance (Revenue, FCF & EPS) — Growth: {_growth_label}",
                     legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
                 )
                 
@@ -485,7 +485,7 @@ def render(dd, ctx):
                 st.plotly_chart(fig_fin_q, use_container_width=True)
                 _pit_q = pit_caption(load_ticker_provenance(deep_ticker), "quarterly")
                 if _pit_q:
-                    st.caption("🕰️ " + _pit_q)
+                    st.caption(_pit_q)
 
             else:
                 st.info("No historical quarterly financial data available for this ticker.")

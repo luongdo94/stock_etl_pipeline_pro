@@ -141,7 +141,7 @@ def render(ctx):
         return ok
 
     if st.session_state.get("_ledger_warning"):
-        st.warning(f"Trade ledger: {st.session_state.pop('_ledger_warning')} — the portfolio itself was saved.", icon="📒")
+        st.warning(f"Trade ledger: {st.session_state.pop('_ledger_warning')} — the portfolio itself was saved.")
     st.caption("Read the saved portfolio first; select Holdings to record trades or edit. All amounts are in EUR.")
 
     # 1. LOCAL TICKER SELECTION
@@ -169,7 +169,7 @@ def render(ctx):
         st.session_state.portfolio_db_synced = not st.session_state.get("portfolio_load_failed", False)
     if st.session_state.get("portfolio_load_failed"):
         st.error("The stored portfolio could not be read — what you see is NOT your saved portfolio, and saving is "
-                 "disabled until it loads.", icon="🛑")
+                 "disabled until it loads.")
         st.button("Retry saved portfolio", key="pf_retry_load", on_click=_retry_portfolio_load,
                   help="Reads your stored portfolio again. Nothing is saved or deleted.")
 
@@ -202,7 +202,7 @@ def render(ctx):
 
         with tc1:
             # --- CSV / Excel Portfolio Importer ---
-            with st.popover("📂 Import Portfolio", width="stretch"):
+            with st.popover("Import Portfolio", width="stretch"):
                 st.markdown("**Format:** `ticker` (Required), `shares`, `cost` (Optional)")
                 uploaded_file = st.file_uploader("Select file", type=["csv", "xlsx"], label_visibility="collapsed")
                 import_mode = sticky_radio("Mode", ["Overwrite", "Merge (Accumulate)"], "Overwrite", "pf_import_mode", horizontal=True, label_visibility="collapsed")
@@ -213,7 +213,7 @@ def render(ctx):
                 st.caption("The import changes this session only: review the grid, then press “Save & Calculate” to keep it.")
 
                 if uploaded_file is not None:
-                    if st.button("▶ Start Import", key="do_import_btn", type="primary", width="stretch"):
+                    if st.button("Start Import", key="do_import_btn", type="primary", width="stretch"):
                         try:
                             pass  # hoisted to module level: import pandas as pd, io
                             if uploaded_file.name.endswith('.csv'):
@@ -276,7 +276,7 @@ def render(ctx):
                                         # Merge — keep existing tickers, append new ones
                                         st.session_state.portfolio_tickers = list(dict.fromkeys(st.session_state.portfolio_tickers + valid))
                                     st.session_state['_portfolio_version'] += 1
-                                    st.session_state['_import_toast'] = f"✅ Imported {len(valid)} assets! Not saved yet: review the grid, then “Save & Calculate”."
+                                    st.session_state['_import_toast'] = f"Imported {len(valid)} assets! Not saved yet: review the grid, then “Save & Calculate”."
                                     if missing_tickers:
                                         st.session_state['_import_warnings'] = f"Skipped {len(missing_tickers)} unsupported: {', '.join(missing_tickers[:5])}"
                                     st.rerun()
@@ -285,9 +285,10 @@ def render(ctx):
 
         with tc2:
             # --- Manual Transaction Tool ---
-            with st.popover("➕ Add Trade", width="stretch"):
+            with st.popover("Add Trade", width="stretch"):
                 st.caption("Register a manual transaction")
-                mt_type   = sticky_radio("Transaction Type", ["🟢 Buy", "🔴 Sell"], "🟢 Buy", "mt_type_radio", horizontal=True)
+                mt_type   = sticky_radio("Transaction Type", ["🟢 Buy", "🔴 Sell"], "🟢 Buy", "mt_type_radio", horizontal=True,
+                                     format_func=lambda value: value.split(" ", 1)[1])
 
                 _avail_tickers = st.session_state.portfolio_tickers if "Sell" in mt_type else stock_tickers
                 if not _avail_tickers:
@@ -324,7 +325,7 @@ def render(ctx):
                                       mt_price, cost_pct=float(load_decision_rules()["costs"]["commission_pct"]) / 100,
                                       fund_from_cash=mt_from_cash)
                     if _t["error"]:
-                        st.warning(f"⚠️ {_t['error']}")
+                        st.warning(f"{_t['error']}")
                     elif _save(_t["shares"], _t["costs"], _t["cash"]):        # persist first, then change the session
                         st.session_state.portfolio_shares = _t["shares"]
                         st.session_state.portfolio_cost = _t["costs"]
@@ -336,15 +337,15 @@ def render(ctx):
                         _fee_pct = float(load_decision_rules()["costs"]["commission_pct"]) / 100
                         _record([ledger_trade(mt_ticker, _side, mt_shares, mt_price, mt_shares * mt_price * _fee_pct,
                                               _t["cash"], "manual" if mt_from_cash else "manual (new deposit)")])
-                        st.toast(f"✅ {_side} {mt_shares:.4g} {mt_ticker} @ €{mt_price:,.2f} · cash €{_t['cash']:,.2f}")
+                        st.toast(f"{_side} {mt_shares:.4g} {mt_ticker} @ €{mt_price:,.2f} · cash €{_t['cash']:,.2f}")
                         st.rerun()
                     else:
-                        st.error(f"Trade NOT recorded — {st.session_state.get('_save_error')}", icon="🛑")
+                        st.error(f"Trade NOT recorded — {st.session_state.get('_save_error')}")
 
     p_tickers = st.session_state.portfolio_tickers
 
     if not p_tickers:
-        st.info("🎯 Add your first holding: select Holdings, then use “Add Trade” or Import; the Decision of each line appears here.")
+        st.info("Add your first holding: select Holdings, then use “Add Trade” or Import; the Decision of each line appears here.")
     if p_tickers:
         latest_prices = (_now_px[_now_px["ticker"].isin(p_tickers)].sort_values("date")
                          .groupby("ticker")["price_close"].last().to_dict())
@@ -413,6 +414,10 @@ def render(ctx):
 
         # ── FEAT 1: Inline Position-Level PnL Breakdown ──
         disp_df = st.session_state.portfolio_df.copy()
+        for _column in ("Action", "Smart Money"):
+            disp_df[_column] = disp_df[_column].map(
+                lambda value: str(value).removeprefix("🔵 ").removeprefix("🟢 ").removeprefix("🔴 ")
+                .removeprefix("🟡 ").removeprefix("⚪ "))
         disp_df["Total Cost (€)"] = disp_df["Cost Basis (€)"] * disp_df["Shares"]
         disp_df["Market Value"] = disp_df["Price (€)"] * disp_df["Shares"]
         disp_df["Unrealized PnL (€)"] = disp_df["Market Value"] - disp_df["Total Cost (€)"]
@@ -420,7 +425,7 @@ def render(ctx):
         _no_px = disp_df.loc[disp_df["Price (€)"].isna(), "Ticker"].tolist()
         if _no_px:
             st.warning(f"No price in this snapshot for {', '.join(map(str, _no_px))}: their value, weight and P&L are unknown and "
-                       f"left out of the totals below, so the NAV shown is incomplete.", icon="⚠️")
+                       f"left out of the totals below, so the NAV shown is incomplete.")
 
         _cash_eur = float(st.session_state.get("portfolio_cash_eur", 0.0) or 0.0)
         _t_val = disp_df["Market Value"].sum()
@@ -493,21 +498,24 @@ def render(ctx):
                         if pd.notna(v) and float(v) > 0}
             _old_shares = dict(st.session_state.get("portfolio_shares", {}))
             if sum(_targets.values()) > 100 + 1e-9:
-                st.error(f"Targets add up to {sum(_targets.values()):.1f}% of NAV (> 100%) — not saved.", icon="🛑")
+                st.error(f"Targets add up to {sum(_targets.values()):.1f}% of NAV (> 100%) — not saved.")
             elif _save(shares_dict, cost_dict, float(cash_in), _targets):   # session changes only on a confirmed save
                 # a grid edit is a correction, not a trade: ADJUST events carry the new quantity and basis (audit F20)
                 _record(adjustments_from_edit(_old_shares, dict(st.session_state.get("portfolio_cost", {})),
                                               shares_dict, cost_dict, float(cash_in)))
-                st.session_state.portfolio_df = edited_df.copy()
+                _saved_grid = edited_df.copy()
+                for _column in ("Action", "Smart Money"):
+                    _saved_grid[_column] = _saved_grid["Ticker"].map(st.session_state.portfolio_df.set_index("Ticker")[_column])
+                st.session_state.portfolio_df = _saved_grid
                 st.session_state.portfolio_shares = shares_dict
                 st.session_state.portfolio_cost = cost_dict
                 st.session_state.portfolio_cash_eur = float(cash_in)
                 st.session_state.pop("_save_error", None)
-                st.toast("☁️ Portfolio saved.", icon="🚀")
+                st.toast("Portfolio saved.")
                 st.rerun()
             else:
                 st.error(f"Portfolio NOT saved — {st.session_state.get('_save_error')} Your edits are shown but not "
-                         f"stored.", icon="🛑")
+                         f"stored.")
         else:
             edited_df = st.session_state.portfolio_df.copy()
 
@@ -524,7 +532,7 @@ def render(ctx):
             with _pf_lang_col:
                 _pf_language = sticky_choice("Language", ["English", "Vietnamese"], "English", "pf_review_lang", label_visibility="collapsed")
             with _pf_btn_col:
-                _run_pf_review = st.button("🤖 Request CIO Portfolio Review — Calls the language model", type="secondary", use_container_width=True, key="run_portfolio_review_btn")
+                _run_pf_review = st.button("Request CIO Portfolio Review — Calls the language model", type="secondary", use_container_width=True, key="run_portfolio_review_btn")
 
             if _run_pf_review:
                 from etl.llm_parser import analyze_portfolio_with_llm
@@ -704,7 +712,7 @@ def render(ctx):
                     st.warning("Stale AI review: holdings, cash, costs or snapshot differ (or its original spec is unknown). Request a new review to refresh.")
                 st.caption(f"Saved AI review · created {_stored_review.get('at', 'unknown')} · snapshot {(_stored_review.get('spec') or {}).get('snapshot', 'unknown')}")
                 st.markdown(_stored_review["report"])
-                with st.expander("🔍 Debug: Raw Portfolio Review Prompt"):
+                with st.expander("Debug: Raw Portfolio Review Prompt"):
                     st.code(_stored_review.get("prompt", ""), language="markdown")
 
 
@@ -733,7 +741,7 @@ def render(ctx):
             if _ineligible:
                 st.error("Portfolio analytics and optimisation are blocked: not enough return history in the selected "
                          f"horizon for {', '.join(map(str, _ineligible))} (a missing return is unknown, not 0%). Widen the "
-                         "date range, refresh the data or remove the line.", icon="🛑")
+                         "date range, refresh the data or remove the line.")
 
         if total_p_val > 0 and not _ineligible and not _no_value:
             # NAV = holdings at market + cash: every weight, cap and rebalance is measured on it (R4-F01). Without
@@ -767,7 +775,7 @@ def render(ctx):
             _now_breaches = policy_check(dict(zip(current_tickers, weights)), _pol_meta, _portfolio_policy["policy"])
             if _now_breaches:
                 st.error("Portfolio policy breached by the current holdings — additions to these groups are blocked, "
-                         "reduce to comply: " + "; ".join(policy_describe(v) for v in _now_breaches), icon="🛑")
+                         "reduce to comply: " + "; ".join(policy_describe(v) for v in _now_breaches))
             else:
                 _ex = policy_exposures(dict(zip(current_tickers, weights)), _pol_meta, _portfolio_policy["policy"])
                 st.caption(f"Portfolio policy OK · correlated-crash loss {_ex['stress_loss']:.1%} of NAV "
@@ -830,10 +838,10 @@ def render(ctx):
                     # Risk tiles stacked vertically
                     render_metric_tile("Weighted Return", f"{(cum_returns.iloc[-1]-1)*100:.1f}%", delta=(cum_returns.iloc[-1]-1)*100)
                     st.caption(f"Timeframe: {selected_horizon}")
-                    if sharpe > 2.0: s_label, s_color = "💎 ELITE", "#00ffcc"
-                    elif sharpe > 1.5: s_label, s_color = "🟢 STRONG", "#2ecc71"
-                    elif sharpe > 1.0: s_label, s_color = "🟡 OK", "#f1c40f"
-                    else: s_label, s_color = "🔴 POOR", "#e74c3c"
+                    if sharpe > 2.0: s_label, s_color = "ELITE", "#00ffcc"
+                    elif sharpe > 1.5: s_label, s_color = "STRONG", "#2ecc71"
+                    elif sharpe > 1.0: s_label, s_color = "OK", "#f1c40f"
+                    else: s_label, s_color = "POOR", "#e74c3c"
                     render_metric_tile("Sharpe Ratio", f"{sharpe:.2f} · {s_label}", help_text="< 1.0 Poor | 1.0–1.5 Acceptable | 1.5–2.0 Strong | > 2.0 Elite")
                     render_metric_tile("Max Drawdown",  f"{max_dd:.1f}%")
                     render_metric_tile("Annual Vol",    f"{vol:.1f}%")
@@ -940,7 +948,7 @@ def render(ctx):
                     corr_matrix = ret_matrix.corr()
                     mean_corr = (corr_matrix.values.sum() - n_assets) / (n_assets**2 - n_assets) if n_assets > 1 else 0
                     if mean_corr > 0.45:
-                        st.warning(f"⚠️ High Correlation ({mean_corr:.2f}) — risk concentration!")
+                        st.warning(f"High Correlation ({mean_corr:.2f}) — risk concentration!")
                     fig_corr = px.imshow(
                         corr_matrix, text_auto=".2f",
                         color_continuous_scale="RdBu_r", zmin=-1, zmax=1,
@@ -993,7 +1001,7 @@ def render(ctx):
                         "YOC (%)":          round(yoc, 2),
                         "Proj. Income (€)": round(proj_income, 2),
                         "Special":          is_special,
-                        "Type":             "⚠️ Unverified" if is_special else "Trailing yield ≤ 8%",
+                        "Type":             "Unverified" if is_special else "Trailing yield ≤ 8%",
                     })
 
                 div_df = pd.DataFrame(div_rows).sort_values("Cur. Yield (%)", ascending=False) if div_rows else pd.DataFrame()
@@ -1008,7 +1016,7 @@ def render(ctx):
                     div_df["Pay Date"] = div_df["Ticker"].map(lambda t: cal_data.get(t, {}).get("pay_date", "—"))
 
                 if div_df.empty:
-                    st.info("ℹ️ No dividend-paying assets found. Add assets like UNH, UPS, JNJ, or MSFT to track income.")
+                    st.info("No dividend-paying assets found. Add assets like UNH, UPS, JNJ, or MSFT to track income.")
                 else:
                     # Projections use all stored trailing yields; recurrence has not been verified.
                     # All projected dividends count (audit A13); high-yield lines are reported as UNVERIFIED, not dropped
@@ -1023,7 +1031,7 @@ def render(ctx):
                     if has_special:
                         special_tickers = ", ".join(div_df[div_df["Special"]]["Ticker"].tolist())
                         st.warning(
-                            f"⚠️ **Unverified dividends** · {special_tickers} — trailing yield above 8%. A high yield alone does not "
+                            f"**Unverified dividends** · {special_tickers} — trailing yield above 8%. A high yield alone does not "
                             f"tell a special payout from a high regular dividend, so these lines ARE included below; "
                             f"€{unverified_income:,.0f} of the projected annual income is unverified. Check the dividend history "
                             f"before relying on it. Monthly income = annual ÷ 12 (an average, not a payment calendar). "
@@ -1091,7 +1099,7 @@ def render(ctx):
                         width="stretch",
                         height=min(320, 40 + len(div_df) * 35),
                     )
-                    st.caption("ℹ️ YOC = DPS ÷ Avg. cost basis · Dates from the loaded warehouse; unavailable dates stay blank · Income uses stored trailing yield, includes unverified lines")
+                    st.caption("YOC = DPS ÷ Avg. cost basis · Dates from the loaded warehouse; unavailable dates stay blank · Income uses stored trailing yield, includes unverified lines")
 
                 st.markdown("---")
 
@@ -1103,7 +1111,7 @@ def render(ctx):
 
             if _section == "Rebalance":
                 # ── 4.7. REBALANCING OPTIMIZER ───────────────────────────────────────────
-                st.markdown("### 📊 Portfolio Rebalancing Hub")
+                st.markdown("### Portfolio Rebalancing Hub")
 
                 _rules_for_copy = load_decision_rules()
                 _evidence_on = bool((_rules_for_copy.get("evidence") or {}).get("require_validated_evidence_for_buy", True))
@@ -1147,6 +1155,7 @@ def render(ctx):
                     sel_strategy_label = sticky_choice(
                         "Optimization Strategy",
                         list(strategy_options), list(strategy_options)[2], "pf_strategy",
+                        format_func=lambda value: value.split(" ", 1)[1],
                         help="Choose how to distribute capital: from lowest risk (Min Vol) to highest growth (Max Return)."
                     )
                     sel_strategy = strategy_options[sel_strategy_label]
@@ -1162,24 +1171,24 @@ def render(ctx):
                 # ── Strategy Descriptions ──────────────────────────────────────────
                 _strategy_descriptions = {
                     "min_vol": (
-                        "**🛡️ Minimum Volatility** — Lowest variance of the TRAILING sample covariance, regardless of "
+                        "**Minimum Volatility** — Lowest variance of the TRAILING sample covariance, regardless of "
                         "expected returns. Past covariance is not a crisis forecast: correlations rise in sell-offs."
                     ),
                     "risk_parity": (
-                        "**⚖️ Risk Parity** — Allocates capital so each asset contributes **equally** to trailing portfolio "
+                        "**Risk Parity** — Allocates capital so each asset contributes **equally** to trailing portfolio "
                         "variance. High-volatility assets receive less capital; stable assets receive more."
                     ),
                     "equal_weight": (
-                        "**🌐 Equal Weight (1/N)** — Splits capital evenly across all holdings; no estimated inputs, so no "
+                        "**Equal Weight (1/N)** — Splits capital evenly across all holdings; no estimated inputs, so no "
                         "estimation error in the weights."
                     ),
                     "max_sharpe": (
-                        "**🚀 Max Sharpe (mean-variance)** — Maximises trailing return per unit of trailing risk, with "
+                        "**Max Sharpe (mean-variance)** — Maximises trailing return per unit of trailing risk, with "
                         "historical means shrunk 50% toward their average. Highly sensitive to the sample period; results "
                         "concentrate in past winners."
                     ),
                     "max_return": (
-                        "**🎯 Maximum Return** — Fills the highest trailing (shrunk) returns up to the position cap with no "
+                        "**Maximum Return** — Fills the highest trailing (shrunk) returns up to the position cap with no "
                         "regard for volatility. A momentum bet on the sample period. **Use with caution.**"
                     ),
                 }
@@ -1315,7 +1324,7 @@ def render(ctx):
                 # ── Action Buttons ─────────────────────────────────────────────────
                 act_col1, act_col2 = st.columns([1, 1])
                 with act_col1:
-                    if st.button("🚀 GENERATE OPTIMAL REBALANCE", width="stretch", type="primary"):
+                    if st.button("GENERATE OPTIMAL REBALANCE", width="stretch", type="primary"):
                         try:
                             if sel_strategy == "min_vol":
                                 opt_weights = _run_min_vol(cov_matrix, n_assets, min_w)
@@ -1360,7 +1369,7 @@ def render(ctx):
                                           range_start=t_start, range_end=t_end)
                     if st.session_state.get("_pending_opt_spec") != _proposal_spec:
                         st.warning("Stale proposal: controls, saved holdings or snapshot changed. Generate again to review current inputs; Apply still re-checks the current policy.")
-                    st.info(f"🎯 **Suggested Rebalancing · Strategy: {_used_strategy}**")
+                    st.info(f"**Suggested Rebalancing · Strategy: {_used_strategy.split(' ', 1)[1] if _used_strategy in strategy_options else _used_strategy}**")
 
                     # ── Expected metrics after rebalancing ──────────────────────
                     _pend = st.session_state.pending_optimization
@@ -1416,12 +1425,12 @@ def render(ctx):
                     # ── DISCARD / APPLY buttons ────────────────────────────────
                     sc1, sc2, sc3 = st.columns([2, 1, 1])
                     with sc2:
-                        if st.button("❌ DISCARD", width="stretch"):
+                        if st.button("DISCARD", width="stretch"):
                             st.session_state.pending_optimization = None
                             st.session_state.pending_opt_strategy = None
                             st.rerun()
                     with sc3:
-                        if st.button("✅ APPLY REBALANCE", width="stretch", type="primary"):
+                        if st.button("APPLY REBALANCE", width="stretch", type="primary"):
                             # Re-check NOW against the current Decisions, cap and holdings — never trust the stored
                             # proposal alone (a stance or a rule may have changed since Generate) (R4-01)
                             _target = np.nan_to_num(_pend_assets["Target Weight %"].to_numpy(dtype=float)) / 100 \
@@ -1467,14 +1476,13 @@ def render(ctx):
                                 st.session_state['_portfolio_version'] += 1
                                 st.session_state.pending_optimization = None
                                 st.session_state.pending_opt_strategy = None
-                                st.toast(f"✅ Portfolio saved (in the app, not a broker order) · NAV €{_res['nav_after']:,.2f} "
+                                st.toast(f"Portfolio saved (in the app, not a broker order) · NAV €{_res['nav_after']:,.2f} "
                                          f"(costs €{_res['cost']:,.2f}) · cash €{_res['cash']:,.2f}"
-                                         + (f" · {len(_pol_now['blocked'])} increase(s) blocked" if _pol_now["blocked"] else ""),
-                                         icon="🎯")
+                                         + (f" · {len(_pol_now['blocked'])} increase(s) blocked" if _pol_now["blocked"] else ""))
                             st.rerun()
                     if st.session_state.get("_apply_error"):
                         st.error(f"Rebalance NOT applied — {st.session_state['_apply_error']} The proposal is kept; "
-                                 "your holdings are unchanged.", icon="🛑")
+                                 "your holdings are unchanged.")
 
                 st.markdown("---")
 
@@ -1489,7 +1497,7 @@ def render(ctx):
 
                 # ── Efficient Frontier (Monte Carlo simulation background) ────
                 st.info(
-                    "ℹ️ Each dot represents a randomly weighted portfolio. "
+                    "Each dot represents a randomly weighted portfolio. "
                     "The **5 labeled markers** show where each optimization strategy lands on the risk/return map. "
                     "Your current portfolio ★ reveals which strategy style you are closest to."
                 )
@@ -1523,35 +1531,35 @@ def render(ctx):
                 try:
                     _big5 = [
                         {
-                            "name":   "🛡️ Min Volatility",
+                            "name":   "Min Volatility",
                             "color":  "#3498db",
                             "symbol": "diamond",
                             "w":      _run_min_vol(cov_matrix, n_assets, _default_min_w),
                             "desc":   "Lowest trailing variance",
                         },
                         {
-                            "name":   "🚀 Max Sharpe",
+                            "name":   "Max Sharpe",
                             "color":  "#2ecc71",
                             "symbol": "square",
                             "w":      _run_max_sharpe(hist_rets, cov_matrix, n_assets, _default_min_w),
                             "desc":   "Mean-variance, shrunk trailing means",
                         },
                         {
-                            "name":   "🎯 Max Return",
+                            "name":   "Max Return",
                             "color":  "#e67e22",
                             "symbol": "triangle-up",
                             "w":      _run_max_return(hist_rets, n_assets, _default_min_w),
                             "desc":   "Highest trailing return up to the cap",
                         },
                         {
-                            "name":   "⚖️ Risk Parity",
+                            "name":   "Risk Parity",
                             "color":  "#9b59b6",
                             "symbol": "cross",
                             "w":      _run_risk_parity(cov_matrix, n_assets, _default_min_w),
                             "desc":   "Equal trailing risk contribution",
                         },
                         {
-                            "name":   "🌐 Equal Weight",
+                            "name":   "Equal Weight",
                             "color":  "#bdc3c7",
                             "symbol": "circle",
                             "w":      _run_equal_weight(n_assets),
@@ -1646,9 +1654,9 @@ def render(ctx):
                 st.info("The efficient frontier compares several holdings: add a second one to see it.")
         elif _no_value:
             st.error("Portfolio analytics are blocked: a holding has no price in this snapshot, so the NAV and the weights "
-                     "would be wrong. Refresh the data or remove the line.", icon="🛑")
+                     "would be wrong. Refresh the data or remove the line.")
         elif not _ineligible:
-            st.warning("⚠️ Total portfolio value is 0. Please enter the number of shares owned to activate the analysis.")
+            st.warning("Total portfolio value is 0. Please enter the number of shares owned to activate the analysis.")
 
 
         st.markdown("---")
@@ -1686,7 +1694,7 @@ def _render_stress_and_ledger(ctx, tickers, weights, nav_eur, meta, port_beta, r
                f"foreign holdings, sector shocks and gaps. Cash does not move. Worst scenario {worst:+.1%} of NAV vs the "
                f"policy limit of −{limit:.0%} (config/decision_rules.yaml → portfolio).")
     if worst < -limit:
-        st.error(f"A scenario loses more than the {limit:.0%} stress budget — reduce the most exposed lines first.", icon="🛑")
+        st.error(f"A scenario loses more than the {limit:.0%} stress budget — reduce the most exposed lines first.")
     if not sens.empty:
         with st.expander("Per-holding sensitivities used above"):
             sv = sens.assign(weight=sens["ticker"].map(w) * 100, rate_beta=sens["rate_beta"] * 100,
@@ -1709,7 +1717,7 @@ def _render_stress_and_ledger(ctx, tickers, weights, nav_eur, meta, port_beta, r
 
     # ── target weights: drift and the trades the policy allows ──
     targets = dict(st.session_state.get("portfolio_targets", {}) or {})
-    with st.expander(f"🎯 Target weights ({len(targets)} set)", expanded=bool(targets)):
+    with st.expander(f"Target weights ({len(targets)} set)", expanded=bool(targets)):
         if not targets:
             st.caption("Set a Target % per line in the Capital Allocation Grid and save; drift and the trades to reach "
                        "the targets appear here.")
@@ -1735,7 +1743,7 @@ def _render_stress_and_ledger(ctx, tickers, weights, nav_eur, meta, port_beta, r
                 "Trade (shares)": st.column_config.NumberColumn(format="%+.2f")})
             st.caption("Allowed = the target after the same rules as every rebalance: only BUY-stance lines may grow, the "
                        "position cap, liquidity / stop sizing and the sector / currency / stress budgets. Execute with "
-                       "➕ Add Trade so the ledger records it.")
+                       "Add Trade so the ledger records it.")
 
 
 def _render_factor_tilts(ctx, weights: dict):
@@ -1775,7 +1783,7 @@ def _render_alert_center(ctx, _alert_rules):
     _fired = {id(h["rule"]) for h in evaluate_rules(_rules, _latest)}
     for _r in _rules:
         _c1, _c2 = st.columns([6, 1])
-        _hit = "🔔 **TRIGGERED** — " if id(_r) in _fired else ""
+        _hit = "**TRIGGERED** — " if id(_r) in _fired else ""
         _c1.markdown(f"{_hit}{_r['ticker']} · {_r['metric']} {_r['condition']} {float(_r['threshold']):,.2f}")
         if _c2.button("Delete", key=f"del_alert_{_r['id']}"):
             try:
@@ -1792,7 +1800,7 @@ def _render_alert_center(ctx, _alert_rules):
         if st.form_submit_button("Save Alert Rule"):
             try:
                 add_alert_rule(a_ticker, a_metric, a_condition, a_value)
-                st.success(f"✅ Saved: {a_ticker} {a_metric} {a_condition} {a_value:,.2f}")
+                st.success(f"Saved: {a_ticker} {a_metric} {a_condition} {a_value:,.2f}")
                 st.rerun()
             except Exception as _e:
                 st.error(f"Could not save the rule: {_e}")
@@ -1801,9 +1809,9 @@ def _render_alert_center(ctx, _alert_rules):
 def _render_trade_ledger():
     # ── trade ledger ──
     trades = load_trades()
-    with st.expander(f"📒 Trade ledger ({len(trades)} trades)", expanded=False):
+    with st.expander(f"Trade ledger ({len(trades)} trades)", expanded=False):
         if trades.empty:
-            st.caption("Every trade recorded with ➕ Add Trade, a rebalance or a grid edit appears here with its price, "
+            st.caption("Every trade recorded with Add Trade, a rebalance or a grid edit appears here with its price, "
                        "fees and the cash left. Cloud users: create the table once with sql/supabase/portfolio_trades.sql.")
         else:
             pnl = realized_pnl(trades)
@@ -1815,5 +1823,5 @@ def _render_trade_ledger():
                 st.caption("Some sells exceed the shares bought in the ledger (positions opened before the ledger "
                            "existed); their P&L counts only the recorded part.")
             st.dataframe(trades.sort_values("traded_at", ascending=False), hide_index=True, width="stretch")
-            st.download_button("⬇️ Export ledger (CSV)", trades.to_csv(index=False).encode("utf-8"),
+            st.download_button("Export ledger (CSV)", trades.to_csv(index=False).encode("utf-8"),
                                file_name="trade_ledger.csv", mime="text/csv")

@@ -35,7 +35,7 @@ def load_alert_rules_status() -> tuple:
 def load_alert_rules() -> list:
     rules, err = load_alert_rules_status()
     if err:
-        st.caption(f"⚠️ {err}")
+        st.caption(f"{err}")
     return rules
 
 

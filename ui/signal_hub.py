@@ -157,7 +157,7 @@ def render(*, m_df, prices_full, companies_full, reco_df, earnings_cal, advice, 
             # closed: only the badge above was computed — no panel, no detail query, no FX (review SIG-R03)
             return
         panel = sticky_segmented("Panel", PANELS, PANELS[0], "sig_panel",
-                                     label_visibility="collapsed")
+                                     label_visibility="collapsed", format_func=lambda value: value.split(" ", 1)[1])
         if panel == PANELS[0]:
             _needs_review(items, hub)
         elif panel == PANELS[1]:

@@ -9,6 +9,7 @@ import pandas as pd
 import streamlit as st
 
 from ui.sticky import forget, sticky, sticky_choice
+from ui.watchlist_status import UNKNOWN, status_choices, status_for_save, status_label
 from views.stock_analysis.layout import layer_banner
 
 from services.user_store import load_watchlist, save_watchlist
@@ -43,8 +44,9 @@ def _save_form(ticker, act_str, act_desc, s1, stop_loss, tp1, next_earnings):
     c1, c2 = st.columns(2)
     with c1:
         # Saved workflow values seed the form; sticky drafts still take priority.
-        opt_status = sticky_choice("Idea status", STATUSES, defaults["Status"],
-                                   pre + "status")
+        saved_status = UNKNOWN if pd.isna(defaults["Status"]) else defaults["Status"]
+        opt_status = sticky_choice("Idea status", status_choices(saved_status), saved_status,
+                                   pre + "status", format_func=status_label)
         opt_thesis = sticky(st.text_area, "Investment Thesis (Why buy/hold?)", defaults["Thesis"], pre + "thesis", height=110)
     with c2:
         opt_catalyst = sticky(st.text_input, "Upcoming Catalyst (Earnings, FDA, Macro, etc.)", defaults["Catalyst"], pre + "catalyst",
@@ -63,7 +65,7 @@ def _save_form(ticker, act_str, act_desc, s1, stop_loss, tp1, next_earnings):
     if b2.button("Reset draft", key=pre + "reset", help="Back to the saved values, or suggestions for a new idea"):
         forget(pre)
         st.rerun(scope="fragment")
-    if b1.button("💾 Update saved idea" if saved is not None else "💾 Save Candidate to Watchlist",
+    if b1.button("Update saved idea" if saved is not None else "Save Candidate to Watchlist",
                  type="primary", key=pre + "save"):
         try:
             wl_df = load_watchlist()                                            # fresh: what is stored right now
@@ -71,7 +73,7 @@ def _save_form(ticker, act_str, act_desc, s1, stop_loss, tp1, next_earnings):
             added = current["Added Date"].iloc[0] if not current.empty else pd.Timestamp.now().strftime("%Y-%m-%d")
             wl_df = wl_df[wl_df["Ticker"] != ticker]
             new_row = pd.DataFrame([{
-                "Ticker": ticker, "Status": opt_status, "Thesis": opt_thesis, "Catalyst": opt_catalyst,
+                "Ticker": ticker, "Status": status_for_save(status_label(opt_status), defaults["Status"]), "Thesis": opt_thesis, "Catalyst": opt_catalyst,
                 "Entry Target": round(opt_entry, 2) if opt_entry is not None else None,
                 "Invalidation Level": round(opt_inval, 2) if opt_inval is not None else None,
                 "Take Profit": round(opt_tp, 2) if opt_tp is not None else None, "Next Earnings": str(next_earnings),
@@ -80,7 +82,7 @@ def _save_form(ticker, act_str, act_desc, s1, stop_loss, tp1, next_earnings):
             if not current.empty:
                 st.success(f"Updated {ticker} in the Watchlist Pipeline.")
             else:
-                st.success(f"✅ Successfully added **{ticker}** to Watchlist Pipeline!")
+                st.success(f"Successfully added **{ticker}** to Watchlist Pipeline!")
         except Exception as e:
             st.error(f"Error saving to watchlist: {e}")
 
@@ -91,5 +93,5 @@ def render(dd, ctx):
     next_earnings = meta.get("next_earnings_date", "TBD")
     if pd.isna(next_earnings):
         next_earnings = "TBD"
-    with st.expander("📥 📝 Save Idea to Watchlist Pipeline", expanded=False):
+    with st.expander("Save Idea to Watchlist Pipeline", expanded=False):
         _save_form(dd.ticker, dd.act_str, dd.act_desc, dd.s1, dd.stop_loss, dd.tp1, next_earnings)

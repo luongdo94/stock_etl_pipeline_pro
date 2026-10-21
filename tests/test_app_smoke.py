@@ -218,7 +218,7 @@ def test_the_floating_assistant_is_on_every_tab(warehouse, tab):
     at = _app(tab).run()
     assert not at.exception, [e.value for e in at.exception]
     labels = [p.proto.popover.label for p in at.get("popover")]
-    assert "💬 Assistant" in labels
+    assert "Assistant" in labels
 
 
 @pytest.mark.smoke

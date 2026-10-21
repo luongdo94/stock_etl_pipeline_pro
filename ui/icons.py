@@ -32,10 +32,9 @@ SVG_ICONS = {
 
 
 def render_header(icon_key, text, level="####", color="currentColor", subtitle=None):
-    """Renders a premium monochromatic header with an SVG icon (and an optional one-line subtitle under it)."""
-    icon_svg = SVG_ICONS.get(icon_key, "")
+    """Render the existing text header wrapper and optional subtitle."""
     html = f"<div style='display:flex; align-items:center; margin-bottom:12px; color:{color};'>" \
-           f"{icon_svg}<span style='font-size:1.15rem; font-weight:700; letter-spacing:0.02em;'>{text}</span></div>"
+           f"<span style='font-size:1.15rem; font-weight:700; letter-spacing:0.02em;'>{text}</span></div>"
     st.markdown(html, unsafe_allow_html=True)
     if subtitle:
         st.caption(subtitle)

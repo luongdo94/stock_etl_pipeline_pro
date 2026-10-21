@@ -70,7 +70,7 @@ def validation_note(d):
         return None
     if not any("not yet validated" in str(n).lower() for n in getattr(d, "confidence_notes", []) or []):
         return None
-    return ("⚠️ Not yet validated: the Track Record cannot yet show that BUY signals earn excess returns, so this is a "
+    return ("Not yet validated: the Track Record cannot yet show that BUY signals earn excess returns, so this is a "
             "candidate for research. A position size, if shown, is a risk limit (stop distance and a 10 % cap), not a "
             "measure of conviction.")
 

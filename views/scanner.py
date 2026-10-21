@@ -15,6 +15,7 @@ from core import scanner_views as sv
 from core.scan_presets import ELITE, FAIR, SOLID
 from core.scoring import SCORE_VERSION
 from ui.icons import render_header
+from ui.watchlist_status import status_label
 from ui.sticky import forget, kept_key, sticky, sticky_choice, sticky_multi, sticky_pills
 
 # Default columns answer the four questions of a long-horizon screen, each with a number every stock has:
@@ -309,7 +310,7 @@ def _selected_panel(shown, ctx):
         for x in sv.as_list(r.get("_confidence_notes"))[:3]:
             st.markdown(f"- {x}")
     ok = sel in set(ctx["current_universe"])
-    st.button("🔬 Open in Stock Analysis", key="scan_open", disabled=not ok, on_click=_open_analysis, args=(sel,),
+    st.button("Open in Stock Analysis", key="scan_open", disabled=not ok, on_click=_open_analysis, args=(sel,),
               help=None if ok else "This ticker is not in the loaded universe.")
     if not ok:
         st.caption("Not in the loaded universe, so it cannot be opened in Stock Analysis.")
@@ -331,10 +332,10 @@ def render(ctx):
     s1, s2, s3 = st.columns([1, 1, 1.4])
     with s1:
         selected_region = sticky_choice("Region", ["🌎 All Regions"] + sorted(m_df["Region"].dropna().unique().tolist()),
-                                        "🌎 All Regions", "p_region_filter")
+                                        "🌎 All Regions", "p_region_filter", format_func=lambda value: value.removeprefix("🌎 "))
     with s2:
         selected_sector = sticky_choice("Sector", ["🌍 All Sectors"] + sorted(m_df["Sector"].dropna().unique().tolist()),
-                                        "🌍 All Sectors", "p_sector_filter")
+                                        "🌍 All Sectors", "p_sector_filter", format_func=lambda value: value.removeprefix("🌍 "))
     with s3:
         query = sticky(st.text_input, "Search ticker or company", "", "scan_search", placeholder="e.g. AAPL or Apple")
     scope = m_df
@@ -358,7 +359,7 @@ def render(ctx):
             return
         if not (user["holdings_ok"] if view == "Held" else user["watchlist_ok"]):
             st.warning(f"Your {'portfolio' if view == 'Held' else 'watchlist'} could not be read, so this view cannot be "
-                       "shown (that is not an empty list).", icon="⚠️")
+                       "shown (that is not an empty list).")
             return
     _members = view in sv.MEMBERSHIP_VIEWS
     base = sv.select_view(m_df if _members else scope, view, holdings=(user or {}).get("holdings"),
@@ -375,6 +376,10 @@ def render(ctx):
     # ── filters (a preset is a screen of observations, not a Decision) ──────────────────────────────────────────────
     can_filter = {"Quality", "RSI (14)", "Smart Money"} <= set(f_df.columns)
     scan_presets = presets.options()
+    preset_labels = {presets.ALL: "All Stock Universe",
+                     **{p.label: p.label.split(" ", 1)[1] for p in presets.PRESETS},
+                     presets.SEPARATORS["opportunity"]: "OPPORTUNITY",
+                     presets.SEPARATORS["risk"]: "RISK / WARNING"}
     # A preset removed in an update must not break a session that still has it selected.
     # (the widget key is absent on a run after a tab in which the Scanner was not drawn: judge the remembered value then)
     _cur_mode = st.session_state.get("scan_mode", st.session_state.get(kept_key("scan_mode")))
@@ -383,7 +388,8 @@ def render(ctx):
         st.session_state.pop(kept_key("scan_mode"), None)
     p1, p2 = st.columns([1.6, 1])
     with p1:
-        scan_mode = sticky_choice("Intelligence Strategy Preset", scan_presets, presets.ALL, "scan_mode")
+        scan_mode = sticky_choice("Intelligence Strategy Preset", scan_presets, presets.ALL, "scan_mode",
+                                  format_func=preset_labels.__getitem__)
     with p2:
         sort_label = sticky_choice("Sort", list(SORTS), "Decision, then Quality, Value", "scan_sort")
     if view == "Changed":
@@ -392,7 +398,7 @@ def render(ctx):
         preset = presets.get(scan_mode)
         if preset is not None:
             f_df = presets.apply(f_df, scan_mode)
-            getattr(st, preset.level)(f"{preset.label.split(' (')[0]}: {preset.note}")
+            getattr(st, preset.level)(f"{preset_labels[preset.label].split(' (')[0]}: {preset.note}")
         elif scan_mode in presets.SEPARATORS.values():
             st.warning("Please select a valid screening preset.")
 
@@ -415,7 +421,7 @@ def render(ctx):
             skip_er = sticky(st.checkbox, "Hide stocks reporting within 7 days", False, "scan_skip_er",
                              help="No new position into a release: the Decision blocks BUYs in that window anyway.")
             filter_sm = sticky_choice("Smart Money", ["🌎 All", "🟢 Accumulation only", "🔴 Distribution only"],
-                                      "🌎 All", "custom_sm_filter")
+                                      "🌎 All", "custom_sm_filter", format_func=lambda value: value.split(" ", 1)[1])
     # A refinement applies only once moved off its default — otherwise stocks with an unknown value
     # (no forward P/E, no PEG) were silently removed from every preset, including "All".
     n_before = len(f_df)
@@ -481,6 +487,8 @@ def render(ctx):
     if 'radar_limit' not in st.session_state:
         st.session_state.radar_limit = 50
     display_df = ordered[display_cols].reset_index(drop=True)
+    if "Plan status" in display_df:
+        display_df["Plan status"] = display_df["Plan status"].map(status_label)
     paged_df = display_df.iloc[:st.session_state.radar_limit]
     paged_full = ordered.reset_index(drop=True).iloc[:st.session_state.radar_limit]
     if not paged_df.empty:
@@ -494,11 +502,11 @@ def render(ctx):
         _selected_panel(paged_full, ctx)
 
     if len(display_df) > st.session_state.radar_limit:
-        if st.button(f"📥 Load All (Showing {st.session_state.radar_limit} of {len(display_df)})", width="stretch"):
+        if st.button(f"Load All (Showing {st.session_state.radar_limit} of {len(display_df)})", width="stretch"):
             st.session_state.radar_limit = len(display_df)
             st.rerun()
     elif len(display_df) > 50:
-        if st.button("🔄 Reset to Top 50", width="stretch"):
+        if st.button("Reset to Top 50", width="stretch"):
             st.session_state.radar_limit = 50
             st.rerun()
 
@@ -520,7 +528,7 @@ def render(ctx):
             "include_archived": include_archived, "data_version": ctx.get("data_version") or "unknown",
             "rows": len(ordered), "prices_to": f"{latest:%Y-%m-%d}" if latest is not None else "unknown",
             "note": "Decision = the app's one recommendation; scores are rules, not forecasts"}
-    b1.download_button("⬇️ Export filtered results (CSV)", data=sv.export_csv(ordered, display_cols, meta=meta),
+    b1.download_button("Export filtered results (CSV)", data=sv.export_csv(ordered, display_cols, meta=meta),
                        file_name=f"scanner_{view.lower().replace(' ', '_')}.csv", mime="text/csv", key="scan_export",
                        disabled=ordered.empty, help="All filtered rows (not only the page shown), the columns shown.")
     b2.button("Reset view", key="scan_reset", on_click=_reset, help="Back to the default view and filters.")
@@ -531,7 +539,7 @@ def render(ctx):
                 f"<div style='font-size:0.78rem; color:{colour}; font-weight:800;'>{title}</div>"
                 f"<div style='font-size:0.72rem; color:inherit; margin-top:4px;'>{body}</div>"
                 f"<div style='font-size:0.68rem; color:inherit; margin-top:6px;'>{extra}</div></div>")
-    with st.expander("ℹ️ How the scores work"):
+    with st.expander("How the scores work"):
         st.markdown(
             "<div style='margin-top:16px; padding:14px 18px; background:var(--secondary-background-color, transparent); border:1px solid rgba(128,128,128,0.25); border-radius:10px;'>"
             "<div style='font-size:0.78rem; font-weight:700; color:inherit; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:10px;'>"
@@ -549,7 +557,7 @@ def render(ctx):
             "The Decision uses Quality as a floor (a BUY needs ≥ 50) and Value as a cross-check on the DCF. "
             "Whether any score predicts returns is tested on the Track Record tab.</div></div>", unsafe_allow_html=True)
 
-    with st.expander("💡 How to read the table"):
+    with st.expander("How to read the table"):
         st.write("""
         - **Decision** is the recommendation; **MoS** (margin of safety vs the DCF base value) is its evidence. Blank = DCF not informative.
         - The arrow after the Decision is the **timing context** (the Signal): ▲ supportive, · neutral, ▼ against — trend, quality, value, reward/risk, volume flow. Add the "Action" column for the full Signal label.

@@ -43,7 +43,7 @@ def _evidence_block(prices_full):
     with c2:
         st.caption(f"{ev.get('label', '')}  \nEvidence required for BUY: **{'On' if gate else 'Off'}** (owner setting). "
                    f"The timing experiments below are a different question and do not change this status. "
-                   f"Details: the 📈 Track Record tab.")
+                   f"Details: the Track Record tab.")
 
 
 def render(ctx):
@@ -79,7 +79,7 @@ def render(ctx):
                          step=1000)
         fee = sticky(st.slider, "Transaction cost per fill (%)", 0.1, "slab_fee", min_value=0.0, max_value=1.0, step=0.05)
         demo = sticky(st.toggle, "Include the Static Quality demo (lookahead — methodology only)", False, "slab_demo")
-        run = st.button("▶ Compare all rules", type="primary", width="stretch")
+        run = st.button("Compare all rules", type="primary", width="stretch")
 
     spec = lv.run_spec(ticker, sl, tp, capital, fee, db.opened_version(), demo)
 
@@ -107,7 +107,7 @@ def render(ctx):
 
         saved = st.session_state.get("slab_run")
         if not saved:
-            st.info("Choose a ticker and press **▶ Compare all rules**.")
+            st.info("Choose a ticker and press **Compare all rules**.")
             return
         results, rspec = saved["results"], saved["spec"]
         why = lv.stale_reason(saved, spec)
@@ -118,7 +118,7 @@ def render(ctx):
         gaps = int(comp["Missing returns"].max() or 0)
         if gaps:
             st.warning(f"{gaps} trading day(s) without a return inside {rspec['ticker']}'s history were counted as 0% — "
-                       f"read these results as indicative.", icon="⚠️")
+                       f"read these results as indicative.")
         st.markdown(f"<div style='border-left:4px solid #8899aa; padding:10px 14px; margin-bottom:12px; color:inherit;'>"
                     f"{lv.neutral_summary(results)}</div>", unsafe_allow_html=True)
         st.dataframe(comp, width="stretch", hide_index=True, column_config={
@@ -128,7 +128,7 @@ def render(ctx):
             "Max DD %": st.column_config.NumberColumn("Max DD", format="%.1f%%"),
             "Win rate %": st.column_config.NumberColumn("Win rate", format="%.0f%%", help="N/A when no trade was completed."),
             "Days in market %": st.column_config.NumberColumn("In market", format="%.0f%%"),
-            "Lookahead": st.column_config.CheckboxColumn("⚠️ Lookahead", help="Uses today's Quality on past bars: optimistic by construction."),
+            "Lookahead": st.column_config.CheckboxColumn("Lookahead", help="Uses today's Quality on past bars: optimistic by construction."),
         })
         st.caption(lv.sample_meta(results[0]))
 
@@ -151,5 +151,8 @@ def render(ctx):
         fig.update_layout(template="plotly_dark", height=420, yaxis_title="Equity (€)", hovermode="x unified",
                           legend=dict(orientation="h", y=1.05))
         st.plotly_chart(fig, width="stretch")
-        with st.expander("📋 Trade log"):
-            st.dataframe(pd.DataFrame(r["trade_log"]).drop(columns=["_pnl"], errors="ignore"), width="stretch", hide_index=True)
+        with st.expander("Trade log"):
+            trades = pd.DataFrame(r["trade_log"]).drop(columns=["_pnl"], errors="ignore")
+            if "Action" in trades:
+                trades["Action"] = trades["Action"].replace({"🟢 BUY": "BUY", "🔴 SELL": "SELL"})
+            st.dataframe(trades, width="stretch", hide_index=True)

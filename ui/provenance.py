@@ -74,7 +74,7 @@ def render_confidence_line(prov: dict, vin: dict = None) -> None:
     warn = [t for s, t in items if s == "warn"]
     info = [t for s, t in items if s == "info"]
     color = "#f39c12" if warn else "#2ecc71"
-    text = " · ".join(([f"⚠️ {t}" for t in warn]) + ([f"✓ {t}" for t in info]))
+    text = " · ".join(([f"Warning: {t}" for t in warn]) + ([f"{t}" for t in info]))
     st.markdown(f"<div style='font-size:0.78rem;color:{color};margin:-4px 0 10px 0;'><b>Data confidence:</b> {text}</div>",
                 unsafe_allow_html=True)
 

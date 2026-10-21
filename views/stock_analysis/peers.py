@@ -147,7 +147,7 @@ def render(dd, ctx):
                 ("price_to_sales",   "P/S",               "x1",         "lower"),
                 ("peg_ratio",        "PEG",               "x1",         "lower"),
             ]
-            _group_spans = [("", 3), ("📈 Growth & Profitability", 5), ("💰 Valuation", 2)]
+            _group_spans = [("", 3), ("Growth & Profitability", 5), ("Valuation", 2)]
         elif b_type == 'industrial':
             _COL_DEFS = base_cols + [
                 ("gross_margin",     "Gross Mgn",         "pct",        "higher"),
@@ -157,7 +157,7 @@ def render(dd, ctx):
                 ("ev_to_ebitda",     "EV/EBITDA",         "x",          "lower"),
                 ("peg_ratio",        "PEG",               "x1",         "lower"),
             ]
-            _group_spans = [("", 3), ("💎 Operations & Return", 3), ("🏦 Risk", 1), ("💰 Valuation", 2)]
+            _group_spans = [("", 3), ("Operations & Return", 3), ("Risk", 1), ("Valuation", 2)]
         elif b_type == 'consumer':
             _COL_DEFS = base_cols + [
                 ("revenue_growth",   "Org Growth",        "pct_sign",   "higher"),
@@ -168,7 +168,7 @@ def render(dd, ctx):
                 ("dividend_yield",   "Div Yield",         "pct",        "higher"),
                 ("pe_ratio",         "P/E",               "x",          "lower"),
             ]
-            _group_spans = [("", 3), ("🛍️ Consumer Metrics", 4), ("🏦 Risk & Yield", 2), ("💰 Valuation", 1)]
+            _group_spans = [("", 3), ("Consumer Metrics", 4), ("Risk & Yield", 2), ("Valuation", 1)]
         elif b_type == 'finance':
             _COL_DEFS = base_cols + [
                 ("revenue_growth",   "Rev Growth",        "pct_sign",   "higher"),
@@ -177,7 +177,7 @@ def render(dd, ctx):
                 ("price_to_book",    "P/B",               "x1",         "lower"),
                 ("pe_ratio",         "P/E",               "x",          "lower"),
             ]
-            _group_spans = [("", 3), ("🏦 Financial Metrics", 3), ("💰 Valuation", 2)]
+            _group_spans = [("", 3), ("Financial Metrics", 3), ("Valuation", 2)]
         else: # general
             _COL_DEFS = base_cols + [
                 ("revenue_growth",   "Rev Growth",        "pct_sign",   "higher"),
@@ -191,7 +191,7 @@ def render(dd, ctx):
                 ("pe_ratio",         "P/E",               "x",          "lower"),
                 ("price_to_sales",   "P/S",               "x1",         "lower"),
             ]
-            _group_spans = [("", 3), ("📈 Growth", 2), ("💎 Profitability", 4), ("🏦 Risk", 1), ("💰 Valuation", 3)]
+            _group_spans = [("", 3), ("Growth", 2), ("Profitability", 4), ("Risk", 1), ("Valuation", 3)]
 
         # ── Sector Average row ─────────────────────────────────────────
         _numeric_cols = [c[0] for c in _COL_DEFS if c[0] not in ("company", "market_cap")]
@@ -263,24 +263,32 @@ def render(dd, ctx):
             is_avg = (ticker_idx == "AVG")
             row_bg = "background:rgba(99,132,255,0.12); font-weight:700;" if is_sel else (
                      "background:var(--secondary-background-color, transparent); font-style:italic; font-weight:600;" if is_avg else "")
-            label  = f"★ {ticker_idx}" if is_sel else ticker_idx
+            label  = f"{ticker_idx} (selected)" if is_sel else ticker_idx
 
             td_ticker = f"<td style='padding:8px 10px; color:#a78bfa; font-weight:700; white-space:nowrap;'>{label}</td>"
             col_cells = ""
             for col_key, col_lbl, fmt, direction in _COL_DEFS:
                 val = row_data.get(col_key)
                 bg  = _cell_bg(val, col_key, is_avg)
+                comparison = ""
+                if is_sel and col_key in _numeric_cols:
+                    avg = avg_dict.get(col_key)
+                    if pd.isna(val) or avg is None or pd.isna(avg) or (fmt in ("x", "x1") and val <= 0):
+                        comparison = " · N/A"
+                    else:
+                        comparison = (" · Above peer average" if val > avg else
+                                      " · Below peer average" if val < avg else " · At peer average")
                 if col_key == "company":
                     text = html.escape(str(val)[:28]) if val else "—"
                     col_cells += f"<td style='padding:8px 10px; text-align:left; {bg}'>{text}</td>"
                 elif col_key == "market_cap":
                     col_cells += f"<td style='padding:8px 10px; text-align:center; {bg}'>{_fmt_cap(val)}</td>"
                 elif fmt == "pct":
-                    col_cells += f"<td style='padding:8px 10px; text-align:center; {bg}'>{_fmt_pct(val)}</td>"
+                    col_cells += f"<td style='padding:8px 10px; text-align:center; {bg}'>{_fmt_pct(val)}{comparison}</td>"
                 elif fmt == "pct_sign":
-                    col_cells += f"<td style='padding:8px 10px; text-align:center; {bg}'>{_fmt_pct(val, sign=True)}</td>"
+                    col_cells += f"<td style='padding:8px 10px; text-align:center; {bg}'>{_fmt_pct(val, sign=True)}{comparison}</td>"
                 elif fmt in ("x", "x1"):
-                    col_cells += f"<td style='padding:8px 10px; text-align:center; {bg}'>{_fmt_x(val, 1 if fmt=='x' else 2)}</td>"
+                    col_cells += f"<td style='padding:8px 10px; text-align:center; {bg}'>{_fmt_x(val, 1 if fmt=='x' else 2)}{comparison}</td>"
                 else:
                     col_cells += f"<td style='padding:8px 10px; text-align:center; {bg}'>—</td>"
             html_rows.append(f"<tr style='{row_bg}'>{td_ticker}{col_cells}</tr>")
@@ -296,7 +304,7 @@ def render(dd, ctx):
         </table>
         </div>
         <div style="font-size:0.78rem; color:inherit; margin-top:-4px; margin-bottom:16px;">
-          🟢 = above {_match_level} avg &nbsp;|&nbsp; 🔴 = below avg &nbsp;|&nbsp; ★ = selected ticker
+          Selected ticker cells state Above / Below / At peer average; N/A means unavailable.
         </div>
         """
         st.markdown(html_table, unsafe_allow_html=True)

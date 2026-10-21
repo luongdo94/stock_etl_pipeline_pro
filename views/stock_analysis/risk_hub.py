@@ -10,7 +10,7 @@ from views.stock_analysis.layout import layer_banner
 
 from etl.llm_parser import analyze_risk_with_llm
 from services.ai import get_finbert_pipeline, get_unified_verdict
-from ui.icons import SVG_ICONS, render_header
+from ui.icons import render_header
 
 
 def _known(v):
@@ -39,7 +39,7 @@ def _render_news(meta, ticker, snapshot=None):
     from services.news import fetch_news_sentiment
     key = f"news_sent::{ticker}"
     rec = st.session_state.get(key)
-    label = "🔄 Refresh headlines" if rec else "📰 Load headlines and sentiment"
+    label = "Refresh headlines" if rec else "Load headlines and sentiment"
     if st.button(label, key=f"news_btn_{ticker}",
                  help="Reads recent headlines from Google News and scores them with FinBERT. The first use downloads "
                       "the model (~440 MB). Headline sentiment is context only — it does not feed the Decision."):
@@ -52,23 +52,22 @@ def _render_news(meta, ticker, snapshot=None):
         return
     st.caption("Google News / FinBERT · " + _saved_context(rec, ticker, snapshot))
     if rec["error"] and not rec["items"]:
-        st.caption(f"⚠️ News feed unavailable: {rec['error']}")
+        st.caption(f"News feed unavailable: {rec['error']}")
         return
     if not rec["items"]:
         st.info("No recent news found for this ticker.")
         return
     if rec["scored"]:
         colour = {"BULLISH": "#2ecc71", "BEARISH": "#e74c3c", "NEUTRAL": "#f1c40f"}[rec["mood"]]
-        icon = {"BULLISH": "🚀", "BEARISH": "📉", "NEUTRAL": "😴"}[rec["mood"]]
-        st.markdown(f"<div style='margin-bottom:12px;padding:8px 12px;background:var(--secondary-background-color, transparent);border-radius:6px;border-left:3px solid {colour};font-size:0.85rem;'><b style='color:{colour};'>{icon} {rec['mood']}</b> &nbsp;·&nbsp; FinBERT: {rec['avg']:+.2f} on {len(rec['items'])} headlines</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='margin-bottom:12px;padding:8px 12px;background:var(--secondary-background-color, transparent);border-radius:6px;border-left:3px solid {colour};font-size:0.85rem;'><b style='color:{colour};'>{rec['mood']}</b> &nbsp;·&nbsp; FinBERT: {rec['avg']:+.2f} on {len(rec['items'])} headlines</div>", unsafe_allow_html=True)
     else:
         st.caption("Headlines are listed without a sentiment score (the model was not available).")
     st.caption(f"Fetched {rec['fetched_at']:%d %b %H:%M}. Headlines are context, not an input of the Decision.")
     with st.popover(f"View {len(rec['items'])} Detailed Headlines", width="stretch"):
-        st.markdown("### 📰 Recent Headlines")
+        st.markdown("### Recent Headlines")
         for it in rec["items"]:
-            icon = {"POSITIVE": "🟢", "NEGATIVE": "🔴"}.get(it["label"], "⚪" if it["label"] else "📰")
-            with st.expander(f"{icon} {it['title'][:70]}..."):
+            sentiment = {"POSITIVE": "Positive", "NEGATIVE": "Negative", "NEUTRAL": "Neutral"}.get(it["label"], "Unscored")
+            with st.expander(f"{sentiment}: {it['title'][:70]}..."):
                 st.caption(f"**Source:** {it['source']} | **Date:** {it['published']}")
                 st.markdown(f"[Read Article ↗]({it['link']})")
 
@@ -99,7 +98,7 @@ def render(dd, ctx):
     layer_banner(3, "Risk intelligence hub", "#9b59b6", bottom=0)
     # ── RISK INTELLIGENCE HUB: Full-Width Top, then Split View ─────
     render_header("zap", "AI news and risk review", level="####")
-    st.caption("🧠 LLM narrative: it summarises the quantitative signals and news above in words. "
+    st.caption("LLM narrative: it summarises the quantitative signals and news above in words. "
                "It is not an independent signal — the Decision Summary does not count it as a vote.")
     st.caption("An on-request summary of news and quantitative context. Refer to the Decision Summary for the current recommendation.")
 
@@ -259,7 +258,7 @@ def render(dd, ctx):
     if not _uv_data:
         st.markdown("""
         <div style='text-align:center; padding:40px 20px; color:inherit; background:var(--secondary-background-color, transparent); border-radius:10px; border:1px dashed rgba(255,255,255,0.1); margin-top:20px;'>
-            <div style='font-size:2.5rem; filter:grayscale(1); opacity:0.3; margin-bottom:15px;'>🔍</div>
+            <div style='font-size:2.5rem; filter:grayscale(1); opacity:0.3; margin-bottom:15px;'></div>
             <div style='font-size:0.85rem;'>Click <b>'Run AI news and risk review'</b> above<br>to generate the CIO Deep Dive and Risk Scorecard.</div>
         </div>
         """, unsafe_allow_html=True)
@@ -281,7 +280,7 @@ def render(dd, ctx):
 '>
     <!-- Card 2: News Sentiment -->
     <div style='padding:15px; background:var(--secondary-background-color, transparent); border-radius:10px;'>
-        <div style='font-size:0.65rem; color:inherit; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;'>{SVG_ICONS["globe"]} News Tone</div>
+        <div style='font-size:0.65rem; color:inherit; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;'>News Tone</div>
         <div style='display:flex; align-items:center; gap:8px;'>
             <span style='font-size:1.2rem; font-weight:600; color:{_s_color};'>{_nlp_sent}</span>
         </div>
@@ -289,7 +288,7 @@ def render(dd, ctx):
     </div>
     <!-- Card 3: Risk Exposure -->
     <div style='padding:15px; background:var(--secondary-background-color, transparent); border-radius:10px;'>
-        <div style='font-size:0.65rem; color:inherit; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;'>{SVG_ICONS["risk"]} Risk Exposure</div>
+        <div style='font-size:0.65rem; color:inherit; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;'>Risk Exposure</div>
         <div style='display:flex; align-items:baseline; gap:6px;'>
             <span style='font-size:1.4rem; font-weight:700; color:{_r_color};'>{_nlp_score}</span>
             <span style='font-size:0.75rem; color:inherit;'>/100</span>
@@ -315,9 +314,9 @@ def render(dd, ctx):
                 _conf_dir = f"Weak Quality ({_ai_score_snap}/100), but News Tone is <b>POSITIVE</b>. Beware of a temporary, sentiment-driven rally."
             st.markdown(f"""
     <div style='display:flex; align-items:flex-start; gap:14px; margin:8px 0; padding:14px 18px; background:linear-gradient(90deg,rgba(230,126,34,0.14),rgba(231,76,60,0.08)); border:1px solid rgba(230,126,34,0.55); border-left:4px solid #e67e22; border-radius:10px;'>
-<span style='font-size:1.4rem; line-height:1; padding-top:2px;'>⚠️</span>
+<span style='font-size:1.4rem; line-height:1; padding-top:2px;'></span>
 <div>
-    <div style='color:#e67e22; font-weight:900; font-size:0.75rem; text-transform:uppercase; letter-spacing:2px; margin-bottom:4px;'>⚡ News vs Quality Conflict</div>
+    <div style='color:#e67e22; font-weight:900; font-size:0.75rem; text-transform:uppercase; letter-spacing:2px; margin-bottom:4px;'>News vs Quality Conflict</div>
     <div style='color:inherit; font-size:0.85rem; line-height:1.5;'>{_conf_dir}</div>
 </div>
     </div>
@@ -328,11 +327,11 @@ def render(dd, ctx):
 
     # Detailed Audit Narrative (Full Width, only when audit has been run)
     if _uv_data:
-        st.markdown("<div style='color:#3498db; font-size:1.1rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:12px; border-bottom:1px solid rgba(52,152,219,0.3); padding-bottom:6px;'>🧠 CIO AI Deep Dive & Scenario Analysis</div>", unsafe_allow_html=True)
+        st.markdown("<div style='color:#3498db; font-size:1.1rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-bottom:12px; border-bottom:1px solid rgba(52,152,219,0.3); padding-bottom:6px;'>CIO AI Deep Dive & Scenario Analysis</div>", unsafe_allow_html=True)
         st.info(_uv_data.get("report", ""))
         _show_insights = _uv_data.get("nlp_insights", []) if isinstance(_uv_data, dict) else []
         if _show_insights:
-            with st.expander("🧩 Raw Evidence: News Signals Analyzed"):
+            with st.expander("Raw Evidence: News Signals Analyzed"):
                 for insight in _show_insights:
                     st.markdown(f"- {insight}")
 
@@ -340,12 +339,12 @@ def render(dd, ctx):
         _cio_p   = _uv_data.get("cio_prompt_debug", "")
         _risk_p  = _uv_data.get("risk_prompt_debug", "")
         if _cio_p or _risk_p:
-            with st.expander("🔍 Debug: Raw Prompts Sent to Cohere"):
+            with st.expander("Debug: Raw Prompts Sent to Cohere"):
                 if _risk_p:
-                    st.markdown("**📰 Stage 1 — Risk Audit Prompt (News Parser)**")
+                    st.markdown("**Stage 1 — Risk Audit Prompt (News Parser)**")
                     st.code(_risk_p, language="markdown")
                 if _cio_p:
-                    st.markdown("**🧠 Stage 2 — CIO Verdict Prompt (Unified Synthesis)**")
+                    st.markdown("**Stage 2 — CIO Verdict Prompt (Unified Synthesis)**")
                     st.code(_cio_p, language="markdown")
 
         st.markdown("<br>", unsafe_allow_html=True)
@@ -355,7 +354,7 @@ def render(dd, ctx):
     with qual_col:
 
         # ── NEWS FEED (on request: Google News + FinBERT) ────────────────────────────────────────
-        st.markdown("<div style='color:#f39c12; font-size:0.85rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-top:16px; margin-bottom:8px; border-bottom:1px solid rgba(243,156,18,0.3); padding-bottom:6px;'>📰 Market Sentiment (FinBERT)</div>", unsafe_allow_html=True)
+        st.markdown("<div style='color:#f39c12; font-size:0.85rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-top:16px; margin-bottom:8px; border-bottom:1px solid rgba(243,156,18,0.3); padding-bottom:6px;'>Market Sentiment (FinBERT)</div>", unsafe_allow_html=True)
         _render_news(meta, deep_ticker, ctx.get("data_version"))
 
 

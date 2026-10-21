@@ -32,7 +32,7 @@ def fx_rate(source: str, target: str = "EUR"):
         return None
 
 
-@st.cache_data(ttl=1800, show_spinner="🌍 Fetching FX Rates...")
+@st.cache_data(ttl=1800, show_spinner="Fetching FX Rates...")
 def get_forex_rates(target="EUR", source="USD"):
     """Rate to convert `source` currency → `target`, or None when it could not be obtained (a failed lookup is not
     parity: callers show the native amount / N/A instead of an amount labelled with the wrong currency).
@@ -265,7 +265,7 @@ def _stored_fx(ccy, generation=None):
 _stored_fx = snapshot_cached(ttl=600)(_stored_fx)
 
 
-@st.cache_data(ttl=86400, show_spinner="📅 Fetching Dividend Calendar...")
+@st.cache_data(ttl=86400, show_spinner="Fetching Dividend Calendar...")
 def fetch_dividend_calendar(tickers_tuple: tuple, companies_df: "pd.DataFrame" = None) -> dict:
     """
     Returns ex-dividend date and pay date for a list of tickers.

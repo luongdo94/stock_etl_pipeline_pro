@@ -341,7 +341,7 @@ def render(ctx):
             f"- Beat rate over the last {b['n']} reports: {_pct(b['beat_rate'], 0, False)}." if b["n"] else None,
             f"- Next report: {nxt_txt}." if nxt is not None else None]))
         key = svc.note_key(t, last["earnings_ts"] if last is not None else None, lang, facts)
-        if st.button("🧠 Summarise the latest report", key="er_ai"):
+        if st.button("Summarise the latest report", key="er_ai"):
             company = names.get(t, t)
             mismatch = None
             with st.spinner("Collecting the report text..."):

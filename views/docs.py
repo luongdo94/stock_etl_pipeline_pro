@@ -32,7 +32,7 @@ def render(ctx):
     m_col1, m_col2 = st.columns(2)
 
     with m_col1:
-        st.markdown("### 📡 1. Data")
+        st.markdown("### 1. Data")
         st.markdown("""
         - **Source**: Yahoo Finance (prices, statements, consensus), TradingView (discovery), FRED (macro).
           Free data: occasional gaps and errors are expected; implausible values are filtered where detected.
@@ -44,7 +44,7 @@ def render(ctx):
         - **Prices** are end-of-day (T-1). Not built for intraday trading.
         """)
 
-        st.markdown("### 🧮 Scores: Quality, Value, Momentum")
+        st.markdown("### Scores: Quality, Value, Momentum")
         st.markdown("""
         Three separate 0-100 numbers per stock (`core/scoring.py`, thresholds in `config/scoring_rules.yaml`):
         - **Quality** — is it a good business? Return on capital, margins, growth & stability, net debt/EBITDA,
@@ -65,7 +65,7 @@ def render(ctx):
           is one global 5%; weights are judgement until the **Track Record** tab shows each score's information coefficient.
         """)
 
-        st.markdown("### ⚠️ 2. Point-in-time limits (read this)")
+        st.markdown("### 2. Point-in-time limits (read this)")
         st.warning("""
         - **Fundamentals are a current snapshot**, not a history as of each past date. Anything that
           combines today's fundamentals with past prices (e.g. the *Static Quality demo* backtest rule)
@@ -78,7 +78,7 @@ def render(ctx):
           returns drop out of the IC instead of counting as losses; and SPY-relative ranks are not factor-adjusted alpha.
         """)
 
-        st.markdown("### 🧪 3. Backtests")
+        st.markdown("### 3. Backtests")
         st.info("""
         - A signal computed on a day's close is filled at the NEXT close; stops are checked on closes and also filled
           at the next close (overnight gaps are paid; intraday triggers, spreads and market impact are not modelled).
@@ -88,7 +88,7 @@ def render(ctx):
         """)
 
     with m_col2:
-        st.markdown("### 🧭 4. How a Decision is made")
+        st.markdown("### 4. How a Decision is made")
         st.markdown(f"""
         - **Valuation**: 10-year FCF-to-equity DCF on normalised statement free cash flow **after stock-based
           compensation** (median of the last 3 years), cost of equity = risk-free rate **of the cash flows' currency**
@@ -125,7 +125,7 @@ def render(ctx):
           Decision is a recommendation. The 52-week position is shown but not scored.
         """)
 
-        st.markdown("### 🔮 5. Experimental modules")
+        st.markdown("### 5. Experimental modules")
         st.markdown("""
         - **Risk Lab** estimates a volatility range (GJR-GARCH + Monte Carlo) and checks its calibration; it forecasts no direction. The neural price forecasts were removed after failing a walk-forward test against a no-change forecast;
           the Decision ignores them.
@@ -141,7 +141,7 @@ def _methodology_qa():
     """Questions about the method, answered from the documentation and the rule files with citations (RAG)."""
     from services import research
     st.markdown("---")
-    st.markdown("### 💬 Ask the methodology")
+    st.markdown("### Ask the methodology")
     st.caption("Answered by an LLM only from docs/ and config/*.yaml, each statement cited. For a single stock's "
                "result use *Why this Decision?* in Stock Analysis.")
     if not research.available():

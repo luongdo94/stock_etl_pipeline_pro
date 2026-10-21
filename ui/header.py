@@ -35,7 +35,7 @@ def render_title_bar(model: dict):
         </div>
     </div>""", unsafe_allow_html=True)
     for w in model["warnings"]:
-        st.markdown(f"<div style='margin:4px 2px; color:#e74c3c; font-size:0.85rem; font-weight:700;'>⚠️ {esc(w)}</div>",
+        st.markdown(f"<div style='margin:4px 2px; color:#e74c3c; font-size:0.85rem; font-weight:700;'>Warning: {esc(w)}</div>",
                     unsafe_allow_html=True)
     with st.expander("Data details"):
         for label, text in model["details"]:

@@ -105,9 +105,9 @@ _CROSS = """
         </div>
         """
 
-_NEXT_STEPS = (("🔭 Look for ideas", "🔭 Stock Scanner", "Scanner — Decisions of the whole universe"),
-               ("💼 Check what you hold", "💼 Portfolio", "Portfolio — your holdings and their Decisions"),
-               ("🎲 One stock's range", "🎲 Risk Lab", "Risk Lab — the volatility range of a single stock"))
+_NEXT_STEPS = (("Look for ideas", "🔭 Stock Scanner", "Scanner — Decisions of the whole universe"),
+               ("Check what you hold", "💼 Portfolio", "Portfolio — your holdings and their Decisions"),
+               ("One stock's range", "🎲 Risk Lab", "Risk Lab — the volatility range of a single stock"))
 
 
 def _go(tab):
@@ -159,7 +159,7 @@ def _your_review():
         st.caption("Your review is not loaded yet — open SIGNAL (top right).")
         return
     if not prev["readable"]:
-        st.warning("Your portfolio or watchlist could not be read, so SIGNAL cannot say what needs your review.", icon="⚠️")
+        st.warning("Your portfolio or watchlist could not be read, so SIGNAL cannot say what needs your review.")
         return
     if not prev["top"]:
         st.success("Nothing in your holdings or watchlist needs your review right now (SIGNAL).")
@@ -176,7 +176,7 @@ def _economic_data(ctx):
     """Stored observation periods and their collection dates; no inferred release dates."""
     from core.macro_view import REGION_NAMES, period_label, table_for_display
     from services.db import load_macro_indicators
-    st.markdown("#### 🏛️ Economic data — latest observation vs the previous one")
+    st.markdown("#### Economic data — latest observation vs the previous one")
     stored = load_macro_indicators(ctx.get("data_version"))
     if stored.attrs.get("unavailable") == "read_error":
         st.warning("Economic data could not be read. Reload to retry; this does not mean no observations were stored.")
@@ -283,7 +283,7 @@ def render(ctx):
 
     st.markdown("---")
 
-    st.markdown("#### 🚀 ETF Sector Rotation")
+    st.markdown("#### ETF Sector Rotation")
     _asof = ""
     if "_extracted_at" in tv_sector_rotation.columns and tv_sector_rotation["_extracted_at"].notna().any():
         _asof = f" Stored {tv_sector_rotation['_extracted_at'].max():%d %b %Y %H:%M}."
@@ -332,7 +332,7 @@ def render(ctx):
     st.markdown("---")
     _economic_data(ctx)
     st.markdown("---")
-    st.markdown("#### 🌐 External market tools (TradingView)")
+    st.markdown("#### External market tools (TradingView)")
     import streamlit.components.v1 as _mp_comp
     if not sticky(st.toggle, "Load the external widgets", False, "mp_external",
                   help="Heatmap, economic calendar and cross-asset performance are TradingView widgets: they load scripts from "
@@ -341,10 +341,10 @@ def render(ctx):
         return
     c1, c2 = st.columns([3, 2])
     with c1:
-        st.markdown("##### 🌍 S&P 500 Sector Heatmap")
+        st.markdown("##### S&P 500 Sector Heatmap")
         _mp_comp.html(_HEATMAP, height=520)
     with c2:
-        st.markdown("##### 📅 Economic Calendar")
+        st.markdown("##### Economic Calendar")
         _mp_comp.html(_CALENDAR, height=520)
-    st.markdown("##### 📈 Global Cross-Asset Performance")
+    st.markdown("##### Global Cross-Asset Performance")
     _mp_comp.html(_CROSS, height=420)

@@ -31,7 +31,7 @@ def load_watchlist():
             records = local_store.load_watchlist_records()
         except local_store.LocalStoreError as e:
             st.session_state["watchlist_load_failed"] = True
-            st.sidebar.error(f"⚠️ Watchlist not readable: {e}")
+            st.sidebar.error(f"Watchlist not readable: {e}")
             return pd.DataFrame(columns=cols)
         return pd.DataFrame(records, columns=cols) if records else pd.DataFrame(columns=cols)
     if not st.session_state.get("authenticated") or not st.session_state.get("user_id"):
@@ -63,7 +63,7 @@ def load_watchlist():
         return df[cols]
     except Exception as e:
         st.session_state["watchlist_load_failed"] = True
-        st.sidebar.error(f"⚠️ Data Sync Error (Supabase Load): {e}")
+        st.sidebar.error(f"Data Sync Error (Supabase Load): {e}")
         return pd.DataFrame(columns=cols)
 
 
@@ -240,7 +240,7 @@ def _load_portfolio_raw():
             return local_store.load_portfolio()
         except local_store.LocalStoreError as e:                  # corrupt file: unknown, not empty (audit F23)
             st.session_state["portfolio_load_failed"] = True
-            st.sidebar.error(f"⚠️ Portfolio not readable: {e}")
+            st.sidebar.error(f"Portfolio not readable: {e}")
             return {}
     if not st.session_state.get("authenticated") or not st.session_state.get("user_id"):
         return {}
@@ -264,7 +264,7 @@ def _load_portfolio_raw():
         # The stored portfolio is UNKNOWN, not empty: saving the empty session now would overwrite it, so every
         # save is refused until a reload reads it successfully.
         st.session_state["portfolio_load_failed"] = True
-        st.sidebar.error(f"⚠️ Portfolio Sync Error: {e}")
+        st.sidebar.error(f"Portfolio Sync Error: {e}")
         return {}
 
 
@@ -321,7 +321,7 @@ def save_portfolio_to_db(shares_dict, cost_dict, cash_eur=None, stops=None):
     """Backward-compatible wrapper: True when saved; otherwise shows why in the sidebar and returns False."""
     ok, msg = save_portfolio_checked(shares_dict, cost_dict, cash_eur, stops)
     if not ok:
-        st.sidebar.error(f"⚠️ Portfolio not saved — {msg}")
+        st.sidebar.error(f"Portfolio not saved — {msg}")
     return ok
 
 

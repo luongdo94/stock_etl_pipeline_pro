@@ -60,9 +60,9 @@ def render_score_strip(scores):
     st.markdown(f"<div style='display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px;'>{tiles}</div>",
                 unsafe_allow_html=True)
     if scores.get("flags"):
-        st.warning(f"Red flags: {scores['flags']}", icon="🚩")
+        st.warning(f"Red flags: {scores['flags']}")
     if cov is not None and cov < 60:
-        st.caption(f"⚠️ Only {cov:.0f}% of the scoring inputs are available — scores are pulled toward neutral.")
+        st.caption(f"Only {cov:.0f}% of the scoring inputs are available — scores are pulled toward neutral.")
 
 
 def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, relval, missing,
@@ -118,9 +118,9 @@ def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, re
     if scores:
         render_score_strip(scores)
     for c in d.conflicts:
-        st.error(f"Conflict — re-underwrite before acting: {c}", icon="⚖️")
+        st.error(f"Conflict — re-underwrite before acting: {c}")
     for w in d.warnings:
-        st.warning(w, icon="⏳")
+        st.warning(w)
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("**Why**")
@@ -177,7 +177,7 @@ def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, re
                                                     load_policy(dec.load_rules()))
                 if why:
                     st.warning(f"Portfolio policy limits this addition to **{allowed:.1%} of NAV** "
-                               f"(Decision size {d.position['size_pct']:.1f}%) — {why}.", icon="🧱")
+                               f"(Decision size {d.position['size_pct']:.1f}%) — {why}.")
         imp = candidate_impact(prices, holdings_value, ticker, d.position["size_pct"], companies) \
             if holdings_value else None
         if imp:
@@ -198,15 +198,15 @@ def _render_financial_valuation(meta, price, vin, companies=None):
     st.markdown("---")
     render_header("gem", "Intrinsic Valuation (Residual Income) — Banks & Insurers")
     if vin["note"]:
-        st.warning("⚠️ " + vin["note"])
+        st.warning(vin["note"])
     if not vin["book_per_share"]:
         st.info("Book value per share is not available, so a book-based value cannot be computed.")
         return
     st.caption(f"{vin['model_note']} Rates: {vin['currency']} risk-free {vin['risk_free']:.1%} ({vin['rate_source']}), "
                f"cost of equity {vin['cost_of_equity']:.1%}, long-run growth {vin['terminal_growth']:.1%}.")
-    st.info("🧪 **Sensitivity sandbox** — changing these inputs recomputes the scenarios below ONLY. The Decision "
+    st.info("**Sensitivity sandbox** — changing these inputs recomputes the scenarios below ONLY. The Decision "
             "Summary, scanner, alerts, watchlist and AI brief keep using the system defaults shown in the inputs' "
-            "starting values.", icon="🧪")
+            "starting values.")
     c1, c2, c3 = st.columns(3)
     roe = _sticky(c1.number_input, "Normalised ROE today (%)", round((vin["roe"] or 0) * 100, 1),
                   f"pb_roe_{meta.get('ticker')}", step=0.5) / 100
@@ -276,20 +276,20 @@ def render_valuation_section(*, meta, price, vin, relval, companies=None):
     st.markdown("---")
     render_header("gem", "Intrinsic Valuation (FCFE DCF) — Scenarios & Sensitivity")
     if not vin["fcfe"] or vin["fcfe"] <= 0 or not vin["shares"]:
-        st.info("⚠️ " + (vin["note"] or "No positive free cash flow — a cash-flow valuation is not meaningful.")
+        st.info((vin["note"] or "No positive free cash flow — a cash-flow valuation is not meaningful.")
                 + " Use the relative valuation and quality pillars instead.")
         return
     if not vin["reliable"] and vin["note"]:
-        st.warning("⚠️ " + vin["note"])
+        st.warning(vin["note"])
     st.caption(f"Free cash flow is after interest, so it is discounted at the cost of equity "
                f"(CAPM: {vin['currency']} risk-free {vin['risk_free']:.1%} [{vin['rate_source']}] + Blume-adjusted β×"
                f"{val.EQUITY_RISK_PREMIUM:.0%} ERP) and debt is not subtracted again. "
                f"Base cash flow: {vin['fcf_source']} (the Value score's FCF yield uses a different basis — provider TTM "
                f"FCF minus the latest SBC; see docs/FINANCIAL_DATA_DICTIONARY.md). Starting growth anchored on: "
                f"{', '.join(vin['growth_sources'])}; it fades to the terminal rate over {val.EXPLICIT_YEARS} years.")
-    st.info("🧪 **Sensitivity sandbox** — changing these inputs recomputes the scenarios below ONLY. The Decision "
+    st.info("**Sensitivity sandbox** — changing these inputs recomputes the scenarios below ONLY. The Decision "
             "Summary, scanner, alerts, watchlist and AI brief keep using the system defaults shown in the inputs' "
-            "starting values.", icon="🧪")
+            "starting values.")
     c1, c2, c3 = st.columns(3)
     g = _sticky(c1.number_input, "Starting FCF growth (%)", round(vin["growth"] * 100, 1),
                 f"dcf_g_{meta.get('ticker')}", step=1.0) / 100
@@ -366,11 +366,9 @@ def _render_model_risk(vin: dict, scen: dict, price: float):
                    + (f"; {ev / price - 1:+.0%} vs price." if ev else "."))
 
 
-def render_alert_inbox(items: list, title: str = "🔔 Alerts & Sell-Discipline Inbox"):
+def render_alert_inbox(items: list, title: str = "Alerts & Sell-Discipline Inbox"):
     if not items:
         return
     with st.expander(f"{title} ({len(items)})", expanded=True):
-        icons = {"THESIS INVALIDATED": "🔴", "TARGET REACHED": "🎯", "AT INTRINSIC VALUE": "💎",
-                 "ENTRY ZONE": "🟢", "EARNINGS SOON": "⏳", "RULE": "🔔"}
         for it in items:
-            st.markdown(f"{icons.get(it['kind'], '•')} **{it['kind']}** — {it['message']}")
+            st.markdown(f"**{it['kind']}** — {it['message']}")

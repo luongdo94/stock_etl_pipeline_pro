@@ -100,11 +100,11 @@ def render(dd, ctx):
 
             ev_raw = _num(meta.get('ev_to_ebitda'))
             ev_col = None if ev_raw is None else ("#2ecc71" if 0 < ev_raw <= 10 else ("#e74c3c" if ev_raw > 20 else None))
-            render_metric_row("EV/EBITDA", _txt(ev_raw, "{:.2f}x"), value_color=ev_col, help_text="🟢 <10x (Value) | 🔴 >20x (Expensive)")
+            render_metric_row("EV/EBITDA", _txt(ev_raw, "{:.2f}x"), value_color=ev_col, help_text="<10x (Value) | >20x (Expensive)")
 
             ps_val = _num(meta.get('price_to_sales'))
             ps_col = None if ps_val is None else ("#2ecc71" if 0 < ps_val <= 2 else ("#e74c3c" if ps_val > 10 else None))
-            render_metric_row("Price/Sales", _txt(ps_val, "{:.2f}x"), value_color=ps_col, help_text="🟢 < 2x (Cheap) | 🔴 > 10x (Expensive)")
+            render_metric_row("Price/Sales", _txt(ps_val, "{:.2f}x"), value_color=ps_col, help_text="< 2x (Cheap) | > 10x (Expensive)")
             st.markdown("</div>", unsafe_allow_html=True)
 
         with kcol2:
@@ -112,13 +112,13 @@ def render(dd, ctx):
 
             div_val = _num(meta.get('dividend_yield_pct'))
             div_col = "#2ecc71" if div_val is not None and div_val > 4 else None
-            render_metric_row("Div Yield", _txt(div_val, "{:.2f}%"), value_color=div_col, help_text="🟢 > 4% (High Yielding)")
+            render_metric_row("Div Yield", _txt(div_val, "{:.2f}%"), value_color=div_col, help_text="> 4% (High Yielding)")
 
             # Net Payout = Div + Buybacks
             net_payout = _num(meta.get('net_payout_yield_pct'))
             bb_yield   = _num(meta.get('buyback_yield_pct'))
             _pst, _pnote = payout_status(load_ticker_provenance(deep_ticker))
-            render_metric_row("Net Payout" + (f" ⚠️ {_pst}" if _pst and _pst != "OBSERVED" else ""),
+            render_metric_row("Net Payout" + (f" · {_pst}" if _pst and _pst != "OBSERVED" else ""),
                               _txt(net_payout, "{:.2f}%"),
                               delta=f"BB: {bb_yield:.1f}%" if bb_yield is not None else None,
                               help_text=(f"Payout evidence {_pst}: {_pnote}" if _pst else None))
@@ -126,12 +126,12 @@ def render(dd, ctx):
             _roe = _num(meta.get('roe'))
             roe_raw = _roe * 100 if _roe is not None else None
             roe_col = None if roe_raw is None else ("#2ecc71" if roe_raw >= 15 else ("#e74c3c" if roe_raw < 5 else None))
-            render_metric_row("ROE", _txt(roe_raw, "{:.1f}%"), value_color=roe_col, help_text="🟢 > 15% (Strong Profitability) | 🔴 < 5% (Poor)")
+            render_metric_row("ROE", _txt(roe_raw, "{:.1f}%"), value_color=roe_col, help_text="> 15% (Strong Profitability) | < 5% (Poor)")
 
             _gm = _num(meta.get('gross_margin'))
             gm_val = _gm * 100 if _gm is not None else None
             gm_col = None if gm_val is None else ("#2ecc71" if gm_val >= 40 else ("#e74c3c" if gm_val < 10 else None))
-            render_metric_row("Gross Margin", _txt(gm_val, "{:.1f}%"), value_color=gm_col, help_text="🟢 > 40% (Wide Moat) | 🔴 < 10% (Thin Margin)")
+            render_metric_row("Gross Margin", _txt(gm_val, "{:.1f}%"), value_color=gm_col, help_text="> 40% (Wide Moat) | < 10% (Thin Margin)")
 
             _om = _num(meta.get('operating_margin'))
             op_val = _om * 100 if _om is not None else None
@@ -183,7 +183,7 @@ def render(dd, ctx):
             beta_val = meta.get('beta', 1.0)
             if pd.notnull(beta_val) and beta_val != 0:
                 beta_col = "#e74c3c" if beta_val > 1.5 else ("#3498db" if beta_val < 0.8 else None)
-                render_metric_row("Beta", f"{beta_val:.2f}", value_color=beta_col, help_text="🔴 > 1.5 (High Volatility) | 🔵 < 0.8 (Defensive)")
+                render_metric_row("Beta", f"{beta_val:.2f}", value_color=beta_col, help_text="> 1.5 (High Volatility) | < 0.8 (Defensive)")
             else:
                 render_metric_row("Beta", "N/A")
             st.markdown("</div>", unsafe_allow_html=True)
@@ -219,7 +219,7 @@ def render(dd, ctx):
                     days_to_e = (e_date_obj - date.today()).days
                     if 0 <= days_to_e <= 7:
                         e_header = e_header.replace("#aabbcc", "#f39c12") # Highlight upcoming
-                        e_date_str = f"⚠️ {e_date_obj.strftime('%b %d')}"
+                        e_date_str = f"Within 7 days: {e_date_obj.strftime('%b %d')}"
                     else:
                         e_date_str = e_date_obj.strftime('%b %d, %y')
                 else:

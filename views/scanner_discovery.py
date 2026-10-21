@@ -10,7 +10,7 @@ from services.market_data import get_forex_rates
 
 
 def render():
-    with st.expander("🌐 Live TradingView Global Screener (On-Demand)", expanded=False):
+    with st.expander("Live TradingView Global Screener (On-Demand)", expanded=False):
         st.write("Fetch data directly from TradingView's servers (14 markets). External and unpinned: it is not part of the "
                  "warehouse snapshot, the stocks are not scored here and there is no Decision for them. Nothing is fetched until you press Scan.")
         
@@ -78,13 +78,14 @@ def render():
         
         col_preset, col_market = st.columns([3, 1])
         with col_preset:
-            selected_tv_preset = st.selectbox("Select TradingView Strategy:", list(tv_presets.keys()))
+            selected_tv_preset = st.selectbox("Select TradingView Strategy:", list(tv_presets.keys()),
+                                            format_func=lambda value: value.split(" ", 1)[1])
         with col_market:
             selected_tv_market = st.selectbox("Market:", tv_markets, index=0)
             
-        st.info(f"💡 **Strategy:** {tv_presets[selected_tv_preset]['description']}")
+        st.info(f"**Strategy:** {tv_presets[selected_tv_preset]['description']}")
         
-        if st.button(f"🔍 Scan {selected_tv_market.upper()} Market (Live)", type="primary"):
+        if st.button(f"Scan {selected_tv_market.upper()} Market (Live)", type="primary"):
             with st.spinner(f"Calling TradingView API for {selected_tv_market.upper()}..."):
                 import requests
                 url = f"https://scanner.tradingview.com/{selected_tv_market}/scan"

@@ -9,8 +9,8 @@ from services import research
 from views.stock_analysis.layout import layer_banner
 
 _MAX_KEPT = 6           # answers kept per ticker in the session (oldest dropped)
-_PRESET_LABELS = {"moat": "🏰 Business model & moat", "risks": "⚠️ Key risk factors", "drivers": "📈 What drove results",
-                  "capital": "💰 Capital allocation", "earnings": "🗞️ Latest earnings release"}
+_PRESET_LABELS = {"moat": "Business model & moat", "risks": "Key risk factors", "drivers": "What drove results",
+                  "capital": "Capital allocation", "earnings": "Latest earnings release"}
 
 
 def render(dd, ctx):
@@ -22,7 +22,7 @@ def render(dd, ctx):
         st.info("Set COHERE_API_KEY to ask questions (retrieval, re-ranking and the cited answer use Cohere).")
         return
     lang = st.radio("Answer language", ["English", "Vietnamese"], horizontal=True, key=f"rag_lang_{dd.ticker}")
-    tab_f, tab_d = st.tabs(["📄 Ask the filings", "❓ Why this Decision?"])
+    tab_f, tab_d = st.tabs(["Ask the filings", "Why this Decision?"])
     with tab_f:
         _filings_tab(dd, lang)
     with tab_d:
@@ -115,12 +115,12 @@ def _render_answer(item):
             st.warning("Numbers not found in the passages (check before relying on them): "
                        + ", ".join(f"{x:g}" for x in res["ungrounded"][:10]))
         if not res["citations"]:
-            st.caption("⚠️ The answer cites no passage — treat it as unsupported.")
+            st.caption("The answer cites no passage — treat it as unsupported.")
         cited = set(res["docs"]["chunk_id"].astype(str)) if not res["docs"].empty else set()
         with st.expander(f"Sources ({len(cited)} cited of {len(hits)} retrieved)"):
             for r in hits.itertuples():
                 n = numbering[str(r.chunk_id)]
-                mark = "✅" if str(r.chunk_id) in cited else "▫️"
+                mark = "Cited" if str(r.chunk_id) in cited else "Retrieved"
                 link = f" — [open filing]({r.url})" if isinstance(getattr(r, "url", None), str) else ""
                 st.markdown(f"{mark} **[{n}] {r.title}**{link}")
                 st.caption(str(r.text)[:700] + ("…" if len(str(r.text)) > 700 else ""))

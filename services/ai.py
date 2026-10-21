@@ -67,7 +67,7 @@ def _with_grounding_check(text: str, brief: str, stance=None) -> str:
     if not notes:
         return text + "\n\n<sub>Heuristic checks passed (numbers present in the brief, no conflicting rating words) — " \
                       "not a guarantee of factual accuracy.</sub>"
-    return (text + "\n\n---\n⚠️ **Heuristic checks:** " + "; ".join(notes)
+    return (text + "\n\n---\n**Heuristic checks:** " + "; ".join(notes)
             + ". Rely on the computed Decision and the figures shown elsewhere on this page.")
 
 
@@ -152,13 +152,13 @@ Analyze the following stock data and produce a concise, professional investment 
 ---
 Write a structured analysis with exactly these THREE sections:
 
-### 1. 🎯 Investment Verdict
+### 1. Investment Verdict
 One clear paragraph (3-5 sentences). Restate the System Decision above — do NOT issue your own Buy/Hold/Sell — and explain its primary driver.
 
-### 2. 📊 Technical & Fundamental Analysis
+### 2. Technical & Fundamental Analysis
 One paragraph (3-5 sentences). Analyze the interplay between technical signals and the fundamental picture. Highlight any divergence or confirmation.
 
-### 3. ⚠️ Key Risks & Catalysts
+### 3. Key Risks & Catalysts
 - Risk 1: (only from the data above)
 - Risk 2: (only from the data above)
 - Catalyst 1: (only from the data above)
@@ -323,19 +323,19 @@ Your task: explain the system's COMPUTED decision in the light of both. You do n
 ---
 Write a unified analysis with FOUR sections. Total length: under 450 words.
 
-### 💼 CIO Verdict
+### CIO Verdict
 One paragraph (3-4 sentences) summarising the evidence for and against the computed System Decision, referencing BOTH quantitative and qualitative data.
 
-### 💡 Signal Convergence Analysis
+### Signal Convergence Analysis
 One paragraph on the interplay between news sentiment and fundamentals. If diverging, state which side you trust more and why.
 
-### 🎯 System Decision (computed by the deterministic engine — restate it, do NOT change it)
+### System Decision (computed by the deterministic engine — restate it, do NOT change it)
 {decision_brief(metrics.get('decision'))}
 Explain in 2-3 sentences why the engine reached this stance, using only numbers given in this brief. If the news
 intelligence contradicts it, say so explicitly as a RISK TO MONITOR — you may not upgrade or downgrade the stance,
 and you may not state any price target or scenario value other than the ones listed above.
 
-### ⚠️ Key Risks to Monitor
+### Key Risks to Monitor
 3 concise bullet points on the most material risks.
 
 
@@ -351,14 +351,14 @@ Rules: Your final output MUST be written in {language} (translate section header
     except Exception as e:
         err = str(e)
         if "invalid api key" in err.lower() or "unauthorized" in err.lower():
-            return "❌ **Invalid API Key.** Please check your Cohere API Key.", ""
+            return "**Invalid API Key.** Please check your Cohere API Key.", ""
         elif "rate limit" in err.lower():
-            return "⏳ **Rate limit reached.** Please wait a moment and try again.", ""
+            return "**Rate limit reached.** Please wait a moment and try again.", ""
         else:
-            return f"❌ **AI Engine Error:** {err}", ""
+            return f"**AI Engine Error:** {err}", ""
 
 
-@st.cache_resource(show_spinner="📥 Loading Institutional NLP Engine (FinBERT ~440MB)...")
+@st.cache_resource(show_spinner="Loading Institutional NLP Engine (FinBERT ~440MB)...")
 def get_finbert_pipeline():
     """Loads the ProsusAI/finbert model for financial-specific sentiment analysis."""
     import os

@@ -62,12 +62,12 @@ def render_data_status(fresh: dict, n_exceptions: int = 0):
     dq_txt = {"CLEAN": "checks clean", "WARN": f"{dq['warnings']} check warning(s)",
               "CRIT": f"{dq['critical']} critical check(s)", "UNKNOWN": "checks unavailable"}[dq["state"]]
     dq_col = {"CLEAN": "#2ecc71", "WARN": "#f1c40f", "CRIT": "#e74c3c", "UNKNOWN": "#8899aa"}[dq["state"]]
-    exc = f"<br><span class='sb-muted'>{n_exceptions} ticker exception(s) — 🩺 Data Health</span>" if n_exceptions else ""
+    exc = f"<br><span class='sb-muted'>{n_exceptions} ticker exception(s) — Data Health</span>" if n_exceptions else ""
     st.sidebar.markdown(
         f"<div class='sb-card'><span style='color:{colour};font-weight:700;'>● {word}</span><br>{px}{fresh_share}<br>"
         f"<span class='sb-muted'>{fund}<br>{etl}</span><br>"
         f"<span class='sb-muted'>Data quality: <span style='color:{dq_col};font-weight:700;'>● {dq_txt}</span></span>{exc}</div>", unsafe_allow_html=True)
-    if st.sidebar.button("🔄 Check for new data", width="stretch", key="sb_check_data",
+    if st.sidebar.button("Check for new data", width="stretch", key="sb_check_data",
                          help="Looks for a newer warehouse snapshot and reloads only what depends on it. It does not "
                               "run the ETL or fetch new data from the providers."):
         from services.db import check_for_new_data
@@ -154,7 +154,7 @@ def render_macro_panel(macro, fred=None, live=None):
     `live` = {"version", "macro", "fred", "at"} as kept by the button; ignored once the snapshot changed."""
     ss = st.session_state
     with st.sidebar.expander("Macro — US rates & economy", expanded=False):
-        if st.button("🌐 Fetch live rates & economy", key="sb_live_macro", width="stretch",
+        if st.button("Fetch live rates & economy", key="sb_live_macro", width="stretch",
                      help="Asks Yahoo (rates, VIX, dollar) and FRED (CPI, unemployment, Fed funds) now. Shown here only — "
                           "the Decision and the regime keep using the closes stored in the snapshot."):
             from datetime import datetime
