@@ -7,6 +7,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from core import earnings as er
+from core import earnings_highlights as _eh
 from services import earnings as svc
 
 from ui.components import format_value
@@ -330,14 +331,20 @@ def render(ctx):
                        "surprise % is real but not comparable — counted as a beat / miss, left out of averages.")
 
         q = ctx.get("quarterly_fin", pd.DataFrame())
-        if not q.empty and "revenue_growth_yoy_pct" in q.columns:
-            qq = q[q["ticker"] == t].sort_values(["year", "quarter"]).tail(8)
-            if not qq.empty:
-                st.markdown("**Reported revenue and EPS growth (year on year, last 8 quarters)**")
-                st.dataframe(pd.DataFrame({"Quarter": qq["year"].astype(str) + " Q" + qq["quarter"].astype(str),
-                                           "Revenue YoY": qq["revenue_growth_yoy_pct"], "EPS YoY": qq["eps_growth_yoy_pct"]}),
-                             hide_index=True, width="stretch",
-                             column_config={c: st.column_config.NumberColumn(format="%+.1f%%") for c in ("Revenue YoY", "EPS YoY")})
+        gh = _eh.growth_history(t, events, q)
+        if not gh.empty:
+            st.markdown("**Reported EPS and revenue growth (year on year, last 8 reports)**")
+            st.dataframe(gh, hide_index=True, width="stretch", column_config={
+                "Reported": st.column_config.DateColumn(format="YYYY-MM-DD"),
+                "Quarter end": st.column_config.DateColumn(format="YYYY-MM-DD"),
+                "EPS": st.column_config.NumberColumn(format="%.2f"),
+                "EPS year ago": st.column_config.NumberColumn(format="%.2f"),
+                "EPS YoY %": st.column_config.NumberColumn(format="%+.1f%%"),
+                "Revenue YoY %": st.column_config.NumberColumn(format="%+.1f%%")})
+            st.caption("EPS is as reported to analysts, in the reporting currency; a year-ago EPS of zero or below gives no "
+                       "percentage. Revenue growth needs the same quarter a year earlier, and the data provider serves only "
+                       "about the last 5 quarterly statements, so older rows are blank (the history fills in as the ETL stores "
+                       "each new quarter) — blank means not stored, not zero.")
 
         # AI note
         st.markdown("---")
@@ -348,7 +355,6 @@ def render(ctx):
                           help="Or set COHERE_API_KEY in the environment.")
         last = rt.iloc[0] if not rt.empty else None
         try:
-            from core import earnings_highlights as _eh
             from services.db import load_estimate_snapshots as _les
             _hl = _eh.facts_line(_eh.latest_report(t, ctx.get("quarterly_fin"), ctx.get("hist_fcf_q_full"), events,
                                                    _les(ctx.get("data_version"))))

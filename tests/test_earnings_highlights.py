@@ -88,6 +88,24 @@ def test_consensus_snapshot_is_dated_by_its_fetch_and_keeps_the_first_copy_of_a_
     assert es.snapshot(duckdb.connect(":memory:")) == 0   # no estimates table: skipped, not an error
 
 
+def test_growth_history_uses_the_event_history_and_leaves_missing_revenue_blank():
+    ts = pd.to_datetime(["2025-01-21", "2025-04-17", "2025-07-17", "2025-10-21", "2026-01-20", "2026-04-16", "2026-07-16"], utc=True)
+    ev = pd.DataFrame({"ticker": "NFLX", "earnings_ts": ts, "eps_actual": [0.43, 0.66, 0.72, 0.59, 0.56, 1.23, 0.80],
+                       "eps_estimate": 0.5, "surprise_pct": 0.0})
+    q = pd.DataFrame({"ticker": "NFLX", "report_date": pd.to_datetime(["2026-03-31", "2026-06-30"]),
+                      "revenue_growth_yoy_pct": [None, 13.37]})
+    g = eh.growth_history("NFLX", ev, q)
+    assert list(g["Reported"].dt.strftime("%Y-%m-%d"))[:2] == ["2026-07-16", "2026-04-16"]          # newest first
+    latest, prev = g.iloc[0], g.iloc[1]
+    assert latest["EPS YoY %"] == pytest.approx((0.80 / 0.72 - 1) * 100) and latest["Revenue YoY %"] == 13.37
+    assert latest["Quarter end"] == pd.Timestamp("2026-06-30")
+    assert prev["EPS YoY %"] == pytest.approx((1.23 / 0.66 - 1) * 100) and pd.isna(prev["Revenue YoY %"])   # not stored: blank
+    assert pd.isna(g.iloc[-1]["EPS YoY %"])                                  # the oldest report has no year-ago report
+    neg = ev.assign(eps_actual=[-0.2, 0.66, 0.72, 0.59, 0.56, 1.23, 0.80])    # a loss a year ago: no percentage, not a huge one
+    assert pd.isna(eh.growth_history("NFLX", neg, q).iloc[3]["EPS YoY %"])
+    assert eh.growth_history("ZZZ", ev, q).empty and eh.growth_history("NFLX", None, q).empty
+
+
 @pytest.mark.smoke
 def test_earnings_single_stock_shows_the_latest_quarter(warehouse):
     at = _app("🗓️ Earnings")

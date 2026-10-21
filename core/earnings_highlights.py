@@ -143,3 +143,40 @@ def fmt_amount(v: Optional[float]) -> str:
     a = abs(v)
     s = f"{a / 1e9:,.2f}B" if a >= 1e9 else f"{a / 1e6:,.1f}M" if a >= 1e6 else f"{a:,.0f}"
     return ("-" if v < 0 else "") + "€" + s
+
+
+def growth_history(ticker: str, events: Optional[pd.DataFrame], quarterly: Optional[pd.DataFrame], n: int = 8) -> pd.DataFrame:
+    """The last `n` reports with EPS and revenue growth against the same quarter a year earlier.
+
+    EPS comes from the report events (24 quarters stored, reporting currency, split-adjusted by the provider): the change
+    is against the report about a year before (330-400 days), and a year-ago EPS that is zero or negative gives no
+    percentage. Revenue growth comes from the stored statements (only the quarters the provider still serves, so older
+    rows stay blank) and is matched to the report by its quarter end. Anything not stored stays NaN, never 0.
+    Columns: Reported, Quarter end, EPS, EPS year ago, EPS YoY %, Revenue YoY %."""
+    cols = ["Reported", "Quarter end", "EPS", "EPS year ago", "EPS YoY %", "Revenue YoY %"]
+    if events is None or events.empty:
+        return pd.DataFrame(columns=cols)
+    e = events[(events["ticker"] == ticker) & events["eps_actual"].notna()].copy()
+    if e.empty:
+        return pd.DataFrame(columns=cols)
+    e["_ts"] = pd.to_datetime(e["earnings_ts"], utc=True).dt.tz_convert(None)
+    e = e.sort_values("_ts").reset_index(drop=True)
+    q = pd.DataFrame()
+    if quarterly is not None and not quarterly.empty and "ticker" in quarterly.columns:
+        q = quarterly[quarterly["ticker"] == ticker].copy()
+        q["report_date"] = pd.to_datetime(q["report_date"])
+    rows = []
+    for i in range(len(e)):
+        ts, eps = e.loc[i, "_ts"], _num(e.loc[i, "eps_actual"])
+        ago = e[(e["_ts"] >= ts - pd.Timedelta(days=400)) & (e["_ts"] <= ts - pd.Timedelta(days=330))]
+        eps_ago = _num(ago.iloc[-1]["eps_actual"]) if not ago.empty else None
+        yoy = (eps / eps_ago - 1) * 100 if eps is not None and eps_ago is not None and eps_ago > 0 else None
+        end = rev = None
+        if not q.empty:
+            prior = q[(q["report_date"] < ts) & (q["report_date"] >= ts - pd.Timedelta(days=REPORT_WINDOW_DAYS))]
+            if not prior.empty:
+                last = prior.sort_values("report_date").iloc[-1]
+                end, rev = last["report_date"], _num(last.get("revenue_growth_yoy_pct"))
+        rows.append({"Reported": ts.normalize(), "Quarter end": end, "EPS": eps, "EPS year ago": eps_ago,
+                     "EPS YoY %": yoy, "Revenue YoY %": rev})
+    return pd.DataFrame(rows, columns=cols).tail(n).iloc[::-1].reset_index(drop=True)
