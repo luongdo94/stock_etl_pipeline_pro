@@ -576,6 +576,11 @@ def _run_pipeline_locked(lookback_days, force_full, fast_mode):
                 macro_indicators.refresh(conn)
             except Exception as e:
                 logger.warning(f"   ⚠️ Economic indicators skipped: {type(e).__name__}: {e}")
+            try:                                                  # the consensus before each report (Earnings tab)
+                from etl import estimate_snapshots
+                estimate_snapshots.snapshot(conn)
+            except Exception as e:
+                logger.warning(f"   ⚠️ Consensus snapshot skipped: {type(e).__name__}: {e}")
             if rebased_full is not None:
                 replaced, skipped = replace_ticker_prices(conn, rebased_full, cfg["price_integrity"]["min_rebase_ratio"])
                 logger.info(f"   🔁 Rebased {len(replaced)} ticker histories ({len(skipped)} ignored)")

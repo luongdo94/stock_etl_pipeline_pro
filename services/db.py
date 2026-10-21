@@ -844,6 +844,16 @@ def load_decision_snapshots(generation=None) -> pd.DataFrame:
 
 
 @snapshot_cached(ttl=600)
+def load_estimate_snapshots(generation=None) -> pd.DataFrame:
+    """The next-quarter consensus the ETL recorded each day (raw.estimate_snapshots); empty when not in this snapshot."""
+    try:
+        with get_db_connection(read_only=True) as conn:
+            return conn.execute("SELECT * FROM raw.estimate_snapshots").df()
+    except Exception:
+        return pd.DataFrame(columns=["ticker", "as_of", "eps_est_0q_avg", "rev_est_0q_avg", "eps_est_0q_n_analysts"])
+
+
+@snapshot_cached(ttl=600)
 def load_macro_indicators(generation=None) -> pd.DataFrame:
     """Stored economic observations; empty.attrs['unavailable'] distinguishes absent table from read failure."""
     try:

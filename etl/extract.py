@@ -1311,6 +1311,7 @@ def extract_quarterly_financials(tickers: dict = None) -> pd.DataFrame:
             "BasicEPS": "eps", 
             "DilutedEPS": "eps_diluted",
             "NetIncome": "net_income",
+            "OperatingIncome": "operating_income",
             "StockholdersEquity": "total_equity"
         }
         
@@ -1327,7 +1328,7 @@ def extract_quarterly_financials(tickers: dict = None) -> pd.DataFrame:
             t_filtered = t_data[["asOfDate"] + found_cols].rename(columns={"asOfDate": "date"}).rename(columns=row_map)
             
             # Ensure all target columns exist even if missing from source
-            for col in ["revenue", "net_income", "total_equity", "eps", "eps_diluted"]:
+            for col in ["revenue", "net_income", "total_equity", "eps", "eps_diluted", "operating_income"]:
                 if col not in t_filtered.columns:
                     t_filtered[col] = pd.NA
                 else:

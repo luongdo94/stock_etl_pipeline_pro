@@ -1,0 +1,96 @@
+"""Latest-quarter highlights on the Earnings tab: stored figures only, consensus only when recorded before the report,
+unknown is N/A, growth in the statement currency; and the daily consensus snapshot."""
+import os
+import sys
+from datetime import date
+
+import duckdb
+import pandas as pd
+import pytest
+
+sys.path.insert(0, os.path.dirname(__file__))
+from core import earnings_highlights as eh  # noqa: E402
+from etl import estimate_snapshots as es  # noqa: E402
+from test_app_smoke import _app, warehouse  # noqa: E402,F401
+
+
+def _q():
+    return pd.DataFrame({
+        "ticker": "NFLX", "report_date": pd.to_datetime(["2025-09-30", "2026-06-30", "2026-09-30"]),
+        "revenue": [10.0e9, 11.0e9, 11.5e9], "net_income": [2.0e9, 3.0e9, 3.2e9], "operating_income": [3.0e9, 3.8e9, 4.0e9],
+        "revenue_growth_yoy_pct": [None, None, 15.0], "eps_growth_yoy_pct": [None, None, 49.0],
+        "net_income_growth_yoy_pct": [None, None, 60.0], "operating_income_growth_yoy_pct": [None, None, 33.3],
+        "src_currency": "USD", "fx_to_eur": 0.9})
+
+
+def _events():
+    return pd.DataFrame({"ticker": "NFLX", "earnings_ts": pd.to_datetime(["2026-10-20 20:00", "2026-07-16 20:00"], utc=True),
+                         "eps_estimate": [0.82, 0.70], "eps_actual": [0.87, 0.72], "surprise_pct": [0.06, 0.03]})
+
+
+def _lines(h):
+    return {l["label"]: l for l in h["lines"]}
+
+
+def test_latest_quarter_with_eps_pair_growth_and_margins():
+    fcf = pd.DataFrame({"ticker": "NFLX", "year": [2025, 2026], "quarter": [3, 3], "free_cash_flow": [2.0e9, 2.5e9]})
+    h = eh.latest_report("NFLX", _q(), fcf, _events())
+    assert h["period"].startswith("Q3 2026") and h["reported"] == pd.Timestamp("2026-10-20 20:00", tz="UTC")
+    l = _lines(h)
+    assert l["EPS"]["value"] == 0.87 and l["EPS"]["estimate"] == 0.82 and l["EPS"]["vs"] == "Beat" and l["EPS"]["unit"] == "USD"
+    assert l["Revenue"]["yoy_pct"] == 15.0 and l["Revenue"]["estimate"] is None and "no consensus" in l["Revenue"]["note"]
+    assert l["Operating margin"]["value"] == pytest.approx(4.0 / 11.5 * 100)
+    assert l["Operating margin"]["yoy_bps"] == pytest.approx((4.0 / 11.5 - 3.0 / 10.0) * 1e4)
+    assert l["Free cash flow"]["yoy_pct"] == pytest.approx(25.0)
+
+
+def test_revenue_consensus_only_when_recorded_before_the_report_and_compared_in_the_same_currency():
+    snaps = pd.DataFrame({"ticker": "NFLX", "as_of": pd.to_datetime(["2026-10-19", "2026-10-21"]),
+                          "rev_est_0q_avg": [12.0e9, 99e9], "eps_est_0q_avg": [0.82, 0.9]})
+    h = eh.latest_report("NFLX", _q(), None, _events(), snaps)
+    rev = _lines(h)["Revenue"]
+    assert rev["estimate"] == pytest.approx(12.0e9 * 0.9)              # the snapshot before 20 Oct, converted like actuals
+    assert rev["vs"] == "Beat" and "recorded 2026-10-19" in rev["note"]
+
+
+def test_unknown_stays_unknown():
+    q = _q().assign(operating_income=None)
+    h = eh.latest_report("NFLX", q, None, None)
+    l = _lines(h)
+    assert l["Operating income"]["value"] is None and l["Operating margin"]["value"] is None
+    assert l["EPS"]["value"] is None and l["EPS"]["vs"] is None and "no report event" in l["EPS"]["note"]
+    assert l["Free cash flow"]["value"] is None and h["reported"] is None
+    assert eh.latest_report("ZZZ", _q(), None, None) is None and eh.latest_report("NFLX", pd.DataFrame(), None, None) is None
+    assert eh.fmt_amount(None) == "N/A" and eh.fmt_amount(12.87e9) == "€12.87B" and eh.fmt_amount(-4.1e8) == "-€410.0M"
+    assert "Operating income N/A" in eh.facts_line(h)
+
+
+def test_in_line_and_miss():
+    assert eh._vs(1.001, 1.0) == "In line" and eh._vs(0.9, 1.0) == "Miss" and eh._vs(-0.1, -0.2) == "Beat"
+    assert eh._vs(None, 1.0) is None and eh._vs(1.0, 0) is None
+
+
+def test_consensus_snapshot_keeps_the_first_copy_of_a_day():
+    conn = duckdb.connect(":memory:")
+    conn.execute("CREATE SCHEMA raw")
+    conn.execute("CREATE TABLE raw.forward_estimates (ticker VARCHAR, eps_est_0q_avg DOUBLE, rev_est_0q_avg DOUBLE, "
+                 "eps_est_0q_n_analysts DOUBLE)")
+    conn.execute("INSERT INTO raw.forward_estimates VALUES ('A', 1.0, 10.0, 5), ('B', NULL, NULL, NULL)")
+    assert es.snapshot(conn, date(2026, 10, 19)) == 1
+    conn.execute("UPDATE raw.forward_estimates SET eps_est_0q_avg = 2.0 WHERE ticker = 'A'")
+    assert es.snapshot(conn, date(2026, 10, 19)) == 0                  # same day: the first knowledge is kept
+    assert es.snapshot(conn, date(2026, 10, 20)) == 1
+    assert conn.execute("SELECT eps_est_0q_avg FROM raw.estimate_snapshots ORDER BY as_of").fetchall() == [(1.0,), (2.0,)]
+    assert es.snapshot(duckdb.connect(":memory:"), date(2026, 10, 20)) == 0   # no estimates table: skipped, not an error
+
+
+@pytest.mark.smoke
+def test_earnings_single_stock_shows_the_latest_quarter(warehouse):
+    at = _app("🗓️ Earnings")
+    at.session_state["_kept::er_section"] = "Single stock"
+    at.session_state["active_ticker"] = "AAPL"
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert any("Latest reported quarter" in m.value for m in at.markdown)
+    tables = [d.value for d in at.dataframe if "vs a year ago" in getattr(d.value, "columns", [])]
+    assert tables and set(tables[0]["Item"]) >= {"Revenue", "EPS", "Operating margin", "Free cash flow"}

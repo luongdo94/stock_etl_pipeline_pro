@@ -172,9 +172,14 @@ instead of guessing. Do not give a buy / sell recommendation. Use these markdown
 
 ### Headline numbers vs expectations
 ### Guidance / outlook
+(each figure with the period it covers, and the consensus only if the source states it)
+### Segment and regional revenue
+(as reported, with the year-on-year change when stated)
 ### What drove the quarter
 ### Risks and red flags
 ### Management tone
+### Other announcements
+(products, partnerships, buybacks, dividends — only those in the source)
 ### What to watch next quarter
 """
 
@@ -185,6 +190,8 @@ SECTION_QUERIES = ["revenue net income earnings per share results compared with 
                    "driven by growth decline margin demand pricing segment volume",
                    "risk headwind uncertainty impairment charge restructuring litigation tariff",
                    "chief executive officer said commented pleased confident",
+                   "segment region geography revenue by segment operating segment",
+                   "announced launch partnership agreement repurchase dividend",
                    "next quarter pipeline backlog orders investment plans"]
 
 

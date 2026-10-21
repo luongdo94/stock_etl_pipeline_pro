@@ -286,9 +286,11 @@ def build_financial_dims(conn) -> None:
     conn.execute(f"""
         CREATE OR REPLACE TABLE marts.dim_quarterly_financials AS
         WITH q AS (
-            SELECT ticker, date, revenue, net_income, total_equity, eps, eps_diluted, src_currency,
-                   available_date, available_source,
-                   revenue / COALESCE(NULLIF(fx_to_eur, 0), 1) AS rev_l, eps / COALESCE(NULLIF(fx_to_eur, 0), 1) AS eps_l
+            SELECT ticker, date, revenue, net_income, total_equity, eps, eps_diluted, src_currency, fx_to_eur,
+                   operating_income, available_date, available_source,
+                   revenue / COALESCE(NULLIF(fx_to_eur, 0), 1) AS rev_l, eps / COALESCE(NULLIF(fx_to_eur, 0), 1) AS eps_l,
+                   net_income / COALESCE(NULLIF(fx_to_eur, 0), 1) AS ni_l,
+                   operating_income / COALESCE(NULLIF(fx_to_eur, 0), 1) AS oi_l
             FROM raw.quarterly_financials
             -- DEDUPLICATION: Take the most recent extraction for each ticker/date
             QUALIFY ROW_NUMBER() OVER (PARTITION BY ticker, date ORDER BY _loaded_at DESC) = 1
@@ -311,6 +313,13 @@ def build_financial_dims(conn) -> None:
                 AS revenue_growth_yoy_pct,
             CASE WHEN y.src_currency IS NOT DISTINCT FROM p.src_currency THEN {_growth('p.eps_l', 'y.eps_l')} END
                 AS eps_growth_yoy_pct,
+            p.operating_income, p.src_currency, p.fx_to_eur,
+            CASE WHEN y.src_currency IS NOT DISTINCT FROM p.src_currency THEN {_growth('p.ni_l', 'y.ni_l')} END
+                AS net_income_growth_yoy_pct,
+            CASE WHEN y.src_currency IS NOT DISTINCT FROM p.src_currency THEN {_growth('p.oi_l', 'y.oi_l')} END
+                AS operating_income_growth_yoy_pct,
+            y.revenue AS revenue_year_ago, y.net_income AS net_income_year_ago,
+            y.operating_income AS operating_income_year_ago,
             p.available_date, p.available_source
         FROM p
         LEFT JOIN q y ON y.ticker = p.ticker AND date_diff('day', y.date, p.date) BETWEEN 350 AND 380

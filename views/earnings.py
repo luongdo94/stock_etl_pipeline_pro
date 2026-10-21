@@ -102,6 +102,46 @@ def _pending(events, cal_all, now, days) -> pd.DataFrame:
         else pd.DataFrame(columns=cols)
 
 
+def _latest_report(ticker, events, ctx):
+    """What the latest reported quarter showed: reported vs consensus (when recorded) and vs a year ago."""
+    from core import earnings_highlights as eh
+    from services.db import load_estimate_snapshots
+    h = eh.latest_report(ticker, ctx.get("quarterly_fin"), ctx.get("hist_fcf_q_full"), events,
+                         load_estimate_snapshots(ctx.get("data_version")))
+    st.markdown(f"**Latest reported quarter** · {h['period']}" if h else "**Latest reported quarter**")
+    if not h:
+        st.info("No quarterly statements are stored for this stock.")
+        return
+
+    def val(line):
+        v = line["value"]
+        if line["unit"] == "%":
+            return "N/A" if v is None else f"{v:.1f}%"
+        if line["unit"] == "EUR":
+            return eh.fmt_amount(v)
+        return "N/A" if v is None else f"{v:,.2f} {line['unit']}"
+
+    def est(line):
+        e = line.get("estimate")
+        if e is None:
+            return "—"
+        return eh.fmt_amount(e) if line["unit"] == "EUR" else f"{e:,.2f}"
+
+    def change(line):
+        if line.get("yoy_bps") is not None:
+            return f"{line['yoy_bps']:+,.0f} bps"
+        y = line.get("yoy_pct")
+        return "N/A" if y is None else f"{y:+.1f}%"
+    st.dataframe(pd.DataFrame({
+        "Item": [l["label"] for l in h["lines"]], "Reported": [val(l) for l in h["lines"]],
+        "Estimate": [est(l) for l in h["lines"]], "vs estimate": [l["vs"] or "—" for l in h["lines"]],
+        "vs a year ago": [change(l) for l in h["lines"]], "Note": [l.get("note", "") for l in h["lines"]]}),
+        hide_index=True, width="stretch")
+    rep = f"Reported {h['reported']:%Y-%m-%d}. " if h["reported"] is not None else "Report date not stored. "
+    st.caption(rep + h["sources"] + " Growth is in the statement currency. Guidance, segment revenue and management "
+               "commentary are not part of the stored data; the AI note below (on request) reads the press release.")
+
+
 def render(ctx):
     prices_full, companies = ctx["prices_full"], ctx["companies_full"]
     m_df, fe = ctx["m_df"], ctx.get("forward_estimates_full", pd.DataFrame())
@@ -231,6 +271,7 @@ def render(ctx):
                     unsafe_allow_html=True)
         st.caption("Upcoming dates and times come from Yahoo and can be estimates until the company confirms them; "
                    "times are shown in the exchange's time zone.")
+        _latest_report(t, events, ctx)
 
         if rt.empty:
             st.info("No reported quarter with price data to measure a reaction.")
@@ -287,7 +328,14 @@ def render(ctx):
             sticky(st.text_input, "Cohere API key (kept only for this session)", "", "cohere_api_key", type="password",
                           help="Or set COHERE_API_KEY in the environment.")
         last = rt.iloc[0] if not rt.empty else None
-        facts = "\n".join(filter(None, [
+        try:
+            from core import earnings_highlights as _eh
+            from services.db import load_estimate_snapshots as _les
+            _hl = _eh.facts_line(_eh.latest_report(t, ctx.get("quarterly_fin"), ctx.get("hist_fcf_q_full"), events,
+                                                   _les(ctx.get("data_version"))))
+        except Exception:
+            _hl = None
+        facts = "\n".join(filter(None, [_hl,
             f"- Latest report: {_local(last['earnings_ts'], t)[0]}; EPS {last['eps_actual']} vs consensus {last['eps_estimate']} "
             f"(surprise {_pct(last['surprise_pct'])}); 2-day price reaction {_pct(last['ret_2d'])}." if last is not None else None,
             f"- Beat rate over the last {b['n']} reports: {_pct(b['beat_rate'], 0, False)}." if b["n"] else None,

@@ -278,6 +278,8 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
             conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS total_equity DOUBLE")
             conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS src_currency VARCHAR")
             conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS fx_to_eur DOUBLE")
+            if table == "raw.quarterly_financials":
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS operating_income DOUBLE")
         except Exception as e:
             logger.debug(f"Migration for {table} skipped or failed: {e}")
 
@@ -1026,12 +1028,15 @@ def load_quarterly_financials(
         return 0
 
     df = _with_provenance(df)
+    if "operating_income" not in df.columns:
+        df = df.assign(operating_income=None)
+    conn.execute("ALTER TABLE raw.quarterly_financials ADD COLUMN IF NOT EXISTS operating_income DOUBLE")
     before = _snapshot_values(conn, "raw.quarterly_financials", df)
     conn.register("df_tmp", df)
     # INSERT OR REPLACE uses PRIMARY KEY (ticker, date) — does NOT wipe historical rows
     # that are absent from the current extract (e.g. 2022 data won't be deleted when 2025 is fetched)
     conn.execute("""
-        INSERT OR REPLACE INTO raw.quarterly_financials (ticker, date, revenue, net_income, total_equity, eps, eps_diluted, _loaded_at, src_currency, fx_to_eur)
+        INSERT OR REPLACE INTO raw.quarterly_financials (ticker, date, revenue, net_income, total_equity, eps, eps_diluted, _loaded_at, src_currency, fx_to_eur, operating_income)
         SELECT 
             ticker, 
             CAST(date AS DATE), 
@@ -1042,7 +1047,8 @@ def load_quarterly_financials(
             eps_diluted, 
             CURRENT_TIMESTAMP,
             CAST(src_currency AS VARCHAR),
-            CAST(fx_to_eur AS DOUBLE)
+            CAST(fx_to_eur AS DOUBLE),
+            CAST(operating_income AS DOUBLE)
         FROM df_tmp
     """)
     conn.unregister("df_tmp")
