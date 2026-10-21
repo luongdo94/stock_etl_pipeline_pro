@@ -70,18 +70,22 @@ def test_in_line_and_miss():
     assert eh._vs(None, 1.0) is None and eh._vs(1.0, 0) is None
 
 
-def test_consensus_snapshot_keeps_the_first_copy_of_a_day():
+def test_consensus_snapshot_is_dated_by_its_fetch_and_keeps_the_first_copy_of_a_day():
     conn = duckdb.connect(":memory:")
     conn.execute("CREATE SCHEMA raw")
     conn.execute("CREATE TABLE raw.forward_estimates (ticker VARCHAR, eps_est_0q_avg DOUBLE, rev_est_0q_avg DOUBLE, "
-                 "eps_est_0q_n_analysts DOUBLE)")
-    conn.execute("INSERT INTO raw.forward_estimates VALUES ('A', 1.0, 10.0, 5), ('B', NULL, NULL, NULL)")
-    assert es.snapshot(conn, date(2026, 10, 19)) == 1
+                 "eps_est_0q_n_analysts DOUBLE, _loaded_at TIMESTAMP)")
+    conn.execute("INSERT INTO raw.forward_estimates VALUES ('A', 1.0, 10.0, 5, '2026-10-14 07:40'), "
+                 "('B', NULL, NULL, NULL, '2026-10-14 07:40'), ('C', 3.0, 30.0, 2, NULL)")
+    assert es.snapshot(conn) == 1                                      # A under its fetch day; C has no fetch time
+    assert es.snapshot(conn) == 0                                      # nothing refetched (fast run): no relabelled copy
     conn.execute("UPDATE raw.forward_estimates SET eps_est_0q_avg = 2.0 WHERE ticker = 'A'")
-    assert es.snapshot(conn, date(2026, 10, 19)) == 0                  # same day: the first knowledge is kept
-    assert es.snapshot(conn, date(2026, 10, 20)) == 1
-    assert conn.execute("SELECT eps_est_0q_avg FROM raw.estimate_snapshots ORDER BY as_of").fetchall() == [(1.0,), (2.0,)]
-    assert es.snapshot(duckdb.connect(":memory:"), date(2026, 10, 20)) == 0   # no estimates table: skipped, not an error
+    assert es.snapshot(conn) == 0                                      # same fetch day: the first knowledge is kept
+    conn.execute("UPDATE raw.forward_estimates SET _loaded_at = '2026-10-20 07:40' WHERE ticker = 'A'")
+    assert es.snapshot(conn) == 1
+    assert conn.execute("SELECT as_of, eps_est_0q_avg FROM raw.estimate_snapshots WHERE ticker = 'A' ORDER BY as_of"
+                        ).fetchall() == [(date(2026, 10, 14), 1.0), (date(2026, 10, 20), 2.0)]
+    assert es.snapshot(duckdb.connect(":memory:")) == 0   # no estimates table: skipped, not an error
 
 
 @pytest.mark.smoke

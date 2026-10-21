@@ -54,7 +54,7 @@ def get_etl_config() -> dict:
     default_config = {
         "extraction": {"max_workers": 8, "insiders": True},
         "incremental_load": {"lookback_days_full": 1825, "overlap_buffer_days": 2},
-        "refresh_intervals": {"fundamentals_hours": 168, "metadata_hours": 168, "earnings_hours": 168, "insider_hours": 168},
+        "refresh_intervals": {"fundamentals_hours": 144, "metadata_hours": 144, "earnings_hours": 144, "insider_hours": 144},
         "price_integrity": {"drift_tolerance": 0.002, "rebase_every_days": 7, "min_rebase_ratio": 0.5},
         "universe": {"discovery_retention_days": 30},
         "lifecycle": {"inactive_after_days": 10, "unexplained_jump_pct": 40, "market_quiet_pct": 5},

@@ -1,7 +1,10 @@
 """Stock ETL — Airflow DAG.
 
 Two tasks, `python run.py --fast --no-sync` then `python run.py --only-sync`, every day at 07:30 German time (Europe/Berlin, daylight saving included), Monday to
-Saturday (Saturday picks up Friday's close). run.py already does everything else — lock against overlap, extraction,
+Saturday (Saturday picks up Friday's close). On Mondays the first task runs without --fast: a fast run never refetches
+the earnings calendar, the earnings events (the reported EPS pair) or insider data, and refetches statements and estimates
+only for tickers that are out of date; the weekly normal (still incremental) run refreshes whatever is older than
+etl_config refresh_intervals (6 days). run.py already does everything else — lock against overlap, extraction,
 data-quality gates, atomic swap, score snapshot, Supabase publication — and sends its own e-mail (SMTP_* /
 ALERT_EMAIL_TO / ETL_NOTIFY_SUCCESS in .env, see etl/notify.py). Airflow only schedules, retries once and shows the log,
 so there is no second notification channel here.
@@ -22,7 +25,7 @@ default_args = {"owner": "stock-etl", "retries": 1, "retry_delay": timedelta(min
 
 @dag(
     dag_id="stock_etl_fast",
-    description="python run.py --fast at 07:30 Europe/Berlin, Mon-Sat",
+    description="python run.py at 07:30 Europe/Berlin, Mon-Sat: --fast except on Mondays",
     schedule="30 7 * * 1-6",
     start_date=pendulum.datetime(2026, 10, 1, tz="Europe/Berlin"),
     catchup=False,                            # a missed day is not replayed: the next run reads the latest prices anyway
@@ -32,11 +35,13 @@ default_args = {"owner": "stock-etl", "retries": 1, "retry_delay": timedelta(min
 )
 def stock_etl_fast():
     env = {"PYTHONIOENCODING": "utf-8", "PYTHONPATH": PROJECT}
+    # the run's own date (data_interval_end; logical_date is the previous slot): Monday → normal run, else --fast
+    mode = "{{ '' if data_interval_end.in_timezone('Europe/Berlin').strftime('%a') == 'Mon' else '--fast' }}"
     # Two tasks, so a cloud outage retries only the publication and never re-runs a finished extraction:
     # run.py --no-sync leaves the validated warehouse in place; run.py --only-sync publishes it.
     etl = BashOperator(
         task_id="run_etl",
-        bash_command=f"cd {PROJECT} && {PYTHON} run.py --fast --no-sync",
+        bash_command=f"cd {PROJECT} && {PYTHON} run.py {mode} --no-sync",
         env=env,
         append_env=True,                      # keep PATH and the variables compose passes in from .env
         execution_timeout=timedelta(hours=3),

@@ -9,11 +9,13 @@ incremental_load:
   lookback_days_full: 1825        # history pulled on a full refresh and when a ticker's price history is rebased
   overlap_buffer_days: 2          # days re-downloaded before each ticker's watermark (also used to detect dividend/split drift)
 
+# Age after which a non-fast run refetches these. Under a week (144 h = 6 days), so the weekly non-fast run of the
+# Airflow DAG (Mondays) always finds last Monday's data due, even when it starts a few minutes earlier than last time.
 refresh_intervals:
-  fundamentals_hours: 168   # quarterly statements, cash flows, forward estimates
-  metadata_hours: 168       # company info, annual statements
-  earnings_hours: 168       # earnings calendar
-  insider_hours: 168        # insider transactions + summary
+  fundamentals_hours: 144   # quarterly statements, cash flows, forward estimates
+  metadata_hours: 144       # company info, annual statements
+  earnings_hours: 144       # earnings calendar
+  insider_hours: 144        # insider transactions + summary
 
 price_integrity:
   drift_tolerance: 0.002    # median |new/stored - 1| over the overlap days that triggers a full re-pull of that ticker

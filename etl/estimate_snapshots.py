@@ -1,13 +1,12 @@
-"""Daily record of the analysts' consensus for the next report (the forward estimates the ETL already loads).
+"""Record of the analysts' consensus for the next report (the forward estimates the ETL already loads).
 
 The provider only gives the CURRENT consensus: once a company has reported, the estimate that stood before the report is
-gone. Keeping one row per ticker and day lets the Earnings tab later compare a reported quarter with the consensus that
-stood just before it (revenue as well as EPS). Amounts stay in the estimates' own currency.
+gone. Keeping one row per ticker and fetch day lets the Earnings tab later compare a reported quarter with the consensus
+that stood just before it (revenue as well as EPS). `as_of` is the day the estimate was fetched (its _loaded_at), not the
+day of the run: a run that did not refetch estimates (fast mode) records nothing new rather than relabelling an old
+consensus as today's. Amounts stay in the estimates' own currency.
 """
 import logging
-from datetime import date
-from typing import Optional
-
 import duckdb
 
 logger = logging.getLogger(__name__)
@@ -21,19 +20,19 @@ def ensure_table(conn: duckdb.DuckDBPyConnection) -> None:
         PRIMARY KEY (ticker, as_of))""")
 
 
-def snapshot(conn: duckdb.DuckDBPyConnection, today: Optional[date] = None) -> int:
-    """Copy today's next-quarter consensus from raw.forward_estimates; a rerun the same day keeps the first copy."""
+def snapshot(conn: duckdb.DuckDBPyConnection) -> int:
+    """Copy the next-quarter consensus from raw.forward_estimates under the day it was fetched; a second copy for the
+    same ticker and day is ignored, so the first knowledge of a day is kept. Rows without a fetch time are skipped."""
     ensure_table(conn)
-    today = today or date.today()
     try:
         before = conn.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchone()[0]
         conn.execute(f"""INSERT OR IGNORE INTO {TABLE}
-            SELECT ticker, CAST(? AS DATE), eps_est_0q_avg, rev_est_0q_avg, eps_est_0q_n_analysts
+            SELECT ticker, CAST(_loaded_at AS DATE), eps_est_0q_avg, rev_est_0q_avg, eps_est_0q_n_analysts
             FROM raw.forward_estimates
-            WHERE eps_est_0q_avg IS NOT NULL OR rev_est_0q_avg IS NOT NULL""", [today])
+            WHERE _loaded_at IS NOT NULL AND (eps_est_0q_avg IS NOT NULL OR rev_est_0q_avg IS NOT NULL)""")
         n = conn.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchone()[0] - before
     except duckdb.Error as e:                                   # no forward estimates table yet: nothing to record
         logger.info(f"   ℹ️ Estimate snapshot skipped: {e}")
         return 0
-    logger.info(f"   🗂️ Consensus snapshot: {n} ticker(s) recorded for {today}")
+    logger.info(f"   🗂️ Consensus snapshot: {n} ticker(s) recorded")
     return n
