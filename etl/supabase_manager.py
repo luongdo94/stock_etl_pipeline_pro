@@ -66,6 +66,7 @@ TABLES = (
     ("raw.earnings_events", "earnings_events", "SELECT * FROM raw.earnings_events", None, True),
     # the consensus recorded before each report, so the Earnings tab can compare revenue with it (small: ~900 rows a week)
     ("raw.estimate_snapshots", "estimate_snapshots", "SELECT * FROM raw.estimate_snapshots", None, True),
+    ("raw.analyst_actions", "analyst_actions", "SELECT * FROM raw.analyst_actions", None, True),
     ("raw.stock_prices", "macro_prices",
      "SELECT * FROM raw.stock_prices WHERE ticker IN (" + ", ".join(f"'{t}'" for t in MACRO_TICKERS) + ")", None, False),
 )

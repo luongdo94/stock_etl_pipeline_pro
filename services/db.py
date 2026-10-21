@@ -866,6 +866,20 @@ def load_decision_snapshots(generation=None) -> pd.DataFrame:
 
 
 @snapshot_cached(ttl=600)
+def load_analyst_actions(generation=None) -> pd.DataFrame:
+    """Stored broker actions; an absent table is empty, other read failures carry an error."""
+    try:
+        with get_db_connection(read_only=True) as conn:
+            return conn.execute("SELECT * FROM raw.analyst_actions").df()
+    except Exception as e:
+        out = pd.DataFrame(columns=["ticker", "grade_date", "firm", "action", "from_grade", "to_grade",
+                                    "price_target_action", "current_price_target", "prior_price_target", "_extracted_at"])
+        if not isinstance(e, duckdb.CatalogException):
+            out.attrs["error"] = f"{type(e).__name__}: {e}"[:200]
+        return out
+
+
+@snapshot_cached(ttl=600)
 def load_estimate_snapshots(generation=None) -> pd.DataFrame:
     """The next-quarter consensus the ETL recorded each day (raw.estimate_snapshots); empty when not in this snapshot."""
     try:

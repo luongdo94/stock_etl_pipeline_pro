@@ -59,6 +59,7 @@ def env(tmp_path, monkeypatch):
     import etl.pipeline as pl
     import etl.snapshot as snapshot
 
+    monkeypatch.setattr(pl.analyst_actions, "extract", lambda *a, **k: pd.DataFrame())
     world = World(monkeypatch)
     paths = {"DB_PATH": str(tmp_path / "prod.duckdb"), "SHADOW_DB_PATH": str(tmp_path / "shadow.duckdb"),
              "AUDIT_DB_PATH": str(tmp_path / "audit.duckdb")}

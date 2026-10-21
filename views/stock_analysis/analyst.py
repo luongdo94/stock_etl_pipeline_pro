@@ -206,3 +206,36 @@ def render(dd, ctx):
                 </div>
             </div>
             """, unsafe_allow_html=True)
+
+    from services.db import load_analyst_actions
+    st.markdown("##### Recent analyst actions")
+    actions = load_analyst_actions(ctx.get("data_version"))
+    if actions.attrs.get("error"):
+        st.caption("Analyst actions could not be read.")
+    else:
+        actions = actions[actions["ticker"] == deep_ticker].copy() if not actions.empty else actions
+        if actions.empty:
+            st.caption("No analyst actions stored for this stock.")
+        else:
+            actions["grade_date"] = pd.to_datetime(actions["grade_date"], utc=True, errors="coerce")
+            today = pd.Timestamp.now(tz="UTC").normalize()
+            recent = actions[actions["grade_date"].between(today - pd.Timedelta(days=90), today)]
+            counts = recent["action"].value_counts()
+            st.caption(f"Last 90 days: {counts.get('up', 0)} upgrades / {counts.get('down', 0)} downgrades / "
+                       f"{counts.get('init', 0)} initiations ({recent['firm'].nunique()} firms).")
+            rows = actions.sort_values("grade_date", ascending=False).head(10)
+            labels = {"up": "Upgrade", "down": "Downgrade", "init": "Initiated", "main": "Maintained", "reit": "Reiterated"}
+
+            def price_target(row):
+                current, prior = row["current_price_target"], row["prior_price_target"]
+                text = f"{current:,.2f}" if pd.notna(current) and current > 0 else "N/A"
+                return text + (f" (prior {prior:,.2f})" if pd.notna(prior) and prior > 0 else "")
+
+            table = pd.DataFrame({"Date": rows["grade_date"].dt.date, "Firm": rows["firm"],
+                                  "Action": rows["action"].map(lambda v: labels.get(v, v)),
+                                  "Rating": rows.apply(lambda r: " → ".join(str(v) for v in (r["from_grade"], r["to_grade"])
+                                                                           if pd.notna(v) and str(v)), axis=1),
+                                  "Price target": rows.apply(price_target, axis=1)})
+            st.dataframe(table, hide_index=True, use_container_width=True)
+            st.caption(f"Price targets in listing currency ({meta.get('currency') or 'unknown'}).")
+            st.caption("Yahoo's aggregation of broker actions (mostly US coverage); reference only — not used in the Decision.")
