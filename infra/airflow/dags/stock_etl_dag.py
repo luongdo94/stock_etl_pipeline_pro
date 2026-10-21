@@ -1,7 +1,9 @@
 """Stock ETL — Airflow DAG.
 
-Two tasks, `python run.py --fast --no-sync` then `python run.py --only-sync`, every day at 07:30 German time (Europe/Berlin, daylight saving included), Monday to
-Saturday (Saturday picks up Friday's close). On Mondays the first task runs without --fast: a fast run never refetches
+Two tasks, `python run.py --fast --no-sync` then `python run.py --only-sync`, Monday to Friday at 16:30 New York time
+(America/New_York, US daylight saving included): half an hour after the US close, so the day's US bar is in, and Europe
+and Asia closed hours earlier. That is usually 22:30 in Germany (21:30 for the weeks when only one side has switched
+clocks). On Mondays the first task runs without --fast: a fast run never refetches
 the earnings calendar, the earnings events (the reported EPS pair) or insider data, and refetches statements and estimates
 only for tickers that are out of date; the weekly normal (still incremental) run refreshes whatever is older than
 etl_config refresh_intervals (6 days). run.py already does everything else — lock against overlap, extraction,
@@ -25,9 +27,9 @@ default_args = {"owner": "stock-etl", "retries": 1, "retry_delay": timedelta(min
 
 @dag(
     dag_id="stock_etl_fast",
-    description="python run.py at 07:30 Europe/Berlin, Mon-Sat: --fast except on Mondays",
-    schedule="30 7 * * 1-6",
-    start_date=pendulum.datetime(2026, 10, 1, tz="Europe/Berlin"),
+    description="python run.py at 16:30 America/New_York (after the US close), Mon-Fri: --fast except on Mondays",
+    schedule="30 16 * * 1-5",
+    start_date=pendulum.datetime(2026, 10, 1, tz="America/New_York"),
     catchup=False,                            # a missed day is not replayed: the next run reads the latest prices anyway
     max_active_runs=1,                        # (run.py also holds its own file lock)
     default_args=default_args,
@@ -36,7 +38,7 @@ default_args = {"owner": "stock-etl", "retries": 1, "retry_delay": timedelta(min
 def stock_etl_fast():
     env = {"PYTHONIOENCODING": "utf-8", "PYTHONPATH": PROJECT}
     # the run's own date (data_interval_end; logical_date is the previous slot): Monday → normal run, else --fast
-    mode = "{{ '' if data_interval_end.in_timezone('Europe/Berlin').strftime('%a') == 'Mon' else '--fast' }}"
+    mode = "{{ '' if data_interval_end.in_timezone('America/New_York').strftime('%a') == 'Mon' else '--fast' }}"
     # Two tasks, so a cloud outage retries only the publication and never re-runs a finished extraction:
     # run.py --no-sync leaves the validated warehouse in place; run.py --only-sync publishes it.
     etl = BashOperator(
