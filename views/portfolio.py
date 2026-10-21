@@ -18,7 +18,7 @@ from core.portfolio_risk import (apply_rebalance, complete_returns, rebalance_li
                                  record_trade, shrink_expected_returns, weight_budget)
 from services.alerts import add_alert_rule, delete_alert_rule, load_alert_rules
 from services.market_data import fetch_dividend_calendar
-from core.ledger import adjustments_from_edit, realized_pnl, trade as ledger_trade, trades_from_diff
+from core.ledger import adjustments_from_edit, history_incomplete, realized_pnl, trade as ledger_trade, trades_from_diff
 from core.stress import estimate_sensitivities, historical_replay, load_scenarios, scenario_losses
 from services.user_store import (append_trades, load_portfolio_with_cash, load_trades, save_portfolio_checked,
                                  save_portfolio_to_db)
@@ -27,6 +27,15 @@ from ui.sticky import sticky, sticky_choice, sticky_radio
 from ui.decision_panel import render_alert_inbox
 from ui.icons import render_header
 import pandas as pd, io
+
+
+_STRATEGY_OPTIONS = {
+    "🛡️ Minimum Volatility (Lowest Risk)":   "min_vol",
+    "⚖️ Risk Parity (Strategic Balance)":   "risk_parity",
+    "🌐 Equal Weight (Max Diversification)": "equal_weight",
+    "🚀 Max Sharpe (Risk-Adjusted Growth)":  "max_sharpe",
+    "🎯 Maximum Return (Highest Growth)":    "max_return",
+}
 
 
 def _known(v, nd):
@@ -57,6 +66,36 @@ _IMPORT_BOOK = ("portfolio_tickers", "portfolio_shares", "portfolio_cost", "port
 _IMPORT_NOTICE = "Save or discard this import before recording another trade or applying a rebalance."
 
 
+def _position_metrics(frame, cash):
+    frame = frame.copy()
+    for column in ("Shares", "Price (€)", "Cost Basis (€)"):
+        frame[column] = pd.to_numeric(frame[column], errors="coerce")
+    frame["Total Cost (€)"] = frame["Cost Basis (€)"] * frame["Shares"]
+    frame["Market Value"] = frame["Price (€)"] * frame["Shares"]
+    frame["Unrealized PnL (€)"] = frame["Market Value"] - frame["Total Cost (€)"]
+    frame["Unrealized PnL (%)"] = (frame["Unrealized PnL (€)"] / frame["Total Cost (€)"] * 100).replace([np.inf, -np.inf], np.nan)
+    value_known = bool(np.isfinite(frame["Market Value"]).all())
+    cost_known = bool(np.isfinite(frame["Total Cost (€)"]).all())
+    nav = frame["Market Value"].sum() + cash
+    total_cost = frame["Total Cost (€)"].sum()
+    frame["Weight (%)"] = frame["Market Value"] / nav * 100 if value_known and nav > 0 else np.nan
+    frame["Contribution (%)"] = (frame["Unrealized PnL (€)"] / total_cost * 100
+                                  if value_known and cost_known and total_cost > 0 else np.nan)
+    return frame
+
+
+def _portfolio_stats(weights, returns, covariance):
+    """Cash earns 0%; Sharpe still subtracts the same 4% risk-free assumption."""
+    ret = float(np.sum(np.asarray(returns) * weights))
+    vol = float(np.sqrt(np.dot(weights.T, np.dot(covariance, weights))))
+    return ret, vol, (ret - 0.04) / vol if vol > 0 else 0.0
+
+
+def _proposal_stale(proposal, tickers, saved_spec, current_spec):
+    return (saved_spec != current_spec or
+            set(proposal.loc[proposal["Ticker"] != "CASH", "Ticker"]) != set(tickers))
+
+
 def _stage_import(idf, stock_tickers, mode):
     """Parse the whole file before changing any session state; keep the first pre-import book."""
     if "ticker" not in idf.columns:
@@ -73,22 +112,20 @@ def _stage_import(idf, stock_tickers, mode):
             if raw not in ("NAN", ""):
                 missing.append(raw)
             continue
-        qty = float(row["shares"]) if pd.notna(row.get("shares")) else 0.0
+        qty = float(row["shares"]) if pd.notna(row.get("shares")) else np.nan
         cost = row.get("cost", row.get("cost_basis"))
-        cost = float(cost) if pd.notna(cost) else 0.0
-        if not np.isfinite([qty, cost]).all() or qty < 0 or cost < 0:
+        cost = float(cost) if pd.notna(cost) else np.nan
+        if any(pd.notna(v) and (not np.isfinite(v) or v < 0) for v in (qty, cost)):
             raise ValueError(f"Invalid shares or cost for {raw}.")
-        if mode == "Merge (Accumulate)" and ticker in shares:
-            old_qty = shares[ticker]
-            total = old_qty + qty
-            if total > 0:
-                costs[ticker] = (old_qty * costs.get(ticker, 0.0) + qty * cost) / total
-                shares[ticker] = total
+        if ticker in shares:                      # duplicates are lots in both modes
+            old_qty, old_cost = shares[ticker], costs.get(ticker)
+            total = old_qty + qty if pd.notna(old_qty) and pd.notna(qty) else np.nan
+            costs[ticker] = ((old_qty * old_cost + qty * cost) / total
+                             if pd.notna(old_cost) and pd.notna(cost) and pd.notna(total) and total > 0
+                             else np.nan)
+            shares[ticker] = total
         else:
-            if qty > 0:
-                shares[ticker] = qty
-            if cost > 0:
-                costs[ticker] = cost
+            shares[ticker], costs[ticker] = qty, cost
         valid.append(ticker)
     if valid:
         st.session_state.setdefault("_import_saved_book", {k: deepcopy(st.session_state[k]) for k in _IMPORT_BOOK if k in st.session_state})
@@ -96,7 +133,7 @@ def _stage_import(idf, stock_tickers, mode):
         previous = [] if mode == "Overwrite" else st.session_state.portfolio_tickers
         st.session_state.portfolio_tickers = list(dict.fromkeys(previous + valid))
         st.session_state['_portfolio_version'] += 1
-    return valid, missing
+    return list(dict.fromkeys(valid)), missing
 
 
 def _discard_import():
@@ -158,6 +195,30 @@ def _retry_portfolio_load():
     st.session_state.pop("portfolio_load_failed", None)
 
 
+def _reload_portfolio():
+    """Refresh saved rows/revision; an imported draft remains a draft and Discard uses the refreshed book."""
+    draft = {key: deepcopy(st.session_state.get(key)) for key in _IMPORT_BOOK}
+    holdings, cash = load_portfolio_with_cash()
+    if st.session_state.get("portfolio_load_failed"):
+        st.session_state.update(draft)
+        return
+    saved = {"portfolio_tickers": sorted(holdings),
+             "portfolio_shares": {t: row["shares"] for t, row in holdings.items()},
+             "portfolio_cost": {t: float(row["cost"]) if pd.notna(row["cost"]) else np.nan
+                                for t, row in holdings.items()},
+             "portfolio_cash_eur": cash, "portfolio_stops": st.session_state.get("portfolio_stops", {}),
+             "portfolio_targets": st.session_state.get("portfolio_targets", {})}
+    if "_import_saved_book" in st.session_state:
+        st.session_state["_import_saved_book"] = deepcopy(saved)
+        st.session_state.update(draft)
+    else:
+        st.session_state.update(saved)
+    st.session_state["portfolio_db_synced"] = True
+    st.session_state["_portfolio_version"] = st.session_state.get("_portfolio_version", 0) + 1
+    for key in ("portfolio_stale_error", "_save_error", "_apply_error"):
+        st.session_state.pop(key, None)
+
+
 def render(ctx):
     """Render the 💼 Portfolio tab. ctx is the context dict built in app.py."""
     _vix_val = ctx['_vix_val']
@@ -193,6 +254,8 @@ def render(ctx):
                 st.session_state["portfolio_targets"] = dict(targets)
         else:
             st.session_state["_save_error"] = msg
+            if st.session_state.get("portfolio_stale_error"):
+                st.rerun()
         return ok
 
     def _record(rows):
@@ -220,7 +283,8 @@ def render(ctx):
         if db_portfolio:
             st.session_state.portfolio_tickers = sorted(list(db_portfolio.keys()))
             st.session_state.portfolio_shares = {t: db_portfolio[t]["shares"] for t in db_portfolio}
-            st.session_state.portfolio_cost = {t: db_portfolio[t]["cost"] for t in db_portfolio}
+            st.session_state.portfolio_cost = {t: float(row["cost"]) if pd.notna(row["cost"]) else np.nan
+                                               for t, row in db_portfolio.items()}
         else:
             # Start empty. Pre-filled demo holdings (AAPL/NVDA/META at €150) were shown as if they
             # were the user's portfolio — and META, absent from the warehouse, priced at €0 (-100%).
@@ -234,6 +298,10 @@ def render(ctx):
                  "disabled until it loads.")
         st.button("Retry saved portfolio", key="pf_retry_load", on_click=_retry_portfolio_load,
                   help="Reads your stored portfolio again. Nothing is saved or deleted.")
+
+    if st.session_state.get("portfolio_stale_error"):
+        st.error(st.session_state["portfolio_stale_error"])
+        st.button("Reload", key="pf_revision_reload", on_click=_reload_portfolio)
 
     # Always ensure _portfolio_version is initialized (may be missing on first run or after cache clear)
     if '_portfolio_version' not in st.session_state:
@@ -420,8 +488,9 @@ def render(ctx):
                     "RSI (14)": meta.get("RSI (14)", float("nan")),
                     "Smart Money": _sm_emoji + _sm,
                     "Price (€)": latest_prices.get(t, float("nan")),
-                    "Shares": st.session_state.portfolio_shares.get(t, 10.0),
-                    "Cost Basis (€)": st.session_state.portfolio_cost.get(t, latest_prices.get(t, float("nan")))
+                    "Shares": st.session_state.portfolio_shares.get(t, np.nan),
+                    "Cost Basis (€)": (float(st.session_state.portfolio_cost[t])
+                                       if pd.notna(st.session_state.portfolio_cost.get(t)) else np.nan)
                 })
             st.session_state.portfolio_df = pd.DataFrame(init_data)
         # the grid is kept across reruns; its prices follow the loaded snapshot's latest close on every run
@@ -445,26 +514,19 @@ def render(ctx):
             disp_df[_column] = disp_df[_column].map(
                 lambda value: str(value).removeprefix("🔵 ").removeprefix("🟢 ").removeprefix("🔴 ")
                 .removeprefix("🟡 ").removeprefix("⚪ "))
-        disp_df["Total Cost (€)"] = disp_df["Cost Basis (€)"] * disp_df["Shares"]
-        disp_df["Market Value"] = disp_df["Price (€)"] * disp_df["Shares"]
-        disp_df["Unrealized PnL (€)"] = disp_df["Market Value"] - disp_df["Total Cost (€)"]
-        disp_df["Unrealized PnL (%)"] = (disp_df["Unrealized PnL (€)"] / disp_df["Total Cost (€)"]).replace([np.inf, -np.inf], np.nan) * 100   # no cost / no price: blank, not 0 %
+        _cash_eur = float(st.session_state.get("portfolio_cash_eur", 0.0) or 0.0)
+        disp_df = _position_metrics(disp_df, _cash_eur)
         _no_px = disp_df.loc[disp_df["Price (€)"].isna(), "Ticker"].tolist()
+        _no_qty = disp_df.loc[disp_df["Shares"].isna(), "Ticker"].tolist()
+        _no_cost = disp_df.loc[disp_df["Cost Basis (€)"].isna(), "Ticker"].tolist()
         if _no_px:
             st.warning(f"No price in this snapshot for {', '.join(map(str, _no_px))}: their value, weight and P&L are unknown and "
                        f"left out of the totals below, so the NAV shown is incomplete.")
-
-        _cash_eur = float(st.session_state.get("portfolio_cash_eur", 0.0) or 0.0)
-        _t_val = disp_df["Market Value"].sum()
-        _t_cost = disp_df["Total Cost (€)"].sum()
-        _nav = _t_val + _cash_eur                                         # weights are of NAV, cash included (R4-F01)
-        if _no_px:                       # the NAV is unknown: every weight would be measured against a wrong total
-            disp_df["Weight (%)"] = np.nan
-            disp_df["Contribution (%)"] = np.nan
             st.caption("Weights unavailable until every holding has a price.")
-        else:
-            disp_df["Weight (%)"] = (disp_df["Market Value"] / _nav * 100).fillna(0) if _nav > 0 else 0
-            disp_df["Contribution (%)"] = (disp_df["Unrealized PnL (€)"] / _t_cost * 100).fillna(0) if _t_cost > 0 else 0
+        if _no_qty:
+            st.warning(f"Unknown shares: {', '.join(map(str, _no_qty))}. Fill these rows before saving.")
+        if _no_cost:
+            st.caption(f"Unknown cost basis: {', '.join(map(str, _no_cost))}. P&L for these rows and table Contribution are N/A.")
         disp_df["Drift (pp)"] = disp_df["Weight (%)"] - disp_df["Target (%)"]   # NaN where no target is set
 
         if _section == "Holdings":
@@ -525,7 +587,10 @@ def render(ctx):
                         if pd.notna(v) and float(v) > 0}
             _before = st.session_state.get("_import_saved_book", st.session_state)
             _old_shares = dict(_before.get("portfolio_shares", {}))
-            if sum(_targets.values()) > 100 + 1e-9:
+            _missing_shares = edited_df.loc[edited_df["Shares"].isna(), "Ticker"].tolist()
+            if _missing_shares:
+                st.error("Not saved: missing shares for " + ", ".join(map(str, _missing_shares)) + ". Fill these rows before saving.")
+            elif sum(_targets.values()) > 100 + 1e-9:
                 st.error(f"Targets add up to {sum(_targets.values()):.1f}% of NAV (> 100%) — not saved.")
             elif _save(shares_dict, cost_dict, float(cash_in), _targets, save_import=True):   # session changes only on a confirmed save
                 # a grid edit is a correction, not a trade: ADJUST events carry the new quantity and basis (audit F20)
@@ -1148,7 +1213,7 @@ def render(ctx):
                     * **Evidence requirement: {'On' if _evidence_on else 'Off'}.**
                       {'Without validated Track Record evidence, an otherwise eligible stock is RESEARCH CANDIDATE with no size.' if _evidence_on else 'BUY can appear before validation. Evidence status is unchanged; confidence remains capped at MEDIUM without validation.'}
                     * **HOLD / WATCH:** no sufficient margin of safety either way, a blocked gate or an open conflict, or the DCF is not informative.
-                    * **AVOID / TRIM:** price is above even the bull-case value (fresh data only).
+                    * **AVOID / TRIM:** price is above even the bull-case value (fresh data only), unless both Quality ≥ {_rules_for_copy['scores']['avoid_spared_quality']:g} and Momentum ≥ {_rules_for_copy['scores']['avoid_spared_momentum']:g}. Weak or unknown quality/momentum does not get this exemption.
                     * **NOT ENOUGH DATA:** no usable or informative valuation with the required inputs.
 
                     These are triage labels: they do not know your tax lots or target weights.
@@ -1171,13 +1236,7 @@ def render(ctx):
                 # ── Strategy Controls ──────────────────────────────────────────────
                 strat_col, min_w_col, _ = st.columns([2, 1, 1])
                 with strat_col:
-                    strategy_options = {
-                        "🛡️ Minimum Volatility (Lowest Risk)":   "min_vol",
-                        "⚖️ Risk Parity (Strategic Balance)":   "risk_parity",
-                        "🌐 Equal Weight (Max Diversification)": "equal_weight",
-                        "🚀 Max Sharpe (Risk-Adjusted Growth)":  "max_sharpe",
-                        "🎯 Maximum Return (Highest Growth)":    "max_return",
-                    }
+                    strategy_options = _STRATEGY_OPTIONS
                     sel_strategy_label = sticky_choice(
                         "Optimization Strategy",
                         list(strategy_options), list(strategy_options)[2], "pf_strategy",
@@ -1245,10 +1304,7 @@ def render(ctx):
             def _run_max_sharpe(hist_rets, cov_matrix, n_assets, min_w):
                 """Maximize Sharpe Ratio (Markowitz MVO) with per-asset floor constraint."""
                 def portfolio_stats(w):
-                    p_ret = np.sum(hist_rets.values * w) + (1 - np.sum(w)) * 0.04     # cash earns the risk-free rate
-                    p_vol = np.sqrt(np.dot(w.T, np.dot(cov_matrix, w)))
-                    p_sharpe = (p_ret - 0.04) / p_vol if p_vol > 0 else 0
-                    return p_ret, p_vol, p_sharpe
+                    return _portfolio_stats(w, hist_rets.values, cov_matrix)
 
                 floor, cap, init_w = _box(n_assets, min_w)
                 bounds = tuple((floor, cap) for _ in range(n_assets))
@@ -1393,8 +1449,10 @@ def render(ctx):
                     _used_strategy = st.session_state.pending_opt_strategy or "Unknown Strategy"
                     _proposal_spec = dict(_review_spec, strategy=sel_strategy_label, min_weight=min_weight_pct,
                                           range_start=t_start, range_end=t_end)
-                    if st.session_state.get("_pending_opt_spec") != _proposal_spec:
-                        st.warning("Stale proposal: controls, saved holdings or snapshot changed. Generate again to review current inputs; Apply still re-checks the current policy.")
+                    _stale_proposal = _proposal_stale(st.session_state.pending_optimization, current_tickers,
+                        st.session_state.get("_pending_opt_spec"), _proposal_spec)
+                    if _stale_proposal:
+                        st.warning("Stale proposal: controls, saved holdings, ticker set or snapshot changed. Generate again before Apply.")
                     st.info(f"**Suggested Rebalancing · Strategy: {_used_strategy.split(' ', 1)[1] if _used_strategy in strategy_options else _used_strategy}**")
 
                     # ── Expected metrics after rebalancing ──────────────────────
@@ -1402,12 +1460,10 @@ def render(ctx):
                     _pend_assets = _pend[_pend["Ticker"] != "CASH"].set_index("Ticker").reindex(current_tickers)
                     _opt_w_arr = np.nan_to_num(_pend_assets["Optimal Weight %"].to_numpy(dtype=float)) / 100
                     try:
-                        _exp_ret  = np.sum(hist_rets.values * _opt_w_arr) * 100
-                        _exp_vol  = np.sqrt(np.dot(_opt_w_arr.T, np.dot(cov_matrix, _opt_w_arr))) * 100
-                        _exp_srp  = (_exp_ret/100 - 0.04) / (_exp_vol/100) if _exp_vol > 0 else 0
-                        _curr_ret = np.sum(hist_rets.values * weights) * 100
-                        _curr_vol = np.sqrt(np.dot(weights.T, np.dot(cov_matrix, weights))) * 100
-                        _curr_srp = (_curr_ret/100 - 0.04) / (_curr_vol/100) if _curr_vol > 0 else 0
+                        _exp_ret, _exp_vol, _exp_srp = _portfolio_stats(_opt_w_arr, hist_rets.values, cov_matrix)
+                        _curr_ret, _curr_vol, _curr_srp = _portfolio_stats(weights, hist_rets.values, cov_matrix)
+                        _exp_ret, _exp_vol = _exp_ret * 100, _exp_vol * 100
+                        _curr_ret, _curr_vol = _curr_ret * 100, _curr_vol * 100
 
                         _m1, _m2, _m3, _m4 = st.columns(4)
                         with _m1: render_metric_tile("Trailing annualised return (shrunk)", f"{_exp_ret:.1f}%", delta=_exp_ret - _curr_ret)
@@ -1456,7 +1512,7 @@ def render(ctx):
                             st.session_state.pending_opt_strategy = None
                             st.rerun()
                     with sc3:
-                        if st.button("APPLY REBALANCE", width="stretch", type="primary", disabled=import_pending) and not import_pending:
+                        if st.button("APPLY REBALANCE", width="stretch", type="primary", disabled=(import_pending or _stale_proposal)) and not (import_pending or _stale_proposal):
                             # Re-check NOW against the current Decisions, cap and holdings — never trust the stored
                             # proposal alone (a stance or a rule may have changed since Generate) (R4-01)
                             _target = np.nan_to_num(_pend_assets["Target Weight %"].to_numpy(dtype=float)) / 100 \
@@ -1476,7 +1532,8 @@ def render(ctx):
                             new_cost_dict = {}
                             for t in current_tickers:            # weighted-average cost: bought shares at today's price
                                 o_sh, n_sh = float(_cur_shares.get(t, 0.0)), float(new_shares_dict.get(t, 0.0))
-                                o_c = float(_old_cost.get(t, latest_prices.get(t, 0.0)))
+                                o_c = _old_cost.get(t)
+                                o_c = float(o_c) if pd.notna(o_c) else np.nan
                                 new_cost_dict[t] = ((o_sh * o_c + (n_sh - o_sh) * latest_prices[t]) / n_sh
                                                     if n_sh > o_sh and n_sh > 0 else o_c)
                             # Persist FIRST; only a confirmed save changes the session (a failed or unknown save keeps
@@ -1829,9 +1886,24 @@ def _render_alert_center(ctx, _alert_rules):
                 st.error(f"Could not save the rule: {_e}")
 
 
+def _ledger_display(trades):
+    shown = trades.copy()
+    shown["note"] = shown["note"].replace({raw: raw.split(" ", 1)[1] for raw in _STRATEGY_OPTIONS})
+    return shown
+
+
 def _render_trade_ledger():
     # ── trade ledger ──
     trades = load_trades()
+    if st.session_state.get("trades_load_error"):
+        st.error("Trade history could not be read")
+        if st.button("Retry", key="pf_retry_trades"):
+            st.rerun()
+        return
+    saved_book = st.session_state.get("_import_saved_book", st.session_state)
+    incomplete = history_incomplete(trades, saved_book.get("portfolio_shares", {}))
+    if incomplete:
+        st.caption("Realised P&L may be incomplete: the ledger starts after holdings existed")
     with st.expander(f"Trade ledger ({len(trades)} trades)", expanded=False):
         if trades.empty:
             st.caption("Every trade recorded with Add Trade, a rebalance or a grid edit appears here with its price, "
@@ -1845,6 +1917,6 @@ def _render_trade_ledger():
             if (pnl["unmatched_qty"] > 0).any():
                 st.caption("Some sells exceed the shares bought in the ledger (positions opened before the ledger "
                            "existed); their P&L counts only the recorded part.")
-            st.dataframe(trades.sort_values("traded_at", ascending=False), hide_index=True, width="stretch")
+            st.dataframe(_ledger_display(trades).sort_values("traded_at", ascending=False), hide_index=True, width="stretch")
             st.download_button("Export ledger (CSV)", trades.to_csv(index=False).encode("utf-8"),
                                file_name="trade_ledger.csv", mime="text/csv")

@@ -1,4 +1,7 @@
 """Per-user watchlist and portfolio persistence (Supabase)."""
+import logging
+import math
+
 import pandas as pd
 import streamlit as st
 
@@ -21,6 +24,45 @@ def forget_hub_cache(fn):
     return wrapper
 
 
+def _rev_key(store):
+    return f"_store_rev::{st.session_state.get('user_id', 'local')}::{store}"
+
+
+def _revision_warning():
+    if not st.session_state.get("_store_revision_warning"):
+        message = "multi-session protection not installed (run sql/supabase/user_store_revisions.sql)"
+        logging.getLogger(__name__).warning(message)
+        st.session_state["_store_revision_warning"] = True
+        try:
+            st.sidebar.warning(message)
+        except Exception:                          # a notice must never turn a save or a read into a failure
+            pass
+
+
+def _cloud_revision(client, store):
+    """The stored revision; 0 when the revision functions are not installed. Any other failure returns None: the rows
+    can still be shown, but a save with an unknown revision is refused by the server (None never matches)."""
+    try:
+        return int(client.rpc("get_user_store_rev", {"p_user_id": st.session_state["user_id"],
+                                                     "p_store": store}).execute().data)
+    except Exception as exc:
+        if "pgrst202" in str(exc).lower():
+            _revision_warning()
+            return 0
+        logging.getLogger(__name__).warning(f"store revision unreadable for {store}: {exc}")
+        return None
+
+
+def _stale(store):
+    message = "Not saved: changed in another session — reload"
+    st.session_state[store.removeprefix("stock_") + "_stale_error"] = message
+    return message
+
+
+def _nullable(value, convert):
+    return convert(value) if pd.notna(value) else None
+
+
 def load_watchlist():
     """The user's watchlist. A failed read returns an empty frame AND sets watchlist_load_failed, so save_watchlist —
     which replaces the whole list — refuses to run until a reload reads it (audit F21)."""
@@ -28,7 +70,8 @@ def load_watchlist():
     st.session_state["watchlist_load_failed"] = False
     if auth.local_dev_mode():
         try:
-            records = local_store.load_watchlist_records()
+            records, rev = local_store.load_versioned("watchlist", [])
+            st.session_state[_rev_key("stock_watchlist")] = rev
         except local_store.LocalStoreError as e:
             st.session_state["watchlist_load_failed"] = True
             st.sidebar.error(f"Watchlist not readable: {e}")
@@ -39,8 +82,10 @@ def load_watchlist():
         
     try:
         supabase = auth.get_supabase_client()
+        rev = _cloud_revision(supabase, "stock_watchlist")   # read BEFORE rows: never attach a newer rev to older rows
         response = supabase.table("stock_watchlist").select("*").eq("user_id", st.session_state["user_id"]).execute()
         
+        st.session_state[_rev_key("stock_watchlist")] = rev
         if not response.data:
             return pd.DataFrame(columns=cols)
             
@@ -80,8 +125,24 @@ def _replace_user_rows(supabase, table: str, user_id, records: list) -> None:
     """Replace a user's rows in ONE server-side transaction (sql/supabase/replace_user_rows.sql) — fail closed (R2-04).
     There is no client-side delete/insert fallback any more: two separate requests can always leave the user with
     nothing. If the function is missing nothing was written; on any other error the outcome is unknown."""
+    params = {"p_table": table, "p_user_id": user_id, "p_rows": records}
+    if _rev_key(table) in st.session_state and st.session_state[_rev_key(table)] is None:
+        raise UserDataSaveError("Not saved: the stored version could not be read — reload and try again.")
     try:
-        supabase.rpc("replace_user_rows", {"p_table": table, "p_user_id": user_id, "p_rows": records}).execute()
+        response = supabase.rpc("replace_user_rows_rev", dict(params,
+            p_expected_rev=st.session_state.get(_rev_key(table), 0))).execute()
+        st.session_state[_rev_key(table)] = int(response.data)
+        st.session_state.pop(table.removeprefix("stock_") + "_stale_error", None)
+        return
+    except Exception as exc:
+        if "stale revision" in str(exc).lower():
+            raise UserDataSaveError(_stale(table)) from exc
+        if "pgrst202" not in str(exc).lower():
+            raise UserDataSaveError(f"Save status unknown ({exc}). Reload to check what is stored before editing again.") from exc
+        _revision_warning()
+    try:
+        supabase.rpc("replace_user_rows", params).execute()
+        st.session_state.pop(table.removeprefix("stock_") + "_stale_error", None)
     except Exception as e:
         if _rpc_missing(e):
             raise UserDataSaveError("Not saved: the database function replace_user_rows is not installed "
@@ -95,7 +156,15 @@ def save_watchlist(df):
         raise UserDataSaveError("Not saved: the stored watchlist could not be read, so replacing it would lose it. "
                                 "Reload and check what is stored first.")
     if auth.local_dev_mode():
-        local_store.save_watchlist_records(df.astype(object).where(df.notna(), None).to_dict("records"))
+        try:
+            rev = local_store.save_watchlist_records(df.astype(object).where(df.notna(), None).to_dict("records"),
+                expected_rev=st.session_state.get(_rev_key("stock_watchlist"), 0))
+        except local_store.LocalStoreError as exc:
+            if "changed in another session" in str(exc):
+                raise UserDataSaveError(_stale("stock_watchlist")) from exc
+            raise UserDataSaveError(str(exc)) from exc
+        st.session_state[_rev_key("stock_watchlist")] = rev
+        st.session_state.pop("watchlist_stale_error", None)
         return
     if not st.session_state.get("authenticated") or not st.session_state.get("user_id"):
         raise Exception("Authentication required to save data.")
@@ -110,14 +179,14 @@ def save_watchlist(df):
             record = {
                 "user_id": user_id,
                 "ticker": str(row.get("Ticker", "")),
-                "status": str(row.get("Status", "🔵 PENDING")),
-                "thesis": str(row.get("Thesis", "")),
-                "catalyst": str(row.get("Catalyst", "")),
-                "entry_target": float(row.get("Entry Target", 0)) if pd.notna(row.get("Entry Target")) and row.get("Entry Target") else None,
-                "invalidation_level": float(row.get("Invalidation Level", 0)) if pd.notna(row.get("Invalidation Level")) and row.get("Invalidation Level") else None,
-                "take_profit": float(row.get("Take Profit", 0)) if pd.notna(row.get("Take Profit")) and row.get("Take Profit") else None,
-                "next_earnings": str(row.get("Next Earnings", "TBD")),
-                "added_date": str(row.get("Added Date", "")) if pd.notna(row.get("Added Date")) and row.get("Added Date") else None,
+                "status": _nullable(row.get("Status", "🔵 PENDING"), str),
+                "thesis": _nullable(row.get("Thesis", ""), str),
+                "catalyst": _nullable(row.get("Catalyst", ""), str),
+                "entry_target": _nullable(row.get("Entry Target"), float),
+                "invalidation_level": _nullable(row.get("Invalidation Level"), float),
+                "take_profit": _nullable(row.get("Take Profit"), float),
+                "next_earnings": _nullable(row.get("Next Earnings", "TBD"), str),
+                "added_date": _nullable(row.get("Added Date"), str),
             }
             records.append(record)
             
@@ -183,7 +252,7 @@ def load_portfolio_with_cash() -> tuple:
     """(holdings, cash EUR) — the portfolio's NAV is Σ holdings at market + cash. Also refreshes the session's
     original stops (st.session_state["portfolio_stops"])."""
     st.session_state["portfolio_load_failed"] = False         # set again by _load_portfolio_raw on a failed read
-    raw = _load_portfolio_raw()
+    raw = _load_portfolio_raw(track_revision=True)
     holdings, cash_eur, stops = split_reserved(raw)
     st.session_state["portfolio_stops"] = stops
     st.session_state["portfolio_targets"] = split_targets(raw)
@@ -219,6 +288,8 @@ def read_portfolio_status() -> tuple:
 def read_watchlist_status() -> tuple:
     """(watchlist frame, ok) of THIS read; the Watchlist page's save guard flag is kept."""
     flag = st.session_state.get("watchlist_load_failed")
+    rev_key = _rev_key("stock_watchlist")
+    revision = st.session_state.get(rev_key)
     try:
         df = load_watchlist()
         ok = not st.session_state.get("watchlist_load_failed")
@@ -226,6 +297,10 @@ def read_watchlist_status() -> tuple:
         df, ok = None, False
     finally:
         st.session_state["watchlist_load_failed"] = flag
+        if revision is None:
+            st.session_state.pop(rev_key, None)
+        else:
+            st.session_state[rev_key] = revision
     return df, ok
 
 
@@ -234,10 +309,13 @@ def load_portfolio_from_db():
     return split_cash(_load_portfolio_raw())[0]
 
 
-def _load_portfolio_raw():
+def _load_portfolio_raw(track_revision=False):
     if auth.local_dev_mode():
         try:
-            return local_store.load_portfolio()
+            raw, rev = local_store.load_versioned("portfolio", {})
+            if track_revision:
+                st.session_state[_rev_key("stock_portfolio")] = rev
+            return raw
         except local_store.LocalStoreError as e:                  # corrupt file: unknown, not empty (audit F23)
             st.session_state["portfolio_load_failed"] = True
             st.sidebar.error(f"Portfolio not readable: {e}")
@@ -246,7 +324,10 @@ def _load_portfolio_raw():
         return {}
     try:
         supabase = auth.get_supabase_client()
+        rev = _cloud_revision(supabase, "stock_portfolio") if track_revision else None
         response = supabase.table("stock_portfolio").select("ticker, shares, cost_basis").eq("user_id", st.session_state["user_id"]).execute()
+        if track_revision:
+            st.session_state[_rev_key("stock_portfolio")] = rev
         if not response.data:
             return {}
         
@@ -257,7 +338,7 @@ def _load_portfolio_raw():
             ticker = row.get("ticker")
             parsed_data[ticker] = {
                 "shares": float(row.get("shares", 0)),
-                "cost": float(row.get("cost_basis", 0))
+                "cost": _nullable(row.get("cost_basis"), float)
             }
         return parsed_data
     except Exception as e:
@@ -285,7 +366,12 @@ def save_portfolio_checked(shares_dict, cost_dict, cash_eur=None, stops=None, ta
         targets = dict(st.session_state.get("portfolio_targets", {}) or {})
     reserved = lambda t: t == CASH_KEY or str(t).startswith((STOP_PREFIX, TARGET_PREFIX))   # noqa: E731
     shares_dict = {t: v for t, v in dict(shares_dict).items() if not reserved(t)}
-    cost_dict = {t: v for t, v in dict(cost_dict).items() if not reserved(t)}
+    cost_dict = {t: _nullable(v, float) for t, v in dict(cost_dict).items() if not reserved(t)}
+    missing = [str(t) for t, qty in shares_dict.items() if pd.isna(qty)]
+    if missing:
+        return False, "Not saved: missing shares for " + ", ".join(missing) + ". Fill these rows before saving."
+    if any(not math.isfinite(float(qty)) or float(qty) < 0 for qty in shares_dict.values()):
+        return False, "Not saved: shares must be finite and non-negative."
     held = set(shares_dict)
     if cash_eur > 0:
         shares_dict[CASH_KEY], cost_dict[CASH_KEY] = float(cash_eur), 1.0
@@ -297,8 +383,13 @@ def save_portfolio_checked(shares_dict, cost_dict, cash_eur=None, stops=None, ta
             shares_dict[TARGET_PREFIX + t], cost_dict[TARGET_PREFIX + t] = float(w), 0.0
     if auth.local_dev_mode():
         try:
-            local_store.save_portfolio(shares_dict, cost_dict)
+            rev = local_store.save_portfolio(shares_dict, cost_dict,
+                expected_rev=st.session_state.get(_rev_key("stock_portfolio"), 0))
+            st.session_state[_rev_key("stock_portfolio")] = rev
+            st.session_state.pop("portfolio_stale_error", None)
         except OSError as e:
+            if "changed in another session" in str(e):
+                return False, _stale("stock_portfolio")
             return False, f"Not saved locally ({e})."
         return True, "Saved locally."
     if not st.session_state.get("authenticated") or not st.session_state.get("user_id"):
@@ -307,7 +398,7 @@ def save_portfolio_checked(shares_dict, cost_dict, cash_eur=None, stops=None, ta
         supabase = auth.get_supabase_client()
         user_id = st.session_state["user_id"]
         records = [{"user_id": user_id, "ticker": t, "shares": float(shares_dict.get(t, 0)),
-                    "cost_basis": float(cost_dict.get(t, 0))} for t in shares_dict]
+                    "cost_basis": _nullable(cost_dict.get(t), float)} for t in shares_dict]
         _replace_user_rows(supabase, "stock_portfolio", user_id, records)
     except UserDataSaveError as e:
         return False, str(e)
@@ -329,6 +420,7 @@ def save_portfolio_to_db(shares_dict, cost_dict, cash_eur=None, stops=None):
 def load_trades() -> pd.DataFrame:
     """The user's trade ledger, oldest first (core.ledger.COLUMNS)."""
     from core.ledger import COLUMNS
+    st.session_state.pop("trades_load_error", None)
     if auth.local_dev_mode():
         try:
             rows = local_store.load_trades()

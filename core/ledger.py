@@ -49,6 +49,8 @@ def adjustments_from_edit(old_shares: dict, old_costs: dict, new_shares: dict, n
     rows = []
     for t in sorted(set(old_shares) | set(new_shares)):
         o_q, n_q = float(old_shares.get(t, 0.0) or 0.0), float(new_shares.get(t, 0.0) or 0.0)
+        if t in new_shares and pd.isna(new_costs.get(t)):
+            continue                               # cannot invent an ADJUST basis for an unknown cost
         o_c, n_c = float(old_costs.get(t, 0.0) or 0.0), float(new_costs.get(t, 0.0) or 0.0)
         if abs(n_q - o_q) < 1e-9 and abs(n_c - o_c) < 1e-9:
             continue
@@ -91,3 +93,14 @@ def realized_pnl(trades) -> pd.DataFrame:
                     "sold_qty": sold, "open_qty": qty, "avg_cost": cost / qty if qty > 0 else None,
                     "unmatched_qty": unmatched})
     return pd.DataFrame(out)
+
+
+def history_incomplete(trades, shares: dict) -> bool:
+    """Warn about an opening book/history gap; never backfill synthetic trades."""
+    pnl = realized_pnl(trades)
+    quantities = pnl.set_index("ticker")["open_qty"].to_dict() if not pnl.empty else {}
+    if not pnl.empty and (pnl["unmatched_qty"] > 1e-9).any():
+        return True
+    return any(pd.isna(shares.get(t, 0.0)) or
+               abs(float(shares.get(t, 0.0)) - quantities.get(t, 0.0)) > 1e-6
+               for t in set(shares) | set(quantities))

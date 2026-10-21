@@ -46,6 +46,8 @@ def _clean_store_flags():
         import streamlit as st
         for k in ("portfolio_load_failed", "watchlist_load_failed", "trades_load_error"):
             st.session_state.pop(k, None)
+        for k in [k for k in st.session_state if str(k).startswith("_store_rev::")]:   # a store revision, too
+            st.session_state.pop(k, None)
     except Exception:
         pass
 

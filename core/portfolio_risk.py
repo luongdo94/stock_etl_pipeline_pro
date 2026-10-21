@@ -134,7 +134,11 @@ def record_trade(shares: dict, costs: dict, cash_eur: float, ticker: str, side: 
                     "error": f"Not enough cash: the buy needs €{pay:,.2f}, cash is €{cash:,.2f}. Add cash first or "
                              f"mark it as funded by a new deposit."}
         old = float(sh.get(ticker, 0.0))
-        co[ticker] = (old * float(co.get(ticker, price)) + qty * price) / (old + qty)
+        basis = co.get(ticker)
+        if old > 0:
+            co[ticker] = (old * float(basis) + qty * price) / (old + qty) if pd.notna(basis) else float("nan")
+        else:
+            co[ticker] = price
         sh[ticker] = old + qty
         if fund_from_cash:
             cash -= pay

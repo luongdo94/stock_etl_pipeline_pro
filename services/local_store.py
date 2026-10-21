@@ -5,9 +5,12 @@ warehouse/local_user/. One local user, one machine — never used when a real lo
 import json
 import os
 from pathlib import Path
+from tempfile import NamedTemporaryFile
+from threading import Lock
 
 ROOT = Path(__file__).resolve().parent.parent
 STORE_DIR = Path(os.environ.get("LOCAL_STORE_DIR") or ROOT / "warehouse" / "local_user")
+_STORE_LOCK = Lock()
 
 
 def _path(name: str) -> Path:
@@ -32,26 +35,62 @@ def read(name: str, default):
 
 def write(name: str, data) -> None:
     STORE_DIR.mkdir(parents=True, exist_ok=True)
-    tmp = _path(name).with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
-    tmp.replace(_path(name))                      # never leave a half-written file
+    with NamedTemporaryFile(mode="w", encoding="utf-8", dir=STORE_DIR,
+                            prefix=f".{name}-", suffix=".tmp", delete=False) as handle:
+        tmp = Path(handle.name)
+        try:
+            json.dump(data, handle, ensure_ascii=False, indent=1, default=str)
+        except Exception:
+            handle.close()
+            tmp.unlink(missing_ok=True)
+            raise
+    try:
+        tmp.replace(_path(name))                  # never leave a half-written file
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _versioned(name, default):
+    raw = read(name, default)
+    if isinstance(raw, dict) and "rev" in raw and "data" in raw:
+        return raw["data"], int(raw["rev"])
+    return raw, 0                                # legacy JSON
+
+
+def load_versioned(name, default):
+    """Read rows and their revision together, under the same process-wide lock as writes."""
+    with _STORE_LOCK:
+        return _versioned(name, default)
+
+
+def replace_versioned(name, data, expected_rev=None):
+    with _STORE_LOCK:
+        _, rev = _versioned(name, [] if name == "watchlist" else {})
+        if expected_rev is not None and rev != expected_rev:
+            raise LocalStoreError("Not saved: changed in another session — reload")
+        write(name, {"rev": rev + 1, "data": data})
+        return rev + 1
 
 
 # watchlist: list of records keyed like the dashboard's columns
 def load_watchlist_records() -> list:
-    return read("watchlist", [])
+    return load_versioned("watchlist", [])[0]
 
 
-def save_watchlist_records(records: list) -> None:
-    write("watchlist", records)
+def save_watchlist_records(records: list, expected_rev=None) -> int:
+    return replace_versioned("watchlist", records, expected_rev)
 
 
 def load_portfolio() -> dict:
-    return read("portfolio", {})
+    return load_versioned("portfolio", {})[0]
 
 
-def save_portfolio(shares: dict, costs: dict) -> None:
-    write("portfolio", {t: {"shares": float(shares.get(t, 0)), "cost": float(costs.get(t, 0))} for t in shares})
+def save_portfolio(shares: dict, costs: dict, expected_rev=None) -> int:
+    from math import isfinite
+
+    data = {t: {"shares": float(qty), "cost": float(costs[t])
+                if costs.get(t) is not None and isfinite(float(costs[t])) else None} for t, qty in shares.items()}
+    return replace_versioned("portfolio", data, expected_rev)
 
 
 def load_trades() -> list:

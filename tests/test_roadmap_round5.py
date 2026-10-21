@@ -102,7 +102,8 @@ def test_buy_pays_from_cash_and_sell_credits_it():
 
 # ── failed saves never look synced ───────────────────────────────────────────────────────────────────────────────
 def _fake_st(**state):
-    return types.SimpleNamespace(session_state=dict(state), sidebar=types.SimpleNamespace(error=lambda *a, **k: None))
+    return types.SimpleNamespace(session_state=dict(state), sidebar=types.SimpleNamespace(error=lambda *a, **k: None,
+                                                                                warning=lambda *a, **k: None))
 
 
 @pytest.mark.parametrize("err,expect", [

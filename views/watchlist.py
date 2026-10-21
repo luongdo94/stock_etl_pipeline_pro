@@ -14,6 +14,28 @@ from ui.watchlist_status import STATUS_LABELS, UNKNOWN, restore_statuses, status
 from views.stock_analysis.watchlist_save import _idea_version
 
 
+def _watchlist_version(frame):
+    """Stored fields keyed by ticker; row order, scalar dtype and missing sentinels do not make conflicts."""
+    numeric = {"Entry Target", "Invalidation Level", "Take Profit"}
+    columns = sorted(frame.columns)
+    rows = []
+    for _, row in frame.iterrows():
+        rows.append(tuple(None if pd.isna(row[col]) else float(row[col]) if col in numeric else str(row[col])
+                          for col in columns))
+    ticker = columns.index("Ticker")
+    return columns, sorted(rows, key=lambda row: row[ticker] or "")
+
+
+def _reload_watchlist():
+    load_watchlist()
+    if not st.session_state.get("watchlist_load_failed"):
+        st.session_state.pop("watchlist_stale_error", None)
+        forget("wl_bulk")
+        ticker = st.session_state.get("wl_edit_ticker")
+        if ticker:
+            forget(f"wl_edit_{ticker}_")
+
+
 def render(ctx):
     """Render the 📋 Watchlist tab. ctx is the context dict built in app.py."""
     annual_fin = ctx['annual_fin']
@@ -27,6 +49,9 @@ def render(ctx):
     st.write("Track and prune your high-conviction ideas. A thesis without an invalidation level is just a gamble.")
 
     wl_df = load_watchlist()
+    if st.session_state.get("watchlist_stale_error"):
+        st.error(st.session_state["watchlist_stale_error"])
+        st.button("Reload", key="wl_revision_reload", on_click=_reload_watchlist)
     if st.session_state.get("watchlist_load_failed"):
         st.error("Your watchlist could not be read, so it cannot be shown. That is not an empty list: nothing was deleted. "
                  "Reload the page to retry; saving stays blocked until it loads.")
@@ -85,7 +110,7 @@ def render(ctx):
             if not any(_ed.get(k) for k in ("edited_rows", "added_rows", "deleted_rows")):
                 st.session_state["wl_bulk_baseline"] = wl_df.copy()                # nothing edited yet: follow the store
             baseline = st.session_state.setdefault("wl_bulk_baseline", wl_df.copy())
-            if not baseline.equals(wl_df):
+            if _watchlist_version(baseline) != _watchlist_version(wl_df):
                 st.warning("This idea was changed elsewhere since you started editing")
             st.button("Reload saved values", key="wl_bulk_reload", on_click=forget, args=("wl_bulk",))
             with st.container():  # edits rerun so removal count is visible before Save
@@ -115,7 +140,7 @@ def render(ctx):
                         current = load_watchlist()
                         if st.session_state.get("watchlist_load_failed"):
                             raise RuntimeError("The saved watchlist could not be read.")
-                        if not baseline.equals(current):
+                        if _watchlist_version(baseline) != _watchlist_version(current):
                             st.warning("This idea was changed elsewhere since you started editing")
                             return
                         clean_df = restore_statuses(edited_df, current)
@@ -125,6 +150,8 @@ def render(ctx):
                         st.rerun()
                     except Exception as e:
                         st.error(f"Failed to sync memory: {e}")
+                        if st.session_state.get("watchlist_stale_error"):
+                            st.rerun()
 
         st.markdown("---")
         st.markdown("### Quick Preview")
@@ -248,6 +275,8 @@ def _edit_idea(wl_df, decisions):
             save_watchlist(edited)
         except Exception as exc:
             st.error(f"Could not save idea: {exc}. Your edits are kept here.")
+            if st.session_state.get("watchlist_stale_error"):
+                st.rerun()
         else:
             forget(pre)
             st.toast("Watchlist idea saved.")
