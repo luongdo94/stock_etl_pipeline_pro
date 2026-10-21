@@ -93,6 +93,12 @@ def _render_summary(ctx, prices):
                           on_click=_open_analysis, args=(item["ticker"],))
 
 
+def _retry_portfolio_load():
+    """Callback: forget the failed read so the next run reads the stored portfolio again (only marked synced on success)."""
+    st.session_state.pop("portfolio_db_synced", None)
+    st.session_state.pop("portfolio_load_failed", None)
+
+
 def render(ctx):
     """Render the 💼 Portfolio tab. ctx is the context dict built in app.py."""
     _vix_val = ctx['_vix_val']
@@ -163,7 +169,9 @@ def render(ctx):
         st.session_state.portfolio_db_synced = not st.session_state.get("portfolio_load_failed", False)
     if st.session_state.get("portfolio_load_failed"):
         st.error("The stored portfolio could not be read — what you see is NOT your saved portfolio, and saving is "
-                 "disabled until it loads (reload the page).", icon="🛑")
+                 "disabled until it loads.", icon="🛑")
+        st.button("Retry saved portfolio", key="pf_retry_load", on_click=_retry_portfolio_load,
+                  help="Reads your stored portfolio again. Nothing is saved or deleted.")
 
     # Always ensure _portfolio_version is initialized (may be missing on first run or after cache clear)
     if '_portfolio_version' not in st.session_state:
@@ -183,6 +191,12 @@ def render(ctx):
         return
 
     if _section == "Holdings":
+        # the importer reruns the page: its result is shown here, where the draft is (it used to be lost)
+        _imp, _imp_w = st.session_state.pop("_import_toast", None), st.session_state.pop("_import_warnings", None)
+        if _imp:
+            st.success(_imp)
+        if _imp_w:
+            st.warning(_imp_w)
         # --- 2. Portfolio Management Tools (New Layout) ---
         tc1, tc2 = st.columns(2)
 
@@ -412,8 +426,13 @@ def render(ctx):
         _t_val = disp_df["Market Value"].sum()
         _t_cost = disp_df["Total Cost (€)"].sum()
         _nav = _t_val + _cash_eur                                         # weights are of NAV, cash included (R4-F01)
-        disp_df["Weight (%)"] = (disp_df["Market Value"] / _nav * 100).fillna(0) if _nav > 0 else 0
-        disp_df["Contribution (%)"] = (disp_df["Unrealized PnL (€)"] / _t_cost * 100).fillna(0) if _t_cost > 0 else 0
+        if _no_px:                       # the NAV is unknown: every weight would be measured against a wrong total
+            disp_df["Weight (%)"] = np.nan
+            disp_df["Contribution (%)"] = np.nan
+            st.caption("Weights unavailable until every holding has a price.")
+        else:
+            disp_df["Weight (%)"] = (disp_df["Market Value"] / _nav * 100).fillna(0) if _nav > 0 else 0
+            disp_df["Contribution (%)"] = (disp_df["Unrealized PnL (€)"] / _t_cost * 100).fillna(0) if _t_cost > 0 else 0
         disp_df["Drift (pp)"] = disp_df["Weight (%)"] - disp_df["Target (%)"]   # NaN where no target is set
 
         if _section == "Holdings":

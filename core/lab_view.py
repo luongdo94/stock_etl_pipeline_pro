@@ -28,9 +28,9 @@ def win_rate(r: dict) -> Optional[float]:
     return finite(r.get("win_rate")) if (r.get("n_trades") or 0) > 0 else None
 
 
-def run_spec(ticker, sl, tp, capital, fee, version) -> dict:
+def run_spec(ticker, sl, tp, capital, fee, version, demo: bool = False) -> dict:
     return {"ticker": ticker, "sl": int(sl), "tp": int(tp), "capital": float(capital), "fee": float(fee),
-            "snapshot": version}
+            "snapshot": version, "demo": bool(demo)}
 
 
 def stale_reason(run: Optional[dict], spec: dict) -> Optional[str]:
@@ -40,6 +40,8 @@ def stale_reason(run: Optional[dict], spec: dict) -> Optional[str]:
     old = run["spec"]
     changed = [label for k, label in (("ticker", "ticker"), ("sl", "stop loss"), ("tp", "take profit"),
                                       ("capital", "capital"), ("fee", "transaction cost")) if old.get(k) != spec.get(k)]
+    if bool(old.get("demo", False)) != bool(spec.get("demo", False)):    # (runs stored before this key: no demo)
+        changed.append("Static Quality demo")
     if changed:
         return "controls changed (" + ", ".join(changed) + ")"
     if old.get("snapshot") != spec.get("snapshot"):

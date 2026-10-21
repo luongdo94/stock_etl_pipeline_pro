@@ -81,7 +81,7 @@ def render(ctx):
         demo = sticky(st.toggle, "Include the Static Quality demo (lookahead — methodology only)", False, "slab_demo")
         run = st.button("▶ Compare all rules", type="primary", width="stretch")
 
-    spec = lv.run_spec(ticker, sl, tp, capital, fee, db.opened_version())
+    spec = lv.run_spec(ticker, sl, tp, capital, fee, db.opened_version(), demo)
 
     with col2:
         if run and ticker:

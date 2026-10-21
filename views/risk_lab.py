@@ -35,6 +35,10 @@ def _news_sentiment(company, ticker):
     q = urllib.parse.quote(f"{company or ticker} stock when:7d")
     feed = feedparser.parse(f"https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en")
     titles = [e.get("title", "").split(" - ")[0] for e in feed.entries[:10]]
+    status = feed.get("status") if hasattr(feed, "get") else getattr(feed, "status", None)
+    bozo = feed.get("bozo") if hasattr(feed, "get") else getattr(feed, "bozo", None)
+    if not titles and (bozo or (status is not None and status != 200)):
+        raise RuntimeError(f"news feed unavailable (status {status})")      # shown as Unavailable, not No headlines
     return (analyze_sentiment_finbert(titles) if titles else None), len(titles)
 
 

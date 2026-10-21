@@ -136,7 +136,7 @@ def _answer(ctx):
         <span style='color:inherit; font-size:0.78rem;'>raw heuristic score {summ['score']}/{summ['max_score']}
           · {"prices to " + f"{latest:%d %b %Y}" if latest is not None else "price date unknown"}</span>
       </div>
-      <div style='color:#cfd8dc; font-size:0.82rem; margin-top:4px;'>{ctx['regime_advice']}</div>
+      <div style='font-size:0.82rem; margin-top:4px;'>{ctx['regime_advice']}</div>
       <ul style='margin:6px 0 0 16px; padding:0; font-size:0.82rem;'>{why}{gaps}{flag}</ul>
     </div>""", unsafe_allow_html=True)
     cols = st.columns(len(_NEXT_STEPS))
@@ -275,7 +275,7 @@ def render(ctx):
             )
             st.plotly_chart(fig_br, use_container_width=True)
         else:
-            st.info("Calculating breadth history... run pipeline if empty.")
+            st.info("No breadth history in this snapshot.")
 
 
 

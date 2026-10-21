@@ -64,7 +64,7 @@ def render(dd, ctx):
     render_header("activity", "Diagnostic Metrics Portfolio")
 
     _card_style = "background:var(--secondary-background-color, transparent);border:1px solid rgba(128,128,128,0.25);border-radius:10px;padding:10px 4px 4px 4px;margin-bottom:4px;"
-    _header_style = "color:#aabbcc;font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;padding:0 8px 6px 8px;"
+    _header_style = "opacity:0.75;font-size:0.72rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;padding:0 8px 6px 8px;"
 
     # Missing values must read "N/A" — not "nan%", and not "0.0%" painted red as if it were a fact
     def _num(v):

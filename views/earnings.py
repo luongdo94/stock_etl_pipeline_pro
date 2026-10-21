@@ -203,6 +203,8 @@ def render(ctx):
         idx = universe.index(default) if default in universe else 0
         follow_active_ticker("er_ticker", universe)
         t = sticky_choice("Stock", universe, universe[idx], "er_ticker", format_func=ctx["format_ticker"])
+        if default and default not in universe:                 # the stock researched elsewhere has no report stored
+            st.caption(f"No earnings records are stored for {default}. Showing {t}; choose another stock above.")
         hist = events[events["ticker"] == t]
         rt = reactions[reactions["ticker"] == t].sort_values("reaction_day", ascending=False) if not reactions.empty else pd.DataFrame()
         b, mv, nxt = er.beat_summary(hist), er.expected_move(rt) if not rt.empty else {"n": 0, "median_abs": None, "max_abs": None}, er.next_event(hist)
@@ -210,7 +212,7 @@ def render(ctx):
             _c = _next_dates(cal_all[cal_all["ticker"] == t], pd.Timestamp.now(tz="UTC"))
             nxt = _c.iloc[0] if not _c.empty else None
 
-        nxt_txt, nxt_sub = ("not scheduled", "")
+        nxt_txt, nxt_sub = ("No upcoming date stored", "")
         if nxt is not None:
             nxt_txt, nxt_sub = _local(nxt["earnings_ts"], t)
             nxt_sub = f"{nxt_sub} · EPS est. {nxt['eps_estimate']:.2f}" if pd.notna(nxt["eps_estimate"]) else nxt_sub
