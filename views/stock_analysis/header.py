@@ -4,7 +4,7 @@ import streamlit as st
 
 from services.db import load_ticker_provenance, load_track_record
 from ui.provenance import render_confidence_line
-from services.user_store import read_portfolio_snapshot
+from services.user_store import read_portfolio_status
 from ui.decision_panel import render_decision_panel
 from views.stock_analysis.layout import layer_banner
 
@@ -20,7 +20,10 @@ def render(dd, ctx):
 
     def _holdings_value():
         """({ticker: EUR value}, cash EUR) — the panel sizes against NAV = holdings + cash."""
-        _pf, _cash, _ = read_portfolio_snapshot()
+        _pf, _cash, _, _ok = read_portfolio_status()
+        if not _ok:
+            st.warning("Your portfolio could not be read. Try again by reopening Overview.")
+            return None
         _last = prices_full.sort_values("date").groupby("ticker")["price_close"].last()
         # a holding without a price is held but of UNKNOWN value (None), not worth €0
         def _val(t, v):

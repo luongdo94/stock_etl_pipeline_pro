@@ -1,6 +1,7 @@
 """Peer comparison table."""
 
 import html
+import re
 
 import pandas as pd
 import streamlit as st
@@ -56,21 +57,17 @@ def render(dd, ctx):
 
         # ── Compute Net Debt / EBITDA ──────────────────────────────────
 
-        # ── Compute YoY growth from actual annual_fin data ─────────────
-        # Same method as Financial Performance chart: (Y - Y-1) / |Y-1| * 100
+        # ── Source-currency, period-aware growth from the annual mart ─
         _all_peer_tickers = list(peer_df["ticker"].unique()) + [deep_ticker]
         _af_peers = annual_fin[annual_fin["ticker"].isin(_all_peer_tickers)].copy()
 
         def _yoy_growth_from_annual(ticker_sym, col):
             """Latest YoY growth for a column from dim_annual_financials."""
             t_df = _af_peers[_af_peers["ticker"] == ticker_sym].sort_values("year")
-            if len(t_df) < 2:
+            if t_df.empty or col not in t_df:
                 return None
-            prev = t_df[col].iloc[-2]
-            curr = t_df[col].iloc[-1]
-            if pd.isna(prev) or pd.isna(curr) or prev == 0:
-                return None
-            return (curr - prev) / abs(prev) * 100
+            value = t_df[col].iloc[-1]
+            return None if pd.isna(value) else value
 
         # ── Build unified rows ─────────────────────────────────────────
         def _build_row(row, ticker, is_selected):
@@ -82,7 +79,7 @@ def render(dd, ctx):
                     return None
                 return f if f == f else None
             td, eb = _val("total_debt"), _val("ebitda")
-            rev_growth = _yoy_growth_from_annual(ticker, "revenue")
+            rev_growth = _yoy_growth_from_annual(ticker, "revenue_growth_pct")
             fcf_mgn = _val("fcf_margin")
             _pct100 = lambda k: None if _val(k) is None else _val(k) * 100          # noqa: E731
             return {
@@ -91,7 +88,7 @@ def render(dd, ctx):
                 "market_cap":       row.get("market_cap"),
                 # Growth
                 "revenue_growth":   rev_growth,
-                "earnings_growth":  _yoy_growth_from_annual(ticker, "eps"),
+                "earnings_growth":  _yoy_growth_from_annual(ticker, "eps_growth_pct"),
                 # Quality / Profitability
                 "gross_margin":     _pct100("gross_margin"),
                 "operating_margin": _pct100("operating_margin"),
@@ -100,7 +97,7 @@ def render(dd, ctx):
                 "rule_of_40":       rev_growth + fcf_mgn if rev_growth is not None and fcf_mgn is not None else None,
                 # Balance sheet & Risk
                 "debt_ebitda":  td / eb if (td is not None and eb is not None and eb > 0) else None,
-                "debt_to_equity":   row.get("debt_to_equity"),
+                "debt_to_equity":   None if _val("debt_to_equity") is None else _val("debt_to_equity") / 100,
                 "dividend_yield":   row.get("dividend_yield_pct"),
                 # Valuation
                 "ev_to_ebitda":     row.get("ev_to_ebitda"),
@@ -120,8 +117,10 @@ def render(dd, ctx):
         # ── Dynamic Column Definitions based on Business Type ─────────
         _sector_lower = str(_ticker_sector).lower()
         _industry_lower = str(_ticker_industry).lower()
+        # whole words: "ai" must not match retail / railroads / airlines
+        _words = set(re.findall(r"[a-z]+", f"{_sector_lower} {_industry_lower}"))
 
-        if any(x in _sector_lower or x in _industry_lower for x in ['software', 'saas', 'cyber', 'ai', 'data', 'technology services', 'it services', 'cloud', 'internet']):
+        if _words & {"ai", "data"} or any(x in _sector_lower or x in _industry_lower for x in ['software', 'saas', 'cyber', 'technology services', 'it services', 'cloud', 'internet']):
             b_type = 'saas'
         elif any(x in _sector_lower or x in _industry_lower for x in ['semi', 'industrial', 'manufacturing', 'machinery', 'hardware', 'electronic', 'aerospace', 'auto']):
             b_type = 'industrial'
@@ -288,7 +287,7 @@ def render(dd, ctx):
                 elif fmt == "pct_sign":
                     col_cells += f"<td style='padding:8px 10px; text-align:center; {bg}'>{_fmt_pct(val, sign=True)}{comparison}</td>"
                 elif fmt in ("x", "x1"):
-                    col_cells += f"<td style='padding:8px 10px; text-align:center; {bg}'>{_fmt_x(val, 1 if fmt=='x' else 2)}{comparison}</td>"
+                    col_cells += f"<td style='padding:8px 10px; text-align:center; {bg}'>{'0.0x' if col_key == 'debt_to_equity' and val == 0 else _fmt_x(val, 1 if fmt=='x' else 2)}{comparison}</td>"
                 else:
                     col_cells += f"<td style='padding:8px 10px; text-align:center; {bg}'>—</td>"
             html_rows.append(f"<tr style='{row_bg}'>{td_ticker}{col_cells}</tr>")

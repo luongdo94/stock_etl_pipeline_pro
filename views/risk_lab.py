@@ -39,7 +39,11 @@ def _news_sentiment(company, ticker):
     bozo = feed.get("bozo") if hasattr(feed, "get") else getattr(feed, "bozo", None)
     if not titles and (bozo or (status is not None and status != 200)):
         raise RuntimeError(f"news feed unavailable (status {status})")      # shown as Unavailable, not No headlines
-    return (analyze_sentiment_finbert(titles) if titles else None), len(titles)
+    try:
+        sent = analyze_sentiment_finbert(titles) if titles else None
+    except Exception:
+        sent = None
+    return sent, len(titles)
 
 
 def _stale_reason(previous, current):
@@ -213,8 +217,8 @@ def render(ctx):
     if not news:
         k1.metric("News sentiment (FinBERT)", "Not loaded", delta="Load headline context to request it", delta_color="off")
     elif sent is None:
-        k1.metric("News sentiment (FinBERT)", "Unavailable" if n_titles is None else "No headlines",
-                  delta="lookup failed" if n_titles is None else "none in the last 7 days", delta_color="off")
+        k1.metric("News sentiment (FinBERT)", "Unavailable" if n_titles is None else "Unscored" if n_titles else "No headlines",
+                  delta="lookup failed" if n_titles is None else f"{n_titles} headlines; model unavailable" if n_titles else "none in the last 7 days", delta_color="off")
     else:
         mood = "Bullish" if sent > 0.1 else "Bearish" if sent < -0.1 else "Neutral"
         k1.metric("News sentiment (FinBERT)", mood, delta=f"{sent:.2f} · {n_titles} headlines", delta_color="off")

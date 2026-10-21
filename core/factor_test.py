@@ -199,7 +199,10 @@ def quintile_net_of_costs(fr: pd.DataFrame, h: int, score_col: str = "quality", 
         g = d[d["as_of_date"] == day]
         if len(g) < 10:
             continue
-        top = g[g[score_col].rank(pct=True, method="first") > 0.8]
+        bins = pd.qcut(g[score_col], 5, labels=False, duplicates="drop")
+        if bins.nunique() != 5:
+            continue
+        top = g[bins == 4]
         reg = top.set_index("ticker")["region"].to_dict() if "region" in top.columns else {}
         target = pd.Series(1.0 / len(top), index=top["ticker"])
         prev = held.reindex(target.index.union(held.index)).fillna(0.0)

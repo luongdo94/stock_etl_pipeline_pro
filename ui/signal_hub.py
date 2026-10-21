@@ -201,6 +201,13 @@ def _e(v) -> str:
 
 def _decision_changes(hub):
     ch = hub.get("changes") or {}
+    if ch.get("error"):
+        st.warning("Decision snapshots could not be read. Try again using Retry decision snapshots.")
+        if st.button("Retry decision snapshots", key="sig_retry_changes"):
+            from services.db import load_decision_snapshots
+            load_decision_snapshots.clear()
+            st.rerun()
+        return
     if not ch.get("previous"):
         st.info("Decision changes need two daily snapshots (written by the ETL).")
         return
@@ -255,7 +262,7 @@ def _market_panel(hub, advice, macro, items):
 
 
 def _earnings_panel(earnings_cal, companies_full, dec):
-    from services.market_data import fx_rate
+    from services.market_data import stored_fx_rate
     if earnings_cal is None or earnings_cal.empty:
         st.write("No earnings calendar.")
         return
@@ -264,8 +271,8 @@ def _earnings_panel(earnings_cal, companies_full, dec):
         st.write("No reports in the next 30 days.")
         return
     up = up.merge(companies_full[["ticker", "company", "currency"]], on="ticker", how="left")
-    rates = {c: fx_rate(str(c)) for c in up["currency"].fillna("USD").unique()}      # one lookup per currency
-    st.caption("Consensus estimates in EUR where today's rate is known; otherwise in the reporting currency.")
+    rates = {c: stored_fx_rate(str(c)) for c in up["currency"].fillna("USD").unique()}      # one lookup per currency
+    st.caption("Consensus estimates use snapshot FX for EUR; otherwise the reporting currency is kept.")
     for _, r in up.iterrows():
         ccy = str(r["currency"] or "USD")
         fx = rates.get(ccy)
@@ -285,6 +292,12 @@ def _discovery_panel(companies_full, generation=None):
     disc = load_discovery(generation)
     st.caption("Names the ETL's TradingView screens added to the universe (snapshot of the last ETL run; first seen = "
                "the date a screen first returned it).")
+    if disc.attrs.get("error"):
+        st.warning("The discovery snapshot could not be read. Try again using Retry discovery snapshot.")
+        if st.button("Retry discovery snapshot", key="sig_retry_discovery"):
+            load_discovery.clear()
+            st.rerun()
+        return
     if disc.empty:
         st.info("No discovery snapshot in the warehouse.")
     else:
@@ -313,11 +326,11 @@ def _discovery_panel(companies_full, generation=None):
 
 def _insider_panel():
     from services.db import insider_tickers, load_insider_transactions
-    from services.market_data import fx_rate
+    from services.market_data import stored_fx_rate
     try:
         tickers = insider_tickers()
     except Exception:
-        st.info("No insider transactions in the warehouse yet (loaded by the ETL for US listings).")
+        st.warning("Insider tickers could not be read. Try again by reopening Insider.")
         return
     if not tickers:
         st.info("No insider transactions in the warehouse yet.")
@@ -331,14 +344,17 @@ def _insider_panel():
         min_k = sticky(st.number_input, "Min value (K, USD)", 0, "sig_insider_min", min_value=0, max_value=10000, step=100)
     df = load_insider_transactions(ticker=None if sel == "All" else sel, tx_type=None if tx_type == "All" else tx_type,
                                    min_value_usd=min_k * 1000)
+    if df.attrs.get("error"):
+        st.warning("Insider transactions could not be read. Try again by reopening Insider.")
+        return
     if df.empty:
         st.info("No transactions matching the filters (last 90 days).")
         return
-    fx = fx_rate("USD")
+    fx = stored_fx_rate("USD")
     dd = df.copy()
     dd["value"] = [("-" if pd.isna(v) or v <= 0 else (f"€{v * fx / 1000:,.0f}K" if fx else f"${v / 1000:,.0f}K"))
                    for v in dd["value"]]
     dd["transaction_date"] = pd.to_datetime(dd["transaction_date"]).dt.strftime("%Y-%m-%d")
-    st.caption("SEC Form 4 (US listings), last 90 days" + ("" if fx else " — USD (today's EUR rate unavailable)"))
+    st.caption("SEC Form 4 (US listings), last 90 days" + (" — EUR using snapshot FX" if fx else " — USD (snapshot EUR rate unavailable)"))
     st.dataframe(dd[[c for c in ["ticker", "transaction_date", "transaction_type", "insider_name", "position", "shares",
                                  "value"] if c in dd.columns]], hide_index=True, width="stretch", height=380)

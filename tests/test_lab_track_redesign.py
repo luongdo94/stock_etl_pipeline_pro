@@ -110,7 +110,10 @@ def test_strategy_lab_has_no_winner_banner_and_keeps_controls(warehouse):
 
 
 @pytest.mark.smoke
-def test_track_record_leads_with_evidence_and_remembers_horizon(warehouse):
+def test_track_record_leads_with_evidence_and_remembers_horizon(warehouse, monkeypatch):
+    from views import track_record
+    # This UI fixture has no archive table: explicitly model a successful empty read (B02).
+    monkeypatch.setattr(track_record, "load_price_history", lambda: pd.DataFrame(columns=["date", "ticker", "price_close"]))
     at = _app("📈 Track Record").run()
     assert not at.exception, [e.value for e in at.exception]
     labels = [m.label for m in at.metric]

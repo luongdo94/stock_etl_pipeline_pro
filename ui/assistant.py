@@ -43,7 +43,7 @@ def _tab_name() -> str:
 def _toolbox(ctx) -> ToolBox:
     from core.portfolio_policy import load_policy
     from services import research
-    from services.user_store import read_portfolio_snapshot
+    from services.user_store import read_portfolio_status
     m_df = ctx["m_df"]
     last = dict(zip(m_df["Ticker"], m_df["Price"])) if {"Ticker", "Price"} <= set(m_df.columns) else {}
 
@@ -61,7 +61,9 @@ def _toolbox(ctx) -> ToolBox:
         return built[t]
 
     def portfolio():
-        holdings, cash, stops = read_portfolio_snapshot()      # the signed-in user's rows only
+        holdings, cash, stops, ok = read_portfolio_status()      # the signed-in user's rows only
+        if not ok:
+            raise RuntimeError("Portfolio could not be read; try asking again.")
         held = [t for t in holdings if t not in last]
         if held:                                               # held but outside the screener: latest close
             px = ctx["prices_full"]

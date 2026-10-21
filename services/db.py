@@ -663,8 +663,10 @@ def load_track_record():
     try:
         with get_db_connection(read_only=True) as conn:
             return conn.execute("SELECT * FROM marts.score_snapshots ORDER BY as_of_date, ticker").df()
-    except Exception:
-        return pd.DataFrame(columns=["as_of_date", "ticker", "price_close", "quality", "action"])
+    except Exception as e:
+        out = pd.DataFrame(columns=["as_of_date", "ticker", "price_close", "quality", "action"])
+        _mark_read_error(out, e)
+        return out
 
 
 @snapshot_cached(ttl=600)
@@ -764,14 +766,16 @@ def load_price_history() -> pd.DataFrame:
             # frame's content hash (the evidence cache key) changed every time and the evidence was recomputed on every rerun
             return conn.execute("SELECT date, ticker, price_close FROM marts.track_prices "
                                 "ORDER BY date, ticker, price_close").df()
-    except Exception:
-        return pd.DataFrame(columns=["date", "ticker", "price_close"])
+    except Exception as e:
+        out = pd.DataFrame(columns=["date", "ticker", "price_close"])
+        _mark_read_error(out, e)
+        return out
 
 
 def evidence_prices(fallback=None) -> pd.DataFrame:
     """THE outcome dataset for evidence (R2-05): the long return index if it exists, else the dashboard prices."""
     hist = load_price_history()
-    if not hist.empty or fallback is None:
+    if hist.attrs.get("error") or not hist.empty or fallback is None:
         return hist
     return fallback[["date", "ticker", "price_close"]]
 
@@ -790,6 +794,10 @@ def evidence(fallback_prices=None) -> dict:
     cache keyed on their content (A04)."""
     from services.screener import frame_fingerprint
     snaps, px = load_track_record(), evidence_prices(fallback_prices)
+    error = snaps.attrs.get("error") or px.attrs.get("error")
+    if error:
+        return {"ok": False, "label": f"Evidence not computable: stored history could not be read ({error}). Try again.",
+                "ic": None, "t_stat": None, "n_days": 0}
     return _evidence_cached(snaps, px, frame_fingerprint(snaps, px))
 
 
@@ -823,8 +831,20 @@ def load_insider_transactions(ticker=None, tx_type=None, min_value_usd=0.0, days
         WHERE {" AND ".join(where)}
         ORDER BY t.transaction_date DESC, t.value DESC
         LIMIT {int(limit)}"""
-    with get_db_connection(read_only=True) as conn:
-        return conn.execute(sql, params).df()
+    try:
+        with get_db_connection(read_only=True) as conn:
+            return conn.execute(sql, params).df()
+    except Exception as e:
+        out = pd.DataFrame()
+        _mark_read_error(out, e)
+        return out
+
+
+def _mark_read_error(frame: pd.DataFrame, e: Exception) -> None:
+    """A table (or column) the ETL has not written yet — an older warehouse — is "no data yet"; any other failure (I/O,
+    lock, corrupt file) is a read error the page must say."""
+    if not isinstance(e, (duckdb.CatalogException, duckdb.BinderException)):
+        frame.attrs["error"] = f"{type(e).__name__}: {e}"[:200]
 
 
 @snapshot_cached(ttl=600)
@@ -838,9 +858,11 @@ def load_decision_snapshots(generation=None) -> pd.DataFrame:
                 SELECT as_of_date, ticker, decision, price_close, rules_version, score_version, inputs
                 FROM marts.score_snapshots WHERE as_of_date IN (SELECT as_of_date FROM d)
                 QUALIFY row_number() OVER (PARTITION BY as_of_date, ticker ORDER BY knowledge_at DESC) = 1""").df()
-    except Exception:
-        return pd.DataFrame(columns=["as_of_date", "ticker", "decision", "price_close", "rules_version",
-                                     "score_version", "inputs"])
+    except Exception as e:
+        out = pd.DataFrame(columns=["as_of_date", "ticker", "decision", "price_close", "rules_version",
+                                    "score_version", "inputs"])
+        _mark_read_error(out, e)
+        return out
 
 
 @snapshot_cached(ttl=600)
@@ -878,8 +900,10 @@ def load_discovery(generation=None) -> pd.DataFrame:
         with get_db_connection(read_only=True) as conn:
             return conn.execute("""SELECT ticker, name, sector, region, source, first_seen, last_seen FROM raw.universe
                                    WHERE source LIKE 'TV_%' ORDER BY first_seen DESC, ticker""").df()
-    except Exception:
-        return pd.DataFrame(columns=["ticker", "name", "sector", "region", "source", "first_seen", "last_seen"])
+    except Exception as e:
+        out = pd.DataFrame(columns=["ticker", "name", "sector", "region", "source", "first_seen", "last_seen"])
+        _mark_read_error(out, e)
+        return out
 
 
 def warehouse_tz() -> str:

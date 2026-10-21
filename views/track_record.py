@@ -65,6 +65,12 @@ def render(ctx):
         st.error(f"The signal history could not be read ({type(e).__name__}). This is not 'no history' — reload; "
                  f"if it persists, check the warehouse.")
         return
+    if all_snaps.attrs.get("error"):
+        st.error("The signal history could not be read. Try again using Retry signal history.")
+        if st.button("Retry signal history", key="tr_retry_history"):
+            load_track_record.clear()
+            st.rerun()
+        return
     snaps = tr.current_definitions(all_snaps)
     legacy = tr.history_days(all_snaps) - tr.history_days(snaps)
     if legacy:
@@ -78,6 +84,11 @@ def render(ctx):
 
     # outcomes need the FULL locked price history (the dashboard frame is only 3 years — audit A07)
     _hist = load_price_history()
+    if _hist.attrs.get("error"):
+        st.error("The price archive could not be read. Results are not computable; try again by reopening Track Record.")
+        return
+    if _hist.empty:
+        st.caption("No stored price archive: outcomes use the dashboard price history (about 3 years).")
     _px = _hist if not _hist.empty else prices_full[["date", "ticker", "price_close"]]
     fr = _forward(snaps, _px)
     from services.db import evidence as _ev_service
@@ -120,6 +131,9 @@ def render(ctx):
 
     # ── 2. Quintiles ──────────────────────────────────────────────────────────
     q = tr.quintile_returns(fr, h, score_col)
+    if q.attrs.get("skipped_days"):
+        st.caption(f"Quintiles exclude {q.attrs['skipped_days']} day(s): scores could not form five distinct groups "
+                   "without splitting ties.")
     c1, c2 = st.columns(2)
     with c1:
         st.markdown(f"**Excess return vs SPY by score quintile ({tr.horizon_label(h)})**")

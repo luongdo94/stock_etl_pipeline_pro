@@ -2,8 +2,11 @@
 
 Built only from stored data: quarterly statements (marts.dim_quarterly_financials, amounts in EUR with the statement
 currency and its EUR rate), quarterly free cash flow (EUR), the EPS pair of the report (raw.earnings_events, reporting
-currency) and, when the ETL recorded it before the report, the revenue consensus (raw.estimate_snapshots, estimate
-currency). Growth uses the local-currency rates the mart computes, so a moving exchange rate is not reported as growth.
+currency) and the revenue consensus (raw.estimate_snapshots, estimate currency) — only a snapshot recorded AFTER the
+quarter ended and BEFORE it was reported: the provider's current-quarter (0q) estimate only rolls to the next quarter
+once a report is out, so in that window it can only be the quarter just reported. Any other snapshot leaves the
+comparison blank (its quarter is unverified). Growth uses the local-currency rates the mart computes, so a moving
+exchange rate is not reported as growth.
 Anything not stored is None — shown as N/A, never 0. Guidance, segments and management commentary are not in these
 tables and are not invented here.
 """
@@ -50,12 +53,14 @@ def _report_event(events: pd.DataFrame, ticker: str, period_end: pd.Timestamp) -
     return None if hit.empty else hit.loc[pd.to_datetime(hit["earnings_ts"], utc=True).idxmin()]
 
 
-def _consensus_before(snaps: Optional[pd.DataFrame], ticker: str, report_ts) -> Optional[dict]:
-    if snaps is None or snaps.empty or report_ts is None:
+def _consensus_before(snaps: Optional[pd.DataFrame], ticker: str, report_ts, period_end=None) -> Optional[dict]:
+    """The last snapshot recorded after `period_end` and before the report day: the 0q consensus of that quarter."""
+    if snaps is None or snaps.empty or report_ts is None or period_end is None:
         return None
     ts = pd.Timestamp(report_ts)
     ts = (ts.tz_convert(None) if ts.tzinfo is not None else ts).normalize()
-    s = snaps[(snaps["ticker"] == ticker) & (pd.to_datetime(snaps["as_of"]) < ts)]
+    as_of = pd.to_datetime(snaps["as_of"])
+    s = snaps[(snaps["ticker"] == ticker) & (as_of > pd.Timestamp(period_end)) & (as_of < ts)]
     if s.empty:
         return None
     row = s.loc[pd.to_datetime(s["as_of"]).idxmax()]
@@ -77,18 +82,18 @@ def latest_report(ticker: str, quarterly: pd.DataFrame, fcf_q: Optional[pd.DataF
     ya = year_ago.iloc[-1] if not year_ago.empty else None
     ev = _report_event(events, ticker, end)
     reported = pd.Timestamp(ev["earnings_ts"]) if ev is not None else None
-    cons = _consensus_before(snaps, ticker, reported)
+    cons = _consensus_before(snaps, ticker, reported, end)
     fx = _num(r.get("fx_to_eur"))
     ccy = r.get("src_currency") if isinstance(r.get("src_currency"), str) else None
 
     rev, ni, oi = _num(r.get("revenue")), _num(r.get("net_income")), _num(r.get("operating_income"))
     lines = []
-    # revenue (EUR) and, when recorded before the report, the consensus — compared in the estimate's own currency
+    # the consensus of THIS quarter (recorded between its end and its report), converted like the actuals
     rev_est_eur = cons["revenue"] * fx if cons and cons["revenue"] is not None and fx else None
     lines.append({"label": "Revenue", "value": rev, "unit": "EUR", "estimate": rev_est_eur,
                   "vs": _vs(rev, rev_est_eur), "yoy_pct": _num(r.get("revenue_growth_yoy_pct")),
-                  "note": (f"consensus recorded {cons['as_of']}" if rev_est_eur is not None else
-                           "no consensus recorded before this report")})
+                  "note": (f"consensus recorded {cons['as_of']}, after the quarter ended" if rev_est_eur is not None
+                           else "no consensus recorded between quarter end and report (period unverified)")})
     eps_a = _num(ev["eps_actual"]) if ev is not None else None
     eps_e = _num(ev["eps_estimate"]) if ev is not None else None
     lines.append({"label": "EPS", "value": eps_a, "unit": ccy or "reporting currency", "estimate": eps_e,
@@ -113,8 +118,8 @@ def latest_report(ticker: str, quarterly: pd.DataFrame, fcf_q: Optional[pd.DataF
                   "note": "EUR at each period's rate: the change includes currency moves"})
     return {"period": f"Q{(end.month - 1) // 3 + 1} {end.year} (quarter ended {end:%Y-%m-%d})",
             "reported": reported, "currency": ccy, "lines": lines,
-            "sources": "Stored statements (Yahoo) converted to EUR, the report's EPS pair, and the consensus the ETL "
-                       "recorded before the report when available."}
+            "sources": "Stored statements (Yahoo) converted to EUR, the report's EPS pair, and the revenue consensus "
+                       "recorded between quarter end and report when available."}
 
 
 def facts_line(h: Optional[dict]) -> Optional[str]:

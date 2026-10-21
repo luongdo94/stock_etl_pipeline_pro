@@ -36,3 +36,24 @@ def snapshot(conn: duckdb.DuckDBPyConnection) -> int:
         return 0
     logger.info(f"   🗂️ Consensus snapshot: {n} ticker(s) recorded")
     return n
+
+
+def carry_forward(conn: duckdb.DuckDBPyConnection, prod_path: str) -> int:
+    """FULL refresh: the fresh warehouse starts empty, but the provider cannot resend a past consensus — copy every
+    stored snapshot from production (rows this run already recorded win on a clash). Returns rows added."""
+    ensure_table(conn)
+    try:
+        conn.execute(f"ATTACH '{prod_path}' AS prodes (READ_ONLY)")
+    except duckdb.Error as e:
+        logger.warning(f"   ⚠️ Consensus history carry-forward skipped: {e}")
+        return 0
+    try:
+        before = conn.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchone()[0]
+        conn.execute(f"""INSERT OR IGNORE INTO {TABLE} (ticker, as_of, eps_est_0q_avg, rev_est_0q_avg, eps_est_0q_n_analysts)
+            SELECT ticker, as_of, eps_est_0q_avg, rev_est_0q_avg, eps_est_0q_n_analysts FROM prodes.{TABLE}""")
+        return conn.execute(f"SELECT COUNT(*) FROM {TABLE}").fetchone()[0] - before
+    except duckdb.Error as e:                                   # production has no snapshots yet
+        logger.info(f"   ℹ️ No consensus history to carry forward: {e}")
+        return 0
+    finally:
+        conn.execute("DETACH prodes")

@@ -146,12 +146,16 @@ def quintile_returns(fr: pd.DataFrame, h: int, score_col: str = "quality") -> pd
     d = fr.dropna(subset=[score_col, col]).copy()
     if d.empty:
         return pd.DataFrame(columns=["quintile", "mean_excess_pct", "n"])
-    d["quintile"] = d.groupby("as_of_date")[score_col].transform(
-        lambda s: pd.qcut(s.rank(method="first"), 5, labels=False) + 1 if len(s) >= 5 else np.nan)
+    def bins(scores):
+        q = pd.qcut(scores, 5, labels=False, duplicates="drop")
+        return q + 1 if q.nunique() == 5 else np.nan
+
+    d["quintile"] = d.groupby("as_of_date")[score_col].transform(bins)
     out = d.dropna(subset=["quintile"]).groupby("quintile")[col].agg(["mean", "count"]).reset_index()
     out.columns = ["quintile", "mean_excess_pct", "n"]
     out["mean_excess_pct"] *= 100
     out["quintile"] = out["quintile"].astype(int)
+    out.attrs["skipped_days"] = d.loc[d["quintile"].isna(), "as_of_date"].nunique()
     return out
 
 

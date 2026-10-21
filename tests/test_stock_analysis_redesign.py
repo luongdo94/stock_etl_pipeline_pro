@@ -290,8 +290,8 @@ def test_r10_get_forex_rates_returns_none_not_one_when_the_lookup_fails(monkeypa
 @pytest.mark.smoke
 def test_r15_a_holding_without_a_price_is_held_but_makes_the_portfolio_unvalued(warehouse, monkeypatch):
     import views.stock_analysis.header as hd
-    monkeypatch.setattr(hd, "read_portfolio_snapshot",
-                        lambda: ({"ZZZ": {"shares": 10}, "AAPL": {"shares": 5}}, 100.0, {}))
+    monkeypatch.setattr(hd, "read_portfolio_status",
+                        lambda: ({"ZZZ": {"shares": 10}, "AAPL": {"shares": 5}}, 100.0, {}, True))
     at = _app("🔬 Stock Analysis")
     at.session_state["deep_ticker_selector"] = "AAPL"
     at.run()

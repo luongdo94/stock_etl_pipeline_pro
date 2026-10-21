@@ -38,7 +38,7 @@ def test_latest_quarter_with_eps_pair_growth_and_margins():
     assert h["period"].startswith("Q3 2026") and h["reported"] == pd.Timestamp("2026-10-20 20:00", tz="UTC")
     l = _lines(h)
     assert l["EPS"]["value"] == 0.87 and l["EPS"]["estimate"] == 0.82 and l["EPS"]["vs"] == "Beat" and l["EPS"]["unit"] == "USD"
-    assert l["Revenue"]["yoy_pct"] == 15.0 and l["Revenue"]["estimate"] is None and "no consensus" in l["Revenue"]["note"]
+    assert l["Revenue"]["yoy_pct"] == 15.0 and l["Revenue"]["estimate"] is None and "no consensus recorded" in l["Revenue"]["note"]
     assert l["Operating margin"]["value"] == pytest.approx(4.0 / 11.5 * 100)
     assert l["Operating margin"]["yoy_bps"] == pytest.approx((4.0 / 11.5 - 3.0 / 10.0) * 1e4)
     assert l["Free cash flow"]["yoy_pct"] == pytest.approx(25.0)
@@ -49,8 +49,10 @@ def test_revenue_consensus_only_when_recorded_before_the_report_and_compared_in_
                           "rev_est_0q_avg": [12.0e9, 99e9], "eps_est_0q_avg": [0.82, 0.9]})
     h = eh.latest_report("NFLX", _q(), None, _events(), snaps)
     rev = _lines(h)["Revenue"]
-    assert rev["estimate"] == pytest.approx(12.0e9 * 0.9)              # the snapshot before 20 Oct, converted like actuals
+    assert rev["estimate"] == pytest.approx(12.0e9 * 0.9)              # recorded after Q3 ended, before 20 Oct; EUR
     assert rev["vs"] == "Beat" and "recorded 2026-10-19" in rev["note"]
+    early = snaps.assign(as_of=pd.to_datetime(["2026-09-15", "2026-10-21"]))   # before quarter end / after the report
+    assert _lines(eh.latest_report("NFLX", _q(), None, _events(), early))["Revenue"]["estimate"] is None
 
 
 def test_unknown_stays_unknown():
@@ -116,3 +118,17 @@ def test_earnings_single_stock_shows_the_latest_quarter(warehouse):
     assert any("Latest reported quarter" in m.value for m in at.markdown)
     tables = [d.value for d in at.dataframe if "vs a year ago" in getattr(d.value, "columns", [])]
     assert tables and set(tables[0]["Item"]) >= {"Revenue", "EPS", "Operating margin", "Free cash flow"}
+
+
+def test_full_refresh_keeps_the_consensus_history(tmp_path):
+    prod = str(tmp_path / "prod.duckdb")
+    p = duckdb.connect(prod)
+    es.ensure_table(p)
+    p.execute("INSERT INTO raw.estimate_snapshots VALUES ('A', '2026-10-14', 1.0, 10.0, 5), ('A', '2026-10-21', 9.0, 90.0, 5)")
+    p.close()
+    fresh = duckdb.connect(str(tmp_path / "shadow.duckdb"))
+    es.ensure_table(fresh)
+    fresh.execute("INSERT INTO raw.estimate_snapshots VALUES ('A', '2026-10-21', 2.0, 20.0, 6)")   # this run's own row
+    assert es.carry_forward(fresh, prod) == 1
+    assert fresh.execute("SELECT as_of, eps_est_0q_avg FROM raw.estimate_snapshots ORDER BY as_of").fetchall() ==         [(date(2026, 10, 14), 1.0), (date(2026, 10, 21), 2.0)]
+    assert es.carry_forward(duckdb.connect(str(tmp_path / "other.duckdb")), str(tmp_path / "missing.duckdb")) == 0

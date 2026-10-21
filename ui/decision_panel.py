@@ -179,7 +179,9 @@ def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, re
                     st.warning(f"Portfolio policy limits this addition to **{allowed:.1%} of NAV** "
                                f"(Decision size {d.position['size_pct']:.1f}%) — {why}.")
         imp = candidate_impact(prices, holdings_value, ticker, d.position["size_pct"], companies) \
-            if holdings_value else None
+            if holdings_value and not cash_eur else None
+        if cash_eur > 0 and holdings_value is not None:
+            st.caption("Portfolio-fit projection unavailable with cash; see the NAV-based limits above")
         if imp:
             corr = f"{imp['correlation']:.2f}" if imp["correlation"] is not None else "n/a"
             st.info(f"Portfolio fit: correlation with current holdings **{corr}** · "

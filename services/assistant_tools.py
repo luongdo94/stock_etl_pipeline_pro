@@ -286,11 +286,12 @@ class ToolBox:
                     unpriced.append(t)
                 continue
             mv = float(h.get("shares", 0)) * float(px)
-            cost = float(h.get("cost", 0)) * float(h.get("shares", 0))
+            unit_cost = _num(h.get("cost"), 6)
+            cost = unit_cost * float(h.get("shares", 0)) if unit_cost is not None else None
             mv_total += mv
             r = self._row(t)
             rows.append({"ticker": t, "shares": h.get("shares"), "price_eur": px, "market_value_eur": mv,
-                         "gain_vs_cost_pct": (mv / cost - 1) * 100 if cost > 0 else None,
+                         "gain_vs_cost_pct": (mv / cost - 1) * 100 if cost is not None and cost > 0 else None,
                          "decision": r.get("Decision"), "verdict": r.get("Verdict"), "sector": r.get("Sector")})
         nav = mv_total + float(cash or 0)
         rows.sort(key=lambda r: -r["market_value_eur"])

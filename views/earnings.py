@@ -255,9 +255,10 @@ def render(ctx):
 
     # ── single stock ────────────────────────────────────────────────────────────────────────
     elif section == "Single stock":
-        universe = sorted(set(events["ticker"]) | set(cal_all["ticker"]))     # either source knows the stock
+        q = ctx.get("quarterly_fin", pd.DataFrame())
+        universe = sorted(set(events["ticker"]) | set(cal_all["ticker"]) | set(q.get("ticker", [])))
         if not universe:
-            st.info("No earnings records stored for any stock.")
+            st.info("No earnings dates/events or quarterly statements stored for any stock.")
             return
         default = st.session_state.get("active_ticker")
         idx = universe.index(default) if default in universe else 0
@@ -353,7 +354,11 @@ def render(ctx):
         if not svc.api_key():
             sticky(st.text_input, "Cohere API key (kept only for this session)", "", "cohere_api_key", type="password",
                           help="Or set COHERE_API_KEY in the environment.")
-        last = rt.iloc[0] if not rt.empty else None
+        reported = hist[hist["eps_actual"].notna()].sort_values("earnings_ts", ascending=False)
+        last = reported.iloc[0] if not reported.empty else None
+        reaction = (rt[pd.to_datetime(rt["earnings_ts"], utc=True) == pd.Timestamp(last["earnings_ts"])]
+                    if last is not None and not rt.empty else pd.DataFrame())
+        ret_2d = reaction.iloc[0]["ret_2d"] if not reaction.empty else None
         try:
             from services.db import load_estimate_snapshots as _les
             _hl = _eh.facts_line(_eh.latest_report(t, ctx.get("quarterly_fin"), ctx.get("hist_fcf_q_full"), events,
@@ -362,7 +367,7 @@ def render(ctx):
             _hl = None
         facts = "\n".join(filter(None, [_hl,
             f"- Latest report: {_local(last['earnings_ts'], t)[0]}; EPS {last['eps_actual']} vs consensus {last['eps_estimate']} "
-            f"(surprise {_pct(last['surprise_pct'])}); 2-day price reaction {_pct(last['ret_2d'])}." if last is not None else None,
+            f"(surprise {_pct(last['surprise_pct'])}); 2-day price reaction {_pct(ret_2d)}." if last is not None else None,
             f"- Beat rate over the last {b['n']} reports: {_pct(b['beat_rate'], 0, False)}." if b["n"] else None,
             f"- Next report: {nxt_txt}." if nxt is not None else None]))
         key = svc.note_key(t, last["earnings_ts"] if last is not None else None, lang, facts)

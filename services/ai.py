@@ -381,7 +381,7 @@ def analyze_sentiment_finbert(headlines):
     """Batch processes headlines using FinBERT and returns an average score (-1 to 1)."""
     pipe = get_finbert_pipeline()
     if not pipe or not headlines:
-        return 0
+        return None
     
     results = pipe(headlines)
     scores = []
@@ -395,4 +395,4 @@ def analyze_sentiment_finbert(headlines):
             scores.append(-score)
         else:
             scores.append(0)
-    return np.mean(scores) if scores else 0
+    return np.mean(scores) if scores else None

@@ -101,7 +101,7 @@ def _login_form(cm):
     if not supabase:
         st.error("Authentication is not configured. Add SUPABASE_URL and SUPABASE_ANON_KEY "
                  "(or SUPABASE_KEY) to .streamlit/secrets.toml. For local development without "
-                 "Supabase login, run .\\start_dashboard.ps1 from the project directory.")
+                 "Supabase login, run ./scripts/windows/start_dashboard.ps1 from the project directory.")
         st.stop()
 
     # Native inputs, buttons and menu follow the selected Light/Dark theme.

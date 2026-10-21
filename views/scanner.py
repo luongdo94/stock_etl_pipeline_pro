@@ -273,8 +273,8 @@ def _changes(ctx):
     from services.db import load_decision_snapshots
     try:
         return feed.decision_changes(load_decision_snapshots(ctx.get("data_version")))
-    except Exception:
-        return None
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {e}"[:200]}
 
 
 def _selected_panel(shown, ctx):
@@ -368,6 +368,13 @@ def render(ctx):
         base = sv.within_scope(base, scope, m_df,
                                narrowed=(selected_region != "🌎 All Regions" or selected_sector != "🌍 All Sectors"),
                                query=query)
+    if view == "Changed" and (changes or {}).get("error"):
+        st.warning("Decision snapshots could not be read. Try again using Retry decision snapshots.")
+        if st.button("Retry decision snapshots", key="scan_retry_changes"):
+            from services.db import load_decision_snapshots
+            load_decision_snapshots.clear()
+            st.rerun()
+        return
     if view == "Changed" and not (changes or {}).get("previous"):
         st.info("Decision changes need two daily snapshots (written by the ETL) — none to compare yet. That is not '0 changes'.")
         return

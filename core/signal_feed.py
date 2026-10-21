@@ -51,6 +51,8 @@ def decision_changes(snaps: pd.DataFrame) -> dict:
     with a rules change, and claimed causes it had not checked). `cause` is "rules" only when the version changed and
     nothing else did (a pure methodology re-rating, grouped in the hub); "unknown" when no difference is visible."""
     out = {"as_of": None, "previous": None, "rules_changed": False, "rule_changes": 0, "changes": []}
+    if snaps is not None and snaps.attrs.get("error"):
+        return {**out, "error": snaps.attrs["error"]}
     if snaps is None or snaps.empty:
         return out
     days = sorted(pd.to_datetime(snaps["as_of_date"]).dt.date.unique())
@@ -148,6 +150,9 @@ def personal_items(*, decisions: dict, latest: pd.DataFrame, holdings: Optional[
             return ("review" if sev == "action" else sev), f"[price of {bar_date(t) or 'unknown date'} — stale] {msg}"
         return sev, msg
     items = []
+    if (changes or {}).get("error"):
+        items.append(_item("—", "DECISION HISTORY UNREADABLE", "review", "Decision snapshots could not be read. "
+                           "Changes are incomplete; try again in Decision changes.", "market", source="daily score snapshot"))
     if not holdings_ok:
         items.append(_item("—", "PORTFOLIO UNREADABLE", "review", "Your portfolio could not be read — its alerts below are "
                            "incomplete (unknown, not empty).", "portfolio", source="portfolio store"))
@@ -204,6 +209,9 @@ def personal_items(*, decisions: dict, latest: pd.DataFrame, holdings: Optional[
                                    "alerts, value and weight use an old price.", scope, decisions.get(t), "prices",
                                    bar_date(t)))
     doc = portfolio_doc or {}
+    if doc.get("error"):
+        items.append(_item("—", "PORTFOLIO CHECK UNAVAILABLE", "review", "Portfolio budget check unavailable: "
+                           + str(doc["error"]), "portfolio", source="portfolio"))
     if doc.get("nav_status"):
         items.append(_item("—", "NAV UNKNOWN", "review", f"Portfolio NAV {doc['nav_status']} — weights and budgets "
                            "cannot be checked.", "portfolio", source="portfolio"))

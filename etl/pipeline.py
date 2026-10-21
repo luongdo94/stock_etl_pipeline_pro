@@ -592,6 +592,8 @@ def _run_pipeline_locked(lookback_days, force_full, fast_mode):
                 carry_forward_missing(conn, DB_PATH, list(universe))
                 carry_forward_history(conn, DB_PATH, list(universe))
                 carry_forward_reference(conn, DB_PATH)
+                from etl import estimate_snapshots
+                estimate_snapshots.carry_forward(conn, DB_PATH)       # the consensus history is not re-fetchable
             logger.info(f"   ⏱  Load: {time.time()-t0:.1f}s")
 
             # ── STEP 3b: INDEPENDENT SOURCES + POINT-IN-TIME DATES ───────────────

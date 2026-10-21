@@ -44,9 +44,9 @@ def render(dd, ctx):
         if not df_fin.empty:
             df_fin_plot = df_fin.sort_values("year")
             
-            # Calculate YoY Growth manually to handle negative values properly: (New - Old) / abs(Old)
-            df_fin_plot['rev_growth'] = (df_fin_plot['revenue'] - df_fin_plot['revenue'].shift(1)) / df_fin_plot['revenue'].shift(1).abs() * 100
-            df_fin_plot['eps_growth'] = (df_fin_plot['eps'] - df_fin_plot['eps'].shift(1)) / df_fin_plot['eps'].shift(1).abs() * 100
+            # The mart checks periods and removes FX moves from business growth.
+            df_fin_plot['rev_growth'] = df_fin_plot.get('revenue_growth_pct')
+            df_fin_plot['eps_growth'] = df_fin_plot.get('eps_growth_pct')
             
             # ── Merge FCF from raw.hist_fcf ──────────────────────────────
             df_fcf_ticker = pd.DataFrame()
@@ -61,7 +61,9 @@ def render(dd, ctx):
                 # hist_fcf is stored in EUR by the ETL — no conversion here
                 df_fin_plot['fcf_growth'] = (
                     df_fin_plot['free_cash_flow'] - df_fin_plot['free_cash_flow'].shift(1)
-                ) / df_fin_plot['free_cash_flow'].shift(1).abs() * 100
+                ) / df_fin_plot['free_cash_flow'].shift(1).abs().replace(0, float('nan')) * 100
+                dates = pd.to_datetime(df_fin_plot.get('report_date', pd.Series(pd.NaT, index=df_fin_plot.index)))
+                df_fin_plot['fcf_growth'] = df_fin_plot['fcf_growth'].where(dates.diff().dt.days.between(350, 380))
             else:
                 df_fin_plot['free_cash_flow'] = None
                 df_fin_plot['fcf_growth']     = None
@@ -109,7 +111,7 @@ def render(dd, ctx):
                         marker_color="rgba(39, 174, 96, 0.75)",
                         text=fcf_text,
                         textposition="outside",
-                        hovertemplate="<b>Year: %{x}</b><br>FCF: €%{y:.2f}" + unit + "<br>YoY Growth: %{text}<extra></extra>"
+                        hovertemplate="<b>Year: %{x}</b><br>FCF (EUR; growth includes FX): €%{y:.2f}" + unit + "<br>YoY Growth: %{text}<extra></extra>"
                     ),
                     secondary_y=False
                 )
@@ -257,21 +259,13 @@ def render(dd, ctx):
                 else:
                     df_fin_q_plot['free_cash_flow'] = None
 
-                # Growth basis: YoY (shift 4) if enough history, else QoQ (shift 1) as fallback
-                _n_quarters = len(df_fin_q_plot)
-                _growth_shift = 4 if _n_quarters >= 5 else 1
-                _growth_label = "YoY" if _growth_shift == 4 else "QoQ"
-
-                def _safe_growth(series, n):
-                    prev = series.shift(n)
-                    return (series - prev) / prev.abs() * 100
-
-                df_fin_q_plot['rev_growth'] = _safe_growth(df_fin_q_plot['revenue'], _growth_shift)
-                df_fin_q_plot['eps_growth'] = _safe_growth(df_fin_q_plot['eps'], _growth_shift)
-                if 'free_cash_flow' in df_fin_q_plot.columns and df_fin_q_plot['free_cash_flow'].notna().any():
-                    df_fin_q_plot['fcf_growth'] = _safe_growth(df_fin_q_plot['free_cash_flow'], _growth_shift)
-                else:
-                    df_fin_q_plot['fcf_growth'] = None
+                _growth_label = "YoY"
+                df_fin_q_plot['rev_growth'] = df_fin_q_plot.get('revenue_growth_yoy_pct')
+                df_fin_q_plot['eps_growth'] = df_fin_q_plot.get('eps_growth_yoy_pct')
+                prev = df_fin_q_plot.set_index(['year', 'quarter'])['free_cash_flow'].reindex(
+                    pd.MultiIndex.from_arrays([df_fin_q_plot['year'] - 1, df_fin_q_plot['quarter']])).to_numpy()
+                prev = pd.Series(prev, index=df_fin_q_plot.index, dtype=float).replace(0, float('nan'))
+                df_fin_q_plot['fcf_growth'] = (df_fin_q_plot['free_cash_flow'] - prev) / prev.abs() * 100
                 
                 # Auto-scale based on max of Revenue and FCF
                 max_val_q = max(
@@ -332,7 +326,7 @@ def render(dd, ctx):
                             marker_color="rgba(39, 174, 96, 0.75)",
                             text=fcf_text_q,
                             textposition="outside",
-                            hovertemplate="<b>Period: %{x}</b><br>FCF: €%{y:.2f}" + unit_q + "<br>" + _growth_label + " Growth: %{text}<extra></extra>"
+                            hovertemplate="<b>Period: %{x}</b><br>FCF (EUR; growth includes FX): €%{y:.2f}" + unit_q + "<br>" + _growth_label + " Growth: %{text}<extra></extra>"
                         ),
                         secondary_y=False
                     )
@@ -345,8 +339,7 @@ def render(dd, ctx):
                         name="Adjusted EPS (Actual)",
                         line=dict(color="orange", width=3),
                         mode="lines+markers",
-                        hovertemplate="<b>Quarter: %{x}</b><br>Adjusted EPS: €%{y:.2f}<br>" + _growth_label + " Growth: %{text}<extra></extra>",
-                        text=eps_text_q,
+                        hovertemplate="<b>Quarter: %{x}</b><br>Adjusted EPS: €%{y:.2f}<extra></extra>",
                     ),
                     secondary_y=True
                 )
@@ -361,7 +354,8 @@ def render(dd, ctx):
                             line=dict(color="rgba(231, 76, 60, 0.75)", width=2),
                             mode="lines+markers",
                             marker=dict(size=6, symbol="circle-open"),
-                            hovertemplate="<b>Quarter: %{x}</b><br>GAAP EPS: €%{y:.2f}<extra></extra>",
+                            hovertemplate="<b>Quarter: %{x}</b><br>GAAP EPS: €%{y:.2f}<br>YoY Growth: %{text}<extra></extra>",
+                            text=eps_text_q,
                         ),
                         secondary_y=True
                     )

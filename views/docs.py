@@ -60,7 +60,7 @@ def render(ctx):
         - Known limits: return on capital is EBIT × (1 − tax) / average (equity + debt − cash) from annual statements
           (a 21% tax rate when none is reported; net income / capital only as a fallback) — no R&D capitalisation, goodwill
           or lease adjustment; net debt comes from Yahoo's EV (can include minorities / preferred); the Value score's FCF
-          yield deducts stock comp only where reported (the DCF refuses to act when it is not reported every year);
+          yield deducts stock comp only where reported (the DCF separately checks FCFE deduction evidence below);
           non-USD risk-free rates are configured approximations (`config/decision_rules.yaml`), the equity risk premium
           is one global 5%; weights are judgement until the **Track Record** tab shows each score's information coefficient.
         """)
@@ -103,12 +103,18 @@ def render(ctx):
           (critical leverage, negative equity, debt without EBITDA, illiquid), no open conflict (collapsing momentum,
           earnings within {rules['risk']['earnings_blackout_days']} days, an unfavourable timing context).
           {evidence_text}
-        - **AVOID / TRIM**: price above even the bull-case value, on fresh data. Otherwise **HOLD / WATCH**.
+        - **AVOID / TRIM**: reliable valuation, fresh data and price above the bull case (or >15% above base without a bull case),
+          unless Quality ≥ {rules.get('scores', {}).get('avoid_spared_quality', 70):.0f} AND Momentum ≥
+          {rules.get('scores', {}).get('avoid_spared_momentum', 40):.0f}, both known: then **HOLD / WATCH**.
+          Otherwise a weakness permits AVOID; the model alone is not a sell signal for a strong stock.
         - The model is reported as *not informative* — and cannot produce BUY/AVOID — when the price implies growth
           (or ROE) beyond its range, the value looks implausible, ROE is not above long-run growth, fewer than 3
           consecutive annual cash-flow statements exist, or stock comp, interest paid in financing or lease principal is
-          unknown in any of those years (reported 0 counts; "not applicable" only with an issuer source recorded in
-          `decision_rules.yaml`), or — for banks and insurers — no
+          UNKNOWN in any of those years when verified deductions are required. Reported 0 counts;
+          ESTIMATED uses a stated method; accounting rules can settle non-applicability (e.g. US GAAP operating interest).
+          Disclosed ASSUMED deductions are {'currently enabled' if rules['valuation'].get('allow_assumed_fcfe_deductions', True) else 'currently disabled'}:
+          when enabled, permitted lease/SBC assumptions can preserve reliability but lower confidence; when disabled,
+          those missing deductions stay unknown and block BUY/AVOID. For banks and insurers, no
           sourced capital-adequacy / asset-quality inputs exist or they fail the configured gates.
         - **Quality floor / Value cross-check**: a BUY CANDIDATE needs Quality ≥ {rules.get('scores', {}).get('min_quality_for_buy', 45):.0f}
           (cheap and weak is the classic value trap). If the DCF says cheap but the Value score (multiples vs peers)
