@@ -19,7 +19,8 @@ begin
     insert into stock_watchlist (user_id, ticker, status, thesis, catalyst, entry_target, invalidation_level,
                                  take_profit, next_earnings, added_date)
     select p_user_id, x.ticker, x.status, x.thesis, x.catalyst, x.entry_target, x.invalidation_level,
-           x.take_profit, x.next_earnings, x.added_date
+           x.take_profit, x.next_earnings,
+           nullif(nullif(x.added_date, ''), 'None')::timestamptz   -- the column is timestamptz; the app sends text
     from jsonb_to_recordset(coalesce(p_rows, '[]'::jsonb)) as x(ticker text, status text, thesis text, catalyst text,
          entry_target double precision, invalidation_level double precision, take_profit double precision,
          next_earnings text, added_date text);
