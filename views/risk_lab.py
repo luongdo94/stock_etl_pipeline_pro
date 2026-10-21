@@ -15,7 +15,7 @@ from core.smart_money import get_sm_spirit_unified_v2
 from services.ai import analyze_sentiment_finbert
 
 from ui.components import format_value
-from ui.sticky import follow_active_ticker, sticky, sticky_choice
+from ui.sticky import follow_active_ticker, my_tickers, remember_ticker, sticky, sticky_choice, ticker_options
 from ui.icons import render_header
 
 
@@ -72,9 +72,12 @@ def render(ctx):
         with c1:
             at = st.session_state.get("active_ticker")
             follow_active_ticker("risk_ticker_form", current_universe)
-            ticker = sticky_choice("Select ticker", current_universe, at if at in current_universe else None,
+            shown = st.session_state.get("_kept::risk_ticker_form")
+            options = ticker_options(current_universe, shown if shown in current_universe else at, my_tickers())
+            ticker = sticky_choice("Select ticker", options, at if at in current_universe else None,
                                    "risk_ticker_form", format_func=format_ticker,
-                                   placeholder="Choose a ticker...")
+                                   placeholder="Type a ticker or a company name...")
+            remember_ticker(ticker)
         with c2:
             horizon = sticky(st.slider, "Horizon (trading days)", 21, "risk_days_form", min_value=5, max_value=90)
         with c3:

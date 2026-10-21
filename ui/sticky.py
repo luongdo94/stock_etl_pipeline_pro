@@ -29,6 +29,44 @@ def sticky_choice(label, options, default, key, **kw):
     return v
 
 
+RECENT_TICKERS = "_recent_tickers"
+
+
+def remember_ticker(ticker, limit: int = 8) -> None:
+    """The stocks looked at lately, newest first (kept for the session; it only orders the pickers)."""
+    if not ticker:
+        return
+    recent = [t for t in st.session_state.get(RECENT_TICKERS, []) if t != ticker]
+    st.session_state[RECENT_TICKERS] = ([ticker] + recent)[:limit]
+
+
+def my_tickers() -> list:
+    """The user's held stocks, then watchlist ideas — from the 10-minute user cache of the SIGNAL hub (no new read when
+    it is warm). Unreadable or empty lists give [] (the pickers just fall back to the alphabetical order)."""
+    try:
+        from core.scanner_views import held_tickers
+        from ui.signal_hub import _user_data
+        user = _user_data()
+        wl = user.get("watchlist")
+        ideas = [str(t) for t in wl["Ticker"].dropna()] if wl is not None and "Ticker" in wl.columns else []
+        return held_tickers(user.get("holdings")) + ideas
+    except Exception:
+        return []
+
+
+def ticker_options(universe, selected=None, mine=()) -> list:
+    """A stock picker's options in the order people look for them: the stock selected now first (the list opens at the
+    top, not scrolled to it), then those viewed lately, then held / watchlist stocks, then the rest as given (the
+    universe is alphabetical). Only stocks in `universe`; nothing is added or dropped."""
+    universe = list(universe)
+    known = set(universe)
+    out = []
+    for t in [selected, *st.session_state.get(RECENT_TICKERS, []), *mine, *universe]:
+        if t in known and t not in out:
+            out.append(t)
+    return out
+
+
 def follow_active_ticker(key: str, universe) -> None:
     """The stock being researched (active_ticker) moved on since this control last saw it, in another tab: the control's
     remembered choice becomes that stock. A choice made on the control itself stays until active_ticker changes again, so

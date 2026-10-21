@@ -11,7 +11,8 @@ from core import earnings_highlights as _eh
 from services import earnings as svc
 
 from ui.components import format_value
-from ui.sticky import follow_active_ticker, sticky, sticky_choice, sticky_radio
+from ui.sticky import (follow_active_ticker, my_tickers, remember_ticker, sticky, sticky_choice, sticky_radio,
+                       ticker_options)
 from ui.icons import render_header
 
 MIN_REGION = 15          # smaller regions are pooled so a "market" benchmark is not the stock itself
@@ -261,9 +262,11 @@ def render(ctx):
             st.info("No earnings dates/events or quarterly statements stored for any stock.")
             return
         default = st.session_state.get("active_ticker")
-        idx = universe.index(default) if default in universe else 0
         follow_active_ticker("er_ticker", universe)
-        t = sticky_choice("Stock", universe, universe[idx], "er_ticker", format_func=ctx["format_ticker"])
+        shown = st.session_state.get("_kept::er_ticker")
+        universe = ticker_options(universe, shown if shown in universe else default, my_tickers())
+        t = sticky_choice("Stock", universe, universe[0], "er_ticker", format_func=ctx["format_ticker"])
+        remember_ticker(t)
         if default and default not in universe:                 # the stock researched elsewhere has no report stored
             st.caption(f"No earnings records are stored for {default}. Showing {t}; choose another stock above.")
         hist = events[events["ticker"] == t]

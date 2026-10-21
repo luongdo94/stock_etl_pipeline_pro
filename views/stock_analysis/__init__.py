@@ -6,6 +6,7 @@ layer of the page from that DeepDive and the app context.
 import streamlit as st
 
 from ui.icons import render_header
+from ui.sticky import my_tickers, remember_ticker, ticker_options
 from views.stock_analysis import (ai_review, analyst, answer, context, diagnostics, fundamentals, header, ownership,
                                       peers, performance, research, risk_hub, signal_matrix, technical,
                                       watchlist_save)
@@ -29,10 +30,12 @@ def _select_ticker(ctx):
     if "deep_ticker_selector" not in st.session_state:
         default = st.session_state.get("active_ticker")
         st.session_state["deep_ticker_selector"] = default if default in universe else None
-    ticker = st.selectbox("Select Asset to Analyze:", universe, placeholder="Search and Select an Asset...",
+    options = ticker_options(universe, st.session_state.get("deep_ticker_selector"), my_tickers())
+    ticker = st.selectbox("Select Asset to Analyze:", options, placeholder="Type a ticker or a company name...",
                           format_func=ctx["format_ticker"], key="deep_ticker_selector")
     if ticker:
         st.session_state.active_ticker = ticker
+        remember_ticker(ticker)
     return ticker
 
 

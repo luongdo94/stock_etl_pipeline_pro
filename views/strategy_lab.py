@@ -11,7 +11,7 @@ from core.track_record import evidence_headline
 from services import db
 from ui.components import render_metric_tile
 from ui.icons import render_header
-from ui.sticky import follow_active_ticker, sticky, sticky_choice
+from ui.sticky import follow_active_ticker, my_tickers, remember_ticker, sticky, sticky_choice, ticker_options
 
 RULES = [
     "Trend Following (MA20/50 Cross)",
@@ -65,9 +65,10 @@ def render(ctx):
     with col1:
         follow_active_ticker("slab_ticker", options)
         cur = st.session_state.get("_kept::slab_ticker")
-        idx = options.index(cur) if cur in options else 0
-        ticker = st.selectbox("Ticker", options, index=idx, format_func=format_ticker, key="slab_ticker") if options else None
+        options = ticker_options(options, cur if cur in options else None, my_tickers())
+        ticker = st.selectbox("Ticker", options, index=0, format_func=format_ticker, key="slab_ticker") if options else None
         st.session_state["_kept::slab_ticker"] = ticker
+        remember_ticker(ticker)
         sl_c, tp_c = st.columns(2)
         with sl_c:
             sl = sticky(st.slider, "Stop loss (%)", 8, "slab_sl", min_value=0, max_value=30,
