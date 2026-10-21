@@ -1,6 +1,6 @@
 """Layer 3B — research with citations: questions answered from the company's SEC filings (RAG) and an explanation of
 the computed Decision from the methodology and rules. Nothing here changes the Decision."""
-from datetime import date
+from datetime import date, datetime, timezone
 
 import pandas as pd
 import streamlit as st
@@ -26,7 +26,7 @@ def render(dd, ctx):
     with tab_f:
         _filings_tab(dd, lang)
     with tab_d:
-        _decision_tab(dd, lang)
+        _decision_tab(dd, lang, ctx.get("data_version"))
 
 
 def _store(ticker) -> list:
@@ -82,7 +82,7 @@ def _filings_tab(dd, lang):
         _render_answer(item)
 
 
-def _decision_tab(dd, lang):
+def _decision_tab(dd, lang, snapshot=None):
     dec = dd.extra.get("decision")
     stance = getattr(dec, "stance", "n/a")
     st.caption(f"Explains the computed Decision (**{stance}**) from its own figures, the methodology documentation "
@@ -98,10 +98,19 @@ def _decision_tab(dd, lang):
                 doc = research.decision_document(dd.ticker, dec, dd.vin, dd.scores)
                 hits = research.search_methodology(q, doc)
                 res = research.answer(q, hits, system=research.SYSTEM_METHOD, language=lang)
-                _keep(dd.ticker, {"kind": "decision", "q": q, "res": res, "hits": hits})
+                _keep(dd.ticker, {"kind": "decision", "q": q, "res": res, "hits": hits,
+                                  "ticker": dd.ticker, "snapshot": str(snapshot) if snapshot is not None else None,
+                                  "stance": stance, "language": lang,
+                                  "created_at": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")})
             except Exception as e:
                 st.error(f"Explanation failed: {type(e).__name__}: {e}")
     for item in [x for x in _store(dd.ticker) if x["kind"] == "decision"]:
+        saved_snapshot = item.get("snapshot")
+        st.caption(f"Explanation for {item.get('ticker', dd.ticker)} · snapshot {saved_snapshot or 'unknown'} · "
+                   f"created {item.get('created_at', 'unknown')} · {item.get('language', 'unknown language')} · "
+                   f"Decision {item.get('stance', 'unknown')}")
+        if saved_snapshot is not None and snapshot is not None and saved_snapshot != str(snapshot):
+            st.warning("This explanation is from an earlier snapshot; request a new explanation for the current Decision.")
         _render_answer(item)
 
 

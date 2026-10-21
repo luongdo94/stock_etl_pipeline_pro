@@ -284,7 +284,7 @@ def render(dd, ctx):
         <div style='display:flex; align-items:center; gap:8px;'>
             <span style='font-size:1.2rem; font-weight:600; color:{_s_color};'>{_nlp_sent}</span>
         </div>
-        <div style='margin-top:8px; font-size:0.7rem; color:inherit;'>Extracting sentiment from latest financial headlines</div>
+        <div style='margin-top:8px; font-size:0.7rem; color:inherit;'>Sentiment in the saved review</div>
     </div>
     <!-- Card 3: Risk Exposure -->
     <div style='padding:15px; background:var(--secondary-background-color, transparent); border-radius:10px;'>
@@ -299,7 +299,7 @@ def render(dd, ctx):
     </div>
 </div>
 <div style='font-size:0.62rem; color:inherit; text-align:right; margin-bottom:12px; letter-spacing:0.5px;'>
-    SYNCHRONIZED AUDIT TIMESTAMP: {_audit_time} &nbsp;&middot;&nbsp; <b>DYNAMIC OVERLAY V12.1</b>
+    Saved review: {_audit_time} &nbsp;&middot;&nbsp; <b>Stored result</b>
 </div>
 """, unsafe_allow_html=True)
 
@@ -390,23 +390,17 @@ def render(dd, ctx):
         ))
         fig_radar.update_layout(
             polar=dict(
-                bgcolor="rgba(0,0,0,0)",
                 radialaxis=dict(
                     visible=True, range=[0, 100], autorange=False,
-                    tickfont=dict(size=9, color="#666"),
-                    gridcolor="rgba(255,255,255,0.06)",
-                    linecolor="rgba(255,255,255,0.08)"
+                    tickfont=dict(size=9)
                 ),
                 angularaxis=dict(
-                    tickfont=dict(size=11, color="#bbb"),
-                    gridcolor="rgba(255,255,255,0.06)"
+                    tickfont=dict(size=11)
                 )
             ),
             showlegend=False,
-            template="plotly_dark",
             height=290,
             margin=dict(t=20, b=10, l=40, r=40),
-            paper_bgcolor="rgba(0,0,0,0)"
         )
         with st.container():
             st.plotly_chart(fig_radar, use_container_width=True)

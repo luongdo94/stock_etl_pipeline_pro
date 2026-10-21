@@ -32,9 +32,10 @@ SVG_ICONS = {
 
 
 def render_header(icon_key, text, level="####", color="currentColor", subtitle=None):
-    """Render the existing text header wrapper and optional subtitle."""
+    """Render a semantic heading at the requested level, keeping the compact text-only appearance."""
+    heading = f"h{len(level)}" if level in ("#", "##", "###", "####", "#####", "######") else "h4"
     html = f"<div style='display:flex; align-items:center; margin-bottom:12px; color:{color};'>" \
-           f"<span style='font-size:1.15rem; font-weight:700; letter-spacing:0.02em;'>{text}</span></div>"
+           f"<{heading} style='margin:0; padding:0; font-size:1.15rem; font-weight:700; letter-spacing:0.02em;'>{text}</{heading}></div>"
     st.markdown(html, unsafe_allow_html=True)
     if subtitle:
         st.caption(subtitle)

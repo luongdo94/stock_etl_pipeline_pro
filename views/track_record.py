@@ -129,7 +129,7 @@ def render(ctx):
             fig = go.Figure(go.Bar(x=[f"Q{i}" for i in q["quintile"]], y=q["mean_excess_pct"],
                                    marker_color=["#e74c3c" if v < 0 else "#2ecc71" for v in q["mean_excess_pct"]],
                                    text=[f"{v:+.1f}%<br>n={n}" for v, n in zip(q["mean_excess_pct"], q["n"])]))
-            fig.update_layout(template="plotly_dark", height=320, yaxis_title="Mean excess %",
+            fig.update_layout(height=320, yaxis_title="Mean excess %",
                               xaxis_title="Q1 = lowest score … Q5 = highest", margin=dict(t=10, b=10))
             st.plotly_chart(fig, width="stretch")
             st.caption("A working score rises steadily from Q1 to Q5.")

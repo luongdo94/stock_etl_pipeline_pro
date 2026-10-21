@@ -245,6 +245,8 @@ def test_watchlist_failed_single_idea_save_keeps_edits_and_shows_no_success():
         def fail(df):
             raise RuntimeError("Save status unknown")
         patch.setattr(watchlist, "save_watchlist", fail)
+        patch.setattr(watchlist, "load_watchlist",          # the save re-reads the store: same idea, no conflict
+                      lambda: pd.DataFrame({"Ticker": ["AAPL"], "Status": ["🔵 PENDING"], "Thesis": ["Original"]}))
         at = AppTest.from_function(page).run()
         at.text_area(key="wl_edit_AAPL_Thesis").set_value("Keep this draft")
         next(b for b in at.button if b.label == "Save idea changes").click().run()

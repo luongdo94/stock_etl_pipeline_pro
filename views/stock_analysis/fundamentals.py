@@ -216,7 +216,7 @@ def render(dd, ctx):
                 pass  # Silently skip if forward estimates not available
 
             fig_fin.update_layout(
-                template="plotly_dark", height=500,
+                height=500,
                 margin=dict(l=20, r=20, t=60, b=20),
                 hovermode="x unified",
                 barmode="group",
@@ -467,7 +467,7 @@ def render(dd, ctx):
 
                 fig_fin_q.update_layout(
 
-                    template="plotly_dark", height=500,
+                    height=500,
                     margin=dict(l=20, r=20, t=60, b=20),
                     hovermode="x unified",
                     barmode="group",

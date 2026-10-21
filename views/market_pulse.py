@@ -237,7 +237,7 @@ def render(ctx):
                 line=dict(color="#e67e22", width=1.5)
             ))
             fig_spy.update_layout(
-                template="plotly_dark", height=500,
+                height=500,
                 margin=dict(l=0, r=0, t=10, b=0),
                 yaxis_title="SPY in € (includes EUR/USD moves)",
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
@@ -261,14 +261,14 @@ def render(ctx):
             fig_br.add_hline(y=70, line_dash="dot", line_color="rgba(46, 204, 113, 0.5)",
                              annotation_text="70% Bullish Zone", annotation_position="top left",
                              annotation_font=dict(size=10, color="#2ecc71"))
-            fig_br.add_hline(y=50, line_dash="dash", line_color="rgba(255,255,255,0.4)",
+            fig_br.add_hline(y=50, line_dash="dash", line_color="rgba(128,128,128,0.6)",
                              annotation_text="50% Neutral", annotation_position="top left",
-                             annotation_font=dict(size=10, color="#aaa"))
+                             annotation_font=dict(size=10))
             fig_br.add_hline(y=30, line_dash="dot", line_color="rgba(231, 76, 60, 0.5)",
                              annotation_text="30% Oversold", annotation_position="top left",
                              annotation_font=dict(size=10, color="#e74c3c"))
             fig_br.update_layout(
-                template="plotly_dark", height=500,
+                height=500,
                 margin=dict(l=0, r=0, t=10, b=0),
                 yaxis=dict(title="% Above MA50", range=[0, 100], ticksuffix="%"),
                 xaxis_title="", showlegend=False
@@ -312,8 +312,6 @@ def render(ctx):
             xaxis_title="1-Month Performance (%)",
             yaxis_title="",
             coloraxis_showscale=False,
-            plot_bgcolor='rgba(0,0,0,0)',
-            paper_bgcolor='rgba(0,0,0,0)'
         )
 
         fig.update_traces(

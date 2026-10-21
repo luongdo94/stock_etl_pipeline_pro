@@ -142,6 +142,14 @@ def _latest_report(ticker, events, ctx):
                "commentary are not part of the stored data; the AI note below (on request) reads the press release.")
 
 
+def _open_single_stock(ticker):
+    st.session_state["active_ticker"] = ticker
+    st.session_state["_kept::er_ticker"] = ticker
+    st.session_state.pop("er_ticker", None)
+    st.session_state["er_section"] = "Single stock"
+    st.session_state["_kept::er_section"] = "Single stock"
+
+
 def render(ctx):
     prices_full, companies = ctx["prices_full"], ctx["companies_full"]
     m_df, fe = ctx["m_df"], ctx.get("forward_estimates_full", pd.DataFrame())
@@ -158,7 +166,6 @@ def render(ctx):
         if not events.attrs.get("error"):
             st.info("No earnings-announcement history in the warehouse yet. It is collected by the ETL (weekly); run "
                     "`python run.py` once and reload.")
-        return
     if "_extracted_at" in events.columns and events["_extracted_at"].notna().any():
         st.caption(f"Events fetched from Yahoo on {pd.Timestamp(events['_extracted_at'].max()):%d %b %Y %H:%M}.")
     region_of = _region_map(companies)
@@ -190,6 +197,11 @@ def render(ctx):
         now = pd.Timestamp.now(tz="UTC")
         # both sources (events table + the calendar the Decision's earnings gate reads); a date-only entry stays
         # upcoming for its whole local day
+        if user["holdings_ok"]:
+            known = set(_next_dates(events[er.upcoming_mask(events, now)], now)["ticker"]) | set(_next_dates(cal_all, now)["ticker"])
+            k, n = len(set(held) & known), len(held)
+            st.caption(f"{k} of {n} held have a stored date; {n-k} unknown")
+            st.caption("Coverage counts all stored upcoming dates, including those beyond this window.")
         pending = _pending(events, cal_all, now, days)
         if show != "All":
             watchlist = user["watchlist"]
@@ -232,13 +244,20 @@ def render(ctx):
                 "Typical move": st.column_config.NumberColumn(format="±%.1f%%",
                                                              help="Median absolute 2-day price move on the last 8 reports"),
             })
+            ticker = sticky_choice("Open a stock", pending["ticker"].tolist(), pending["ticker"].iloc[0], "er_open_ticker")
+            st.button("Open in Single stock", key="er_open_single", on_click=_open_single_stock, args=(ticker,))
             st.caption("Typical move = median absolute 2-day reaction on up to the last 8 reports (history, not an options-implied "
                        "move). Beat rates are high across the market because companies guide analysts low; a beat on its own "
                        "says little.")
 
+        st.caption("Dates use the exchange time zone; date-only entries have no announced time.")
+
     # ── single stock ────────────────────────────────────────────────────────────────────────
     elif section == "Single stock":
         universe = sorted(set(events["ticker"]) | set(cal_all["ticker"]))     # either source knows the stock
+        if not universe:
+            st.info("No earnings records stored for any stock.")
+            return
         default = st.session_state.get("active_ticker")
         idx = universe.index(default) if default in universe else 0
         follow_active_ticker("er_ticker", universe)
@@ -286,7 +305,7 @@ def render(ctx):
                                               .fillna(False)])
             fig.add_scatter(x=x, y=r["ret_2d"] * 100, name="2-day price reaction %", mode="lines+markers",
                             line=dict(color="#00e5ff", width=2), yaxis="y2")
-            fig.update_layout(template="plotly_dark", height=380, margin=dict(t=10, l=10, r=10, b=10),
+            fig.update_layout(height=380, margin=dict(t=10, l=10, r=10, b=10),
                               yaxis=dict(title="Surprise %"), yaxis2=dict(title="Reaction %", overlaying="y", side="right"),
                               legend=dict(orientation="h", y=1.1))
             st.plotly_chart(fig, width="stretch")

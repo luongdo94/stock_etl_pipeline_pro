@@ -157,10 +157,10 @@ def render(dd, ctx):
                     opacity=0.75, marker_pattern_shape="/"
                 ))
             fig_eps.update_layout(
-                template="plotly_dark", height=260,
+                height=260,
                 margin=dict(l=0, r=0, t=30, b=0),
                 title=dict(text="EPS Trajectory (Historical + Consensus Forecast)",
-                           font=dict(size=12, color="#8899aa"), x=0),
+                           font=dict(size=12), x=0),
                 legend=dict(orientation="h", yanchor="bottom", y=1.0,
                             xanchor="right", x=1, font=dict(size=10)),
                 barmode="group", yaxis_title="EPS (€)",

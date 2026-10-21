@@ -39,7 +39,7 @@ def render(dd, ctx):
                                               line=dict(color='#0d0e14', width=2)))
             fig_own.update_layout(
                 title=dict(text="Corporate Ownership Structure", font=dict(size=18)),
-                template="plotly_dark", height=300, margin=dict(l=20, r=20, t=50, b=20), showlegend=True,
+                height=300, margin=dict(l=20, r=20, t=50, b=20), showlegend=True,
                 legend=dict(orientation="h", yanchor="bottom", y=-0.2, xanchor="center", x=0.5))
             fig_own.add_annotation(text=f"{(inst_own + insider_own) * 100:.1f}%<br><b>Inst. + insiders</b>",
                                    x=0.5, y=0.5, font_size=18, showarrow=False)
@@ -68,9 +68,8 @@ def render(dd, ctx):
                 number = {'suffix': "%", 'font': {'size': 45, 'color': squeeze_color}},
                 title = {'text': "Short % of Float (Squeeze Risk)", 'font': {'size': 18}},
                 gauge = {
-                    'axis': {'range': [None, max(30, (short_pct*100)+5)], 'tickwidth': 1, 'tickcolor': "darkblue"},
+                    'axis': {'range': [None, max(30, (short_pct*100)+5)], 'tickwidth': 1},
                     'bar': {'color': squeeze_color},
-                    'bgcolor': "rgba(255,255,255,0.05)",
                     'borderwidth': 0,
                     'steps': [
                         {'range': [0, 5], 'color': "rgba(46, 204, 113, 0.15)"},
@@ -78,7 +77,7 @@ def render(dd, ctx):
                         {'range': [15, 100], 'color': "rgba(231, 76, 60, 0.15)"}],
                 }
             ))
-            fig_short.update_layout(template="plotly_dark", height=300, margin=dict(l=20, r=20, t=50, b=20))
+            fig_short.update_layout(height=300, margin=dict(l=20, r=20, t=50, b=20))
             st.plotly_chart(fig_short, use_container_width=True)
 
         ratio_txt = "N/A" if short_ratio is None else f"{short_ratio:.1f} days"

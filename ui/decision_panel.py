@@ -258,7 +258,7 @@ def _render_financial_valuation(meta, price, vin, companies=None):
                                  line=dict(color="#3498db", dash="dot")))
         fig.add_trace(go.Scatter(x=[fit["roe"] * 100], y=[fit["actual_pb"]], mode="markers+text", text=[meta.get("ticker")],
                                  textposition="top center", name=meta.get("ticker"), marker=dict(color="#f1c40f", size=14)))
-        fig.update_layout(template="plotly_dark", height=320, xaxis_title="ROE (%)", yaxis_title="P/B",
+        fig.update_layout(height=320, xaxis_title="ROE (%)", yaxis_title="P/B",
                           margin=dict(t=10, b=10), showlegend=False)
         st.plotly_chart(fig, width="stretch")
         rel = fit["residual_pct"]

@@ -33,8 +33,7 @@ def _runs(runs: pd.DataFrame, unavailable: bool = False):
                            marker_color=[_STATUS_COLOR.get(s, "#8899aa") for s in ok["status"]],
                            hovertext=[f"{s} · {m or ''} · {n or 0:,} rows" for s, m, n in
                                       zip(ok["status"], ok["mode"], ok["rows_processed"])]))
-    fig.update_layout(height=220, margin=dict(l=0, r=0, t=10, b=0), yaxis_title="minutes",
-                      template="plotly_dark", paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)")
+    fig.update_layout(height=220, margin=dict(l=0, r=0, t=10, b=0), yaxis_title="minutes")
     st.plotly_chart(fig, width="stretch")
     failed = r[(r["status"] == "FAILED") & r["error_message"].notna()].head(5)
     if not failed.empty:

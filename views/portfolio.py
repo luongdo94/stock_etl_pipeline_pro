@@ -1,5 +1,6 @@
 """View: 💼 Portfolio"""
 import os
+from copy import deepcopy
 
 from scipy.optimize import minimize
 import numpy as np
@@ -51,6 +52,63 @@ def _summary_values(shares, costs, cash, latest):
             "priced": int(np.isfinite(values).sum()), "holdings": len(tickers)}
 
 
+_IMPORT_BOOK = ("portfolio_tickers", "portfolio_shares", "portfolio_cost", "portfolio_cash_eur",
+                "portfolio_stops", "portfolio_targets")
+_IMPORT_NOTICE = "Save or discard this import before recording another trade or applying a rebalance."
+
+
+def _stage_import(idf, stock_tickers, mode):
+    """Parse the whole file before changing any session state; keep the first pre-import book."""
+    if "ticker" not in idf.columns:
+        raise ValueError("A ticker column is required.")
+    shares = {} if mode == "Overwrite" else dict(st.session_state.portfolio_shares)
+    costs = {} if mode == "Overwrite" else dict(st.session_state.portfolio_cost)
+    valid, missing = [], []
+    for _, row in idf.iterrows():
+        raw = str(row["ticker"]).upper().strip()
+        ticker = next((t for t in stock_tickers if t == raw or t.startswith(f"{raw}.")), None)
+        if raw == "NOVO B":
+            ticker = "NVO" if "NVO" in stock_tickers else None
+        if not ticker:
+            if raw not in ("NAN", ""):
+                missing.append(raw)
+            continue
+        qty = float(row["shares"]) if pd.notna(row.get("shares")) else 0.0
+        cost = row.get("cost", row.get("cost_basis"))
+        cost = float(cost) if pd.notna(cost) else 0.0
+        if not np.isfinite([qty, cost]).all() or qty < 0 or cost < 0:
+            raise ValueError(f"Invalid shares or cost for {raw}.")
+        if mode == "Merge (Accumulate)" and ticker in shares:
+            old_qty = shares[ticker]
+            total = old_qty + qty
+            if total > 0:
+                costs[ticker] = (old_qty * costs.get(ticker, 0.0) + qty * cost) / total
+                shares[ticker] = total
+        else:
+            if qty > 0:
+                shares[ticker] = qty
+            if cost > 0:
+                costs[ticker] = cost
+        valid.append(ticker)
+    if valid:
+        st.session_state.setdefault("_import_saved_book", {k: deepcopy(st.session_state[k]) for k in _IMPORT_BOOK if k in st.session_state})
+        st.session_state.portfolio_shares, st.session_state.portfolio_cost = shares, costs
+        previous = [] if mode == "Overwrite" else st.session_state.portfolio_tickers
+        st.session_state.portfolio_tickers = list(dict.fromkeys(previous + valid))
+        st.session_state['_portfolio_version'] += 1
+    return valid, missing
+
+
+def _discard_import():
+    saved = st.session_state.pop("_import_saved_book")
+    for key in _IMPORT_BOOK:
+        st.session_state.pop(key, None)
+    st.session_state.update(saved)
+    st.session_state.pop("_import_toast", None)
+    st.session_state.pop("_import_warnings", None)
+    st.session_state['_portfolio_version'] += 1
+
+
 def _render_summary(ctx, prices):
     latest = prices.sort_values("date").groupby("ticker")["price_close"].last().to_dict()
     summary = _summary_values(st.session_state.get("portfolio_shares", {}),
@@ -63,7 +121,8 @@ def _render_summary(ctx, prices):
     c1.metric("NAV (holdings + cash)", format_value(summary["nav"], ",.2f", prefix="€"))
     c2.metric("Cash", format_value(summary["cash"], ",.2f", prefix="€"))
     c3.metric("Unrealised P&L", format_value(summary["pnl"], "+,.2f", prefix="€"))
-    st.caption(f"Saved holdings · priced {summary['priced']} of {summary['holdings']} · "
+    label = "Imported draft — not saved" if "_import_saved_book" in st.session_state else "Saved holdings"
+    st.caption(f"{label} · priced {summary['priced']} of {summary['holdings']} · "
                f"warehouse snapshot {ctx.get('data_version', 'unknown')} · latest stored closes, dates below.")
     if summary["nav"] is None:
         st.warning(f"NAV incomplete: known holdings €{summary['known_value']:,.2f}; missing prices are not zero.")
@@ -121,8 +180,11 @@ def render(ctx):
             return {}
         return {t: float(v) for t, v in m_df.set_index("Ticker")["_thesis_stop"].items() if pd.notna(v) and v > 0}
 
-    def _save(shares, costs, cash=None, targets=None):
+    def _save(shares, costs, cash=None, targets=None, *, save_import=False):
         """Every portfolio write: original stops follow the holdings; the outcome is shown, never assumed."""
+        if "_import_saved_book" in st.session_state and not save_import:
+            st.session_state["_save_error"] = _IMPORT_NOTICE
+            return False
         stops = opening_stops(st.session_state.get("portfolio_stops", {}), shares, _thesis_stops())
         ok, msg = save_portfolio_checked(shares, costs, cash, stops, targets)
         if ok:
@@ -142,7 +204,7 @@ def render(ctx):
 
     if st.session_state.get("_ledger_warning"):
         st.warning(f"Trade ledger: {st.session_state.pop('_ledger_warning')} — the portfolio itself was saved.")
-    st.caption("Read the saved portfolio first; select Holdings to record trades or edit. All amounts are in EUR.")
+    st.caption("Read your portfolio first; select Holdings to record trades or edit. All amounts are in EUR.")
 
     # 1. LOCAL TICKER SELECTION
     # holdings, trade prices and NAV use the latest close of the full history; the sidebar range only changes the
@@ -181,6 +243,10 @@ def render(ctx):
     p_tickers = st.session_state.portfolio_tickers
 
     _render_summary(ctx, _now_px)
+    import_pending = "_import_saved_book" in st.session_state
+    if import_pending:
+        st.warning(_IMPORT_NOTICE)
+        st.button("Discard import", key="pf_discard_import", on_click=_discard_import)
     _sections = ["Overview", "Holdings", "Health", "Risk & income", "Rebalance", "AI review", "Activity"]
     _section = sticky_choice("Portfolio section", _sections, "Overview", "pf_section")
     _alert_rules = []
@@ -233,53 +299,14 @@ def render(ctx):
                             if 'symbol' in idf.columns and 'ticker' not in idf.columns:
                                 idf.rename(columns={'symbol': 'ticker'}, inplace=True)
 
-                            if 'ticker' in idf.columns:
-                                s_col = 'shares' if 'shares' in idf.columns else None
-                                c_col = 'cost' if 'cost' in idf.columns else ('cost_basis' if 'cost_basis' in idf.columns else None)
-                                mapped_success, missing_tickers = [], []
-
-                                # ── OVERWRITE: wipe existing portfolio first ──────
-                                if import_mode == "Overwrite":
-                                    st.session_state.portfolio_shares = {}
-                                    st.session_state.portfolio_cost   = {}
-
-                                for _, r in idf.iterrows():
-                                    raw_t = str(r['ticker']).upper().strip()
-                                    final_t = next((target for target in stock_tickers if target == raw_t or target.startswith(f"{raw_t}.")), None)
-                                    if raw_t == "NOVO B": final_t = "NVO" if "NVO" in stock_tickers else None
-
-                                    if final_t:
-                                        mapped_success.append(final_t)
-                                        new_sh   = float(r[s_col])   if s_col and pd.notna(r[s_col])   else 0.0
-                                        new_cost = float(r[c_col])   if c_col and pd.notna(r[c_col])   else 0.0
-
-                                        if import_mode == "Merge (Accumulate)" and final_t in st.session_state.portfolio_shares:
-                                            old_sh = st.session_state.portfolio_shares[final_t]
-                                            old_c  = st.session_state.portfolio_cost.get(final_t, 0.0)
-                                            total_sh = old_sh + new_sh
-                                            if total_sh > 0:
-                                                avg_c = ((old_sh * old_c) + (new_sh * new_cost)) / total_sh
-                                                st.session_state.portfolio_shares[final_t] = total_sh
-                                                st.session_state.portfolio_cost[final_t]   = avg_c
-                                        else:
-                                            if new_sh   > 0: st.session_state.portfolio_shares[final_t] = new_sh
-                                            if new_cost > 0: st.session_state.portfolio_cost[final_t]   = new_cost
-                                    elif raw_t not in ("NAN", "") and raw_t:
-                                        missing_tickers.append(raw_t)
-
-                                if mapped_success:
-                                    valid = [t for t in mapped_success if t in stock_tickers]
-                                    if import_mode == "Overwrite":
-                                        # Replace entirely — no legacy tickers retained
-                                        st.session_state.portfolio_tickers = list(dict.fromkeys(valid))
-                                    else:
-                                        # Merge — keep existing tickers, append new ones
-                                        st.session_state.portfolio_tickers = list(dict.fromkeys(st.session_state.portfolio_tickers + valid))
-                                    st.session_state['_portfolio_version'] += 1
-                                    st.session_state['_import_toast'] = f"Imported {len(valid)} assets! Not saved yet: review the grid, then “Save & Calculate”."
-                                    if missing_tickers:
-                                        st.session_state['_import_warnings'] = f"Skipped {len(missing_tickers)} unsupported: {', '.join(missing_tickers[:5])}"
-                                    st.rerun()
+                            valid, missing_tickers = _stage_import(idf, stock_tickers, import_mode)
+                            if valid:
+                                st.session_state['_import_toast'] = f"Imported {len(valid)} assets! Not saved yet: review the grid, then “Save & Calculate”."
+                            else:
+                                st.session_state['_import_toast'] = "No supported tickers imported; the portfolio is unchanged."
+                            if missing_tickers:
+                                st.session_state['_import_warnings'] = f"Skipped {len(missing_tickers)} unsupported: {', '.join(missing_tickers[:5])}"
+                            st.rerun()
                         except Exception as e:
                             st.error(f"Import failed: {e}")
 
@@ -318,7 +345,7 @@ def render(ctx):
                 st.caption(f"Cash available: €{float(st.session_state.get('portfolio_cash_eur', 0.0) or 0.0):,.2f} · "
                            f"commission {load_decision_rules()['costs']['commission_pct']:.2f}% applied.")
 
-                if st.button("Confirm Transaction", type="primary", use_container_width=True, disabled=(mt_ticker is None)):
+                if st.button("Confirm Transaction", type="primary", use_container_width=True, disabled=(mt_ticker is None or import_pending)) and not import_pending:
                     _side = "BUY" if "Buy" in mt_type else "SELL"
                     _t = record_trade(st.session_state.portfolio_shares, st.session_state.portfolio_cost,
                                       st.session_state.get("portfolio_cash_eur", 0.0), mt_ticker, _side, mt_shares,
@@ -496,12 +523,13 @@ def render(ctx):
             cost_dict = edited_df.set_index("Ticker")["Cost Basis (€)"].to_dict()
             _targets = {t: float(v) for t, v in edited_df.set_index("Ticker")["Target (%)"].items()
                         if pd.notna(v) and float(v) > 0}
-            _old_shares = dict(st.session_state.get("portfolio_shares", {}))
+            _before = st.session_state.get("_import_saved_book", st.session_state)
+            _old_shares = dict(_before.get("portfolio_shares", {}))
             if sum(_targets.values()) > 100 + 1e-9:
                 st.error(f"Targets add up to {sum(_targets.values()):.1f}% of NAV (> 100%) — not saved.")
-            elif _save(shares_dict, cost_dict, float(cash_in), _targets):   # session changes only on a confirmed save
+            elif _save(shares_dict, cost_dict, float(cash_in), _targets, save_import=True):   # session changes only on a confirmed save
                 # a grid edit is a correction, not a trade: ADJUST events carry the new quantity and basis (audit F20)
-                _record(adjustments_from_edit(_old_shares, dict(st.session_state.get("portfolio_cost", {})),
+                _record(adjustments_from_edit(_old_shares, dict(_before.get("portfolio_cost", {})),
                                               shares_dict, cost_dict, float(cash_in)))
                 _saved_grid = edited_df.copy()
                 for _column in ("Action", "Smart Money"):
@@ -511,6 +539,7 @@ def render(ctx):
                 st.session_state.portfolio_cost = cost_dict
                 st.session_state.portfolio_cash_eur = float(cash_in)
                 st.session_state.pop("_save_error", None)
+                st.session_state.pop("_import_saved_book", None)
                 st.toast("Portfolio saved.")
                 st.rerun()
             else:
@@ -892,7 +921,7 @@ def render(ctx):
                                 name=sel_bench_label, line=dict(color="#f1c40f", width=2, dash="dot")
                             ))
                     fig_bt.update_layout(
-                        template="plotly_dark", height=500,
+                        height=500,
                         yaxis_title="Value (€)", margin=dict(t=10, l=10, r=10, b=10)
                     )
                     st.plotly_chart(fig_bt, use_container_width=True)
@@ -934,11 +963,8 @@ def render(ctx):
                         hovertemplate="<b>%{label}</b><br>Value: €%{value:,.0f}<br>Share: %{percentParent:.1%}<extra></extra>",
                     )
                     fig_sun.update_layout(
-                        template="plotly_dark",
                         height=360,
                         margin=dict(l=0, r=0, t=10, b=0),
-                        paper_bgcolor="rgba(0,0,0,0)",
-                        plot_bgcolor="rgba(0,0,0,0)",
                     )
                     st.plotly_chart(fig_sun, use_container_width=True)
                     st.caption("Inner ring = Region · Outer ring = Sector")
@@ -952,7 +978,7 @@ def render(ctx):
                     fig_corr = px.imshow(
                         corr_matrix, text_auto=".2f",
                         color_continuous_scale="RdBu_r", zmin=-1, zmax=1,
-                        template="plotly_dark", aspect="auto"
+                        aspect="auto"
                     )
                     fig_corr.update_layout(height=360, margin=dict(l=0, r=0, t=10, b=0))
                     st.plotly_chart(fig_corr, use_container_width=True)
@@ -1430,7 +1456,7 @@ def render(ctx):
                             st.session_state.pending_opt_strategy = None
                             st.rerun()
                     with sc3:
-                        if st.button("APPLY REBALANCE", width="stretch", type="primary"):
+                        if st.button("APPLY REBALANCE", width="stretch", type="primary", disabled=import_pending) and not import_pending:
                             # Re-check NOW against the current Decisions, cap and holdings — never trust the stored
                             # proposal alone (a stance or a rule may have changed since Generate) (R4-01)
                             _target = np.nan_to_num(_pend_assets["Target Weight %"].to_numpy(dtype=float)) / 100 \
@@ -1607,7 +1633,7 @@ def render(ctx):
                     name="★ Current Portfolio"
                 ))
                 fig_mpt.update_layout(
-                    template="plotly_dark", height=580,
+                    height=580,
                     xaxis_title="Annual Volatility (Risk)",
                     yaxis_title="Annual Historical Return",
                     xaxis=dict(tickformat=".0%"),
@@ -1619,15 +1645,13 @@ def render(ctx):
                         xanchor="center", x=0.45,
                         font=dict(size=11),
                         itemsizing="constant",
-                        bgcolor="rgba(0,0,0,0.3)",
-                        bordercolor="rgba(255,255,255,0.1)",
                         borderwidth=1,
                     ),
                     annotations=[dict(
                         text="← Lower Risk          Higher Return →",
                         xref="paper", yref="paper",
                         x=0.0, y=1.03, showarrow=False,
-                        font=dict(size=10, color="#666"),
+                        font=dict(size=10),
                         align="left"
                     )],
                 )
@@ -1643,7 +1667,6 @@ def render(ctx):
                 fig_risk_b = px.bar(
                     x=current_tickers, y=risk_pct,
                     labels={"x": "Ticker", "y": "Risk Contribution (%)"},
-                    template="plotly_dark",
                     color=risk_pct, color_continuous_scale="Reds"
                 )
                 fig_risk_b.update_layout(height=380)
@@ -1762,7 +1785,7 @@ def _render_factor_tilts(ctx, weights: dict):
                            marker_color=["#e67e22" if abs(v) > 0.5 else "#3498db" for v in tilts["tilt_sd"]],
                            text=[f"{v:+.2f} SD · {c:.0%} covered" for v, c in zip(tilts["tilt_sd"], tilts["coverage"])],
                            textposition="auto"))
-    fig.update_layout(template="plotly_dark", height=230, margin=dict(l=0, r=0, t=10, b=0),
+    fig.update_layout(height=230, margin=dict(l=0, r=0, t=10, b=0),
                       xaxis_title="weighted exposure, standard deviations of the universe")
     st.plotly_chart(fig, use_container_width=True)
     st.caption("0 = like the average stock in the universe. Beyond ±0.5 SD the portfolio is a deliberate bet on that "

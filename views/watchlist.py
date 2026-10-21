@@ -11,6 +11,7 @@ from ui.decision_panel import render_alert_inbox, valuation_inputs
 from ui.icons import render_header
 from ui.sticky import forget, sticky, sticky_choice
 from ui.watchlist_status import STATUS_LABELS, UNKNOWN, restore_statuses, status_choices, status_for_save, status_label
+from views.stock_analysis.watchlist_save import _idea_version
 
 
 def render(ctx):
@@ -80,11 +81,18 @@ def render(ctx):
         }
 
         if mode == "Bulk editor":
+            _ed = st.session_state.get("wl_bulk_editor") or {}
+            if not any(_ed.get(k) for k in ("edited_rows", "added_rows", "deleted_rows")):
+                st.session_state["wl_bulk_baseline"] = wl_df.copy()                # nothing edited yet: follow the store
+            baseline = st.session_state.setdefault("wl_bulk_baseline", wl_df.copy())
+            if not baseline.equals(wl_df):
+                st.warning("This idea was changed elsewhere since you started editing")
+            st.button("Reload saved values", key="wl_bulk_reload", on_click=forget, args=("wl_bulk",))
             with st.container():  # edits rerun so removal count is visible before Save
                 st.caption("Double-click any cell to edit your notes, update Stop Loss levels or change Workflow Status. Click the trash icon to remove an idea.")
 
                 # Type safety: Ensure text columns are explicitly strings before rendering in editor
-                _wl_df_safe = wl_df.copy()
+                _wl_df_safe = baseline.copy()
                 _wl_df_safe["Status"] = _wl_df_safe["Status"].map(status_label)
                 for col in ["Thesis", "Catalyst", "Next Earnings"]:
                     if col in _wl_df_safe.columns:
@@ -96,16 +104,23 @@ def render(ctx):
                     width="stretch",
                     num_rows="dynamic",
                     hide_index=True,
-                    height=400
+                    height=400, key="wl_bulk_editor"
                 )
 
-                removed = len(set(wl_df["Ticker"].dropna()) - set(edited_df["Ticker"].dropna()))
+                removed = len(set(baseline["Ticker"].dropna()) - set(edited_df["Ticker"].dropna()))
                 if removed:
                     st.warning(f"Saving removes {removed} idea(s).")
                 if st.button("Synchronize Watchlist Changes", type="primary"):
                     try:
-                        clean_df = restore_statuses(edited_df, wl_df)
+                        current = load_watchlist()
+                        if st.session_state.get("watchlist_load_failed"):
+                            raise RuntimeError("The saved watchlist could not be read.")
+                        if not baseline.equals(current):
+                            st.warning("This idea was changed elsewhere since you started editing")
+                            return
+                        clean_df = restore_statuses(edited_df, current)
                         save_watchlist(clean_df)
+                        forget("wl_bulk")
                         st.success("Watchlist synced successfully! Database updated.")
                         st.rerun()
                     except Exception as e:
@@ -199,6 +214,10 @@ def _edit_idea(wl_df, decisions):
     ticker = sticky_choice("Idea to edit", tickers, tickers[0], "wl_edit_ticker")
     row = wl_df[wl_df["Ticker"] == ticker].iloc[0]
     pre = f"wl_edit_{ticker}_"
+    baseline = st.session_state.setdefault(pre + "baseline", _idea_version(wl_df, ticker))
+    if baseline != _idea_version(wl_df, ticker):
+        st.warning("This idea was changed elsewhere since you started editing")
+    st.button("Reload saved values", key=pre + "reload", on_click=forget, args=(pre,))
     saved_status = UNKNOWN if pd.isna(row["Status"]) else row["Status"]
     statuses = status_choices(saved_status)
     st.write(f"Current Decision: **{decisions.get(ticker, 'NOT ENOUGH DATA')}**")
@@ -216,11 +235,16 @@ def _edit_idea(wl_df, decisions):
         st.caption("These are your idea levels; they are separate from the Decision's thesis stop.")
         save = st.form_submit_button("Save idea changes", type="primary")
     if save:
-        edited = wl_df.copy()
-        changes = {"Status": status_for_save(status_label(status), row["Status"]), **text, **levels}
-        for name, value in changes.items():
-            edited.loc[edited["Ticker"] == ticker, name] = value
         try:
+            edited = load_watchlist()
+            if st.session_state.get("watchlist_load_failed"):
+                raise RuntimeError("The saved watchlist could not be read.")
+            if baseline != _idea_version(edited, ticker):
+                st.warning("This idea was changed elsewhere since you started editing")
+                return
+            changes = {"Status": status_for_save(status_label(status), row["Status"]), **text, **levels}
+            for name, value in changes.items():
+                edited.loc[edited["Ticker"] == ticker, name] = value
             save_watchlist(edited)
         except Exception as exc:
             st.error(f"Could not save idea: {exc}. Your edits are kept here.")

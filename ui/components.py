@@ -70,7 +70,6 @@ def render_sector_health_matrix(m_df: pd.DataFrame):
         text='Sector',
         labels={'Avg_PEG': 'Valuation (Avg PEG Ratio)', 'Avg_ZScore': 'Momentum (Avg Z-Score)'},
         title="Institutional Sector Matrix: Price vs Value Divergence",
-        template="plotly_dark",
         height=600,
         hover_data=['Avg_Upside', 'Count']
     )
@@ -79,29 +78,29 @@ def render_sector_health_matrix(m_df: pd.DataFrame):
     peg_pivot = sector_stats['Avg_PEG'].median()
     z_pivot   = 0  # 0 is the logical neutral point for Z-Score
 
-    fig.add_hline(y=z_pivot, line_dash="dash", line_color="rgba(255,255,255,0.3)")
-    fig.add_vline(x=peg_pivot, line_dash="dash", line_color="rgba(255,255,255,0.3)")
+    fig.add_hline(y=z_pivot, line_dash="dash", line_color="rgba(128,128,128,0.5)")
+    fig.add_vline(x=peg_pivot, line_dash="dash", line_color="rgba(128,128,128,0.5)")
 
     # Quadrant Labels (Positioned in corners)
     # Top-Left: High Momentum, Low PEG
     fig.add_annotation(x=sector_stats['Avg_PEG'].min(), y=sector_stats['Avg_ZScore'].max(),
-                       text="LEADERS (Strong + Fair Value)", showarrow=False, font=dict(color="#2ecc71", size=10), xanchor="left")
+                       text="LEADERS (Strong + Fair Value)", showarrow=False, font=dict(size=10), xanchor="left")
     # Top-Right: High Momentum, High PEG
     fig.add_annotation(x=sector_stats['Avg_PEG'].max(), y=sector_stats['Avg_ZScore'].max(),
-                       text="HYPE ZONE (Strong + Expensive)", showarrow=False, font=dict(color="#f1c40f", size=10), xanchor="right")
+                       text="HYPE ZONE (Strong + Expensive)", showarrow=False, font=dict(size=10), xanchor="right")
     # Bottom-Left: Low Momentum, Low PEG
     fig.add_annotation(x=sector_stats['Avg_PEG'].min(), y=sector_stats['Avg_ZScore'].min(),
-                       text="VALUE TRAP / DEEP VALUE", showarrow=False, font=dict(color="#3498db", size=10), xanchor="left")
+                       text="VALUE TRAP / DEEP VALUE", showarrow=False, font=dict(size=10), xanchor="left")
     # Bottom-Right: Low Momentum, High PEG
     fig.add_annotation(x=sector_stats['Avg_PEG'].max(), y=sector_stats['Avg_ZScore'].min(),
-                       text="LAGGARDS (Weak + Expensive)", showarrow=False, font=dict(color="#e74c3c", size=10), xanchor="right")
+                       text="LAGGARDS (Weak + Expensive)", showarrow=False, font=dict(size=10), xanchor="right")
 
     fig.update_traces(textposition='top center', marker=dict(line=dict(width=1, color='white')))
     fig.update_layout(
         margin=dict(l=20, r=20, b=50, t=50),
         coloraxis_colorbar=dict(title="Avg Upside %"),
-        xaxis=dict(gridcolor='rgba(255,255,255,0.05)', zeroline=False),
-        yaxis=dict(gridcolor='rgba(255,255,255,0.05)', zeroline=False)
+        xaxis=dict(zeroline=False),
+        yaxis=dict(zeroline=False)
     )
 
     st.plotly_chart(fig, use_container_width=True)

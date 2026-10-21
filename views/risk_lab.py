@@ -172,13 +172,13 @@ def render(ctx):
     dates = pd.date_range(start=df["date"].max(), periods=horizon + 1, freq="B")
     fig = go.Figure()
     for i in range(min(n_sims, 40)):
-        fig.add_trace(go.Scatter(x=dates, y=paths[:, i], mode="lines", line=dict(color="rgba(255,255,255,0.05)", width=1),
+        fig.add_trace(go.Scatter(x=dates, y=paths[:, i], mode="lines", line=dict(color="rgba(128,128,128,0.2)", width=1),
                                  showlegend=False, hoverinfo="skip"))
     for q, name, colour, dash in ((5, "P5", "rgba(231,76,60,0.35)", "dot"), (10, "P10", "rgba(231,76,60,0.7)", "dash"),
                                   (50, "Median", "#8899aa", "solid"), (90, "P90", "rgba(46,204,113,0.7)", "dash"),
                                   (95, "P95", "rgba(46,204,113,0.35)", "dot")):
         fig.add_trace(go.Scatter(x=dates, y=np.percentile(paths, q, axis=1), name=name, line=dict(color=colour, width=2, dash=dash)))
-    fig.update_layout(template="plotly_dark", height=460, yaxis_title="Price (€)", margin=dict(t=10, l=10, r=10, b=10))
+    fig.update_layout(height=460, yaxis_title="Price (€)", margin=dict(t=10, l=10, r=10, b=10))
     st.plotly_chart(fig, width="stretch")
 
     # ── calibration ─────────────────────────────────────────────────────────────────────────

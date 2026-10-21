@@ -21,6 +21,16 @@ def _draft_prefix(ticker: str) -> str:
     return f"wl_{st.session_state.get('user_id', 'local')}_{ticker}_"
 
 
+def _idea_version(frame, ticker):
+    """Comparable saved values, including absence/deletion; normalise pandas missing scalars."""
+    rows = frame[frame["Ticker"] == ticker]
+    if rows.empty:
+        return None
+    fields = ("Status", "Thesis", "Catalyst", "Entry Target", "Invalidation Level", "Take Profit",
+              "Next Earnings", "Added Date")
+    return tuple(None if pd.isna(rows.iloc[0].get(k)) else rows.iloc[0].get(k) for k in fields)
+
+
 @st.fragment
 def _save_form(ticker, act_str, act_desc, s1, stop_loss, tp1, next_earnings):
     pre = _draft_prefix(ticker)
@@ -31,6 +41,12 @@ def _save_form(ticker, act_str, act_desc, s1, stop_loss, tp1, next_earnings):
         st.session_state["watchlist_load_failed"] = True
     existing = wl_df[wl_df["Ticker"] == ticker] if not st.session_state.get("watchlist_load_failed") else pd.DataFrame()
     saved = existing.iloc[0] if not existing.empty else None
+    baseline = pre + "baseline"
+    if not st.session_state.get("watchlist_load_failed"):
+        st.session_state.setdefault(baseline, _idea_version(wl_df, ticker))
+    conflict = baseline in st.session_state and _idea_version(wl_df, ticker) != st.session_state[baseline]
+    if conflict:
+        st.warning("This idea was changed elsewhere since you started editing")
     defaults = {"Status": STATUSES[0], "Thesis": act_desc, "Catalyst": "", "Entry Target": float(s1),
                 "Invalidation Level": float(stop_loss), "Take Profit": float(tp1)}
     if saved is not None:
@@ -62,13 +78,17 @@ def _save_form(ticker, act_str, act_desc, s1, stop_loss, tp1, next_earnings):
     if saved is not None:
         st.caption(f"A saved idea for {ticker} exists: saving updates it (added {saved['Added Date']}, kept).")
     b1, b2, _ = st.columns([2, 1, 3])
-    if b2.button("Reset draft", key=pre + "reset", help="Back to the saved values, or suggestions for a new idea"):
-        forget(pre)
-        st.rerun(scope="fragment")
+    b2.button("Reload saved values" if conflict else "Reset draft", key=pre + "reset",
+              help="Back to the saved values, or suggestions for a new idea", on_click=forget, args=(pre,))
     if b1.button("Update saved idea" if saved is not None else "Save Candidate to Watchlist",
                  type="primary", key=pre + "save"):
         try:
             wl_df = load_watchlist()                                            # fresh: what is stored right now
+            if st.session_state.get("watchlist_load_failed"):
+                raise RuntimeError("The saved watchlist could not be read.")
+            if baseline not in st.session_state or _idea_version(wl_df, ticker) != st.session_state[baseline]:
+                st.warning("This idea was changed elsewhere since you started editing")
+                return
             current = wl_df[wl_df["Ticker"] == ticker]
             added = current["Added Date"].iloc[0] if not current.empty else pd.Timestamp.now().strftime("%Y-%m-%d")
             wl_df = wl_df[wl_df["Ticker"] != ticker]
@@ -79,6 +99,7 @@ def _save_form(ticker, act_str, act_desc, s1, stop_loss, tp1, next_earnings):
                 "Take Profit": round(opt_tp, 2) if opt_tp is not None else None, "Next Earnings": str(next_earnings),
                 "Added Date": added}])
             save_watchlist(pd.concat([wl_df, new_row], ignore_index=True))
+            st.session_state.pop(baseline, None)                               # re-read from the store on the next run
             if not current.empty:
                 st.success(f"Updated {ticker} in the Watchlist Pipeline.")
             else:

@@ -113,32 +113,14 @@ def render(dd, ctx):
         ), row=2, col=1)
 
         fig_tech.update_layout(
-            title=dict(text=f"{deep_ticker} — Technical Master Analysis", font=dict(size=20, color='#e8eaf6')),
+            title=dict(text=f"{deep_ticker} — Technical Master Analysis", font=dict(size=20)),
             height=740,
             xaxis_rangeslider_visible=False,
             hovermode="x unified",
-            # Custom premium dark background
-            paper_bgcolor='#0d0e14',
-            plot_bgcolor='#11121a',
-            font=dict(family="Inter, sans-serif", color="#b0bec5"),
-            # Grid styling (subtle)
-            xaxis=dict(
-                showgrid=True, gridcolor='rgba(255,255,255,0.05)',
-                zeroline=False, linecolor='rgba(255,255,255,0.1)'
-            ),
-            xaxis2=dict(
-                showgrid=True, gridcolor='rgba(255,255,255,0.05)',
-                zeroline=False
-            ),
-            yaxis=dict(
-                showgrid=True, gridcolor='rgba(255,255,255,0.06)',
-                zeroline=False, linecolor='rgba(255,255,255,0.1)',
-                tickprefix='€'
-            ),
-            yaxis2=dict(
-                showgrid=True, gridcolor='rgba(255,255,255,0.04)',
-                zeroline=False
-            ),
+            xaxis=dict(showgrid=True, zeroline=False),
+            xaxis2=dict(showgrid=True, zeroline=False),
+            yaxis=dict(showgrid=True, zeroline=False, tickprefix='€'),
+            yaxis2=dict(showgrid=True, zeroline=False),
             # Legend → outside right side
             legend=dict(
                 orientation="v",
@@ -146,10 +128,7 @@ def render(dd, ctx):
                 y=1.0,
                 xanchor="left",
                 x=1.01,
-                bgcolor="rgba(13,14,20,0.92)",
-                bordercolor="rgba(255,255,255,0.12)",
-                borderwidth=1,
-                font=dict(size=11, color='#cfd8dc'),
+                font=dict(size=11),
                 itemsizing="constant",
                 traceorder="normal"
             ),
