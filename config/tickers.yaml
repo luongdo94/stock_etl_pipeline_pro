@@ -3286,6 +3286,24 @@ sector_overrides:
   TXG: Life Science Tools
   BESI.AS: Semiconductors
   ACMR: Semiconductors
+  # reviewed 2026-10-21 against each stock's Yahoo industry
+  # chip-design software (EDA) is recurring software, not a cyclical equipment business
+  CDNS: SaaS
+  SNPS: SaaS
+  # hotel REITs were scored as a financial (ROE / net margin) instead of a REIT
+  DRH: REITs
+  PEB: REITs
+  URW.PA: REITs
+  # a silicon-wafer maker belongs with the chip supply chain, not with commodity materials
+  3436.T: Semiconductors
+  # financial -> financial: the peer group only
+  KARURVYSYA.NS: Banks
+  CGF.AX: Insurance
+  PAT.DE: Capital Markets            # a real-estate investment manager, not a property owner
+  # apparel and online retail in the wrong peer group
+  2232.HK: Retail
+  FIGS: Retail
+  3064.T: Ecommerce
 
 # One sector name per kind of business (applied to every ticker, configured or discovered, after the overrides above).
 # The name decides the peer group and the scoring treatment (config/scoring_rules.yaml sector_groups), so the targets are
@@ -3306,11 +3324,28 @@ sector_aliases:
   Health Technology: Biotech
   Digital Advertising: Media & Entertainment
   Consumer Services: Media & Entertainment
-  Distribution Services: Media & Entertainment
-  Process Industries: Food & Beverage
+  Distribution Services: Business Services
+  Process Industries: Basic Materials
   Consumer Non-Durables: Food & Beverage
-  Producer Manufacturing: Basic Materials
+  Producer Manufacturing: Industrial Machinery
   Design Software: SaaS
   Non-Energy Minerals: Basic Materials
   Energy Minerals: Oil & Gas
   Data Storage: Enterprise Hardware
+
+# Catch-all sector names (a screen's broad label, or "Industrials" / "Electronic Technology" after an alias) say little
+# about the business: a stock still under one of them takes the sector of its Yahoo industry below. Applied after the
+# aliases and before the per-ticker overrides (an override always wins). Targets are the sectors most stocks of that
+# industry already carry.
+generic_sectors: [Industrials, Electronic Technology, Technology]
+sector_by_industry:
+  Semiconductors: Semiconductors
+  Semiconductor Equipment & Materials: Semiconductors
+  Electronic Components: Semiconductors
+  Communication Equipment: Networking
+  Aerospace & Defense: Aerospace & Defense
+  Specialty Industrial Machinery: Industrial Machinery
+  Electrical Equipment & Parts: Industrial Machinery
+  Railroads: Industrial Machinery
+  Engineering & Construction: Construction & Engineering
+  Specialty Business Services: Business Services

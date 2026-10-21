@@ -135,12 +135,14 @@ def resolve_universe(conn: duckdb.DuckDBPyConnection, base: Optional[dict] = Non
 
 
 def sync_company_sectors(conn: duckdb.DuckDBPyConnection, overrides: Optional[dict] = None,
-                         aliases: Optional[dict] = None) -> int:
-    """Write the sector corrections into raw.company_info too (an incremental run does not reload it). Returns the
-    number of rows changed."""
-    from etl.extract import load_sector_aliases, load_sector_overrides
+                         aliases: Optional[dict] = None, by_industry: Optional[tuple] = None) -> int:
+    """Write the sector corrections into raw.company_info too (an incremental run does not reload it): aliases, then a
+    catch-all sector replaced by the sector of the stock's industry, then the per-ticker overrides. Returns the number of
+    rows changed."""
+    from etl.extract import load_sector_aliases, load_sector_by_industry, load_sector_overrides
     overrides = load_sector_overrides() if overrides is None else overrides
     aliases = load_sector_aliases() if aliases is None else aliases
+    generic, industry_map = load_sector_by_industry() if by_industry is None else by_industry
     changed = 0
     for old, new in aliases.items():
         try:
@@ -150,6 +152,18 @@ def sync_company_sectors(conn: duckdb.DuckDBPyConnection, overrides: Optional[di
                 changed += n
         except duckdb.Error:
             return changed
+    if generic:
+        marks = ", ".join("?" * len(generic))
+        for industry, sector in industry_map.items():
+            try:
+                n = conn.execute(f"SELECT COUNT(*) FROM raw.company_info WHERE sector IN ({marks}) AND industry = ?",
+                                 [*generic, industry]).fetchone()[0]
+                if n:
+                    conn.execute(f"UPDATE raw.company_info SET sector = ? WHERE sector IN ({marks}) AND industry = ?",
+                                 [sector, *generic, industry])
+                    changed += n
+            except duckdb.Error:
+                break                           # an older company_info without an industry column
     for ticker, sector in overrides.items():
         try:
             n = conn.execute("SELECT COUNT(*) FROM raw.company_info WHERE ticker = ? AND sector IS DISTINCT FROM ?",

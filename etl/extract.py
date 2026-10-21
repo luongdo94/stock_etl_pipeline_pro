@@ -189,6 +189,19 @@ def load_sector_aliases() -> dict:
         return {}
 
 
+def load_sector_by_industry() -> tuple:
+    """(catch-all sector names, {Yahoo industry: sector}) from tickers.yaml `generic_sectors:` / `sector_by_industry:`."""
+    config_path = Path(__file__).parent.parent / "config" / "tickers.yaml"
+    try:
+        with open(config_path, encoding="utf-8") as f:
+            cfg = yaml.safe_load(f) or {}
+        return ({str(s) for s in cfg.get("generic_sectors") or []},
+                {str(k): str(v) for k, v in (cfg.get("sector_by_industry") or {}).items() if v})
+    except Exception as e:
+        logger.warning(f"⚠️ sector_by_industry not read: {e}")
+        return set(), {}
+
+
 # --- TRADINGVIEW AUTO-DISCOVERY ---
 _YAHOO_SYMBOL = __import__("re").compile(r"^[A-Z0-9][A-Z0-9\-&]*(\.[A-Z]{1,3})?$")
 

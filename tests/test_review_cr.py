@@ -346,3 +346,30 @@ def test_unvalidated_buy_says_so_in_the_answer_block():
     assert "Not yet validated" in validation_note(buy)
     assert validation_note(NS(stance="HOLD / WATCH", confidence_notes=buy.confidence_notes)) is None
     assert validation_note(NS(stance="BUY CANDIDATE", confidence_notes=["thin coverage"])) is None
+
+
+def test_a_catch_all_sector_takes_the_sector_of_its_industry_and_an_override_still_wins():
+    import duckdb
+    from etl import universe as uni
+    conn = duckdb.connect(":memory:")
+    conn.execute("CREATE SCHEMA raw")
+    conn.execute("CREATE TABLE raw.company_info (ticker VARCHAR, sector VARCHAR, industry VARCHAR)")
+    conn.execute("INSERT INTO raw.company_info VALUES ('AXON', 'Industrials', 'Aerospace & Defense'), "
+                 "('HYNIX', 'Electronic Technology', 'Semiconductors'), ('ODD', 'Industrials', 'Something New'), "
+                 "('KO', 'Food & Beverage', 'Semiconductors'), ('ALO', 'Industrials', 'Railroads')")
+    rule = ({"Industrials", "Electronic Technology"},
+            {"Aerospace & Defense": "Aerospace & Defense", "Semiconductors": "Semiconductors", "Railroads": "Transportation"})
+    assert uni.sync_company_sectors(conn, {"ALO": "Industrial Machinery"}, {}, rule) == 4
+    assert dict(conn.execute("SELECT ticker, sector FROM raw.company_info").fetchall()) == {
+        "AXON": "Aerospace & Defense", "HYNIX": "Semiconductors",
+        "ODD": "Industrials",                      # an industry without a mapping keeps its sector
+        "KO": "Food & Beverage",                   # only catch-all sectors are remapped
+        "ALO": "Industrial Machinery"}             # the per-ticker override wins over the industry rule
+
+
+def test_the_industry_rule_in_the_config_maps_to_sectors_the_app_already_uses():
+    import yaml
+    from pathlib import Path
+    cfg = yaml.safe_load((Path(__file__).resolve().parent.parent / "config" / "tickers.yaml").read_text(encoding="utf-8"))
+    used = {m["sector"] for m in cfg["tickers"].values()} | set(cfg["sector_overrides"].values())
+    assert set(cfg["sector_by_industry"].values()) <= used - set(cfg["generic_sectors"])
