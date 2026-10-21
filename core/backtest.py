@@ -42,11 +42,12 @@ def run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct,
     price_series = pd.Series(prices_arr)
     ma60 = price_series.rolling(60).mean().values
     std60 = price_series.rolling(60).std().values
-    z_scores = np.zeros_like(prices_arr)
+    z_scores = np.full(len(prices_arr), np.nan, dtype=float)
     for j in range(len(prices_arr)):
-        if std60[j] > 0 and not np.isnan(std60[j]):
+        if np.isfinite(std60[j]) and std60[j] > 0:
             z_scores[j] = (prices_arr[j] - ma60[j]) / std60[j]
 
+    is_breakout = "RSI 50 Cross" in strategy_type or "Multi-Indicator Breakout" in strategy_type
     position   = np.zeros(len(bt_prices))
     in_position = False
     entry_price_val = 0.0
@@ -80,10 +81,10 @@ def run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct,
                 elif "RSI Mean Reversion" in strategy_type:
                     if rsi_arr[i] > 70: exit_signal = True; exit_reason = "RSI Overbought"
                 elif "Z-Score" in strategy_type:
-                    if z_scores[i] > 0.5: exit_signal = True; exit_reason = "Z-Score > 0.5"
+                    if np.isfinite(z_scores[i]) and z_scores[i] > 0.5: exit_signal = True; exit_reason = "Z-Score > 0.5"
                 elif STATIC_QUALITY in strategy_type:
-                    if static_score < 60 or ma20_arr[i] < ma50_arr[i]: exit_signal = True; exit_reason = "Quality Degraded/Trend Change"
-                elif "Buy on Dip" in strategy_type or "Multi-Indicator Breakout" in strategy_type:
+                    if ma20_arr[i] < ma50_arr[i]: exit_signal = True; exit_reason = "Trend Change"
+                elif "Buy on Dip" in strategy_type or is_breakout:
                     if current_price < ma50_arr[i]: exit_signal = True; exit_reason = "Price < MA50"
                     
             if exit_signal and can_fill:
@@ -103,13 +104,15 @@ def run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct,
             elif "RSI Mean Reversion" in strategy_type:
                 if rsi_arr[i] < 30 and rsi_arr[i-1] >= 30: entry_signal = True; entry_reason = "RSI Oversold"
             elif "Z-Score" in strategy_type:
-                if z_scores[i] < -2.0 and z_scores[i-1] >= -2.0: entry_signal = True; entry_reason = "Z-Score < -2.0"
+                if (np.isfinite(z_scores[i]) and np.isfinite(z_scores[i-1])
+                        and z_scores[i] < -2.0 and z_scores[i-1] >= -2.0):
+                    entry_signal = True; entry_reason = "Z-Score < -2.0"
             elif STATIC_QUALITY in strategy_type:
                 if static_score >= 75 and ma20_arr[i] > ma50_arr[i]: entry_signal = True; entry_reason = "High Quality + Trend"
             elif "Buy on Dip" in strategy_type:
                 if ma20_arr[i] > ma50_arr[i] and rsi_arr[i] < 40 and rsi_arr[i-1] >= 40: entry_signal = True; entry_reason = "Uptrend + RSI Dip"
-            elif "Multi-Indicator Breakout" in strategy_type:
-                if current_price > ma50_arr[i] and rsi_arr[i] > 50 and rsi_arr[i-1] <= 50: entry_signal = True; entry_reason = "Price>MA50 + RSI>50"
+            elif is_breakout:
+                if current_price > ma50_arr[i] and rsi_arr[i] > 50 and rsi_arr[i-1] <= 50: entry_signal = True; entry_reason = "Price>MA50 + RSI crosses 50"
                 
             if entry_signal and can_fill:
                 position[i] = 1; in_position = True; entry_price_val = fill_price
@@ -125,7 +128,9 @@ def run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct,
     cum_strategy = (1 + strategy_returns).cumprod()
     equity_curve = cum_strategy * initial_capital
     
-    cum_bnh = (1 + returns_arr).cumprod()
+    bnh_returns = returns_arr.copy()
+    bnh_returns[0] = 0.0  # Benchmark starts at the first displayed close, not the preceding close.
+    cum_bnh = (1 + bnh_returns).cumprod()
     bnh_curve = cum_bnh * initial_capital
     
     total_return = (equity_curve[-1] / initial_capital - 1) * 100

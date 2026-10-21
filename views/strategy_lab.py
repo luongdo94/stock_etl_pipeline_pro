@@ -18,7 +18,7 @@ RULES = [
     "RSI Mean Reversion (30/70)",
     "Z-Score Mean Reversion (60-bar price deviation)",
     "Buy on Dip (Uptrend + Oversold)",
-    "Multi-Indicator Breakout (Price>MA50 + RSI>50)",
+    "RSI 50 Cross above MA50 (Price>MA50, RSI crosses 50)",
 ]
 DEMO = f"{STATIC_QUALITY} (today's Quality ≥ 75 applied to past bars — lookahead, not evidence)"
 _SKIP = ["^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"]
