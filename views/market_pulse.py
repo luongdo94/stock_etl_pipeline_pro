@@ -11,7 +11,7 @@ import streamlit as st
 
 from core import market_regime as mr
 from ui.icons import render_header
-from ui.sticky import sticky
+from ui.sticky import sticky, sticky_segmented
 
 _HEATMAP = """
         <!-- TradingView Market Heatmap Widget -->
@@ -287,21 +287,43 @@ def render(ctx):
     _asof = ""
     if "_extracted_at" in tv_sector_rotation.columns and tv_sector_rotation["_extracted_at"].notna().any():
         _asof = f" Stored {tv_sector_rotation['_extracted_at'].max():%d %b %Y %H:%M}."
-    st.caption("Price change of the 11 US sector ETFs over the last month (1M performance, not fund flows — the data has no "
-               "subscriptions or redemptions)." + _asof)
+    st.caption("Price change of the 11 US SPDR sector ETFs (Yahoo, USD, dividend-adjusted closes; 1 week = 5 sessions, "
+               "1 / 3 / 6 months = 21 / 63 / 126, YTD from the last close of last year). Price performance, not fund flows "
+               "— the data has no subscriptions or redemptions." + _asof)
 
-    if not tv_sector_rotation.empty:
-        # Prepare data for chart
-        rot_df = tv_sector_rotation.sort_values("perf_1m", ascending=True).tail(11) # All 11 sectors
+    from etl.sector_rotation import BENCHMARK
+    _periods = {"1 week": "perf_1w", "1 month": "perf_1m", "3 months": "perf_3m", "6 months": "perf_6m",
+                "YTD": "perf_ytd"}
+    _periods = {k: c for k, c in _periods.items() if c in tv_sector_rotation.columns}     # older snapshots: 1m / 3m only
+    if not tv_sector_rotation.empty and _periods:
+        c_period, c_rel = st.columns([3, 1])
+        with c_period:
+            _period = sticky_segmented("Period", list(_periods), "1 month", "mp_rotation_period",
+                                       label_visibility="collapsed")
+        _col = _periods[_period]
+        _bench = tv_sector_rotation.loc[tv_sector_rotation["sector"] == BENCHMARK, _col]
+        _bench = float(_bench.iloc[0]) if not _bench.empty and pd.notna(_bench.iloc[0]) else None
+        with c_rel:
+            _rel = sticky(st.toggle, "vs S&P 500", False, "mp_rotation_rel", disabled=_bench is None,
+                          help="Each sector's change minus SPY's over the same period (percentage points): above 0 = "
+                               "it beat the market. Rotation is about relative strength, not up or down.")
+        # a sector without enough history for this period is left out (unknown, not 0%)
+        rot_df = tv_sector_rotation[tv_sector_rotation["sector"] != BENCHMARK].dropna(subset=[_col]).copy()
+        _x = _col
+        if _rel and _bench is not None:
+            rot_df["vs_spy"] = rot_df[_col] - _bench
+            _x = "vs_spy"
+        rot_df = rot_df.sort_values(_x, ascending=True)
+        _unit = " pts" if _x == "vs_spy" else "%"
 
         # Plotly Horizontal Bar Chart
         fig = px.bar(
             rot_df,
-            x='perf_1m',
+            x=_x,
             y='sector',
             orientation='h',
-            text=rot_df['perf_1m'].apply(lambda x: f"{x:+.1f}%"),
-            color='perf_1m',
+            text=rot_df[_x].apply(lambda x: f"{x:+.1f}{_unit}"),
+            color=_x,
             color_continuous_scale=['#e74c3c', '#2c3e50', '#2ecc71'],
             color_continuous_midpoint=0
         )
@@ -309,7 +331,8 @@ def render(ctx):
         fig.update_layout(
             height=400,
             margin=dict(l=0, r=0, t=20, b=0),
-            xaxis_title="1-Month Performance (%)",
+            xaxis_title=(f"{_period}: change minus S&P 500 (percentage points)" if _x == "vs_spy"
+                         else f"{_period} performance (%)"),
             yaxis_title="",
             coloraxis_showscale=False,
         )
@@ -321,6 +344,8 @@ def render(ctx):
         )
 
         st.plotly_chart(fig, use_container_width=True)
+        st.caption(f"S&P 500 (SPY) over {_period.lower() if _period != 'YTD' else 'the year to date'}: "
+                   + (f"{_bench:+.1f}%." if _bench is not None else "not available in this snapshot."))
     else:
         st.info("Sector ETF performance is not in this snapshot (it is collected by the ETL).")
 

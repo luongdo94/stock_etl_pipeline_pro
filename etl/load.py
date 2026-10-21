@@ -432,8 +432,11 @@ def create_raw_schema(conn: duckdb.DuckDBPyConnection):
     conn.execute("""
         CREATE TABLE IF NOT EXISTS raw.tv_sector_rotation (
             sector              VARCHAR PRIMARY KEY,
+            perf_1w             DOUBLE,
             perf_1m             DOUBLE,
             perf_3m             DOUBLE,
+            perf_6m             DOUBLE,
+            perf_ytd            DOUBLE,
             volume              BIGINT,
             etf_count           INTEGER,
             _extracted_at       TIMESTAMP,
@@ -542,11 +545,18 @@ def load_tv_technicals(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
     return len(df)
 
 def load_tv_sector_rotation(conn: duckdb.DuckDBPyConnection, df: pd.DataFrame):
+    """Replace the sector ETF performance with a NON-EMPTY result (an empty one keeps the previous rows)."""
     if df.empty: return 0
+    for col in ("perf_1w", "perf_6m", "perf_ytd"):            # older warehouses had 1m / 3m only
+        conn.execute(f"ALTER TABLE raw.tv_sector_rotation ADD COLUMN IF NOT EXISTS {col} DOUBLE")
+        if col not in df.columns:
+            df[col] = float("nan")
     conn.execute("DELETE FROM raw.tv_sector_rotation")
     df['_extracted_at'] = pd.Timestamp.now()
     conn.register("df_tmp", df)
-    conn.execute("INSERT INTO raw.tv_sector_rotation (sector, perf_1m, perf_3m, volume, etf_count, _extracted_at) SELECT sector, perf_1m, perf_3m, volume, etf_count, _extracted_at FROM df_tmp")
+    conn.execute("INSERT INTO raw.tv_sector_rotation (sector, perf_1w, perf_1m, perf_3m, perf_6m, perf_ytd, volume, "
+                 "etf_count, _extracted_at) SELECT sector, perf_1w, perf_1m, perf_3m, perf_6m, perf_ytd, volume, "
+                 "etf_count, _extracted_at FROM df_tmp")
     conn.unregister("df_tmp")
     logger.info(f"✅ Loaded {len(df)} TV sector rotation records → raw.tv_sector_rotation")
     return len(df)

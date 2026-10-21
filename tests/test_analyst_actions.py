@@ -137,6 +137,7 @@ def test_pipeline_refresh_and_fast_mode(monkeypatch, fast, fresh, failure, expec
                  "extract_earnings_history", "extract_forward_estimates", "extract_earnings_calendar"):
         monkeypatch.setattr(pl, name, lambda *a, **k: pd.DataFrame())
     monkeypatch.setattr(pl.earnings_events, "needs_refresh", lambda *a, **k: False)
+    monkeypatch.setattr(pl.sector_rotation, "extract", lambda *a, **k: pd.DataFrame())   # Market Pulse ETFs: own tests
     calls, checks = [], []
 
     def refresh(conn, threshold_hours):

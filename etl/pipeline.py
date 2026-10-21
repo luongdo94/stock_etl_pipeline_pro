@@ -12,14 +12,14 @@ from etl import exceptions as _exc
 from etl.lifecycle import inactive_tickers, ledger_rows, unexplained_jumps
 from etl.integrity import detect_price_drift, mark_rebased, replace_ticker_prices, tickers_to_rebase
 from etl.load      import get_connection, create_raw_schema, \
-                          load_stock_prices, load_company_info, load_historical_financials, load_quarterly_financials, load_cashflows, load_historical_fcf, load_quarterly_fcf, load_earnings_calendar, load_earnings_surprise, load_forward_estimates, load_insider_summary, load_insider_transactions, cleanup_stale_tv_tickers, \
+                          load_stock_prices, load_company_info, load_historical_financials, load_quarterly_financials, load_cashflows, load_historical_fcf, load_quarterly_fcf, load_earnings_calendar, load_earnings_surprise, load_forward_estimates, load_insider_summary, load_insider_transactions, cleanup_stale_tv_tickers, load_tv_sector_rotation, \
                           perform_atomic_swap, promote_pending_swap, DB_PATH, SHADOW_DB_PATH, AUDIT_DB_PATH, _WAREHOUSE_DIR
 from etl.runlock   import AlreadyRunning, RunLock
 from etl.transform import run_transforms
 from etl.universe  import resolve_universe, sync_company_sectors
 from etl.utils     import get_last_price_dates, needs_full_refresh, needs_earnings_refresh, needs_fundamentals_refresh, needs_metadata_refresh, get_smart_recovery_targets, needs_insider_refresh
 from etl.insider_trading import extract_insider_summary, extract_insider_transactions
-from etl import earnings_events, analyst_actions
+from etl import earnings_events, analyst_actions, sector_rotation
 
 LOCK_PATH = str(_WAREHOUSE_DIR / "etl.lock")
 TRACK_DB_PATH = str(_WAREHOUSE_DIR / "track_record.duckdb")     # survives full rebuilds (security master, track record)
@@ -285,8 +285,11 @@ def _extract_all(conn, universe, watermarks, is_incremental, lookback_days, fast
         except Exception as e:
             logger.warning(f"Analyst actions extraction skipped: {e}")
 
+    # US sector ETF performance for Market Pulse: one request, changes daily, so every run (fast included)
+    rotation_df = sector_rotation.extract()
+
     logger.info(f"   ⏱  Extract: {time.time() - t0:.1f}s | Prices: {len(prices_df):,} rows")
-    return dict(analyst_actions=actions_df, earnings_events=events_df, insider_summary=insider_sum, insider_tx=insider_tx, prices=prices_df, company=company_df, financials=financials_df, quarterly=quarterly_df,
+    return dict(sector_rotation=rotation_df, analyst_actions=actions_df, earnings_events=events_df, insider_summary=insider_sum, insider_tx=insider_tx, prices=prices_df, company=company_df, financials=financials_df, quarterly=quarterly_df,
                 fcf=fcf_df, fcf_q=fcf_q_df, cashflow=cashflow_df, earnings=earnings_df,
                 surprise=earnings_surprise_df, estimates=forward_estimates_df)
 
@@ -579,6 +582,10 @@ def _run_pipeline_locked(lookback_days, force_full, fast_mode):
             if not is_incremental:
                 earnings_events.seed_from_production(conn, DB_PATH, changes)     # SeedError fails the run: no swap
             audit.rows_processed += earnings_events.load_earnings_events(conn, data.get("earnings_events"))
+            try:                                                  # empty result: the previous rows stay
+                load_tv_sector_rotation(conn, data.get("sector_rotation", pd.DataFrame()).copy())
+            except Exception as e:
+                logger.warning(f"Sector ETF performance load skipped: {e}")
             try:
                 audit.rows_processed += analyst_actions.load(conn, data.get("analyst_actions"))
             except Exception as e:
