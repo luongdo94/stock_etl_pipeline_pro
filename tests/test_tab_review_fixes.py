@@ -105,7 +105,7 @@ def test_a04_growth_uses_mart_and_adjusted_has_no_gaap_growth(monkeypatch):
         hist_fcf_full=pd.DataFrame(), hist_fcf_q_full=pd.DataFrame(), quarterly_fin=q))
     rev = [t for fig in ui.charts for t in fig.data if t.name.startswith("Revenue")]
     assert rev[0].text[-1] == "+0.0%" and rev[1].text[-1] == ""
-    adjusted = next(t for t in ui.charts[-1].data if t.name == "Adjusted EPS (Actual)")
+    adjusted = next(t for t in ui.charts[-1].data if t.name == "EPS actual (Yahoo)")     # renamed by L602
     assert not adjusted.text and "Growth" not in adjusted.hovertemplate
     assert "0.0%" in " ".join(peer_table(monkeypatch, [150.] * 4).messages)        # the mart's 0%, not the EUR −11%
 

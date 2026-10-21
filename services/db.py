@@ -557,9 +557,10 @@ def read_warehouse(conn):
     
     try:
         quarterly_f = conn.execute("SELECT * FROM marts.dim_quarterly_financials").df()
-    except Exception:
+    except Exception as e:
         quarterly_f = pd.DataFrame(columns=["ticker", "year", "quarter", "report_date", "revenue", "eps"])
-        
+        _mark_read_error(quarterly_f, e)        # a missing table stays "no data yet"; a real read failure is said
+
     try:
         earnings_calendar = conn.execute("SELECT * FROM raw.earnings_calendar").df()
         if not earnings_calendar.empty:

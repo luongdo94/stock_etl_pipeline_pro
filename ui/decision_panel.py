@@ -206,11 +206,15 @@ def _render_financial_valuation(meta, price, vin, companies=None):
         return
     st.caption(f"{vin['model_note']} Rates: {vin['currency']} risk-free {vin['risk_free']:.1%} ({vin['rate_source']}), "
                f"cost of equity {vin['cost_of_equity']:.1%}, long-run growth {vin['terminal_growth']:.1%}.")
+    if vin.get("roe") is None or pd.isna(vin["roe"]):
+        st.info("Normalised ROE is not available for this stock, so no residual-income scenarios are shown "
+                "(an unknown ROE is not 0%).")
+        return
     st.info("**Sensitivity sandbox** — changing these inputs recomputes the scenarios below ONLY. The Decision "
             "Summary, scanner, alerts, watchlist and AI brief keep using the system defaults shown in the inputs' "
             "starting values.")
     c1, c2, c3 = st.columns(3)
-    roe = _sticky(c1.number_input, "Normalised ROE today (%)", round((vin["roe"] or 0) * 100, 1),
+    roe = _sticky(c1.number_input, "Normalised ROE today (%)", round(vin["roe"] * 100, 1),
                   f"pb_roe_{meta.get('ticker')}", step=0.5) / 100
     payout = _sticky(c2.number_input, "Payout (%)", round((vin.get("payout") if vin.get("payout") is not None
                                                            else val.DEFAULT_PAYOUT) * 100, 0),
@@ -237,9 +241,10 @@ def _render_financial_valuation(meta, price, vin, companies=None):
             <div style='color:inherit; font-size:0.7rem; text-transform:uppercase;'>{key} · ROE {max(roe + d_roe, 0):.1%} · r {max(r + d_r, tg + 0.01):.1%}</div>
             <div style='color:inherit; font-size:1.5rem; font-weight:800;'>{body}</div></div>""", unsafe_allow_html=True)
     implied = tg + (price / bv) * (r - tg)
-    st.markdown(f"**Reverse model:** at €{price:,.2f} (book €{bv:,.2f}, P/B {price / bv:.2f}x) the market prices in a "
-                f"perpetual ROE of **{implied:.1%}** (normalised ROE today {roe:.1%}, fading to {r:.1%} in "
-                f"{val.RI_FADE_YEARS} years in this model).")
+    st.markdown(f"**Constant-ROE reference (justified P/B):** at €{price:,.2f} (book €{bv:,.2f}, P/B "
+                f"{price / bv:.2f}x) the price equals the value of a bank that earns a constant ROE of "
+                f"**{implied:.1%}** forever. It is a reference point, not an inverse of the scenarios above, which "
+                f"fade ROE from {roe:.1%} to {r:.1%} over {val.RI_FADE_YEARS} years.")
     rois = [roe - 0.04, roe - 0.02, roe, roe + 0.02, roe + 0.04]
     rates = [x for x in (r - 0.02, r - 0.01, r, r + 0.01, r + 0.02) if x > tg]
     table = pd.DataFrame({f"{x:.1%}": [value(o, x) for o in rois] for x in rates}, index=[f"{o:.1%}" for o in rois])
@@ -264,10 +269,14 @@ def _render_financial_valuation(meta, price, vin, companies=None):
                           margin=dict(t=10, b=10), showlegend=False)
         st.plotly_chart(fig, width="stretch")
         rel = fit["residual_pct"]
-        st.caption(f"At its ROE of {fit['roe']:.1%} the peer line implies P/B {fit['fitted_pb']:.2f}x; the stock trades at "
-                   f"{fit['actual_pb']:.2f}x ({rel:+.0f}% vs the line). Below the line = cheap RELATIVE to peers, which "
-                   f"is often explained by asset quality, capital or growth the line does not see."
-                   + (" The fit is weak (R² < 0.3) — treat it as context." if (fit["r2"] or 0) < 0.3 else ""))
+        if rel is None or pd.isna(rel):
+            st.caption(f"The peer line is not interpretable here (it implies P/B {fit['fitted_pb']:.2f}x at this ROE); "
+                       f"the stock trades at {fit['actual_pb']:.2f}x.")
+        else:
+            st.caption(f"At its ROE of {fit['roe']:.1%} the peer line implies P/B {fit['fitted_pb']:.2f}x; the stock "
+                       f"trades at {fit['actual_pb']:.2f}x ({rel:+.0f}% vs the line). Below the line = cheap RELATIVE "
+                       f"to peers, which is often explained by asset quality, capital or growth the line does not see."
+                       + (" The fit is weak (R² < 0.3) — treat it as context." if (fit["r2"] or 0) < 0.3 else ""))
 
 
 def render_valuation_section(*, meta, price, vin, relval, companies=None):
@@ -343,9 +352,10 @@ def _render_model_risk(vin: dict, scen: dict, price: float):
     with c1:
         color = "#e74c3c" if ts is not None and ts > TERMINAL_SHARE_WARN else "inherit"
         st.markdown(f"<div style='color:inherit;font-size:0.7rem;text-transform:uppercase;'>Value after year "
-                    f"{val.EXPLICIT_YEARS}</div><div style='color:{color};font-size:1.3rem;font-weight:800;'>"
+                    f"{val.EXPLICIT_YEARS} (system defaults)</div><div style='color:{color};font-size:1.3rem;font-weight:800;'>"
                     f"{'n/a' if ts is None else f'{ts:.0%}'}</div>", unsafe_allow_html=True)
-        st.caption("Share of the base value that comes from the terminal value."
+        st.caption("Share of the base value that comes from the terminal value, at the system defaults (the sandbox "
+                   "inputs above do not change this tile)."
                    + (" Most of it is a perpetuity assumption — small changes in r or g move it a lot."
                       if ts is not None and ts > TERMINAL_SHARE_WARN else ""))
     with c2:

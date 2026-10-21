@@ -26,6 +26,41 @@ def _estimates_of(ctx, ticker, cols):
     return fe.loc[fe["ticker"] == ticker, cols]
 
 
+_OPTIONAL_EST_COLS = ("upgrades_30d", "downgrades_30d", "_loaded_at")
+_UP, _DOWN = "\u2191", "\u2193"
+
+
+def _with_optional(ctx, cols):
+    """`cols` plus the optional estimate columns this snapshot has (revision counts, fetch time)."""
+    fe = ctx.get("forward_estimates_full")
+    have = set(fe.columns) if fe is not None else set()
+    return cols + [c for c in _OPTIONAL_EST_COLS if c in have]
+
+
+def _up_share(row):
+    """Share of the 30-day FY EPS revisions that were up, in % - only when BOTH counts are known and not both zero
+    (a missing downgrade count is unknown, not 0, so it can never make the share 100%)."""
+    up, down = row.get("upgrades_30d"), row.get("downgrades_30d")
+    if up is None or down is None or pd.isna(up) or pd.isna(down) or (up + down) <= 0:
+        return None
+    return round(float(up) / (float(up) + float(down)) * 100, 0)
+
+
+def _snapshot_note(row):
+    ts = row.get("_loaded_at")
+    return f"snapshot {pd.Timestamp(ts):%Y-%m-%d}" if ts is not None and pd.notna(ts) else "snapshot date unknown"
+
+
+def _rev_text(d):
+    """On-chart revision label: arrow and size; an unchanged estimate says so (0 is not a cut)."""
+    if d is None or pd.isna(d):
+        return ""
+    if abs(d) < 0.005:
+        return " (unchanged 30d)"
+    arrow = _UP if d > 0 else _DOWN
+    return f" {arrow}{abs(d):.2f}"
+
+
 def render(dd, ctx):
     deep_ticker = dd.ticker
     df_fin = dd.df_fin
@@ -121,12 +156,12 @@ def render(dd, ctx):
                 go.Scatter(
                     x=df_fin_plot['year'], 
                     y=df_fin_plot['eps'], 
-                    name="EPS (€)", 
-                    line=dict(color="gold", width=3), 
+                    name="Basic EPS (€)",
+                    line=dict(color="gold", width=3),  
                     mode="lines+markers+text",
                     text=eps_text,
                     textposition="top center",
-                    hovertemplate="<b>Year: %{x}</b><br>EPS: €%{y:.2f}<br>YoY Growth: %{text}<extra></extra>"
+                    hovertemplate="<b>Year: %{x}</b><br>Basic EPS: €%{y:.2f}<br>YoY Growth: %{text}<extra></extra>"
                 ),
                 secondary_y=True
             )
@@ -134,11 +169,14 @@ def render(dd, ctx):
             # ── Analyst EPS Forecast overlay (Annual) ──────────────────
             try:
                 # the estimates of the snapshot this page was built from (ctx), not a second read of the warehouse
-                _fe2 = _estimates_of(ctx, deep_ticker, ['eps_est_cur_y', 'eps_est_next_y', 'eps_trend_delta_30d', 'eps_trend_delta_next_y', 'upgrade_ratio_30d'])
-                if not _fe2.empty:
-                    import datetime as _dt2
-                    _cy = _dt2.datetime.now().year
+                _fe2 = _estimates_of(ctx, deep_ticker, _with_optional(ctx, ['eps_est_cur_y', 'eps_est_next_y',
+                                                                         'eps_trend_delta_30d', 'eps_trend_delta_next_y']))
+                if not _fe2.empty and not df_fin_plot.empty:
+                    # The provider gives "current / next fiscal year" without the period end: the estimates sit right
+                    # after the last REPORTED year, never on the machine clock's year (which shifts on 1 January).
+                    _cy = int(df_fin_plot.iloc[-1]["year"]) + 1
                     _fe2r = _fe2.iloc[0]
+                    _snap = _snapshot_note(_fe2r)
 
                     # FX normalisation: forecast native currency → EUR
                     _ticker_ccy = str(meta.get("currency") or "USD")
@@ -149,27 +187,22 @@ def render(dd, ctx):
                     # Revision metrics (also in native currency → convert)
                     _delta_cy = _fe2r.get("eps_trend_delta_30d")
                     _delta_ny = _fe2r.get("eps_trend_delta_next_y")
-                    _up_ratio = _fe2r.get("upgrade_ratio_30d")
                     _delta_cy_eur = float(_delta_cy) * _fx_rate if (_delta_cy is not None and pd.notnull(_delta_cy)) else None
                     _delta_ny_eur = float(_delta_ny) * _fx_rate if (_delta_ny is not None and pd.notnull(_delta_ny)) else None
-                    _conviction  = round(float(_up_ratio) * 100, 0) if (_up_ratio is not None and pd.notnull(_up_ratio)) else None
+                    _conviction = _up_share(_fe2r)
 
-                    def _rev_arrow(d):
-                        """Return arrow+value string for on-chart label."""
-                        if d is None: return ""
-                        _a = "\u2191" if d > 0 else "\u2193"
-                        return f" {_a}{abs(d):.2f}"
-
-                    _fwd_x, _fwd_y, _fwd_cdata = [], [], []
-                    # Bridge from last historical EPS point
-                    if not df_fin_plot.empty:
-                        _last_hist = df_fin_plot.iloc[-1]
+                    _fwd_x, _fwd_y, _fwd_cdata, _fwd_label, _fwd_delta = [], [], [], [], []
+                    # Bridge from the last reported EPS point, only when it is known (None used to drop the overlay)
+                    _last_hist = df_fin_plot.iloc[-1]
+                    if pd.notnull(_last_hist["eps"]):
                         _fwd_x.append(int(_last_hist["year"]))
                         _fwd_y.append(float(_last_hist["eps"]))
-                        _fwd_cdata.append([float("nan"), float("nan")])
-                    for _yr_offset, _col, _delta_eur in [
-                        (0, "eps_est_cur_y",  _delta_cy_eur),
-                        (1, "eps_est_next_y", _delta_ny_eur)
+                        _fwd_cdata.append([float("nan"), float("nan"), "Basic EPS (reported)"])
+                        _fwd_label.append("")
+                        _fwd_delta.append(None)
+                    for _yr_offset, _col, _delta_eur, _name in [
+                        (0, "eps_est_cur_y",  _delta_cy_eur, "Current FY est."),
+                        (1, "eps_est_next_y", _delta_ny_eur, "Next FY est.")
                     ]:
                         _v = _fe2r.get(_col)
                         if _v is not None and pd.notnull(_v):
@@ -177,14 +210,14 @@ def render(dd, ctx):
                             _fwd_y.append(float(_v) * _fx_rate)  # → EUR
                             _fwd_cdata.append([
                                 _delta_eur if _delta_eur is not None else float("nan"),
-                                _conviction if _conviction is not None else float("nan")
+                                _conviction if _conviction is not None else float("nan"),
+                                f"{_name} · {_snap} · period end unverified"
                             ])
-                    if len(_fwd_x) > 1:
-                        _fc_deltas = [_delta_cy_eur, _delta_ny_eur]
-                        _text_labels = [""] + [
-                            f"Est \u20ac{_fwd_y[i+1]:.2f}{_rev_arrow(_fc_deltas[i])}"
-                            for i in range(len(_fwd_x) - 1)
-                        ]
+                            _fwd_label.append(_name)
+                            _fwd_delta.append(_delta_eur)       # the revision of THIS point, not by position
+                    if any(_fwd_label):
+                        _text_labels = [f"Est \u20ac{y:.2f}{_rev_text(d)}" if l else ""
+                                        for y, l, d in zip(_fwd_y, _fwd_label, _fwd_delta)]
                         fig_fin.add_trace(
                             go.Scatter(
                                 x=_fwd_x, y=_fwd_y,
@@ -196,17 +229,18 @@ def render(dd, ctx):
                                 textposition="top center",
                                 customdata=_fwd_cdata,
                                 hovertemplate=(
-                                    "<b>Year: %{x}</b><br>"
-                                    "EPS Forecast: \u20ac%{y:.2f}<br>"
-                                    "30d Revision: %{customdata[0]:+.2f}<br>"
-                                    "Analyst Conviction: %{customdata[1]:.0f}% \u2191"
+                                    "<b>%{customdata[2]}</b><br>"
+                                    "EPS: \u20ac%{y:.2f}<br>"
+                                    "30d revision: %{customdata[0]:+.2f}<br>"
+                                    "Up share of 30d FY revisions: %{customdata[1]:.0f}%"
                                     "<extra></extra>"
                                 )
                             ),
                             secondary_y=True
                         )
+                        _first_est = next(x for x, l in zip(_fwd_x, _fwd_label) if l)
                         fig_fin.add_vrect(
-                            x0=_fwd_x[1] - 0.4, x1=_fwd_x[-1] + 0.4,
+                            x0=_first_est - 0.4, x1=_fwd_x[-1] + 0.4,
                             fillcolor="rgba(155,89,182,0.07)",
                             line_width=0,
                             annotation_text="Forecast", annotation_position="top left",
@@ -214,8 +248,10 @@ def render(dd, ctx):
                         )
             except _NoFx as _e:
                 st.caption(f"Analyst forecast overlay not shown: no EUR rate for {_e} right now.")
-            except Exception:
-                pass  # Silently skip if forward estimates not available
+            except KeyError:
+                pass  # an older warehouse without these estimate columns: no overlay
+            except Exception as _e:
+                st.caption(f"Analyst forecast overlay could not be drawn ({type(_e).__name__}).")
 
             fig_fin.update_layout(
                 height=500,
@@ -230,6 +266,9 @@ def render(dd, ctx):
             fig_fin.update_yaxes(title_text="Earnings Per Share (€)", secondary_y=True)
             
             st.plotly_chart(fig_fin, use_container_width=True)
+            st.caption("Years are the calendar year of each fiscal year-end; missing years are omitted, not zero. Amounts "
+                       "in EUR. Revenue and basic EPS growth in the reporting currency (a moving exchange rate is not "
+                       "growth); FCF growth in EUR, so it includes currency moves.")
             _pit = pit_caption(load_ticker_provenance(deep_ticker), "annual")
             if _pit:
                 st.caption(_pit)
@@ -291,13 +330,13 @@ def render(dd, ctx):
                             _es_q[["year", "quarter", "eps_actual", "eps_estimate", "surprise_pct"]],
                             on=["year", "quarter"], how="left"
                         )
-                        # Use eps_actual (Adjusted EPS, already converted to EUR) to match eps_estimate.
-                        # Fall back to GAAP eps if eps_actual is missing.
-                        df_fin_q_plot["eps_chart"] = df_fin_q_plot["eps_actual"].combine_first(df_fin_q_plot["eps"])
+                        # the provider's reported EPS (the figure the estimate is compared with), EUR. A quarter
+                        # without it stays blank: GAAP EPS has its own line, a silent switch would mix two bases.
+                        df_fin_q_plot["eps_chart"] = df_fin_q_plot["eps_actual"]
                     else:
-                        df_fin_q_plot["eps_chart"] = df_fin_q_plot["eps"]
+                        df_fin_q_plot["eps_chart"] = float("nan")
                 else:
-                    df_fin_q_plot["eps_chart"] = df_fin_q_plot["eps"]
+                    df_fin_q_plot["eps_chart"] = float("nan")
 
                 fig_fin_q = make_subplots(specs=[[{"secondary_y": True}]])
                 
@@ -336,18 +375,19 @@ def render(dd, ctx):
                         secondary_y=False
                     )
                 
-                # EPS ACTUAL — Adjusted (Line, primary)
-                fig_fin_q.add_trace(
-                    go.Scatter(
-                        x=x_labels,
-                        y=df_fin_q_plot['eps_chart'],
-                        name="Adjusted EPS (Actual)",
-                        line=dict(color="orange", width=3),
-                        mode="lines+markers",
-                        hovertemplate="<b>Quarter: %{x}</b><br>Adjusted EPS: €%{y:.2f}<extra></extra>",
-                    ),
-                    secondary_y=True
-                )
+                # EPS ACTUAL — as reported to analysts by the provider (Line, primary)
+                if df_fin_q_plot['eps_chart'].notna().any():
+                    fig_fin_q.add_trace(
+                        go.Scatter(
+                            x=x_labels,
+                            y=df_fin_q_plot['eps_chart'],
+                            name="EPS actual (Yahoo)",
+                            line=dict(color="orange", width=3),
+                            mode="lines+markers",
+                            hovertemplate="<b>Quarter: %{x}</b><br>EPS actual (Yahoo): €%{y:.2f}<extra></extra>",
+                        ),
+                        secondary_y=True
+                    )
 
                 # EPS ACTUAL — GAAP (dotted, secondary reference)
                 if df_fin_q_plot['eps'].notna().any():
@@ -368,7 +408,7 @@ def render(dd, ctx):
                 # EPS ESTIMATE (Dashed Line)
                 if "eps_estimate" in df_fin_q_plot.columns and df_fin_q_plot["eps_estimate"].notna().any():
                     # Create surprise labels for hover
-                    surprise_text = [f"{v*100:+.1f}% Surprise" if pd.notnull(v) else "No Est." for v in df_fin_q_plot.get('surprise_pct', [])]
+                    surprise_text = [f"{v*100:+.1f}% Surprise" if pd.notnull(v) else "Surprise N/A" for v in df_fin_q_plot.get('surprise_pct', [])]
                     fig_fin_q.add_trace(
                         go.Scatter(
                             x=x_labels, 
@@ -385,7 +425,8 @@ def render(dd, ctx):
                 # EPS QUARTERLY FORECAST (Analyst Consensus — CQ & NQ)
                 try:
                     # the estimates of the snapshot this page was built from (ctx), not a second read of the warehouse
-                    _fe_q = _estimates_of(ctx, deep_ticker, ['eps_est_cur_q', 'eps_est_next_q', 'eps_trend_delta_30d', 'upgrade_ratio_30d'])
+                    _fe_q = _estimates_of(ctx, deep_ticker, _with_optional(ctx, ['eps_est_cur_q', 'eps_est_next_q',
+                                                                              'eps_trend_delta_30d']))
                     if not _fe_q.empty:
 
                         # FX normalisation: forecast native currency → EUR
@@ -394,44 +435,34 @@ def render(dd, ctx):
                         if _fx_rate_q is None:
                             raise _NoFx(_ticker_ccy_q)
 
-                        # Revision metrics for quarterly (CQ only; NQ has no separate delta)
+                        # The only revision the provider gives here is the CURRENT FISCAL YEAR's: it is shown in the
+                        # hover as such, never as an arrow on the quarter (a FY revision is not a quarterly one).
                         _fe_qr = _fe_q.iloc[0]
-                        _qdelta = _fe_qr.get("eps_trend_delta_30d")
-                        _qratio = _fe_qr.get("upgrade_ratio_30d")
-                        _qdelta_eur = float(_qdelta) * _fx_rate_q if (_qdelta is not None and pd.notnull(_qdelta)) else None
-                        _qconviction = round(float(_qratio) * 100, 0) if (_qratio is not None and pd.notnull(_qratio)) else None
-
-                        def _qarrow(d):
-                            if d is None: return ""
-                            _a = "\u2191" if d > 0 else "\u2193"
-                            return f" {_a}{abs(d):.2f}"
+                        _fy_delta = _fe_qr.get("eps_trend_delta_30d")
+                        _fy_delta_eur = (float(_fy_delta) * _fx_rate_q if (_fy_delta is not None and pd.notnull(_fy_delta))
+                                         else float("nan"))
+                        _qconviction = _up_share(_fe_qr)
+                        _qsnap = _snapshot_note(_fe_qr)
 
                         _fq_labels, _fq_vals, _fq_cdata = [], [], []
                         if not df_fin_q_plot.empty:
                             _last_q_row = df_fin_q_plot.iloc[-1]
                             _fq_labels.append(f"{int(_last_q_row['year'])} Q{int(_last_q_row['quarter'])}")
                             _fq_vals.append(float(_last_q_row["eps_chart"]) if pd.notnull(_last_q_row["eps_chart"]) else None)
-                            _fq_cdata.append([float("nan"), float("nan")])
+                            _fq_cdata.append([float("nan"), float("nan"), "EPS actual (Yahoo)"])
 
-                        for _qlabel, _qcol, _qd_eur in [
-                            ("CQ (est)", "eps_est_cur_q",  _qdelta_eur),   # Current fiscal quarter
-                            ("NQ (est)", "eps_est_next_q", None),           # Next fiscal quarter
-                        ]:
+                        for _qlabel, _qcol in [("Current Q est.", "eps_est_cur_q"), ("Next Q est.", "eps_est_next_q")]:
                             _qv = _fe_qr.get(_qcol)
                             if _qv is not None and pd.notnull(_qv):
                                 _fq_labels.append(_qlabel)
                                 _fq_vals.append(float(_qv) * _fx_rate_q)  # → EUR
-                                _fq_cdata.append([
-                                    _qd_eur if _qd_eur is not None else float("nan"),
-                                    _qconviction if _qconviction is not None else float("nan")
-                                ])
+                                _fq_cdata.append([_fy_delta_eur,
+                                                  _qconviction if _qconviction is not None else float("nan"),
+                                                  f"{_qlabel} · {_qsnap} · period end unverified"])
 
                         if len(_fq_labels) > 1 and any(v is not None for v in _fq_vals[1:]):
-                            _fq_texts = [""] + [
-                                f"Est \u20ac{_fq_vals[i]:.2f}{_qarrow(_fq_cdata[i][0]) if not pd.isnull(_fq_cdata[i][0]) else ''}"
-                                if _fq_vals[i] is not None else ""
-                                for i in range(1, len(_fq_labels))
-                            ]
+                            _fq_texts = [""] + [f"Est \u20ac{_fq_vals[i]:.2f}" if _fq_vals[i] is not None else ""
+                                                for i in range(1, len(_fq_labels))]
                             fig_fin_q.add_trace(
                                 go.Scatter(
                                     x=_fq_labels, y=_fq_vals,
@@ -443,10 +474,10 @@ def render(dd, ctx):
                                     textposition="top center",
                                     customdata=_fq_cdata,
                                     hovertemplate=(
-                                        "<b>Quarter: %{x}</b><br>"
-                                        "EPS Forecast: \u20ac%{y:.2f}<br>"
-                                        "30d Revision (CY): %{customdata[0]:+.2f}<br>"
-                                        "Analyst Conviction: %{customdata[1]:.0f}% \u2191"
+                                        "<b>%{customdata[2]}</b><br>"
+                                        "EPS: \u20ac%{y:.2f}<br>"
+                                        "Current FY revision, 30d (not quarterly): %{customdata[0]:+.2f}<br>"
+                                        "Up share of 30d FY revisions: %{customdata[1]:.0f}%"
                                         "<extra></extra>"
                                     )
                                 ),
@@ -461,8 +492,10 @@ def render(dd, ctx):
                                 )
                 except _NoFx as _e:
                     st.caption(f"Analyst forecast overlay not shown: no EUR rate for {_e} right now.")
-                except Exception:
-                    pass  # Skip silently if data not available
+                except KeyError:
+                    pass  # an older warehouse without these estimate columns: no overlay
+                except Exception as _e:
+                    st.caption(f"Analyst forecast overlay could not be drawn ({type(_e).__name__}).")
 
                 fig_fin_q.update_layout(
 
@@ -482,11 +515,17 @@ def render(dd, ctx):
                 fig_fin_q.update_yaxes(title_text="Earnings Per Share (€)", secondary_y=True)
                 
                 st.plotly_chart(fig_fin_q, use_container_width=True)
+                st.caption("Labels are the calendar quarter of each period end, not the company's fiscal quarter; missing "
+                           "quarters are omitted (adjacent labels may skip a quarter). Amounts in EUR. Revenue and GAAP EPS "
+                           "growth year on year in the reporting currency; FCF growth in EUR, so it includes currency "
+                           "moves. Estimates: current / next quarter as the provider labels them, period end unverified.")
                 _pit_q = pit_caption(load_ticker_provenance(deep_ticker), "quarterly")
                 if _pit_q:
                     st.caption(_pit_q)
 
             else:
                 st.info("No historical quarterly financial data available for this ticker.")
+        elif quarterly_fin.attrs.get("error"):
+            st.warning(f"Quarterly financials could not be read ({quarterly_fin.attrs['error']}). Reload to try again.")
         else:
             st.info("Quarterly financials warehouse table is empty. Please run the ETL pipeline.")
