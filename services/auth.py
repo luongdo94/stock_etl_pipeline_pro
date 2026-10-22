@@ -10,6 +10,7 @@ from supabase import create_client
 import base64
 import hashlib
 import hmac
+import os
 import time
 import json
 from datetime import datetime, timedelta
@@ -20,11 +21,13 @@ _COOKIE_TTL_DAYS = 7
 
 
 def _secret(name):
-    """An unconfigured secrets store must not crash authentication or enable local access."""
+    """Streamlit secrets first, then the environment (deployments that set environment variables, as the app read
+    them before 2026-10-08). An unconfigured store must not crash authentication or enable local access."""
     try:
-        return st.secrets.get(name)
+        value = st.secrets.get(name)
     except StreamlitSecretNotFoundError:
-        return None
+        value = None
+    return value or os.environ.get(name) or None
 
 
 @st.cache_resource

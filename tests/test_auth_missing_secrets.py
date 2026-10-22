@@ -13,6 +13,9 @@ def missing_secrets(monkeypatch):
             raise StreamlitSecretNotFoundError("No secrets found.")
 
     monkeypatch.setattr(auth.st, "secrets", MissingSecrets())
+    for name in ("SUPABASE_URL", "SUPABASE_ANON_KEY", "SUPABASE_KEY", "SUPABASE_SERVICE_ROLE_KEY",
+                 "SUPABASE_SERVICE_KEY", "COOKIE_SECRET"):
+        monkeypatch.delenv(name, raising=False)             # .env is loaded on import by other modules
     auth.get_supabase_client.clear()
     yield
     auth.get_supabase_client.clear()
@@ -82,3 +85,9 @@ def test_configured_clients_keep_their_key_roles(monkeypatch, factory, key):
         assert calls == [("https://example.supabase.co", key)]
     finally:
         auth.get_supabase_client.clear()
+
+
+def test_environment_variables_configure_auth_when_secrets_lack_them(missing_secrets, monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "https://example.supabase.co")
+    monkeypatch.setenv("SUPABASE_ANON_KEY", "anon")
+    assert auth._secret("SUPABASE_URL") == "https://example.supabase.co" and auth._secret("SUPABASE_ANON_KEY") == "anon"
