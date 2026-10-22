@@ -42,7 +42,7 @@ def _score_tile(title, sub, score, colour):
     bar = ("" if val is None else
            f"<div style='height:3px; border-radius:2px; background:rgba(128,128,128,0.25); margin:5px 0 4px; "
            f"overflow:hidden;'><div style='width:{max(0, min(100, val))}%; height:100%; background:{colour};'></div></div>")
-    return (f"<div style='flex:1; min-width:min(100%, 140px); background:var(--secondary-background-color, transparent); padding:10px 12px; "
+    return (f"<div style='flex:1; min-width:150px; background:var(--secondary-background-color, transparent); padding:10px 12px; "
             f"border-radius:8px; border-top:3px solid {colour};'>"
             f"<div style='font-size:0.65em; color:inherit; text-transform:uppercase; letter-spacing:1px;'>{title}</div>"
             f"<div style='font-weight:900; font-size:1.3em; color:{colour}; font-variant-numeric:tabular-nums;'>{shown}"
@@ -69,7 +69,7 @@ def render_score_strip(scores):
              + _score_tile("Value — the price", f"{v_label} · vs sector peers, no analyst forecasts", v, v_col)
              + _score_tile("Momentum — timing only", "12-1 month return (local currency) + trend", m, m_col)
              + _score_tile("Revisions — estimate changes", _rev_sub(scores), rv, rv_col))
-    st.markdown(f"<div style='display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px;'>{tiles}</div>",
+    st.markdown(f"<div class='hq-tiles' style='display:flex; gap:10px; flex-wrap:wrap; margin-bottom:8px;'>{tiles}</div>",
                 unsafe_allow_html=True)
     if scores.get("flags"):
         st.warning(f"Red flags: {scores['flags']}")
@@ -124,7 +124,7 @@ def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, re
         <div><div style='color:inherit; font-size:0.7rem; text-transform:uppercase; letter-spacing:1px;'>Decision Summary</div>
              <div style='color:{sc}; font-size:1.6rem; font-weight:900;'>{d.stance}</div>
              <div style='color:{cc}; font-size:0.8rem; font-weight:700;'>Confidence: {d.confidence}</div></div>
-        <div style='display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 110px), 1fr)); gap:6px 22px; text-align:right;'>
+        <div class='hq-dec-grid' style='display:grid; grid-template-columns:repeat(4, auto); gap:6px 22px; text-align:right;'>
           <div>
             <div style='color:inherit; font-size:0.7rem;'>Model IRR, base ({_H}y, gross)</div>
             <div style='color:inherit; font-weight:800;'>{fmt(d.horizon_irr_pct)}</div>

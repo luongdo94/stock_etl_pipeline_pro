@@ -462,7 +462,7 @@ def render(ctx):
     # ── result ──────────────────────────────────────────────────────────────────────────────────────────────────────
     c_cols1, c_cols2 = st.columns([1, 3])
     with c_cols1:
-        default_compact = bool(ctx.get("phone_layout") or is_phone_layout())
+        default_compact = is_phone_layout()
         compact = sticky(st.toggle, "Compact view", default_compact, "scan_compact",
                          help="Show 6 core columns (Ticker, Company, Verdict, Quality, Value, Next ER) for quick scanning.")
     with c_cols2:
@@ -562,7 +562,7 @@ def render(ctx):
             "<div style='margin-top:16px; padding:14px 18px; background:var(--secondary-background-color, transparent); border:1px solid rgba(128,128,128,0.25); border-radius:10px;'>"
             "<div style='font-size:0.78rem; font-weight:700; color:inherit; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:10px;'>"
             f"Scores {SCORE_VERSION} — independent 0-100 numbers per stock, ranked against sector peers</div>"
-            "<div style='display:grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap:10px;'>"
+            "<div class='hq-cards' style='display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:10px;'>"
             + _card("#2ecc71", "QUALITY — the business", "Return on capital 20 · margins 25 · growth &amp; stability 20 · balance sheet (net debt/EBITDA) 20 · FCF conversion 15. Banks/insurers: ROE, net margin, stability.",
                     f"Red flags subtract points: loss-making, debt without EBITDA, net debt/EBITDA &gt; 5x, dividend not covered by FCF, negative equity. Tiers: ELITE ≥ {ELITE} · SOLID ≥ {SOLID} · FAIR ≥ {FAIR}.")
             + _card("#3498db", "VALUE — the price", "FCF yield 25 · EV/EBITDA 20 · earnings yield 20 · PEG 15 · shareholder yield 10 · P/S 10, each half peer percentile, half absolute band.",

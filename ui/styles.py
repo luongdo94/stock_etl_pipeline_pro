@@ -21,17 +21,28 @@ def inject_global_css():
             font-variant-numeric: tabular-nums;
         }
         @media (max-width: 640px) {
+            /* Override only these desktop inline sizes on narrow screens. */
+            .hq-dec-grid {
+                grid-template-columns: repeat(auto-fit, minmax(min(100%, 110px), 1fr)) !important;
+            }
+            .hq-tiles > div { min-width: min(100%, 140px) !important; }
+            .hq-cards {
+                grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)) !important;
+            }
+            .hq-range-title, .hq-range { flex-wrap: wrap; }
+            .hq-range-title { gap: 4px; }
+            .hq-range > div { min-width: 100px; }
             .block-container {
                 padding-left: 0.5rem;
                 padding-right: 0.5rem;
                 padding-top: 1rem;
                 padding-bottom: 1rem;
             }
-            [data-testid="stPills"], [data-testid="stPills"] > div, div[role="radiogroup"] {
+            [data-testid="stButtonGroup"], [data-testid="stButtonGroup"] > div, div[role="radiogroup"] {
                 flex-wrap: wrap;
                 gap: 4px;
             }
-            [data-testid="stPills"] button, [data-testid="stPills"] [role="radio"] {
+            [data-testid="stButtonGroup"] button, [data-testid="stButtonGroup"] [role="radio"] {
                 font-size: 0.8rem;
                 padding: 4px 8px;
             }

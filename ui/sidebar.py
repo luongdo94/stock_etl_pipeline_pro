@@ -188,24 +188,24 @@ def render_macro_panel(macro, fred=None, live=None):
 
 # ── PHONE LAYOUT SWITCH ───────────────────────────────────────────────────────────────────────────────────────────
 def is_phone_layout() -> bool:
-    """True if URL has ?phone=1 or ui_phone_layout toggle is enabled."""
-    if st.query_params.get("phone") == "1":
-        return True
+    """Read the choice persisted by the Phone layout toggle."""
     from ui.sticky import kept_key
-    return bool(st.session_state.get(kept_key("ui_phone_layout"), st.session_state.get("ui_phone_layout", False)))
+    return bool(st.session_state.get(kept_key("ui_phone_layout"), False))
 
 
 def render_phone_toggle() -> bool:
-    """Opt-in Phone layout toggle in the sidebar. Persisted with ui.sticky ('ui_phone_layout') and activated by ?phone=1."""
+    """Persist the toggle; the URL only seeds a session without a prior choice."""
     from ui.sticky import kept_key, sticky as _sticky
-    phone_param = st.query_params.get("phone") == "1"
-    if phone_param and not st.session_state.get(kept_key("ui_phone_layout")):
-        st.session_state[kept_key("ui_phone_layout")] = True
-    val = _sticky(
+    if "_ui_phone_layout_initialized" not in st.session_state:
+        if kept_key("ui_phone_layout") not in st.session_state:
+            st.session_state[kept_key("ui_phone_layout")] = st.session_state.get(
+                "ui_phone_layout", st.query_params.get("phone") == "1")
+        st.session_state["_ui_phone_layout_initialized"] = True
+    _sticky(
         st.sidebar.toggle,
         "Phone layout",
-        phone_param,
+        False,
         "ui_phone_layout",
         help="Optimises tables, charts and views for phone screens (360-430 px)."
     )
-    return bool(val)
+    return is_phone_layout()

@@ -591,7 +591,7 @@ def render(ctx):
                     },
                     column_order=(
                         ["Ticker", "Action", "Market Value", "Weight (%)", "Shares", "Price (€)", "Cost Basis (€)", "Target (%)"]
-                        if (ctx.get("phone_layout") or is_phone_layout())
+                        if is_phone_layout()
                         else ["Ticker", "Current Decision", "Action", "Market Value", "Weight (%)", "Shares",
                               "Price (€)", "Cost Basis (€)", "Target (%)", "Drift (pp)", "Company", "Stop (orig)",
                               "Total Cost (€)", "Unrealized PnL (€)", "Unrealized PnL (%)", "Z-Score", "RSI (14)",
