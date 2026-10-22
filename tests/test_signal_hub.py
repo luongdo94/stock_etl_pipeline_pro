@@ -16,7 +16,8 @@ from core import signal_feed as feed
 # ── Decision changes, with their cause ──────────────────────────────────────────────────────────────────────────
 def _snap(day, rows):
     return pd.DataFrame([{"as_of_date": pd.Timestamp(day), "ticker": t, "decision": d, "price_close": p,
-                          "rules_version": rv, "score_version": "v8", "inputs": json.dumps({"valuation": v})}
+                          "rules_version": rv, "score_version": "v8", "inputs": json.dumps({"components": {}, "flags": [], "missing": [],
+                          "valuation": {"bear": 5, "bull": 25, "expected_value": 15, "cost_of_equity": 0.1, **v}})}
                          for t, d, p, rv, v in rows])
 
 
@@ -390,7 +391,7 @@ def test_sigr06_every_visible_difference_is_listed_and_a_rules_change_hides_none
     out = feed.decision_changes(pd.concat([old, new]))
     by = {c["ticker"]: c for c in out["changes"]}
     assert by["A"]["cause"] == "rules+data" and by["A"]["causes"] == ["rules", "price"]
-    assert "possible causes" in by["A"]["detail"] and "price +100.0%" in by["A"]["detail"]
+    assert "possible differences" in by["A"]["detail"] and "price +100.0%" in by["A"]["detail"]
     assert by["B"]["cause"] == "unknown" and "no difference visible" in by["B"]["detail"]
     items = feed.personal_items(decisions={"A": "AVOID / TRIM"}, latest=_latest(), holdings={"A": {"shares": 1}},
                                 changes=out)

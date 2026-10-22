@@ -54,8 +54,8 @@ def movers(prices_full, top=5):
     newest = pd.to_datetime(m["last_date"]).max()
     m["stale"] = (newest - pd.to_datetime(m["last_date"])).dt.days > STALE_DAYS
     live = m[~m["stale"] & m["chg_24h"].notna()]
-    return (m, live.sort_values("chg_24h", ascending=False).head(top),
-            live.sort_values("chg_24h", ascending=True).head(top))
+    return (m, live[live["chg_24h"] > 0].sort_values("chg_24h", ascending=False).head(top),
+            live[live["chg_24h"] < 0].sort_values("chg_24h", ascending=True).head(top))
 
 
 # Observation labels (review SIG-04: "EXIT / RISK" from an RSI alone read as a sell instruction). They describe the
@@ -93,6 +93,7 @@ def hot_alerts(prices_full, reco_df, movers_df):
         base = {"ticker": r["ticker"], "name": r["company"],
                 "date": None if pd.isna(r.get("last_date")) else pd.Timestamp(r["last_date"]).date()}
         chg = r["chg_24h"] if pd.notna(r["chg_24h"]) else None
+        quality = _finite(r["score"])
 
         def add(kind, desc):
             colour, icon = OBSERVATIONS[kind]
@@ -102,13 +103,13 @@ def hot_alerts(prices_full, reco_df, movers_df):
             add("HIGH-VOLUME ADVANCE", f"volume {r['volume'] / r['avg_vol_20d'] - 1:+.0%} vs 20-day average, price {chg:+.1f}%")
         if pd.notna(r["high_52w"]) and r["price_close"] >= 0.98 * r["high_52w"]:
             add("NEAR 52-WEEK HIGH", f"close €{r['price_close']:.2f} within 2% of the 52-week high")
-        if pd.notna(r["rsi"]) and r["rsi"] < 35 and r["score"] >= ELITE:
+        if pd.notna(r["rsi"]) and r["rsi"] < 35 and quality is not None and quality >= ELITE:
             # a screen hit, not a recommendation: only core.decision issues BUY (R3-E)
-            add("OVERSOLD QUALITY", f"RSI {r['rsi']:.1f} · Quality {r['score']}")
+            add("OVERSOLD QUALITY", f"RSI {r['rsi']:.1f} · Quality {quality:.0f}")
         if pd.notna(r["rsi"]) and r["rsi"] > 75:
             add("RSI OVERBOUGHT", f"RSI {r['rsi']:.1f} (above 75)")
-        if r["score"] < WEAK and r["ma_signal"] in ("BEARISH", "STRONG BEAR"):
-            add("WEAK + DOWNTREND", f"Quality {r['score']} · trend {str(r['ma_signal']).lower()}")
+        if quality is not None and quality < WEAK and r["ma_signal"] in ("BEARISH", "STRONG BEAR"):
+            add("WEAK + DOWNTREND", f"Quality {quality:.0f} · trend {str(r['ma_signal']).lower()}")
         if spike and chg is not None and chg < -3:
             add("HIGH-VOLUME DECLINE", f"volume {r['volume'] / r['avg_vol_20d'] - 1:+.0%} vs 20-day average, price {chg:+.1f}%")
     return found

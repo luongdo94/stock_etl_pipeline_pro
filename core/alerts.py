@@ -10,7 +10,11 @@ from typing import Iterable, Optional
 
 import pandas as pd
 
+from ui.watchlist_status import status_label
+
 METRICS = {"Price": "price_close", "Volume": "volume", "Daily Return %": "daily_return_pct", "RSI": "rsi"}
+METRIC_LABELS = {"Price": "Price (EUR)", "Volume": "Volume (shares)",
+                 "Daily Return %": "Daily Return % (EUR closes)", "RSI": "RSI (EUR closes, 0–100)"}
 
 
 def latest_snapshot(prices: pd.DataFrame) -> pd.DataFrame:
@@ -35,7 +39,8 @@ def evaluate_rules(rules: Iterable[dict], latest: pd.DataFrame) -> list:
         hit = (cond == "above" and v > thr) or (cond == "below" and v < thr)
         if hit:
             out.append({"ticker": t, "kind": "RULE",
-                        "message": f"{t} {metric} {v:,.2f} is {cond} {thr:,.2f}", "rule": r})
+                        "message": f"{t} {METRIC_LABELS[metric]} {'€' if metric == 'Price' else ''}{v:,.2f} "
+                                   f"is {cond} {'€' if metric == 'Price' else ''}{thr:,.2f}", "rule": r})
     return out
 
 
@@ -61,8 +66,8 @@ def watchlist_triggers(watchlist: pd.DataFrame, latest: pd.DataFrame,
     intrinsic_values = intrinsic_values or {}
     for _, row in watchlist.iterrows():
         t = str(row.get("Ticker", "")).strip()
-        status = str(row.get("Status", ""))
-        if not t or t not in latest.index or "CLOSED" in status or "INVALIDATED" in status:
+        status = status_label(row.get("Status"))
+        if not t or t not in latest.index or status in ("Closed", "Invalidated"):
             continue
         price = float(latest.at[t, "price_close"])
         inval, tp, entry = _num(row.get("Invalidation Level")), _num(row.get("Take Profit")), _num(row.get("Entry Target"))
@@ -76,7 +81,7 @@ def watchlist_triggers(watchlist: pd.DataFrame, latest: pd.DataFrame,
         if iv and price >= iv:
             out.append({"ticker": t, "kind": "AT INTRINSIC VALUE",
                         "message": f"{t} at {price:,.2f} ≥ base-case value {iv:,.2f} — remaining upside is gone."})
-        if entry and "PENDING" in status and price <= entry:
+        if entry and status == "Pending" and price <= entry:
             out.append({"ticker": t, "kind": "ENTRY ZONE",
                         "message": f"{t} at {price:,.2f} ≤ entry target {entry:,.2f} — consider executing the plan."})
     return out

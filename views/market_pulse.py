@@ -158,11 +158,13 @@ def _your_review():
     if not prev or prev.get("uid") != st.session_state.get("user_id") or prev.get("version") != _expected():
         st.caption("Your review is not loaded yet — open SIGNAL (top right).")
         return
+    st.caption(f"Review preview evaluated at {prev.get('evaluated_at', 'unknown time')}. "
+               "Open SIGNAL for the latest review.")
     if not prev["readable"]:
         st.warning("Your portfolio or watchlist could not be read, so SIGNAL cannot say what needs your review.")
         return
     if not prev["top"]:
-        st.success("Nothing in your holdings or watchlist needs your review right now (SIGNAL).")
+        st.success("Nothing in your holdings or watchlist needs your review at the preview time (SIGNAL).")
         return
     tag = {"action": "ACT", "review": "REVIEW", "info": "INFO"}
     lines = "".join(f"<li><b>{tag.get(i['severity'], i['severity'].upper())}</b> · "

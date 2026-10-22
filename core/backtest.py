@@ -19,7 +19,7 @@ def run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct,
         return None
 
     ticker_score_row = reco_df[reco_df["ticker"] == bt_ticker]
-    static_score = int(ticker_score_row["score"].iloc[0]) if not ticker_score_row.empty else 50
+    static_score = float(ticker_score_row["score"].iloc[0]) if not ticker_score_row.empty else np.nan
 
     prices_arr  = bt_prices["price_close"].values
     # A single NaN return would turn the whole cumprod equity curve into NaN
@@ -108,7 +108,7 @@ def run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct,
                         and z_scores[i] < -2.0 and z_scores[i-1] >= -2.0):
                     entry_signal = True; entry_reason = "Z-Score < -2.0"
             elif STATIC_QUALITY in strategy_type:
-                if static_score >= 75 and ma20_arr[i] > ma50_arr[i]: entry_signal = True; entry_reason = "High Quality + Trend"
+                if np.isfinite(static_score) and static_score >= 75 and ma20_arr[i] > ma50_arr[i]: entry_signal = True; entry_reason = "High Quality + Trend"
             elif "Buy on Dip" in strategy_type:
                 if ma20_arr[i] > ma50_arr[i] and rsi_arr[i] < 40 and rsi_arr[i-1] >= 40: entry_signal = True; entry_reason = "Uptrend + RSI Dip"
             elif is_breakout:

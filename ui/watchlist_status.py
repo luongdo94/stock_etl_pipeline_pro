@@ -1,4 +1,4 @@
-"""Display-only Watchlist status adapter; stored values stay backwards compatible."""
+"""Watchlist status adapter; stored values stay backwards compatible."""
 import pandas as pd
 
 STATUS_LABELS = {
@@ -11,7 +11,16 @@ UNKNOWN = "Unknown status (kept)"
 def status_label(raw):
     if not isinstance(raw, str):
         return UNKNOWN
-    return STATUS_LABELS.get(raw, next((label for label in STATUS_LABELS.values() if raw == label.upper()), UNKNOWN))
+    return next((label for stored, label in STATUS_LABELS.items()
+                 if raw.strip().casefold() in (stored.casefold(), label.casefold())), UNKNOWN)
+
+
+def open_idea_tickers(frame):
+    """Watched scope excludes closed / invalidated ideas; unknown statuses stay watched."""
+    if frame is None or "Ticker" not in frame:
+        return []
+    statuses = frame.get("Status", pd.Series(index=frame.index, dtype=object)).map(status_label)
+    return frame.loc[~statuses.isin(["Closed", "Invalidated"]), "Ticker"].dropna().astype(str).unique().tolist()
 
 
 def status_choices(raw):

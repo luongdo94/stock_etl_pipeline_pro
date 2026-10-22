@@ -177,7 +177,8 @@ def _render_summary(ctx, prices):
     if not feed or not feed.get("readable"):
         st.caption("Unavailable: personal review items have not been loaded reliably.")
     else:
-        st.caption(f"{feed['n']} item(s) across your portfolio and watchlist · loaded snapshot {feed['version']}")
+        st.caption(f"{feed['n']} item(s) across your portfolio and watchlist · loaded snapshot {feed['version']}"
+                   f" · preview evaluated at {feed.get('evaluated_at', 'unknown time')}")
         k, n = len(feed["top"]), feed["total"]
         if n > k:
             st.caption(f"Showing {k} of {n}")
@@ -1877,11 +1878,15 @@ def _render_alert_center(ctx, _alert_rules):
                 st.rerun()
             except Exception as _e:
                 st.error(f"Could not delete rule: {_e}")
+    from core.alerts import METRIC_LABELS
     with st.form("alert_form"):
         colX, colY, colZ = st.columns(3)
         with colX: a_ticker = sticky_choice("Ticker", all_tickers, all_tickers[0], "pf_alert_ticker", format_func=format_ticker)
-        with colY: a_metric = sticky_choice("Metric", list(ALERT_METRICS), next(iter(ALERT_METRICS)), "pf_alert_metric")
+        with colY: a_metric = sticky_choice("Metric", list(ALERT_METRICS), next(iter(ALERT_METRICS)), "pf_alert_metric",
+                                             format_func=METRIC_LABELS.get)
         with colZ: a_condition = sticky_choice("Condition", ["above", "below"], "above", "pf_alert_condition")
+        st.caption("Price (EUR); Volume (shares); Daily Return % and RSI use stored EUR closes. "
+                   "Enter -2 for -2%; RSI ranges from 0 to 100.")
         a_value = sticky(st.number_input, "Threshold Value", 100.0, "pf_alert_threshold")
         if st.form_submit_button("Save Alert Rule"):
             try:

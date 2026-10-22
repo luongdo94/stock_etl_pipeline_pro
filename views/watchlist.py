@@ -10,7 +10,7 @@ from services.user_store import load_watchlist, save_watchlist
 from ui.decision_panel import render_alert_inbox, valuation_inputs
 from ui.icons import render_header
 from ui.sticky import forget, sticky, sticky_choice
-from ui.watchlist_status import STATUS_LABELS, UNKNOWN, restore_statuses, status_choices, status_for_save, status_label
+from ui.watchlist_status import STATUS_LABELS, UNKNOWN, open_idea_tickers, restore_statuses, status_choices, status_for_save, status_label
 from views.stock_analysis.watchlist_save import _idea_version
 
 
@@ -69,7 +69,7 @@ def render(ctx):
                                       hist_fcf_full, _t, macro, annual_fin)
                 _iv[_t] = _v["base"] if _v["reliable"] else None   # only a trustworthy value can trigger
         render_alert_inbox(watchlist_triggers(wl_df, _latest, _iv)
-                           + earnings_soon(earnings_cal, wl_df["Ticker"].dropna().unique()))
+                           + earnings_soon(earnings_cal, open_idea_tickers(wl_df)))
 
         st.markdown("### Research ideas")
         _w1, _w2, _w3, _w4 = st.columns(4)

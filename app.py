@@ -160,7 +160,7 @@ reco_df["upside_pct"] = [clean_upside_pct(t, p, a5) for t, p, a5 in zip(
     reco_df["target_mean_price"], reco_df["price_close"],
     reco_df.get("avg_5y_price", pd.Series(index=reco_df.index, dtype=float)))]
 reco_df["score"] = reco_df["ticker"].map(m_df.set_index("Ticker")["Quality"].to_dict() if "Ticker" in m_df.columns else {})
-reco_df["score"] = reco_df["score"].fillna(0).astype(int)
+reco_df["score"] = pd.to_numeric(reco_df["score"], errors="coerce")
 
 # ── Market context: breadth, confidence score, regime ───────────────────────────────────────
 # None = unknown (the source did not supply it): the regime gauge scores it neutral and says so

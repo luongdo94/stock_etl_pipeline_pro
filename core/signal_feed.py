@@ -15,11 +15,13 @@ Nothing here is a recommendation: the computed Decision is quoted, never changed
 """
 import json
 from datetime import date
+from math import isfinite
 from typing import Optional
 
 import pandas as pd
 
 from core import alerts as al
+from ui.watchlist_status import open_idea_tickers
 
 SEVERITY_ORDER = {"action": 0, "review": 1, "info": 2}
 SCOPE_ORDER = {"portfolio": 0, "watchlist": 1, "market": 2}
@@ -46,10 +48,10 @@ def decision_changes(snaps: pd.DataFrame) -> dict:
     """snaps: the two newest snapshot dates [as_of_date, ticker, decision, price_close, rules_version, score_version,
     inputs]. → {"as_of", "previous", "rules_changed", "rule_changes": n, "changes": [...]}.
 
-    Each change lists EVERY difference the snapshots show — rules / score version, valuation (base, reliable), price,
-    flags / scores — as POSSIBLE causes (review SIG-R06: a single cause picked by priority hid a price move that came
+    Each change lists the snapshot differences — rules / score version, valuation (base, bear, bull, expected value,
+    cost of equity, reliable), price, flags / scores — as POSSIBLE differences (review SIG-R06: a single cause picked by priority hid a price move that came
     with a rules change, and claimed causes it had not checked). `cause` is "rules" only when the version changed and
-    nothing else did (a pure methodology re-rating, grouped in the hub); "unknown" when no difference is visible."""
+    nothing else did and the compared inputs are complete; "unknown" when evidence is incomplete or unchanged."""
     out = {"as_of": None, "previous": None, "rules_changed": False, "rule_changes": 0, "changes": []}
     if snaps is not None and snaps.attrs.get("error"):
         return {**out, "error": snaps.attrs["error"]}
@@ -74,8 +76,10 @@ def decision_changes(snaps: pd.DataFrame) -> dict:
             diffs.append(("rules", "rules / score version changed"))
         if v0.get("reliable") != v1.get("reliable"):
             diffs.append(("valuation", "valuation became " + ("reliable" if v1.get("reliable") else "not reliable")))
-        elif _moved(v0.get("base"), v1.get("base"), 0.01):
-            diffs.append(("valuation", f"base value {_fmt(v0.get('base'))} → {_fmt(v1.get('base'))}"))
+        value_keys = ("base", "bear", "bull", "expected_value", "cost_of_equity")
+        for key in value_keys:
+            if _moved(v0.get(key), v1.get(key), 0):
+                diffs.append(("valuation", f"{key} value {_fmt(v0.get(key))} → {_fmt(v1.get(key))}"))
         try:
             px = (float(new["price_close"]) / float(old["price_close"]) - 1) * 100
         except (TypeError, ValueError, ZeroDivisionError):
@@ -87,13 +91,22 @@ def decision_changes(snaps: pd.DataFrame) -> dict:
         if (i0.get("components") or {}) != (i1.get("components") or {}) or (i0.get("missing") or "") != (i1.get("missing") or ""):
             diffs.append(("data", "score inputs changed"))
         kinds = [k for k, _ in diffs]
-        cause = ("rules" if kinds == ["rules"] else "unknown" if not kinds else
-                 "rules+data" if "rules" in kinds else kinds[0])
+        complete = all(k in i for i in (i0, i1) for k in ("valuation", "components", "flags", "missing"))
+        complete &= all(isinstance(i.get("components"), dict) and i.get("flags") is not None
+                        and i.get("missing") is not None for i in (i0, i1))
+        complete &= all(isinstance(v.get("reliable"), bool) and
+                        all(isfinite(pd.to_numeric(v.get(k), errors="coerce")) for k in value_keys) for v in (v0, v1))
+        complete &= all(pd.notna(row.get(k)) for row in (old, new)
+                        for k in ("rules_version", "score_version"))
+        complete &= all(isfinite(pd.to_numeric(row.get("price_close"), errors="coerce")) for row in (old, new))
+        cause = ("unknown" if not kinds or (kinds == ["rules"] and not complete) else
+                 "rules" if kinds == ["rules"] else "rules+data" if "rules" in kinds else kinds[0])
         up = STANCE_RANK.get(new["decision"], 3) < STANCE_RANK.get(old["decision"], 3)
         out["changes"].append({"ticker": t, "from": old["decision"], "to": new["decision"],
                                "direction": "up" if up else "down", "cause": cause, "causes": kinds,
                                "price_chg_pct": px,
-                               "detail": "possible causes: " + "; ".join(d for _, d in diffs) if diffs
+                               "detail": "possible differences: " + "; ".join(d for _, d in diffs)
+                               + ("; snapshot inputs incomplete" if not complete else "") if diffs
                                else "no difference visible in the snapshot inputs"})
     out["rule_changes"] = sum(c["cause"] == "rules" for c in out["changes"])
     out["rules_changed"] = any("rules" in c["causes"] for c in out["changes"])
@@ -106,6 +119,8 @@ def _moved(a, b, rel: float) -> bool:
         a, b = float(a), float(b)
     except (TypeError, ValueError):
         return (a is None) != (b is None)
+    if not isfinite(a) or not isfinite(b):
+        return isfinite(a) != isfinite(b)
     return abs(b - a) > rel * max(abs(a), 1e-9)
 
 
@@ -134,7 +149,7 @@ def personal_items(*, decisions: dict, latest: pd.DataFrame, holdings: Optional[
     the assistant's my_portfolio document (NAV, breaches — unknown when a holding is unpriced)."""
     held = [t for t, h in (holdings or {}).items() if float((h or {}).get("shares") or 0) != 0]
     wl = watchlist if watchlist is not None else pd.DataFrame(columns=["Ticker"])
-    watched = [t for t in wl.get("Ticker", pd.Series(dtype=str)).dropna().astype(str) if t not in held]
+    watched = [t for t in open_idea_tickers(wl) if t not in held]
     as_of = (changes or {}).get("as_of")
     stale = stale or set()
 

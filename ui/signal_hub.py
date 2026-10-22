@@ -14,6 +14,7 @@ import pandas as pd
 import streamlit as st
 
 from ui.sticky import sticky, sticky_choice, sticky_segmented
+from ui.watchlist_status import open_idea_tickers
 
 from core import market_regime as mr
 from core import signal_feed as feed
@@ -136,6 +137,7 @@ def _publish_preview(items, n, hub):
     user = hub["user"]
     st.session_state[PREVIEW_KEY] = {
         "uid": st.session_state.get("user_id"), "version": _expected(), "n": n, "total": len(items),
+        "evaluated_at": pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%d %H:%M:%S UTC"),
         "top": [{k: it[k] for k in ("severity", "ticker", "kind", "message")} for it in items[:PREVIEW_ITEMS]],
         "readable": bool(user.get("holdings_ok", True)) and bool(user.get("watchlist_ok", True))}
 
@@ -239,7 +241,8 @@ def _market_panel(hub, advice, macro, items):
         st.caption(f"Regime read (heuristic, not validated): {advice}")
     st.caption("Technical observations — they describe the tape, they are not signals to act on. The chip is the "
                "computed Decision.")
-    mine = {i["ticker"] for i in items} | set(hub["user"]["holdings"] or {})
+    mine = ({i["ticker"] for i in items} | set(hub["user"]["holdings"] or {})
+            | set(open_idea_tickers(hub["user"]["watchlist"])))
     show_highs = sticky(st.toggle, "Include 52-week highs of other names", False, "sig_mk_highs")
     alerts = [a for a in mk["alerts"] if show_highs or a["type"] != "NEAR 52-WEEK HIGH" or a["ticker"] in mine]
     rows, total = feed.group_observations(alerts, dec, limit=25)
@@ -255,6 +258,8 @@ def _market_panel(hub, advice, macro, items):
     for col, title, frame, colour in ((c1, "Gainers", mk["gainers"], "#2ecc71"), (c2, "Losers", mk["losers"], "#e74c3c")):
         with col:
             st.markdown(f"**{title}** (own last two sessions)")
+            if frame.empty:
+                st.caption(f"No {title.lower()} in the latest sessions.")
             for _, r in frame.iterrows():
                 st.markdown(f"<b>{r['ticker']}</b> <span style='color:{colour};'>{r['chg_24h']:+.2f}%</span> "
                             f"{_chip(dec.get(r['ticker']))} <span style='color:inherit;font-size:0.7rem;'>"
