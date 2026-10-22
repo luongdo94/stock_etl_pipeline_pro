@@ -161,6 +161,12 @@ def _history_features(annual: pd.DataFrame) -> pd.DataFrame:
         eps = _arr(df, "eps_diluted")
         if np.isnan(eps).all():
             eps = _arr(df, "eps")
+        growth_rev = rev
+        if {"src_currency", "fx_to_eur"} <= set(df.columns):
+            from core.valuation import verified_native_values
+            factor = verified_native_values(df, np.ones(len(df)))
+            factor = factor.to_numpy() if factor is not None else np.full(len(df), np.nan)
+            growth_rev, eps = rev * factor, eps * factor
         e_mask = ~np.isnan(eps)
         e_ok, e_y = eps[e_mask], yrs[e_mask] if len(yrs) == len(eps) else np.full(e_mask.sum(), np.nan)
         if len(e_ok) >= 3 and e_ok[0] > 0 and e_ok[-1] > 0:
@@ -201,9 +207,9 @@ def _history_features(annual: pd.DataFrame) -> pd.DataFrame:
         # CAGR exponents use the YEARS between the endpoints, not the number of rows (a missing middle year used to
         # shorten the period and inflate growth — audit A15)
         yrs = _arr(df, "year")
-        r_ok = ~np.isnan(rev)
+        r_ok = ~np.isnan(growth_rev)
         if r_ok.sum() >= 3:
-            rv, ry = rev[r_ok], yrs[r_ok]
+            rv, ry = growth_rev[r_ok], yrs[r_ok]
             span = ry[-1] - ry[0] if np.isfinite(ry[[0, -1]]).all() else r_ok.sum() - 1
             if rv[0] > 0 and rv[-1] > 0 and span > 0:
                 out["rev_cagr"] = ((rv[-1] / rv[0]) ** (1 / span) - 1) * 100
@@ -228,7 +234,7 @@ def _history_features(annual: pd.DataFrame) -> pd.DataFrame:
         return pd.Series(out)
 
     cols = [c for c in ("year", "revenue", "net_income", "eps", "eps_diluted", "ebit", "tax_rate", "total_equity",
-                        "total_debt", "cash") if c in a.columns]
+                        "total_debt", "cash", "src_currency", "fx_to_eur") if c in a.columns]
     hist = a.groupby("ticker")[cols].apply(agg)
     last = a.groupby("ticker").tail(1).set_index("ticker")
     hist["last_equity"] = last["total_equity"]

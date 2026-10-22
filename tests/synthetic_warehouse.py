@@ -110,8 +110,10 @@ def build(db_path: str, seed: int = 7) -> str:
         conn.execute(f"INSERT INTO raw.company_info ({cols}) SELECT {cols} FROM ci")
         for table, quarterly in (("raw.quarterly_financials", True), ("raw.historical_financials", False)):
             conn.register("fin", _financials(quarterly))
-            conn.execute(f"""INSERT INTO {table} (ticker, date, revenue, net_income, total_equity, eps, eps_diluted)
-                             SELECT ticker, date, revenue, net_income, total_equity, eps, eps_diluted FROM fin""")
+            # the ETL records the statement currency and its EUR rate with every period (amounts = reported x rate)
+            conn.execute(f"""INSERT INTO {table} (ticker, date, revenue, net_income, total_equity, eps, eps_diluted,
+                                                  src_currency, fx_to_eur)
+                             SELECT ticker, date, revenue, net_income, total_equity, eps, eps_diluted, 'EUR', 1.0 FROM fin""")
         conn.execute("""
             CREATE TABLE IF NOT EXISTS raw.insider_summary (
                 ticker VARCHAR, insider_purchases_6m BIGINT, insider_sales_6m BIGINT, net_shares BIGINT,

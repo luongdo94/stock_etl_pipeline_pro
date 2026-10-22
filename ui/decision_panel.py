@@ -91,6 +91,27 @@ def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, re
         if signal_conflict:
             d = dec.with_conflict(d, signal_conflict)
 
+    _hv = holdings_loader() if holdings_loader else None
+    holdings_value, cash_eur = (_hv if isinstance(_hv, tuple) else (_hv, 0.0)) if _hv is not None else (None, 0.0)
+    _unpriced = sorted(t for t, v in (holdings_value or {}).items() if v is None)
+    _held = ticker in (holdings_value or {}) and (holdings_value[ticker] is None or holdings_value[ticker] > 0)
+    nav = sum(holdings_value.values()) + float(cash_eur or 0.0) if holdings_value is not None and not _unpriced else None
+    nav = nav if nav is not None and nav > 0 else None
+    rules = dec.load_rules()
+    sizing = dec.size_limits(d.position.get("stop_distance_pct"), rules, (scores or {}).get("adv_eur"),
+                             nav_eur=nav if nav is not None else 0.0)
+    total_limit = sizing["size_pct"] if d.stance == dec.BUY else 0.0
+    suggested, allowed, why = total_limit, None, None
+    cur_w = {t: v / nav for t, v in holdings_value.items() if v} if nav is not None else {}
+    current_pct = cur_w.get(ticker, 0.0) * 100 if nav is not None else None
+    if nav is not None and d.stance == dec.BUY:
+        from core.portfolio_policy import load_policy, max_candidate_weight
+        cm = companies.drop_duplicates("ticker").set_index("ticker") if "ticker" in companies.columns else None
+        policy_meta = {t: {k: cm.at[t, k] for k in ("sector", "currency", "beta") if k in cm.columns}
+                       for t in list(cur_w) + [ticker] if cm is not None and t in cm.index}
+        wanted_add = max(total_limit / 100 - cur_w.get(ticker, 0.0), 0.0)
+        allowed, why = max_candidate_weight(cur_w, ticker, wanted_add, policy_meta, load_policy(rules))
+        suggested = min(total_limit, (cur_w.get(ticker, 0.0) + allowed) * 100)
     sc, cc = _STANCE_COLORS.get(d.stance, "#8899aa"), _CONF_COLORS[d.confidence]
     _H = (vin.get("irr") or {}).get("horizon_years") or dec.load_rules()["valuation"].get("horizon_years", 4)
     fmt = lambda v, s="%": f"{v:+.1f}{s}" if v is not None else "N/A"
@@ -109,7 +130,7 @@ def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, re
           <div style='color:inherit; font-weight:800;'>{fmt(d.horizon_irr_pct)}</div>
           <div style='color:#e74c3c; font-weight:800;'>{("-" + format(d.bear_case_loss_pct, ".1f") + "%") if d.bear_case_loss_pct else ("none" if d.horizon_irr_pct is not None else "N/A")}</div>
           <div style='color:inherit; font-weight:800;'>{f"{d.reward_risk:.1f}x" if d.reward_risk is not None else ("no upside" if (d.net_expected_return_pct is not None and d.net_expected_return_pct <= 0) else "N/A")}</div>
-          <div style='color:inherit; font-weight:800;'>{f"{d.position['size_pct']:.1f}% of portfolio" if d.position['size_pct'] else "—"}</div>
+          <div style='color:inherit; font-weight:800;'>{f"{suggested:.1f}% of portfolio" if total_limit else "—"}</div>
         </div>
       </div>
     </div>""", unsafe_allow_html=True)
@@ -124,7 +145,7 @@ def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, re
             f"value; before tax, withholding, FX and costs: bear {_f(_irr.get('bear'))} · base {_f(_irr.get('base'))} · "
             f"bull {_f(_irr.get('bull'))} · probability-weighted average of the scenario IRRs {_f(d.expected_value_irr_pct)}. "
             f"Not an expected investor return. Upside to base value (no horizon, after costs): "
-            f"{fmt(d.net_expected_return_pct)}. Reward/risk and size use the thesis STOP "
+            f"{fmt(d.net_expected_return_pct)}. Stop distance (used for reward/risk and size): "
             f"({fmt(-d.downside_pct) if d.downside_pct else 'N/A'}); a stop can gap and is not proof the thesis failed.")
     if scores:
         render_score_strip(scores)
@@ -157,39 +178,24 @@ def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, re
             st.markdown("**Confidence limited by**")
             for n in d.confidence_notes:
                 st.markdown(f"- {n}")
-    _hv = holdings_loader() if holdings_loader else None     # lazy: Supabase call → ({ticker: EUR}, cash EUR)
-    holdings_value, cash_eur = (_hv if isinstance(_hv, tuple) else (_hv, 0.0)) if _hv is not None else (None, 0.0)
-    # a value of None is a holding without a price: held, of unknown worth — it makes NAV, weights and fit unknown
-    _unpriced = sorted(t for t, v in (holdings_value or {}).items() if v is None)
-    _held = bool(holdings_value) and ticker in holdings_value and (holdings_value[ticker] is None
-                                                                    or float(holdings_value[ticker]) > 0)
     if holdings_value is not None:
-        st.markdown(f"**For your portfolio:** {dec.holding_action(d.stance, _held)}")    # holdings-aware (P1/5)
+        st.markdown(f"**For your portfolio:** {dec.holding_action(d.stance, _held, current_pct, total_limit)}")
     if _unpriced:
         st.caption(f"Portfolio fit and the NAV-based size cap are not shown: no price for {', '.join(_unpriced)} in the "
                    "warehouse, so the portfolio cannot be valued.")
         holdings_value = None
-    if d.position["size_pct"]:
-        cap = f" (capped by {d.position['binding']})" if d.position["capped"] else ""
-        st.caption(f"Size = {dec.load_rules()['risk']['account_risk_pct']}% portfolio risk ÷ "
-                   f"{d.position['stop_distance_pct']:.1f}% stop distance{cap}. Costs assumed in "
-                   f"config/decision_rules.yaml (commission, FX spread, dividend withholding). Exit capacity is only "
-                   f"enforced when liquidity.portfolio_nav_eur is set there.")
-        if holdings_value:
-            # Portfolio budgets (sector / currency / correlated crash) bind the candidate too (roadmap P0/2)
-            from core.portfolio_policy import load_policy, max_candidate_weight
-            nav = sum(holdings_value.values()) + float(cash_eur or 0.0)
-            if nav > 0:
-                cur_w = {t: v / nav for t, v in holdings_value.items() if v}
-                cm = companies.drop_duplicates("ticker").set_index("ticker") if "ticker" in companies.columns else None
-                meta = {t: {k: cm.at[t, k] for k in ("sector", "currency", "beta") if k in cm.columns}
-                        for t in list(cur_w) + [ticker] if cm is not None and t in cm.index}
-                allowed, why = max_candidate_weight(cur_w, ticker, d.position["size_pct"] / 100, meta,
-                                                    load_policy(dec.load_rules()))
-                if why:
-                    st.warning(f"Portfolio policy limits this addition to **{allowed:.1%} of NAV** "
-                               f"(Decision size {d.position['size_pct']:.1f}%) — {why}.")
-        imp = candidate_impact(prices, holdings_value, ticker, d.position["size_pct"], companies) \
+    if total_limit:
+        st.caption(f"Total position cap: {total_limit:.1f}% of NAV (binding: {sizing['binding']}). "
+                   f"Size = {rules['risk']['account_risk_pct']}% portfolio risk ÷ "
+                   f"{d.position['stop_distance_pct']:.1f}% stop distance, subject to the position and exit caps. "
+                   "Costs assumed in config/decision_rules.yaml (commission, FX spread, dividend withholding).")
+        if nav is None:
+            st.caption("stop-risk cap only; exit capacity not verified")
+        else:
+            st.caption(f"Available addition: **{allowed * 100:.1f}% of NAV** after current holdings and portfolio budgets.")
+            if why:
+                st.warning(f"Portfolio policy limits this addition to **{allowed:.1%} of NAV** — {why}.")
+        imp = candidate_impact(prices, holdings_value, ticker, allowed * 100 if allowed is not None else total_limit, companies) \
             if holdings_value and not cash_eur else None
         if cash_eur > 0 and holdings_value is not None:
             st.caption("Portfolio-fit projection unavailable with cash; see the NAV-based limits above")

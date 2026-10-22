@@ -88,14 +88,16 @@ def fundamentals_as_of(meta) -> Optional[date]:
     return min(dates) if dates else None
 
 
-def round_trip_cost_pct(currency: Optional[str], rules: dict) -> float:
+def round_trip_cost_pct(currency: Optional[str], rules: dict, fx_rate=None) -> float:
     """Commission in + out, plus FX spread in + out when the stock trades in a foreign currency."""
     c = rules["costs"]
     cost = 2 * c["commission_pct"]
-    if currency:
-        cur = "GBP" if str(currency) in ("GBp", "GBX", "GBx") else str(currency).upper()
-        if cur != c["base_currency"].upper():
-            cost += 2 * c["fx_spread_pct"]
+    fx = _finite(fx_rate)
+    cur = "GBP" if str(currency) in ("GBp", "GBX", "GBx") else str(currency or "").upper()
+    foreign = (fx != 1 if fx is not None and fx > 0 and c["base_currency"].upper() == "EUR"
+               else bool(cur) and cur != c["base_currency"].upper())
+    if foreign:
+        cost += 2 * c["fx_spread_pct"]
     return cost / 100
 
 
@@ -184,7 +186,7 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
                    expected_value: Optional[float] = None, scenario_irr: Optional[dict] = None,
                    statement_date: Optional[date] = None, momentum_score: Optional[float] = None,
                    adv_eur: Optional[float] = None, estimated_inputs: tuple = (), assumed_inputs: tuple = (),
-                   today: Optional[date] = None, rules: Optional[dict] = None) -> Decision:
+                   today: Optional[date] = None, rules: Optional[dict] = None, trading_fx_rate=None) -> Decision:
     rules = rules or load_rules()
     today = today or date.today()
     req_mos = rules["valuation"]["required_margin_of_safety"]
@@ -196,7 +198,7 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
     usable_bear = bear_value if usable_value else None
 
     exp_ret = (usable_value / price - 1) if usable_value and price else None
-    round_trip = round_trip_cost_pct(currency, rules)
+    round_trip = round_trip_cost_pct(currency, rules, trading_fx_rate)
     # Audit F30: the value gap is earned over the thesis horizon, and withholding is lost on every year's dividends in
     # that horizon — one year's drag against a multi-year gap understated the tax cost of high-yield names
     horizon_years = float((rules.get("valuation") or {}).get("horizon_years", 4) or 4)
@@ -241,6 +243,10 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
         notes.append(f"Price data is {(today - price_date).days} days old.")
     if fundamentals_date and (today - fundamentals_date).days > rules["valuation"]["stale_fundamentals_days"]:
         notes.append(f"Fundamentals last refreshed {(today - fundamentals_date).days} days ago.")
+    future_dates = [n for n, x in (("price", price_date), ("fundamentals refresh", fundamentals_date),
+                                  ("statement period", statement_date)) if x is not None and x > today]
+    if future_dates:
+        notes.append(f"date in the future: {', '.join(future_dates)}.")
     _unknown = [n for n, x in (("price", price_date), ("fundamentals refresh", fundamentals_date),
                                 ("latest statement period", statement_date)) if x is None]
     if _unknown:
@@ -273,6 +279,7 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
     #    coverage.full_at): the coverage gate has passed and the gap is already priced into the scores.
     need_evidence_gate = bool((rules.get("evidence") or {}).get("require_validated_evidence_for_buy", True))
     full_cov = float(sc.get("coverage_counts_below", 80))
+    # With the evidence gate Off, "not validated" intentionally still counts as a confidence weakness (D6).
     uncounted = 0
     if not track_record_ok and need_evidence_gate:
         uncounted += 1
@@ -316,7 +323,6 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
         # Unknown quality is NOT neutral evidence: it can never pass the value-trap floor (audit F-02)
         quality_unknown = q is None
         weak_quality = q is not None and q < sc["min_quality_for_buy"]
-        low_coverage = coverage_pct is not None and coverage_pct < sc["min_coverage_pct"]
         cov = _finite(coverage_pct)
         low_coverage = cov is None or cov < sc["min_coverage_pct"]           # unknown coverage is not "enough" (A05)
         cap_floor = float(sc.get("min_market_cap_eur_for_buy") or 0)
@@ -325,10 +331,10 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
         # Freshness gates (A05): a BUY needs a dated, recent price and recently refreshed fundamentals. A statement
         # period older than max_statement_age_days blocks too; an unknown statement date only lowers confidence.
         vr = rules["valuation"]
-        stale_price = price_date is None or (today - price_date).days > vr["stale_price_days"]
-        stale_fund = fundamentals_date is None or (today - fundamentals_date).days > vr["stale_fundamentals_days"]
+        stale_price = price_date is None or not 0 <= (today - price_date).days <= vr["stale_price_days"]
+        stale_fund = fundamentals_date is None or not 0 <= (today - fundamentals_date).days <= vr["stale_fundamentals_days"]
         # unknown statement period blocks too (R2-06): a fresh download does not prove a recent reporting period
-        stale_stmt = statement_date is None or (today - statement_date).days > vr.get("max_statement_age_days", 550)
+        stale_stmt = statement_date is None or not 0 <= (today - statement_date).days <= vr.get("max_statement_age_days", 550)
         illiquid = bool(min_adv) and (adv is None or adv < min_adv)            # unknown ADV cannot pass (R3-D6)
         blocked = (quality_unknown or weak_quality or low_coverage or below_mandate
                    or stale_price or stale_fund or stale_stmt or bool(vetoes) or illiquid or bool(conflicts))
@@ -342,11 +348,11 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
                 stance = RESEARCH
                 reasons.append("Passes every BUY gate, but the signals are not yet validated against forward returns "
                                "(Track Record) — research candidate: underwrite independently, no position size.")
-        elif overpriced and (stale_price or stale_fund):
+        elif overpriced and (stale_price or stale_fund or stale_stmt):
             # AVOID moves money too: it needs the same fresh data as a BUY (R3-E)
             stance = HOLD
-            reasons.append("Price looks above the bull-case value, but price or fundamentals are undated / stale — "
-                           "refresh before trimming.")
+            reasons.append("Price looks above the bull-case value, but price, fundamentals or statement period "
+                           "are undated / stale (including future dates) — refresh before trimming.")
         elif (overpriced and q is not None and q >= float(sc.get("avoid_spared_quality", 70))
               and mom is not None and mom >= float(sc.get("avoid_spared_momentum", 40))):
             # The DCF uses cautious growth and a high cost of equity; for a strong, still-rising business "dearer than
@@ -382,7 +388,7 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
                 reasons.append("Fundamentals are undated or stale — refresh before acting.")
             if stale_stmt and mos >= req_mos:
                 reasons.append("Latest annual statement period unknown — no BUY until it is known." if statement_date is None
-                               else f"Latest annual statement ends {statement_date:%b %Y} — too old for a BUY.")
+                               else f"Statement / FCFE basis ends {statement_date:%b %Y} — stale or future-dated; no BUY.")
             if quality_unknown and mos >= req_mos:
                 reasons.append("Quality is unknown — no BUY without evidence that the business is good.")
             if low_coverage and mos >= req_mos:
@@ -484,16 +490,26 @@ def decide(*, price: float, vin: dict, stop_loss: Optional[float], meta, scores:
     A missing adv_eur is unknown liquidity, which blocks a BUY.
     """
     sc = scores or {}
+    statement = to_date(meta.get("latest_statement_date"))
+    basis_year = _finite(vin.get("fcf_basis_year"))
+    if statement is not None and basis_year is not None and 1 <= basis_year <= 9999:
+        basis_date = date(int(basis_year), 12, 31)  # hist_fcf stores a fiscal year, not an exact period end.
+        if basis_year > date.today().year:
+            statement = basis_date
+        elif statement <= date.today():
+            statement = min(statement, basis_date)
     return build_decision(
         price=float(price), base_value=vin["base"], bear_value=vin["bear"], bull_value=vin["bull"], stop_loss=stop_loss,
-        currency=meta.get("currency"), country=meta.get("country"),
+        # listing currency for the FX cost; the reporting currency only when nothing about the listing is known
+        currency=vin.get("trading_currency") or meta.get("trading_currency") or meta.get("currency"),
+        trading_fx_rate=vin.get("trading_fx_rate"), country=meta.get("country"),
         dividend_yield_pct=_finite(meta.get("dividend_yield_pct")), missing_metrics=tuple(sc.get("missing") or ()),
         price_date=price_date, fundamentals_date=fundamentals_as_of(meta), next_earnings=next_earnings,
         track_record_ok=track_record_ok, quality_score=sc.get("quality"), valuation_reliable=vin["reliable"],
         valuation_note=vin["note"], value_score=sc.get("value"), risk_flags=sc.get("flags") or "",
         coverage_pct=sc.get("coverage"), market_cap_eur=_finite(meta.get("market_cap")),
         expected_value=vin.get("expected_value"), scenario_irr=vin.get("irr"),
-        statement_date=to_date(meta.get("latest_statement_date")), momentum_score=_finite(sc.get("momentum")),
+        statement_date=statement, momentum_score=_finite(sc.get("momentum")),
         adv_eur=_finite(sc.get("adv_eur")),
         estimated_inputs=tuple(_DEDUCTION_NAMES.get(k, k) for k, s in (vin.get("fcfe_deduction_status") or {}).items()
                                if s == "ESTIMATED"),

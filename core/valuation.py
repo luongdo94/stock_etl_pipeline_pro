@@ -177,6 +177,16 @@ def anchor_growth(revenue_growth=None, earnings_growth=None, hist_fcf_cagr=None,
     return float(np.clip(g, GROWTH_FLOOR, GROWTH_CAP)), list(used)
 
 
+def verified_native_values(rows: pd.DataFrame, values):
+    """Reverse stored EUR amounts only when every selected year's source currency and FX are verified."""
+    currencies, rates = rows["src_currency"], rows["fx_to_eur"].map(_finite)
+    if currencies.isna().any() or currencies.nunique() != 1 or not str(currencies.iloc[0]).strip():
+        return None
+    if rates.isna().any() or (rates <= 0).any():
+        return None
+    return values / rates
+
+
 def revenue_cagr(annual_fin: Optional[pd.DataFrame], ticker: str, years: int = 3) -> Optional[float]:
     """Operating revenue CAGR in verified source currency; valuation amounts stay EUR."""
     columns = ["ticker", "year", "revenue", "src_currency", "fx_to_eur"]
@@ -187,12 +197,8 @@ def revenue_cagr(annual_fin: Optional[pd.DataFrame], ticker: str, years: int = 3
     if len(rows) < 3:
         return None
     # Verify every selected year, including middle years; never drop unknown metadata.
-    currencies, rates = rows["src_currency"], rows["fx_to_eur"].map(_finite)
-    if currencies.isna().any() or currencies.nunique() != 1 or not str(currencies.iloc[0]).strip():
-        return None
-    if rates.isna().any() or (rates <= 0).any():
-        return None
-    return cagr_by_year(rows["year"], rows["revenue"] / rates)
+    native = verified_native_values(rows, rows["revenue"])
+    return cagr_by_year(rows["year"], native) if native is not None else None
 
 
 # Cash paid to lenders / lessors that IFRS (and some US GAAP filers) report in FINANCING cash flow. OCF − capex of
@@ -913,20 +919,20 @@ def _irrs(scen, fcfe, shares, price, tg) -> dict:
 
 
 def valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, macro: dict,
-                     annual_fin: Optional[pd.DataFrame] = None) -> dict:
+                     annual_fin: Optional[pd.DataFrame] = None, prices: Optional[pd.DataFrame] = None) -> dict:
     """Valuation of one issuer. Within this call the issuer's basis rows and deduction status are prepared once and
     reused (PERF-05: they were rebuilt ~7× per issuer); the memo lives only for the call, so nothing can go stale."""
     if _MEMO.get() is not None:
-        return _valuation_inputs(meta, price, hist_fcf, ticker, macro, annual_fin)
+        return _valuation_inputs(meta, price, hist_fcf, ticker, macro, annual_fin, prices)
     token = _MEMO.set({})
     try:
-        return _valuation_inputs(meta, price, hist_fcf, ticker, macro, annual_fin)
+        return _valuation_inputs(meta, price, hist_fcf, ticker, macro, annual_fin, prices)
     finally:
         _MEMO.reset(token)
 
 
 def _valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, macro: dict,
-                      annual_fin: Optional[pd.DataFrame] = None) -> dict:
+                      annual_fin: Optional[pd.DataFrame] = None, prices: Optional[pd.DataFrame] = None) -> dict:
     """
     Company-anchored intrinsic value inputs + scenarios + reverse model (EUR, per share).
 
@@ -936,8 +942,11 @@ def _valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, m
     ass = currency_assumptions(meta.get("currency"), macro)
     rf, tg = ass["risk_free"], ass["terminal_growth"]
     coe = cost_of_equity(meta.get("beta"), risk_free=rf)
+    px = prices[prices["ticker"] == ticker].sort_values("date") if prices is not None and not prices.empty else pd.DataFrame()
+    quote = px.iloc[-1] if not px.empty else {}
+    listing = {"trading_fx_rate": _finite(quote.get("fx_rate")), "trading_currency": quote.get("currency")}
     if uses_book_model(meta, hist_fcf, ticker):
-        return _financial_inputs(meta, price, annual_fin, ticker, coe, tg, ass)
+        return {**_financial_inputs(meta, price, annual_fin, ticker, coe, tg, ass), **listing}
 
     # Cash-flow-statement FCF after stock-based compensation (EUR) first; Yahoo's levered FCF only as a fallback
     dctx = deduction_context(meta, ticker)               # accounting-standard rules + disclosed assumptions
@@ -953,7 +962,20 @@ def _valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, m
                   + _deduction_evidence_text(fcfe_deduction_status(hist_fcf, ticker, ctx=dctx))
                   if statement_fcf is not None else "Yahoo levered FCF")
     mcap = _finite(meta.get("market_cap"))
-    shares = mcap / price if mcap and price else None
+    cap_date = pd.to_datetime(meta.get("info_updated_at"), errors="coerce")
+    if pd.isna(cap_date):
+        cap_date = pd.to_datetime(meta.get("_extracted_at"), errors="coerce")
+    share_price, shares_note = None, None
+    if pd.notna(cap_date) and not px.empty:
+        age = (cap_date.date() - pd.to_datetime(px["date"]).dt.date).map(lambda d: d.days)
+        closes = pd.to_numeric(px["price_close"], errors="coerce")
+        prior = px[age.between(0, 5) & np.isfinite(closes) & (closes > 0)]
+        if not prior.empty:
+            share_price = _finite(prior.iloc[-1]["price_close"])
+    if not share_price or share_price <= 0:
+        share_price = price
+        shares_note = "Share count uses latest price: no close within 5 days before the market-cap date."
+    shares = mcap / share_price if mcap and share_price else None
     hist_rows = _with_estimates(hist_fcf[hist_fcf["ticker"] == ticker].sort_values("year")).tail(5) \
         if hist_fcf is not None and not hist_fcf.empty else pd.DataFrame(columns=["year", "free_cash_flow"])
     # Each fetch converts every year at one FX rate, which cancels in a CAGR; years kept from an earlier fetch carry
@@ -1018,7 +1040,13 @@ def _valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, m
         reliable, note = False, (f"Net debt repayment (median {refi['net_repayment']:,.0f} EUR a year) is "
                                  f"{refi['share_of_fcfe']:.0%} of the cash flow to equity — the value assumes the debt "
                                  f"can keep being refinanced. Not used for BUY/AVOID without a debt schedule.")
+    note = " ".join(n for n in (note, shares_note) if n) or None
+    if shares_note:
+        fcf_source += " · " + shares_note
+    basis = basis_rows(hist_fcf, ticker)
+    basis_year = _finite(basis["year"].iloc[-1]) if statement_fcf is not None and not basis.empty else None
     return {
+        **listing, "fcf_basis_year": int(basis_year) if basis_year is not None else None,
         "model": "dcf", "fcfe": fcfe, "fcf_source": fcf_source, "shares": shares, "refinancing": refi,
         "growth": growth, "growth_sources": sources, "reliable": reliable, "note": note,
         "risk_free": rf, "cost_of_equity": coe, "terminal_growth": tg, "currency": ass["currency"],

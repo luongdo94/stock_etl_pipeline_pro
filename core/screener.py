@@ -158,7 +158,7 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
             cur_p,
             analyst_target=float(row.get('target_mean_price') or 0)
         )
-        _vin = valuation_inputs(row, float(cur_p), _t_fcf, ticker, _macro or {}, _t_ann)
+        _vin = valuation_inputs(row, float(cur_p), _t_fcf, ticker, _macro or {}, _t_ann, prices=ticker_prices)
         _dec = decide(
             price=float(cur_p), vin=_vin, stop_loss=_tm["stop_loss"], meta=row,
             scores={"quality": quality_raw, "value": value_score, "flags": _sc["flags"], "coverage": _cov,
