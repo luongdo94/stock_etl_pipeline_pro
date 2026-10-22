@@ -135,14 +135,15 @@ def render(dd, ctx):
 
         with ch_l:
             _hist_eps = annual_fin[annual_fin["ticker"] == deep_ticker].sort_values("year")[["year", "eps"]].dropna()
-            import datetime as _dt
-            _cur_yr = _dt.datetime.now().year
+            _reported_years = annual_fin.loc[annual_fin["ticker"] == deep_ticker, "year"].dropna()
+            _last_year = int(_reported_years.max()) if not _reported_years.empty else None
             _fwd_periods = []
-            for _lbl, _col, _offset in [("CY", "eps_est_cur_y", 0), ("NTY", "eps_est_next_y", 1)]:
+            for _lbl, _col, _offset in [("Current FY est.", "eps_est_cur_y", 1), ("Next FY est.", "eps_est_next_y", 2)]:
                 _v = _fv(_col)
                 if _v is not None:
                     if _fe_fxr is not None:                         # an unknown rate gives no EUR bar, not a native one
-                        _fwd_periods.append({"year": _cur_yr + _offset, "eps": _v * _fe_fxr})
+                        _fwd_periods.append({"year": _last_year + _offset if _last_year is not None else f"FY+{_offset}",
+                                             "eps": _v * _fe_fxr, "label": f"{_lbl} — period end unverified"})
 
             fig_eps = go.Figure()
             if not _hist_eps.empty:
@@ -154,7 +155,9 @@ def render(dd, ctx):
                 fig_eps.add_trace(go.Bar(
                     x=[p["year"] for p in _fwd_periods], y=[p["eps"] for p in _fwd_periods],
                     name="Consensus Estimate", marker_color="#9b59b6",
-                    opacity=0.75, marker_pattern_shape="/"
+                    opacity=0.75, marker_pattern_shape="/",
+                    customdata=[p["label"] for p in _fwd_periods],
+                    hovertemplate="%{customdata}<br>EPS: €%{y:.2f}<extra></extra>"
                 ))
             fig_eps.update_layout(
                 height=260,
@@ -164,7 +167,7 @@ def render(dd, ctx):
                 legend=dict(orientation="h", yanchor="bottom", y=1.0,
                             xanchor="right", x=1, font=dict(size=10)),
                 barmode="group", yaxis_title="EPS (€)",
-                xaxis=dict(tickmode="linear", dtick=1)
+                xaxis=dict(tickmode="linear", dtick=1) if _last_year is not None else dict(type="category")
             )
             st.plotly_chart(fig_eps, use_container_width=True)
 

@@ -15,15 +15,17 @@ def render(dd, ctx):
     st.markdown("---")
     render_header("activity", "Performance vs SPY (cumulative %, visible window)")
     
-    df_ticker_ret = df_deep.set_index('date')['price_close']
-    df_spy_ret = spy_prices.set_index('date')['price_close']
+    df_ticker_ret = df_deep.set_index('date')['price_close'].dropna()
+    df_spy_ret = spy_prices.set_index('date')['price_close'].dropna()
     common_dates = df_ticker_ret.index.intersection(df_spy_ret.index)
-    if not common_dates.empty:
-        ticker_cum = (df_ticker_ret.loc[common_dates] / df_ticker_ret.loc[common_dates].iloc[0] - 1) * 100
-        spy_cum = (df_spy_ret.loc[common_dates] / df_spy_ret.loc[common_dates].iloc[0] - 1) * 100
-    else:
-        ticker_cum = pd.Series()
-        spy_cum = pd.Series()
+    if len(common_dates) < 2:
+        for label, closes in ((deep_ticker, df_ticker_ret), ("SPY", df_spy_ret)):
+            if not closes.empty:
+                st.caption(f"{label}: {pd.Timestamp(closes.index[-1]):%Y-%m-%d} · €{closes.iloc[-1]:,.2f}")
+        st.info("need at least 2 closes on common sessions")
+        return
+    ticker_cum = (df_ticker_ret.loc[common_dates] / df_ticker_ret.loc[common_dates].iloc[0] - 1) * 100
+    spy_cum = (df_spy_ret.loc[common_dates] / df_spy_ret.loc[common_dates].iloc[0] - 1) * 100
 
     fig_rel = go.Figure()
     fig_rel.add_trace(go.Scatter(x=common_dates, y=ticker_cum, name=f"{deep_ticker} (%)", line=dict(color="#3498db", width=3)))

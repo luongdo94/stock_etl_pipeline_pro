@@ -307,7 +307,11 @@ def render(ctx):
             fig.add_bar(x=x, y=(r["surprise_pct"] * 100).clip(-100, 100), name="EPS surprise % (capped ±100)",
                         marker_color=["#2ecc71" if v > 0 else "#e74c3c" for v in r["surprise_pct"].fillna(0)],
                         marker_pattern_shape=["/" if sb else "" for sb in r.get("small_base", pd.Series(False, index=r.index))
-                                              .fillna(False)])
+                                              .fillna(False)],
+                        customdata=["N/A" if pd.isna(v) else f"{v * 100:+g}%" +
+                                    (f" (displayed at {max(-100, min(100, v * 100)):+g}%)" if abs(v) > 1 else "")
+                                    for v in r["surprise_pct"]],
+                        hovertemplate="%{x}<br>Surprise: %{customdata}<extra></extra>")
             fig.add_scatter(x=x, y=r["ret_2d"] * 100, name="2-day price reaction %", mode="lines+markers",
                             line=dict(color="#0284C7", width=2), yaxis="y2")
             fig.update_layout(height=380, margin=dict(t=10, l=10, r=10, b=10),

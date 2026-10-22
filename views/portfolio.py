@@ -91,6 +91,21 @@ def _portfolio_stats(weights, returns, covariance):
     return ret, vol, (ret - 0.04) / vol if vol > 0 else 0.0
 
 
+def _benchmark_values(bench_prices, sessions, initial_investment):
+    """Use the holdings' complete sessions; missing benchmark returns anywhere in the window stay unknown."""
+    in_window = bench_prices[bench_prices["date"].between(sessions.min(), sessions.max())]
+    daily = in_window.set_index("date")["daily_return_pct"]
+    aligned = daily.reindex(sessions)
+    if daily.isna().any() or aligned.isna().any():
+        return None
+    return (1 + aligned / 100).cumprod() * initial_investment
+
+
+def _frontier_weights(n_assets, invested, cap, n_sims=2000):
+    """Random books under the markers' constraints: invested budget, per-name cap, the excess held as cash (0%)."""
+    return np.minimum(np.random.dirichlet(np.ones(n_assets), size=n_sims) * invested, cap)
+
+
 def _proposal_stale(proposal, tickers, saved_spec, current_spec):
     return (saved_spec != current_spec or
             set(proposal.loc[proposal["Ticker"] != "CASH", "Ticker"]) != set(tickers))
@@ -971,7 +986,7 @@ def render(ctx):
                     fig_bt = go.Figure()
                     fig_bt.add_trace(go.Scatter(
                         x=backtest_df["date"], y=backtest_df["portfolio_value"],
-                        name="Your Portfolio", line=dict(color="#0284C7", width=3)
+                        name="Today's weights (hypothetical history)", line=dict(color="#0284C7", width=3)
                     ))
 
                     bench_prices = prices_full[
@@ -979,19 +994,18 @@ def render(ctx):
                         (prices_full["date"] >= t_start) &
                         (prices_full["date"] <= t_end)
                     ].sort_values("date")
-                    if not bench_prices.empty:
-                        bench_prices = bench_prices[bench_prices["date"].isin(cum_returns.index)]
-                        if not bench_prices.empty and bench_prices["daily_return_pct"].notna().any():
-                            bench_daily = bench_prices["daily_return_pct"].fillna(0) / 100
-                            # same anchor as the portfolio line (cum_returns keeps its first return): dividing by the
-                            # first value dropped the benchmark's first day (audit F18)
-                            bench_cum   = (1 + bench_daily).cumprod()
-                            bench_prices = bench_prices.copy()
-                            bench_prices["bench_value"] = bench_cum.values * initial_investment
-                            fig_bt.add_trace(go.Scatter(
-                                x=bench_prices["date"], y=bench_prices["bench_value"],
-                                name=sel_bench_label, line=dict(color="#f1c40f", width=2, dash="dot")
-                            ))
+                    bench_values = _benchmark_values(bench_prices, cum_returns.index, initial_investment)
+                    if bench_values is None:
+                        st.caption("Benchmark not shown: missing returns in the displayed period.")
+                    else:
+                        fig_bt.add_trace(go.Scatter(
+                            x=bench_values.index, y=bench_values,
+                            name=sel_bench_label, line=dict(color="#f1c40f", width=2, dash="dot")
+                        ))
+                    _dropped = len(_ret_raw.index.difference(cum_returns.index))
+                    st.caption(f"Both lines use only sessions where every holding traded ({_dropped} dropped sessions)")
+                    st.caption("Current weights are rebalanced each session; cash earns 0%. This hypothetical history "
+                               f"does not follow actual trades. Initial simulated capital: €{initial_investment:,.0f}.")
                     fig_bt.update_layout(
                         height=500,
                         yaxis_title="Value (€)", margin=dict(t=10, l=10, r=10, b=10)
@@ -1020,7 +1034,7 @@ def render(ctx):
                 l2c1, l2c2 = st.columns([1, 1])
 
                 with l2c1:
-                    render_header("globe", "Portfolio Exposure — Region × Sector", level="#####")
+                    render_header("globe", "Holdings exposure — excludes cash", level="#####")
                     # Sunburst: inner ring = Region, outer ring = Sector
                     fig_sun = px.sunburst(
                         edited_df,
@@ -1032,28 +1046,32 @@ def render(ctx):
                     fig_sun.update_traces(
                         textinfo="label+percent parent",
                         insidetextorientation="radial",
-                        hovertemplate="<b>%{label}</b><br>Value: €%{value:,.0f}<br>Share: %{percentParent:.1%}<extra></extra>",
+                        hovertemplate="<b>%{label}</b><br>Value: €%{value:,.0f}<br>% of parent: %{percentParent:.1%}<extra></extra>",
                     )
                     fig_sun.update_layout(
                         height=360,
                         margin=dict(l=0, r=0, t=10, b=0),
                     )
                     st.plotly_chart(fig_sun, use_container_width=True)
-                    st.caption("Inner ring = Region · Outer ring = Sector")
+                    st.caption(f"Cash: {_cash_eur / nav_eur:.1%} of NAV. Inner ring: region / holdings; "
+                               "outer ring: sector / parent region. Holdings exclude cash.")
 
                 with l2c2:
                     render_header("activity", "Asset Correlation Matrix", level="#####")
-                    corr_matrix = ret_matrix.corr()
-                    mean_corr = (corr_matrix.values.sum() - n_assets) / (n_assets**2 - n_assets) if n_assets > 1 else 0
-                    if mean_corr > 0.45:
-                        st.warning(f"High Correlation ({mean_corr:.2f}) — risk concentration!")
-                    fig_corr = px.imshow(
-                        corr_matrix, text_auto=".2f",
-                        color_continuous_scale="RdBu_r", zmin=-1, zmax=1,
-                        aspect="auto"
-                    )
-                    fig_corr.update_layout(height=360, margin=dict(l=0, r=0, t=10, b=0))
-                    st.plotly_chart(fig_corr, use_container_width=True)
+                    if n_assets < 2:
+                        st.caption("correlation needs 2+ holdings")
+                    else:
+                        corr_matrix = ret_matrix.corr()
+                        mean_corr = (corr_matrix.values.sum() - n_assets) / (n_assets**2 - n_assets) if n_assets > 1 else 0
+                        if mean_corr > 0.45:
+                            st.warning(f"High Correlation ({mean_corr:.2f}) — risk concentration!")
+                        fig_corr = px.imshow(
+                            corr_matrix, text_auto=".2f",
+                            color_continuous_scale="RdBu_r", zmin=-1, zmax=1,
+                            aspect="auto"
+                        )
+                        fig_corr.update_layout(height=360, margin=dict(l=0, r=0, t=10, b=0))
+                        st.plotly_chart(fig_corr, use_container_width=True)
 
                 _render_factor_tilts(ctx, dict(zip(current_tickers, weights)))
                 st.markdown("<br>", unsafe_allow_html=True)
@@ -1591,29 +1609,17 @@ def render(ctx):
                     "The **5 labeled markers** show where each optimization strategy lands on the risk/return map. "
                     "Your current portfolio ★ reveals which strategy style you are closest to."
                 )
-                n_sims  = 2000
-                sim_res = np.zeros((3, n_sims))
-                for i in range(n_sims):
-                    w_rnd  = np.random.dirichlet(np.ones(n_assets))
-                    r_rnd  = np.sum(hist_rets.values * w_rnd)
-                    v_rnd  = np.sqrt(np.dot(w_rnd.T, np.dot(cov_matrix, w_rnd)))
-                    sim_res[0, i] = v_rnd
-                    sim_res[1, i] = r_rnd
-                    sim_res[2, i] = (r_rnd - 0.04) / v_rnd if v_rnd > 0 else 0
-
+                samples = _frontier_weights(n_assets, _invest, _opt_cap)
                 fig_mpt = go.Figure()
-
-                # ── Background: Monte Carlo cloud ─────────────────────────────
+                sim_res = np.array([_portfolio_stats(w, hist_rets.values, cov_matrix) for w in samples]).T
                 fig_mpt.add_trace(go.Scatter(
-                    x=sim_res[0, :], y=sim_res[1, :], mode="markers",
-                    marker=dict(
-                        color=sim_res[2, :], colorscale="Viridis",
-                        showscale=True, size=4, opacity=0.25,
-                        colorbar=dict(title="Sharpe", x=1.02)
-                    ),
+                    x=sim_res[1], y=sim_res[0], mode="markers",
+                    marker=dict(color=sim_res[2], colorscale="Viridis", showscale=True, size=4, opacity=0.25,
+                                colorbar=dict(title="Sharpe", x=1.02)),
                     name="Simulated Portfolios",
                     hovertemplate="Vol: %{x:.1%}<br>Return: %{y:.1%}<extra></extra>"
                 ))
+                st.caption("Trailing sample; optimiser targets before policy. Residual cash earns 0%.")
 
                 # ── Compute & plot The Big 5 strategies ───────────────────────
                 _default_min_w = max(0.02, 1.0 / (n_assets * 5))  # sensible floor for EF display
@@ -1678,7 +1684,7 @@ def render(ctx):
                         name=strat["name"],
                         hovertemplate=(
                             f"<b>{strat['name']}</b><br>"
-                            f"{strat['desc']}<br>"
+                            f"{strat['desc']}<br>Optimiser target before policy<br>"
                             "Vol:    %{x:.1%}<br>"
                             "Return: %{y:.1%}<br>"
                             f"Sharpe: {sh_s:.2f}"
@@ -1699,7 +1705,7 @@ def render(ctx):
                 fig_mpt.update_layout(
                     height=580,
                     xaxis_title="Annual Volatility (Risk)",
-                    yaxis_title="Annual Historical Return",
+                    yaxis_title="Annualised trailing mean, shrunk 50%",
                     xaxis=dict(tickformat=".0%"),
                     yaxis=dict(tickformat=".0%"),
                     margin=dict(t=40, b=120, l=10, r=60),
@@ -1712,7 +1718,7 @@ def render(ctx):
                         borderwidth=1,
                     ),
                     annotations=[dict(
-                        text="← Lower Risk          Higher Return →",
+                        text="← Lower Risk          Higher Return ↑",
                         xref="paper", yref="paper",
                         x=0.0, y=1.03, showarrow=False,
                         font=dict(size=10),

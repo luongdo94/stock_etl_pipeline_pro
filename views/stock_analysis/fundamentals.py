@@ -61,6 +61,16 @@ def _rev_text(d):
     return f" {arrow}{abs(d):.2f}"
 
 
+def _period_gaps(frame, quarterly=False):
+    """Add display-only missing periods; preserve real rows, including ambiguous duplicates."""
+    slots = frame["year"] * 4 + frame["quarter"] - 1 if quarterly else frame["year"]
+    missing = sorted(set(range(int(slots.min()), int(slots.max()) + 1)) - set(slots))
+    rows = ([dict(year=s // 4, quarter=s % 4 + 1) for s in missing] if quarterly
+            else [dict(year=s) for s in missing])
+    return pd.concat([frame, pd.DataFrame(rows)], ignore_index=True).sort_values(
+        ["year", "quarter"] if quarterly else ["year"], kind="stable").reset_index(drop=True)
+
+
 def render(dd, ctx):
     deep_ticker = dd.ticker
     df_fin = dd.df_fin
@@ -103,6 +113,8 @@ def render(dd, ctx):
                 df_fin_plot['free_cash_flow'] = None
                 df_fin_plot['fcf_growth']     = None
             
+            df_fin_plot = _period_gaps(df_fin_plot)
+
             # Auto-scale based on max of Revenue and FCF
             max_val = max(
                 df_fin_plot['revenue'].max(),
@@ -156,7 +168,7 @@ def render(dd, ctx):
                 go.Scatter(
                     x=df_fin_plot['year'], 
                     y=df_fin_plot['eps'], 
-                    name="Basic EPS (€)",
+                    name="Basic EPS (€)", connectgaps=False,
                     line=dict(color="gold", width=3),  
                     mode="lines+markers+text",
                     text=eps_text,
@@ -266,7 +278,7 @@ def render(dd, ctx):
             fig_fin.update_yaxes(title_text="Earnings Per Share (€)", secondary_y=True)
             
             st.plotly_chart(fig_fin, use_container_width=True)
-            st.caption("Years are the calendar year of each fiscal year-end; missing years are omitted, not zero. Amounts "
+            st.caption("Years are the calendar year of each fiscal year-end; missing years are gaps, not zero. Amounts "
                        "in EUR. Revenue and basic EPS growth in the reporting currency (a moving exchange rate is not "
                        "growth); FCF growth in EUR, so it includes currency moves.")
             _pit = pit_caption(load_ticker_provenance(deep_ticker), "annual")
@@ -327,9 +339,11 @@ def render(dd, ctx):
                         _es_q["year"] = _es_q["quarter_date"].dt.year
                         _es_q["quarter"] = _es_q["quarter_date"].dt.quarter
                         df_fin_q_plot = df_fin_q_plot.merge(
-                            _es_q[["year", "quarter", "eps_actual", "eps_estimate", "surprise_pct"]],
-                            on=["year", "quarter"], how="left"
+                            _es_q.loc[~_es_q.duplicated(["year", "quarter"], keep=False),
+                                      ["year", "quarter", "eps_actual", "eps_estimate", "surprise_pct"]],
+                            on=["year", "quarter"], how="left", validate="many_to_one"
                         )
+                        df_fin_q_plot.loc[_dup.to_numpy(), ["eps_actual", "eps_estimate", "surprise_pct"]] = float("nan")
                         # the provider's reported EPS (the figure the estimate is compared with), EUR. A quarter
                         # without it stays blank: GAAP EPS has its own line, a silent switch would mix two bases.
                         df_fin_q_plot["eps_chart"] = df_fin_q_plot["eps_actual"]
@@ -338,12 +352,17 @@ def render(dd, ctx):
                 else:
                     df_fin_q_plot["eps_chart"] = float("nan")
 
+                df_fin_q_plot = _period_gaps(df_fin_q_plot, quarterly=True)
+
                 fig_fin_q = make_subplots(specs=[[{"secondary_y": True}]])
                 
                 rev_text_q = [f"{v:+.1f}%" if pd.notnull(v) else "" for v in df_fin_q_plot['rev_growth']]
                 eps_text_q = [f"{v:+.1f}%" if pd.notnull(v) else "" for v in df_fin_q_plot['eps_growth']]
                 
                 x_labels = df_fin_q_plot['year'].astype(str) + " Q" + df_fin_q_plot['quarter'].astype(str)
+                _ambiguous = df_fin_q_plot.duplicated(["year", "quarter"], keep=False)
+                x_labels = x_labels.where(~_ambiguous, x_labels + " · " +
+                                          pd.to_datetime(df_fin_q_plot["report_date"]).dt.strftime("%Y-%m-%d"))
                 
                 # Revenue Bar
                 fig_fin_q.add_trace(
@@ -381,7 +400,7 @@ def render(dd, ctx):
                         go.Scatter(
                             x=x_labels,
                             y=df_fin_q_plot['eps_chart'],
-                            name="EPS actual (Yahoo)",
+                            name="EPS actual (Yahoo)", connectgaps=False,
                             line=dict(color="orange", width=3),
                             mode="lines+markers",
                             hovertemplate="<b>Quarter: %{x}</b><br>EPS actual (Yahoo): €%{y:.2f}<extra></extra>",
@@ -395,7 +414,7 @@ def render(dd, ctx):
                         go.Scatter(
                             x=x_labels,
                             y=df_fin_q_plot['eps'],
-                            name="GAAP EPS",
+                            name="GAAP EPS", connectgaps=False,
                             line=dict(color="rgba(231, 76, 60, 0.75)", width=2),
                             mode="lines+markers",
                             marker=dict(size=6, symbol="circle-open"),
@@ -413,7 +432,7 @@ def render(dd, ctx):
                         go.Scatter(
                             x=x_labels, 
                             y=df_fin_q_plot['eps_estimate'], 
-                            name="EPS Estimate", 
+                            name="EPS Estimate", connectgaps=False,
                             line=dict(color="rgba(189, 195, 199, 0.8)", width=2, dash="dash"), 
                             mode="lines+markers",
                             hovertemplate="<b>Quarter: %{x}</b><br>EPS Estimate: €%{y:.2f}<br>Result: %{text}<extra></extra>",
@@ -447,7 +466,7 @@ def render(dd, ctx):
                         _fq_labels, _fq_vals, _fq_cdata = [], [], []
                         if not df_fin_q_plot.empty:
                             _last_q_row = df_fin_q_plot.iloc[-1]
-                            _fq_labels.append(f"{int(_last_q_row['year'])} Q{int(_last_q_row['quarter'])}")
+                            _fq_labels.append(x_labels.iloc[-1])
                             _fq_vals.append(float(_last_q_row["eps_chart"]) if pd.notnull(_last_q_row["eps_chart"]) else None)
                             _fq_cdata.append([float("nan"), float("nan"), "EPS actual (Yahoo)"])
 
@@ -516,7 +535,7 @@ def render(dd, ctx):
                 
                 st.plotly_chart(fig_fin_q, use_container_width=True)
                 st.caption("Labels are the calendar quarter of each period end, not the company's fiscal quarter; missing "
-                           "quarters are omitted (adjacent labels may skip a quarter). Amounts in EUR. Revenue and GAAP EPS "
+                           "quarters are gaps, not zero. Amounts in EUR. Revenue and GAAP EPS "
                            "growth year on year in the reporting currency; FCF growth in EUR, so it includes currency "
                            "moves. Estimates: current / next quarter as the provider labels them, period end unverified.")
                 _pit_q = pit_caption(load_ticker_provenance(deep_ticker), "quarterly")

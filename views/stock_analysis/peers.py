@@ -217,13 +217,14 @@ def render(dd, ctx):
                 fv, fa = float(val), float(avg)
             except Exception:
                 return ""
+            diff, tolerance = fv - fa, 0.05 * abs(fa)
             if col_key in HIGHER_BETTER:
-                if fv > fa * 1.05: return "background:rgba(0,229,160,0.18);"
-                if fv < fa * 0.95: return "background:rgba(255,107,107,0.18);"
+                if diff > tolerance: return "background:rgba(0,229,160,0.18);"
+                if diff < -tolerance: return "background:rgba(255,107,107,0.18);"
             elif col_key in LOWER_BETTER:
                 if fv <= 0: return ""
-                if fv < fa * 0.95: return "background:rgba(0,229,160,0.18);"
-                if fv > fa * 1.05: return "background:rgba(255,107,107,0.18);"
+                if diff < -tolerance: return "background:rgba(0,229,160,0.18);"
+                if diff > tolerance: return "background:rgba(255,107,107,0.18);"
             return ""
 
         def _fmt_cap(v):

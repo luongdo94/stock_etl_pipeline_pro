@@ -221,7 +221,7 @@ def render(ctx):
     c1, c2 = st.columns(2)
     with c1:
         render_header("activity", "Index Trend (SPY + MA 50/200)")
-        if not df_spy_filtered.empty:
+        if df_spy_filtered["price_close"].notna().sum() >= 2:
             fig_spy = go.Figure()
             fig_spy.add_trace(go.Scatter(
                 x=df_spy_filtered["date"], y=df_spy_filtered["price_close"],
@@ -246,7 +246,11 @@ def render(ctx):
             )
             st.plotly_chart(fig_spy, use_container_width=True)
         else:
-            st.info("SPY data not available for the selected period.")
+            _closes = df_spy_filtered.dropna(subset=["price_close"])
+            if not _closes.empty:
+                _last = _closes.iloc[-1]
+                st.caption(f"SPY: {pd.Timestamp(_last['date']):%Y-%m-%d} · €{_last['price_close']:,.2f}")
+            st.info("SPY: need at least 2 closes for the selected period.")
 
 
     with c2:
