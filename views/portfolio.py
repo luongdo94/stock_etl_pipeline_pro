@@ -932,7 +932,7 @@ def render(ctx):
                     # Risk tiles stacked vertically
                     render_metric_tile("Weighted Return", f"{(cum_returns.iloc[-1]-1)*100:.1f}%", delta=(cum_returns.iloc[-1]-1)*100)
                     st.caption(f"Timeframe: {selected_horizon}")
-                    if sharpe > 2.0: s_label, s_color = "ELITE", "#00ffcc"
+                    if sharpe > 2.0: s_label, s_color = "ELITE", "#0284C7"
                     elif sharpe > 1.5: s_label, s_color = "STRONG", "#2ecc71"
                     elif sharpe > 1.0: s_label, s_color = "OK", "#f1c40f"
                     else: s_label, s_color = "POOR", "#e74c3c"
@@ -964,7 +964,7 @@ def render(ctx):
                     fig_bt = go.Figure()
                     fig_bt.add_trace(go.Scatter(
                         x=backtest_df["date"], y=backtest_df["portfolio_value"],
-                        name="Your Portfolio", line=dict(color="#00ffcc", width=3)
+                        name="Your Portfolio", line=dict(color="#0284C7", width=3)
                     ))
 
                     bench_prices = prices_full[
@@ -1285,7 +1285,7 @@ def render(ctx):
                                           for k, v in _strategy_descriptions.items()}
                 st.markdown(
                     f"<div style='background:var(--secondary-background-color, transparent); padding:10px 14px; border-radius:8px; "
-                    f"border-left:3px solid #00d4ff; margin-bottom:12px; font-size:0.83rem;'>"
+                    f"border-left:3px solid #0284C7; margin-bottom:12px; font-size:0.83rem;'>"
                     f"{_strategy_descriptions[sel_strategy]}</div>",
                     unsafe_allow_html=True
                 )

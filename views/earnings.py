@@ -288,7 +288,7 @@ def render(ctx):
                   "currentColor" if b["beat_rate"] is None else ("#2ecc71" if b["beat_rate"] >= 0.5 else "#e74c3c")),
             _tile("Current streak", f"{b['streak']} {b['streak_kind'] or ''}", "consecutive reports", "#f1c40f"),
             _tile(f"Typical move ({mv['n']} reports)", format_value(mv["median_abs"], ".1%", prefix="±"),
-                  f"largest {_pct(mv['max_abs'], 1, False)}" if mv.get("max_abs") is not None else "", "#00ffcc"),
+                  f"largest {_pct(mv['max_abs'], 1, False)}" if mv.get("max_abs") is not None else "", "#0284C7"),
             _tile("Decision", verdict.get(t, "—"), "from the Stock Scanner / Analysis", "#3498db"),
         ])
         st.markdown(f"<div style='display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr)); gap:8px; margin:8px 0;'>{tiles}</div>",
@@ -309,7 +309,7 @@ def render(ctx):
                         marker_pattern_shape=["/" if sb else "" for sb in r.get("small_base", pd.Series(False, index=r.index))
                                               .fillna(False)])
             fig.add_scatter(x=x, y=r["ret_2d"] * 100, name="2-day price reaction %", mode="lines+markers",
-                            line=dict(color="#00e5ff", width=2), yaxis="y2")
+                            line=dict(color="#0284C7", width=2), yaxis="y2")
             fig.update_layout(height=380, margin=dict(t=10, l=10, r=10, b=10),
                               yaxis=dict(title="Surprise %"), yaxis2=dict(title="Reaction %", overlaying="y", side="right"),
                               legend=dict(orientation="h", y=1.1))

@@ -24,6 +24,7 @@ from ui.sticky import forget, kept_key, sticky, sticky_choice, sticky_multi, sti
 #   (Next ER, Flags, Conflicts) — plus Why: the Decision's own first reason, so a row explains itself.
 DEFAULT_COLS = ["Ticker", "Company", "Verdict", "Why", "Quality", "Value", "Momentum", "Revisions", "FCF Yield (%)",
                 "Growth Gap (pp)", "Next ER (days)", "Flags", "Conflicts"]
+COMPACT_COLS = ["Ticker", "Company", "Verdict", "Quality", "Value", "Next ER (days)"]
 # Detail one click away; near-duplicates removed (dividend yield ≈ net payout, ρ 0.99; gross ≈ net debt/EBITDA, ρ 0.80)
 EXTRA_COLS = ["Confidence", "Sector", "MCap (B)", "MoS (%)", "Exp. Return (%/yr)", "Implied Growth (%)", "P/E (Fwd)",
               "EV/EBITDA", "PEG", "ROIC (%)", "ROE (%)", "FCF Margin (%)", "FCF Conversion (x)", "Net Debt/EBITDA",
@@ -32,7 +33,7 @@ EXTRA_COLS = ["Confidence", "Sector", "MCap (B)", "MoS (%)", "Exp. Return (%/yr)
 SORTS = {"Decision, then Quality, Value": None, "Quality ↓": ("Quality", False), "Value ↓": ("Value", False),
          "FCF Yield ↓": ("FCF Yield (%)", False), "Next earnings ↑": ("Next ER (days)", True), "Ticker A–Z": ("Ticker", True)}
 STATE_KEYS = ("scan_view", "scan_search", "p_region_filter", "p_sector_filter", "scan_mode", "scan_sort", "scan_skip_er",
-              "custom_sm_filter", "scan_extra_cols", "scan_min_q", "scan_min_v", "scan_min_m", "scan_rsi", "scan_pe",
+              "custom_sm_filter", "scan_extra_cols", "scan_compact", "scan_min_q", "scan_min_v", "scan_min_m", "scan_rsi", "scan_pe",
               "scan_z", "scan_peg", "scan_fcf", "scan_archived", "radar_limit")
 
 
@@ -457,9 +458,15 @@ def render(ctx):
             f_df = f_df[f_df["Smart Money"].str.contains("DISTRIBUTION", na=False)]
 
     # ── result ──────────────────────────────────────────────────────────────────────────────────────────────────────
-    extras = sticky_multi("More columns", EXTRA_COLS, [], "scan_extra_cols",
-                          help="Detail behind the scores. Hidden by default: Quality, Value and Momentum already summarise them.")
-    display_cols = sv.columns_for(view, DEFAULT_COLS, extras, f_df.columns)
+    c_cols1, c_cols2 = st.columns([1, 3])
+    with c_cols1:
+        compact = sticky(st.toggle, "Compact view", False, "scan_compact",
+                         help="Show 6 core columns (Ticker, Company, Verdict, Quality, Value, Next ER) for quick scanning.")
+    with c_cols2:
+        extras = sticky_multi("More columns", EXTRA_COLS, [], "scan_extra_cols",
+                              help="Detail behind the scores. Hidden by default: Quality, Value and Momentum already summarise them.")
+    base_cols = COMPACT_COLS if compact else DEFAULT_COLS
+    display_cols = sv.columns_for(view, base_cols, extras, f_df.columns)
     if "Conflicts" in f_df.columns:
         f_df = f_df.assign(Conflicts=f_df["Conflicts"].map(_clean_conflicts))
     spec = SORTS[sort_label]

@@ -6,6 +6,7 @@ from services.db import load_ticker_provenance, load_track_record
 from ui.provenance import render_confidence_line
 from services.user_store import read_portfolio_status
 from ui.decision_panel import render_decision_panel
+from views.stock_analysis import answer
 from views.stock_analysis.layout import layer_banner
 
 
@@ -40,6 +41,7 @@ def render(dd, ctx):
         snapshots=load_track_record(), prices=prices_full,
         holdings_loader=_holdings_value, companies=ctx["companies_full"],
         signal_conflict=dd.extra.get("signal_conflict"), decision=dd.extra.get("decision"))
+    answer.render_overview_details(dd)
     render_confidence_line(load_ticker_provenance(dd.ticker), dd.vin)
 
     pos, lo, hi = dd.w52_pos, dd.tm["w52_lo"], dd.tm["w52_hi"]

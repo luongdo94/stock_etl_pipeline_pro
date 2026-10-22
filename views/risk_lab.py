@@ -170,7 +170,7 @@ def render(ctx):
         _tile("Low (P10)", format_value(m["p10"], ".2f", prefix="€"), pct(m["p10"]), "#e74c3c", "#e74c3c"),
         _tile("Median", format_value(m["p50"], ".2f", prefix="€"), pct(m["p50"]), border="#8899aa"),
         _tile("High (P90)", format_value(m["p90"], ".2f", prefix="€"), pct(m["p90"]), "#2ecc71", "#2ecc71"),
-        _tile("90% interval", format_value(m["p5"], ".2f", prefix="€") + " – " + format_value(m["p95"], ".2f", prefix="€"), f"{pct(m['p5'])} to {pct(m['p95'])}", border="#00ffcc"),
+        _tile("90% interval", format_value(m["p5"], ".2f", prefix="€") + " – " + format_value(m["p95"], ".2f", prefix="€"), f"{pct(m['p5'])} to {pct(m['p95'])}", border="#0284C7"),
     ])
     st.markdown(f"<div style='display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,160px),1fr)); gap:8px; margin-bottom:6px;'>{cards}</div>",
                 unsafe_allow_html=True)

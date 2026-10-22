@@ -99,3 +99,21 @@ def render(dd, ctx):
     note = validation_note(dd.extra["decision"])
     if note:
         st.caption(note)
+
+
+def render_overview_details(dd):
+    """Render the contextual details ('What could change it', 'Data confidence') for the merged Decision in Overview."""
+    if dd.extra.get("decision") is None:              # no Decision built for this page: nothing to explain
+        return
+    a = answer_summary(dd)
+    li = lambda items: "".join(f"<li>{i}</li>" for i in items) or "<li>—</li>"      # noqa: E731
+    st.markdown(f"""
+    <div style='display:grid; grid-template-columns:repeat(auto-fit, minmax(240px, 1fr)); gap:6px 24px; margin:4px 0 10px 0;'>
+      <div><div style='color:inherit; font-size:0.68rem; text-transform:uppercase; font-weight:700;'>What could change it</div>
+           <ul style='margin:2px 0 0 16px; padding:0; font-size:0.82rem;'>{li(a['change'])}</ul></div>
+      <div><div style='color:inherit; font-size:0.68rem; text-transform:uppercase; font-weight:700;'>Data confidence</div>
+           <ul style='margin:2px 0 0 16px; padding:0; font-size:0.82rem;'>{li(a['data'])}</ul></div>
+    </div>""", unsafe_allow_html=True)
+    note = validation_note(dd.extra["decision"])
+    if note:
+        st.caption(note)

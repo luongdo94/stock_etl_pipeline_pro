@@ -267,7 +267,7 @@ def render(dd, ctx):
     if _uv_data:
         _pulse_style = "border: 1px solid rgba(230,126,34,0.6); box-shadow: 0 0 15px rgba(230,126,34,0.15); border-left: 4px solid #e67e22;" if _is_conflict else "border: 1px solid rgba(255,255,255,0.08); border-left: 4px solid #444;"
         _r_color = "#e74c3c" if _nlp_score >= 60 else "#f39c12" if _nlp_score >= 30 else "#2ecc71"
-        _s_color = "#00ffcc" if _nlp_sent == "Positive" else "#e74c3c" if _nlp_sent in ["Negative", "Critical"] else "#8899aa"
+        _s_color = "#0284C7" if _nlp_sent == "Positive" else "#e74c3c" if _nlp_sent in ["Negative", "Critical"] else "#8899aa"
 
         st.markdown(f"""
 <div style='
@@ -384,8 +384,8 @@ def render(dd, ctx):
             r=_radar_vals_closed,
             theta=_radar_labels_closed,
             fill="toself",
-            fillcolor="rgba(0,255,204,0.08)",
-            line=dict(color="#00ffcc", width=2),
+            fillcolor="rgba(2,132,199,0.12)",
+            line=dict(color="#0284C7", width=2),
             name=deep_ticker
         ))
         fig_radar.update_layout(

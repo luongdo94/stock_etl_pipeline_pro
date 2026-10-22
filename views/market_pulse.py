@@ -224,7 +224,7 @@ def render(ctx):
             fig_spy.add_trace(go.Scatter(
                 x=df_spy_filtered["date"], y=df_spy_filtered["price_close"],
                 name="SPY Price", mode='lines',
-                line=dict(color="#00d4ff", width=2.5)
+                line=dict(color="#0284C7", width=2.5)
             ))
             fig_spy.add_trace(go.Scatter(
                 x=df_spy_filtered["date"], y=df_spy_filtered["ma_50"],
@@ -237,7 +237,7 @@ def render(ctx):
                 line=dict(color="#e67e22", width=1.5)
             ))
             fig_spy.update_layout(
-                height=500,
+                height=340,
                 margin=dict(l=0, r=0, t=10, b=0),
                 yaxis_title="SPY in € (includes EUR/USD moves)",
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
@@ -268,7 +268,7 @@ def render(ctx):
                              annotation_text="30% Oversold", annotation_position="top left",
                              annotation_font=dict(size=10, color="#e74c3c"))
             fig_br.update_layout(
-                height=500,
+                height=340,
                 margin=dict(l=0, r=0, t=10, b=0),
                 yaxis=dict(title="% Above MA50", range=[0, 100], ticksuffix="%"),
                 xaxis_title="", showlegend=False

@@ -82,8 +82,9 @@ def render(ctx):
         return
     dd = context.build(ctx, ticker)
     _chart_range_note(dd, ctx)
-    answer.render(dd, ctx)
     group = _select_group()
+    if group != "Overview":
+        answer.render(dd, ctx)
     for section in GROUPS[group]:
         section.render(dd, ctx)
         if section is fundamentals:
