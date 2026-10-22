@@ -196,8 +196,7 @@ def build(ctx, deep_ticker):
     act_str = rating["action_label"]
     from core.signal_matrix import ACTION_COLOURS, action_description
     act_color = ACTION_COLOURS.get(act_str, rating["action_color"])
-    act_desc = action_description(act_str, rating, s1=tm["s1"], price=float(cur_p), rsi=tm["rsi"],
-                                  sm_signal=sm["signal"])
+    act_desc = action_description(act_str, rating, s1=tm["s1"], price=float(cur_p), rsi=tm["rsi"])
 
     return DeepDive(ticker=deep_ticker, meta=meta, meta_enriched=meta_enriched, df_deep=df_deep,
                     df_fin=df_fin, cur_p=cur_p, target_p=target_p, upside=upside, z_score=z_score,

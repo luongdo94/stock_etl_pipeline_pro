@@ -179,7 +179,10 @@ def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, re
             for n in d.confidence_notes:
                 st.markdown(f"- {n}")
     if holdings_value is not None:
-        st.markdown(f"**For your portfolio:** {dec.holding_action(d.stance, _held, current_pct, total_limit)}")
+        action = dec.holding_action(d.stance, _held, current_pct, suggested)
+        if nav is not None and d.stance == dec.BUY and allowed <= 1e-12 and not _held:
+            action = "WATCH — portfolio budget full"
+        st.markdown(f"**For your portfolio:** {action}")
     if _unpriced:
         st.caption(f"Portfolio fit and the NAV-based size cap are not shown: no price for {', '.join(_unpriced)} in the "
                    "warehouse, so the portfolio cannot be valued.")

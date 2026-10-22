@@ -55,7 +55,7 @@ def test_hold_and_no_data_leave_the_signal_alone():
 
 def test_explanations_name_the_dcf_when_it_is_the_reason():
     r = rate(decision_stance=DECISION_AVOID)
-    assert "bull-case DCF" in action_description(r["action_label"], r, s1=90, price=100, rsi=50, sm_signal="NEUTRAL")
+    assert "bull-case DCF" in action_description(r["action_label"], r, s1=90, price=100, rsi=50)
     lvl, _, bullets = rr_explainer(rr=None, price=100, stop=92, target=100, s1=95, rsi=50, w52_pos=50, pe=20,
                                    quality=80, overvalued=True)
     assert lvl == "OVERVALUED" and "above even the bull-case" in bullets[0]

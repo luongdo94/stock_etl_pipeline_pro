@@ -21,7 +21,7 @@ def classify_transaction(text: str) -> str:
     t = (text or "").lower()
     if "sale" in t or "disposition in the public market" in t:
         return "Sale"
-    if "purchase" in t or re.search(r"buy", t) or "acquisition in the public market" in t:
+    if "purchase" in t or re.search(r"\bbuy\b", t) or "acquisition in the public market" in t:
         return "Buy"
     if "gift" in t:
         return "Gift"

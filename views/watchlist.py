@@ -66,7 +66,7 @@ def render(ctx):
             _row = companies_full[companies_full["ticker"] == _t]
             if not _row.empty and _t in _latest.index:
                 _v = valuation_inputs(_row.iloc[0], float(_latest.at[_t, "price_close"]),
-                                      hist_fcf_full, _t, macro, annual_fin)
+                                      hist_fcf_full, _t, macro, annual_fin, prices=prices_full)
                 _iv[_t] = _v["base"] if _v["reliable"] else None   # only a trustworthy value can trigger
         render_alert_inbox(watchlist_triggers(wl_df, _latest, _iv)
                            + earnings_soon(earnings_cal, open_idea_tickers(wl_df)))

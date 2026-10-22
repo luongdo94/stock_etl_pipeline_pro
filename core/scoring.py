@@ -161,12 +161,12 @@ def _history_features(annual: pd.DataFrame) -> pd.DataFrame:
         eps = _arr(df, "eps_diluted")
         if np.isnan(eps).all():
             eps = _arr(df, "eps")
-        growth_rev = rev
+        growth_rev, growth_ni = rev, ni
         if {"src_currency", "fx_to_eur"} <= set(df.columns):
             from core.valuation import verified_native_values
             factor = verified_native_values(df, np.ones(len(df)))
             factor = factor.to_numpy() if factor is not None else np.full(len(df), np.nan)
-            growth_rev, eps = rev * factor, eps * factor
+            growth_rev, growth_ni, eps = rev * factor, ni * factor, eps * factor
         e_mask = ~np.isnan(eps)
         e_ok, e_y = eps[e_mask], yrs[e_mask] if len(yrs) == len(eps) else np.full(e_mask.sum(), np.nan)
         if len(e_ok) >= 3 and e_ok[0] > 0 and e_ok[-1] > 0:
@@ -213,13 +213,14 @@ def _history_features(annual: pd.DataFrame) -> pd.DataFrame:
             span = ry[-1] - ry[0] if np.isfinite(ry[[0, -1]]).all() else r_ok.sum() - 1
             if rv[0] > 0 and rv[-1] > 0 and span > 0:
                 out["rev_cagr"] = ((rv[-1] / rv[0]) ** (1 / span) - 1) * 100
-        ok = ~np.isnan(ni)
-        pos = ni[ok]
-        py = yrs[ok]
+        growth_ok = ~np.isnan(growth_ni)
+        pos = growth_ni[growth_ok]
+        py = yrs[growth_ok]
         if len(pos) >= 3 and pos[0] > 0 and pos[-1] > 0:
             span = py[-1] - py[0] if np.isfinite(py[[0, -1]]).all() else len(pos) - 1
             if span > 0:
                 out["ni_cagr"] = ((pos[-1] / pos[0]) ** (1 / span) - 1) * 100       # realised earnings growth
+        ok = ~np.isnan(ni)
         if ok.sum() >= 2:
             out["ni_median"] = float(np.median(ni[ok][-3:]))      # through-the-cycle: one impairment year is not the story
             out["ni_median_all"] = float(np.median(ni[ok]))       # longest available window (cyclicals, audit F-22)

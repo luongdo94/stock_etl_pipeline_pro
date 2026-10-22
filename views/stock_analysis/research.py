@@ -150,9 +150,12 @@ def _news_tab(dd, lang):
                 res = research.news_digest(dd.ticker, dd.meta.get("company", dd.ticker), lang)
                 if res.get("yahoo_error"):
                     st.warning(f"Yahoo news unavailable: {res['yahoo_error']}")
+                if res.get("history_error") and res["status"] == "available":
+                    st.warning(f"could not store headlines: {res['history_error']}; using stored history.")
                 if res["status"] != "available":
                     st.info(res["status"])
-                    st.caption("Load headlines first: use Load headlines and sentiment above in Risks & data, then retry.")
+                    if not res.get("history_error"):
+                        st.caption("Load headlines first: use Load headlines and sentiment above in Risks & data, then retry.")
                 else:
                     _keep(dd.ticker, {"kind": "news", "q": "News digest (last 30 days)", "res": res, "hits": res["hits"]})
             except Exception as exc:

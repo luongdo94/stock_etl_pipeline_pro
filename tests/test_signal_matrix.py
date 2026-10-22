@@ -37,9 +37,8 @@ def test_breakout_is_labelled_not_penalised():
 
 
 def test_signal_description_does_not_depend_on_context_only_flow():
-    r = _rate()
-    neutral = action_description("WEAKENING", r, s1=90, price=100, rsi=50, sm_signal="NEUTRAL")
-    dist = action_description("WEAKENING", r, s1=90, price=100, rsi=50, sm_signal="DISTRIBUTION")
+    neutral = action_description("WEAKENING", _rate(sm_status="NEUTRAL"), s1=90, price=100, rsi=50)
+    dist = action_description("WEAKENING", _rate(sm_status="DISTRIBUTION"), s1=90, price=100, rsi=50)
     assert "distribution" not in neutral.lower()
     assert dist == neutral
 

@@ -329,8 +329,10 @@ def news_digest(ticker, company, language="English", *, as_of=None, chat=None, y
     yahoo = fetch_yahoo_news(ticker, ticker_factory=yahoo_factory)
     now = as_of or datetime.now(timezone.utc)
     passages = news_passages(ticker, as_of=now)
-    empty = {"status": "no stored news in the last 30 days — load headlines first", "origin_counts": {},
-             "yahoo_error": yahoo["error"]}
+    history_error = yahoo.get("history_error")
+    empty = {"status": f"could not store headlines: {history_error}" if history_error else
+             "no stored news in the last 30 days — load headlines first", "origin_counts": {},
+             "yahoo_error": yahoo["error"], "history_error": history_error}
     if passages.empty:
         return empty
     # BM25 uses no API; existing filing embeddings are left intact, news is never embedded.
@@ -352,4 +354,4 @@ def news_digest(ticker, company, language="English", *, as_of=None, chat=None, y
     result = answer(f"Summarise the last 30 days of news for {company} ({ticker}) as of {pd.Timestamp(now).isoformat()}.",
                     hits, system=SYSTEM_NEWS, language=language, chat=chat)
     return dict(result, status="available", hits=hits, origin_counts=hits["origin"].value_counts().to_dict(),
-                yahoo_error=yahoo["error"])
+                yahoo_error=yahoo["error"], history_error=history_error)

@@ -10,7 +10,7 @@ ACTION_COLOURS = SIGNAL_COLOURS
 GOOD = ("#2ecc71", "#00ffcc")
 
 
-def action_description(action, rating, *, s1, price, rsi, sm_signal):
+def action_description(action, rating, *, s1, price, rsi):
     """One-paragraph reading of the Signal label."""
     if rating.get("overvalued") and action in ("NEUTRAL", "WEAKENING", "UNFAVOURABLE"):
         return ("The Decision Summary rates the price above even the bull-case DCF value, which holds this back: "

@@ -83,6 +83,8 @@ def get_sm_spirit_unified_v2(df_raw: "pd.DataFrame", sector: str = "Unknown") ->
     df = df.sort_values("date").drop_duplicates("date").tail(126).reset_index(drop=True)
     if len(df) < 30:
         return _unavailable("insufficient history (need 30 sessions)")
+    if pd.to_numeric(df['volume'].tail(20), errors="coerce").isna().all():
+        return _unavailable("volume unavailable (recent sessions)")
     if not pd.to_numeric(df['volume'], errors="coerce").gt(0).any():
         return _unavailable("volume unavailable")
     if pd.to_numeric(df['price_close'], errors="coerce").gt(0).sum() < 30:

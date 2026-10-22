@@ -91,6 +91,7 @@ def _store_headlines(ticker, result):
                  i.get("summary", ""), i.get("origin", "google")) for i in items])
     except Exception as exc:
         logging.getLogger(__name__).warning("News history write failed: %s", exc)
+        return f"{type(exc).__name__}: {str(exc)[:120]}"
 
 
 def stored_headlines(ticker, *, digest=False, days=30, as_of=None):
@@ -125,7 +126,7 @@ def fetch_news_sentiment(company: str, ticker: str, parse: Optional[Callable] = 
                          include_yahoo=False, yahoo_factory=None) -> dict:
     """Shared RSS normalization. Inject parse/get_pipe for offline use; get_pipe=lambda: None skips FinBERT."""
     out = {"items": [], "avg": None, "mood": None, "scored": False, "fetched_at": datetime.now(timezone.utc),
-           "error": None, "status": "no_news", "n_scored": 0, "undated": 0}
+           "error": None, "history_error": None, "status": "no_news", "n_scored": 0, "undated": 0}
     locales = [("en-US", "US")]
     local = LOCALES.get(ticker.upper().rsplit(".", 1)[-1]) if "." in ticker else None
     if local:
@@ -181,7 +182,7 @@ def fetch_news_sentiment(company: str, ticker: str, parse: Optional[Callable] = 
                 it["label"], it["score"] = None, None
             out["error"] = (out["error"] + "; " if out["error"] else "") + f"sentiment model failed: {type(exc).__name__}"
     if items:
-        _store_headlines(ticker, out)
+        out["history_error"] = _store_headlines(ticker, out)
     if include_yahoo:
         out["yahoo"] = fetch_yahoo_news(ticker, ticker_factory=yahoo_factory)
     return out
@@ -189,7 +190,7 @@ def fetch_news_sentiment(company: str, ticker: str, parse: Optional[Callable] = 
 
 def fetch_yahoo_news(ticker, *, ticker_factory=None):
     """On-request yfinance news, old/new formats; inject Ticker for offline tests. No sentiment scoring."""
-    out = {"items": [], "fetched_at": datetime.now(timezone.utc), "status": "no_news", "error": None}
+    out = {"items": [], "fetched_at": datetime.now(timezone.utc), "status": "no_news", "error": None, "history_error": None}
     try:
         if ticker_factory is None:
             from yfinance import Ticker as ticker_factory
@@ -199,7 +200,7 @@ def fetch_yahoo_news(ticker, *, ticker_factory=None):
         seen = set()
         for entry in entries:
             c = entry.get("content", entry)
-            title = _title(c.get("title") or "")
+            title = str(c.get("title") or "").strip()
             key = _normalized(title)
             if not key or key in seen:
                 continue
@@ -211,7 +212,7 @@ def fetch_yahoo_news(ticker, *, ticker_factory=None):
                         or c.get("link") or "", "lang": "en", "origin": "yahoo", "label": None, "score": None})
         if out["items"]:
             out["status"] = "available"
-            _store_headlines(ticker, out)
+            out["history_error"] = _store_headlines(ticker, out)
     except Exception as exc:
         out.update(items=[], status="unavailable", error=f"{type(exc).__name__}: {str(exc)[:120]}")
     return out

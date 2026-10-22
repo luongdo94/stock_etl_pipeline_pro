@@ -1,9 +1,8 @@
-"""Layer 3 — LLM risk audit, news sentiment (FinBERT) and quality radar."""
+"""Layer 3 — LLM risk audit, news sentiment (FinBERT) and quality metrics."""
 from datetime import datetime, timezone
 import os
 
 import pandas as pd
-import plotly.graph_objects as go
 import streamlit as st
 
 
