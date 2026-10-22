@@ -516,11 +516,13 @@ def _create_marts(conn):
             c.inst_ownership,
             c.insider_ownership,
             -- ✅ Insider Trading Signals (Last 6 Months)
-            COALESCE(ins.net_shares, 0) AS insider_net_shares_6m,
-            COALESCE(ins.insider_purchases_6m, 0) AS insider_purchases_6m,
-            COALESCE(ins.insider_sales_6m, 0) AS insider_sales_6m,
-            COALESCE(ins.pct_buy, 0) AS insider_pct_buy,
-            COALESCE(ins.pct_sell, 0) AS insider_pct_sell,
+            -- unknown stays NULL (a missing line is not 0 shares); the fetch time says how old the summary is
+            ins.net_shares AS insider_net_shares_6m,
+            ins.insider_purchases_6m AS insider_purchases_6m,
+            ins.insider_sales_6m AS insider_sales_6m,
+            ins.pct_buy AS insider_pct_buy,
+            ins.pct_sell AS insider_pct_sell,
+            ins._extracted_at AS insider_extracted_at,
             -- Insider Signal: Positive = Net Buying, Negative = Net Selling
             CASE 
                 WHEN ins.net_shares > 0 THEN 'NET BUY'

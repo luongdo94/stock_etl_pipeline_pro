@@ -356,7 +356,8 @@ def run_pipeline(lookback_days: int = None, force_full: bool = False, fast_mode:
         return False
 
 
-CARRY_FORWARD_TABLES = ("raw.company_info", "raw.historical_financials", "raw.hist_fcf", "raw.cashflows")
+CARRY_FORWARD_TABLES = ("raw.company_info", "raw.historical_financials", "raw.hist_fcf", "raw.cashflows",
+                        "raw.insider_summary", "raw.insider_transactions")   # insider: a skipped / failed fetch keeps them
 # accumulated from other sources over many runs (not re-extracted by a full refresh): copied whole, no ledger entry
 REFERENCE_TABLES = ("raw.sec_filings", "raw.source_reconciliation", "raw.sec_cash_items")
 
@@ -473,8 +474,11 @@ def carry_forward_missing(conn, prod_path: str, tickers, tables=CARRY_FORWARD_TA
                 continue
             col_list = ", ".join(f'"{c}"' for c in cols)
             n_before = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
-            conn.execute(f"INSERT OR IGNORE INTO {table} ({col_list}) SELECT {col_list} FROM prod.{schema}.{name} "
-                         f"WHERE ticker = ANY(?)", [missing])
+            select = f"SELECT {col_list} FROM prod.{schema}.{name} WHERE ticker = ANY(?)"
+            try:
+                conn.execute(f"INSERT OR IGNORE INTO {table} ({col_list}) {select}", [missing])
+            except duckdb.BinderException:       # no key to ignore on (insider tables): only missing tickers are copied
+                conn.execute(f"INSERT INTO {table} ({col_list}) {select}", [missing])
             copied = [r[0] for r in conn.execute(f"SELECT DISTINCT ticker FROM {table} WHERE ticker = ANY(?)",
                                                  [missing]).fetchall()]
             out[table] = copied

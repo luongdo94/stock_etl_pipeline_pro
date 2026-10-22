@@ -86,7 +86,8 @@ def render(dd, ctx):
     _render_insider_activity(dd)
 
 
-_INSIDER_COLOR = {"NET BUY": "#2ecc71", "NET SELL": "#e74c3c", "NO TRADES": "#8899aa", "NO DATA": "#667788"}
+_INSIDER_COLOR = {"NET BUY": "#2ecc71", "NET SELL": "#e74c3c", "NET FLAT": "#8899aa", "NO TRADES": "#8899aa",
+                  "PARTIAL DATA": "#8899aa", "NO DATA": "#667788"}
 
 
 def _render_insider_activity(dd):
@@ -94,26 +95,39 @@ def _render_insider_activity(dd):
     ins = dd.scores.get("insider") or {}
     status = ins.get("status") or "NO DATA"
     st.markdown("**Insider activity — last 6 months**")
+    as_of = ins.get("as_of")
+    fetched = f" Provider summary fetched {pd.Timestamp(as_of):%d %b %Y}." if as_of is not None else ""
     if status == "NO DATA":
-        st.caption("No insider-trading data for this listing (the provider covers US filers; zero is not reported as "
-                   "'no trades').")
-        return
-    c1, c2, c3 = st.columns(3)
-    net_pct = ins.get("net_pct")
-    c1.markdown(f"<div style='color:{_INSIDER_COLOR[status]};font-size:1.3rem;font-weight:800;'>{status}</div>"
-                f"<div style='color:inherit;font-size:0.75rem;'>net "
-                f"{'n/a' if net_pct is None else f'{net_pct:+.2f}% of insider holdings'}</div>", unsafe_allow_html=True)
-    c2.metric("Shares bought", f"{ins.get('buys') or 0:,.0f}")
-    c3.metric("Shares sold", f"{ins.get('sells') or 0:,.0f}")
-    st.caption("Open-market buying by several insiders is informative; selling is often routine (taxes, diversification, "
-               "planned 10b5-1 sales). Not part of the scores until the Track Record shows it adds information.")
+        # the summary is one source; the stored transactions below are another and are still shown
+        st.caption("No insider-trading summary for this listing (the provider covers US filers; zero is not reported "
+                   "as 'no trades')." + fetched)
+    else:
+        c1, c2, c3 = st.columns(3)
+        net_pct = ins.get("net_pct")
+        c1.markdown(f"<div style='color:{_INSIDER_COLOR.get(status, '#8899aa')};font-size:1.3rem;font-weight:800;'>"
+                    f"{status}</div><div style='color:inherit;font-size:0.75rem;'>net "
+                    f"{'n/a' if net_pct is None else f'{net_pct:+.2f}% of insider holdings'}</div>",
+                    unsafe_allow_html=True)
+        _shares = lambda v: "N/A" if v is None else f"{v:,.0f}"      # noqa: E731  (unknown is not 0 shares)
+        c2.metric("Shares bought", _shares(ins.get("buys")))
+        c3.metric("Shares sold", _shares(ins.get("sells")))
+        st.caption("Open-market buying by several insiders is informative; selling is often routine (taxes, "
+                   "diversification, planned 10b5-1 sales). Not part of the scores until the Track Record shows it adds "
+                   "information." + fetched)
     try:
         from services.db import load_insider_transactions
         tx = load_insider_transactions(ticker=dd.ticker, days=180, limit=15)
-    except Exception:
+    except Exception as e:
         tx = pd.DataFrame()
-    if tx is not None and not tx.empty:
-        with st.expander(f"Latest Form 4 transactions ({len(tx)})"):
+        tx.attrs["error"] = f"{type(e).__name__}: {e}"
+    if tx is not None and tx.attrs.get("error"):
+        st.warning(f"Stored insider transactions could not be read ({tx.attrs['error']}). Reload to try again.")
+    elif tx is not None and not tx.empty:
+        with st.expander(f"Latest insider transactions ({len(tx)})"):
             cols = [c for c in ("transaction_date", "insider_name", "position", "transaction_type", "shares", "value")
                     if c in tx.columns]
-            st.dataframe(tx[cols], hide_index=True, width="stretch")
+            st.dataframe(tx[cols].rename(columns={"value": "value (USD)"}), hide_index=True, width="stretch")
+            st.caption("From Yahoo's insider-transaction feed (US filers), as reported in USD. Type is read from "
+                       "Yahoo's description; transactions without a description are Unknown.")
+    else:
+        st.caption("No insider transactions stored for this listing in the last 180 days.")

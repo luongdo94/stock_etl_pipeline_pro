@@ -13,18 +13,28 @@ from etl.utils import clean_upside_pct
 
 def insider_activity(row) -> dict:
     """Insider buying / selling over 6 months from the provider's net share purchase activity:
-    {status: NET BUY / NET SELL / NO TRADES / NO DATA, net_pct (% of insider holdings), net_shares, buys, sells}.
+    {status: NET BUY / NET SELL / NET FLAT / NO TRADES / PARTIAL DATA / NO DATA, net_pct (% of insider holdings),
+    net_shares, buys, sells, as_of (when the summary was fetched)}. A missing summary line stays unknown.
     All-zero rows are "no data" (most non-US listings): the transform's NEUTRAL label cannot tell them apart."""
     def num(k):
         v = row.get(k)
         return float(v) if v is not None and pd.notnull(v) else None
     buys, sells, net = num("insider_purchases_6m"), num("insider_sales_6m"), num("insider_net_shares_6m")
     pb, ps = num("insider_pct_buy"), num("insider_pct_sell")
+    as_of = row.get("insider_extracted_at")
+    as_of = as_of if as_of is not None and pd.notnull(as_of) else None
     if not any(x for x in (buys, sells, net, pb, ps)):
-        return {"status": "NO DATA", "net_pct": None, "net_shares": None, "buys": None, "sells": None}
-    status = "NET BUY" if (net or 0) > 0 else ("NET SELL" if (net or 0) < 0 else "NO TRADES")
-    net_pct = ((pb or 0) - (ps or 0)) * 100 if pb is not None or ps is not None else None
-    return {"status": status, "net_pct": net_pct, "net_shares": net, "buys": buys, "sells": sells}
+        return {"status": "NO DATA", "net_pct": None, "net_shares": None, "buys": None, "sells": None, "as_of": as_of}
+    if net is None:                                      # one side of the summary is missing: no net verdict
+        status = "PARTIAL DATA"
+    elif net > 0:
+        status = "NET BUY"
+    elif net < 0:
+        status = "NET SELL"
+    else:                                                # bought and sold the same number of shares
+        status = "NET FLAT" if (buys or sells) else "NO TRADES"
+    net_pct = (pb - ps) * 100 if pb is not None and ps is not None else None     # both shares known, or N/A
+    return {"status": status, "net_pct": net_pct, "net_shares": net, "buys": buys, "sells": sells, "as_of": as_of}
 
 
 def _by_ticker(df) -> dict:
