@@ -4,8 +4,10 @@ import html
 import re
 
 import pandas as pd
+import plotly.graph_objects as go
 import streamlit as st
 
+from ui.sticky import sticky_choice
 from views.stock_analysis.layout import layer_banner
 
 from ui.icons import render_header
@@ -308,6 +310,75 @@ def render(dd, ctx):
         </div>
         """
         st.markdown(html_table, unsafe_allow_html=True)
+
+        # ── Peer Metric Dot Plot (C18) ──────────────────────────────────
+        _col_label_map = {c[0]: c[1] for c in _COL_DEFS}
+        chosen_metric = sticky_choice(
+            "Select metric for peer distribution",
+            _numeric_cols,
+            _numeric_cols[0] if _numeric_cols else "roe_pct",
+            "sa_peer_dotplot_metric",
+            format_func=lambda k: _col_label_map.get(k, k)
+        )
+        if not chosen_metric or chosen_metric not in _numeric_cols:
+            chosen_metric = _numeric_cols[0] if _numeric_cols else None
+        if chosen_metric:
+            # same N/A rule as the table: a multiple at or below 0 is not interpretable
+            _fmt = {c[0]: c[2] for c in _COL_DEFS}.get(chosen_metric)
+            _known = comp_df[chosen_metric].notna() & (comp_df.index != "AVG")
+            if _fmt in ("x", "x1"):
+                _known &= comp_df[chosen_metric] > 0
+            peers_only_rows = comp_df[(comp_df.index != "AVG") & (~comp_df["is_selected"])]
+            n_total_peers = len(peers_only_rows)
+            valid_peers = peers_only_rows[_known[peers_only_rows.index]]
+            n_valid_peers = len(valid_peers)
+            n_missing_peers = n_total_peers - n_valid_peers
+            if n_valid_peers < 4:
+                st.caption(f"Dot plot requires ≥ 4 peers with data ({n_valid_peers} available, {n_missing_peers} missing).")
+            else:
+                if n_missing_peers > 0:
+                    st.caption(f"{n_missing_peers} of {n_total_peers} peers missing data for {_col_label_map.get(chosen_metric, chosen_metric)}; omitted from plot.")
+                plot_rows = comp_df[_known].sort_values(chosen_metric, ascending=True)
+                peers_plot = plot_rows[~plot_rows["is_selected"]]
+                sel_plot = plot_rows[plot_rows["is_selected"]]
+                fig_dots = go.Figure()
+                if not peers_plot.empty:
+                    fig_dots.add_trace(go.Scatter(
+                        x=peers_plot[chosen_metric],
+                        y=peers_plot.index,
+                        mode="markers",
+                        name="Peers",
+                        marker=dict(color="#64748b", size=10),
+                        hovertemplate="<b>%{y}</b>: %{x}<extra></extra>"
+                    ))
+                if not sel_plot.empty:
+                    fig_dots.add_trace(go.Scatter(
+                        x=sel_plot[chosen_metric],
+                        y=sel_plot.index,
+                        mode="markers",
+                        name=f"{deep_ticker} (Selected)",
+                        marker=dict(color="#38bdf8", size=14, line=dict(color="#0284c7", width=2)),
+                        hovertemplate="<b>%{y} (selected)</b>: %{x}<extra></extra>"
+                    ))
+                avg_val = avg_dict.get(chosen_metric)
+                if avg_val is not None and not pd.isna(avg_val):
+                    fig_dots.add_vline(
+                        x=float(avg_val),
+                        line_dash="dash",
+                        line_color="#f59e0b",
+                        line_width=1.5,
+                        annotation_text=f"Peer Avg: {avg_val:.1f}",
+                        annotation_position="top right"
+                    )
+                fig_dots.update_layout(
+                    title=dict(text=f"Peer Distribution — {_col_label_map.get(chosen_metric, chosen_metric)}", font=dict(size=14)),
+                    height=280,
+                    xaxis=dict(zeroline=True, zerolinecolor="rgba(128,128,128,0.2)"),
+                    yaxis=dict(autorange="reversed"),
+                    legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
+                    margin=dict(l=10, r=20, t=40, b=45)
+                )
+                st.plotly_chart(fig_dots, use_container_width=True)
 
     else:
         st.info(f"No peers found in the **{_peer_group_label}** {_match_level} to compare with.")

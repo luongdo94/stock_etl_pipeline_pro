@@ -351,7 +351,8 @@ def render(ctx):
 
         st.plotly_chart(fig, use_container_width=True)
         st.caption(f"S&P 500 (SPY) over {_period.lower() if _period != 'YTD' else 'the year to date'}: "
-                   + (f"{_bench:+.1f}%." if _bench is not None else "not available in this snapshot."))
+                   + (f"{_bench + 0:+.2f}% in USD (the € index chart above includes EUR/USD moves)."
+                      if _bench is not None else "not available in this snapshot."))
     else:
         st.info("Sector ETF performance is not in this snapshot (it is collected by the ETL).")
 

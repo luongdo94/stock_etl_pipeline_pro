@@ -204,6 +204,25 @@ def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, re
     return d
 
 
+def _style_sensitivity(table: pd.DataFrame, price: float):
+    """Background heat by discount vs premium (value / price - 1) readable on both light & dark themes."""
+    mos = val.REQUIRED_MARGIN_OF_SAFETY
+    def _bg(v):
+        if v is None or pd.isna(v) or v <= 0:
+            return ""
+        diff = v / price - 1
+        if diff >= mos:
+            return "background-color: rgba(46, 204, 113, 0.28);"
+        if diff > 0:
+            return "background-color: rgba(46, 204, 113, 0.14);"
+        if diff < -mos:
+            return "background-color: rgba(231, 76, 60, 0.28);"
+        if diff < 0:
+            return "background-color: rgba(231, 76, 60, 0.14);"
+        return ""
+    return table.style.format("€{:,.2f}", na_rep="").map(_bg)
+
+
 def _render_financial_valuation(meta, price, vin, companies=None):
     """Banks, insurers, financial services: residual income on book value instead of a cash-flow DCF, plus where the
     stock sits on its peers' P/B-vs-ROE line."""
@@ -260,9 +279,9 @@ def _render_financial_valuation(meta, price, vin, companies=None):
     rates = [x for x in (r - 0.02, r - 0.01, r, r + 0.01, r + 0.02) if x > tg]
     table = pd.DataFrame({f"{x:.1%}": [value(o, x) for o in rois] for x in rates}, index=[f"{o:.1%}" for o in rois])
     st.markdown("**Sensitivity — value per share (rows: ROE today, columns: cost of equity)**")
-    st.dataframe(table.style.format("€{:,.2f}", na_rep="—")
-                 .map(lambda v: "color:#2ecc71" if v and v >= price * (1 + val.REQUIRED_MARGIN_OF_SAFETY)
-                      else ("color:#e74c3c" if v and v < price else "")), width="stretch")
+    st.dataframe(_style_sensitivity(table, price), width="stretch")
+    st.caption(f"Green = value above the €{price:,.2f} price (darker: at least the {val.REQUIRED_MARGIN_OF_SAFETY:.0%} "
+               "margin of safety), red = below it; blank = not modelled.")
 
     fit = val.pb_roe_peer_fit(companies, meta.get("ticker"))
     if fit:
@@ -342,13 +361,10 @@ def render_valuation_section(*, meta, price, vin, relval, companies=None):
     rates = [x for x in (r - 0.02, r - 0.01, r, r + 0.01, r + 0.02) if x > tg]
     table = val.sensitivity_table(vin["fcfe"], vin["shares"], growths, rates, tg)
     st.markdown("**Sensitivity — value per share (rows: starting growth, columns: cost of equity)**")
-    st.dataframe(table.style.format("€{:,.2f}", na_rep="—")
-                 .map(lambda v: "color:#2ecc71" if v and v >= price * (1 + val.REQUIRED_MARGIN_OF_SAFETY)
-                      else ("color:#e74c3c" if v and v < price else "")),
-                 width="stretch")
-    st.caption(f"Required margin of safety for 'UNDERVALUED': {val.REQUIRED_MARGIN_OF_SAFETY:.0%}. "
-               "Excess cash is not in the warehouse and is not added (conservative for cash-rich firms).")
-
+    st.dataframe(_style_sensitivity(table, price), width="stretch")
+    st.caption(f"Green = value above the €{price:,.2f} price (darker: at least the {val.REQUIRED_MARGIN_OF_SAFETY:.0%} "
+               "margin of safety required for 'UNDERVALUED'), red = below it; blank = not modelled. Excess cash is not "
+               "in the warehouse and is not added (conservative for cash-rich firms).")
 
 TERMINAL_SHARE_WARN = 0.75      # above this, most of the value is the perpetuity — the explicit years barely matter
 

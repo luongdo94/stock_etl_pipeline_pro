@@ -147,7 +147,7 @@ def render(ctx):
             render_metric_tile("Win rate", "N/A (no completed trade)" if wr is None else f"{wr:.0f}% ({r['n_trades']} trades)")
         fig = go.Figure()
         fig.add_trace(go.Scatter(x=r["dates_arr"], y=r["bnh_curve"], name="Buy & hold (fee-free)",
-                                 line=dict(color="rgba(255,255,255,0.4)", width=1.5, dash="dot")))
+                                 line=dict(color="#64748b", width=1.5, dash="dot")))
         fig.add_trace(go.Scatter(x=r["dates_arr"], y=r["equity_curve"], name=r["strategy"], line=dict(color="#0284C7", width=3)))
         fig.update_layout(height=420, yaxis_title="Equity (€)", hovermode="x unified",
                           legend=dict(orientation="h", y=1.05))

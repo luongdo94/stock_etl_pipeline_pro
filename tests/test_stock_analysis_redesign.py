@@ -200,28 +200,27 @@ def test_ownership_and_short_interest_unknown_are_not_zero():
     assert not at.exception, [e.value for e in at.exception]
     infos = " ".join(i.value for i in at.info)
     assert "Ownership is not reported" in infos and "Short interest is not reported" in infos
-    html = " ".join(m.value for m in at.markdown)
-    assert "N/A" in html and "0.0 days" not in html
-    assert not at.get("plotly_chart")                                                 # no gauge painted green at 0 %
+    assert [m.value for m in at.metric] == ["N/A", "N/A"]                             # short interest / days to cover
+    assert not at.get("plotly_chart")                                                 # nothing painted at 0 %
 
 
 def test_r13_ownership_with_one_source_missing_has_no_pie_that_rescales_it_to_100_percent():
     at = _run_ownership({"inst_ownership": 0.6, "insider_ownership": None, "short_percent_of_float": 0.0, "short_ratio": 0.0})
     assert not at.exception, [e.value for e in at.exception]
     assert any("One source is not reported" in c.value for c in at.caption)
-    assert [m.value for m in at.metric] == ["60.0%", "N/A"]                          # the numbers as reported
-    html = " ".join(m.value for m in at.markdown)
-    assert "0.0 days" in html                                                         # a reported 0 is a value
-    assert len(at.get("plotly_chart")) == 1                                           # only the short gauge (at 0 %)
+    # the numbers as reported; a reported 0 is a value (short interest is a number, not a gauge — chart review C12)
+    assert [m.value for m in at.metric] == ["60.0%", "N/A", "0.0%", "0.0 days"]
+    assert not at.get("plotly_chart")
 
 
 def test_r13_ownership_parts_above_100_percent_are_shown_as_reported_not_as_a_pie():
     at = _run_ownership({"inst_ownership": 0.95, "insider_ownership": 0.2, "short_percent_of_float": 0.02, "short_ratio": 1.0})
     assert not at.exception, [e.value for e in at.exception]
-    assert [m.value for m in at.metric] == ["95.0%", "20.0%"]
+    assert [m.value for m in at.metric] == ["95.0%", "20.0%", "2.0%", "1.0 days"]
     assert any("more than 100 %" in c.value for c in at.caption)
     full = _run_ownership({"inst_ownership": 0.6, "insider_ownership": 0.1, "short_percent_of_float": 0.02, "short_ratio": 1.0})
-    assert len(full.get("plotly_chart")) == 2 and not full.metric                     # a real whole: the pie and the gauge
+    assert len(full.get("plotly_chart")) == 1                                         # a real whole: the pie
+    assert [m.value for m in full.metric] == ["2.0%", "1.0 days"]
 
 
 # ── review of the redesign (COMMIT_REVIEW_88fbf9b_HEAD) ──────────────────────────────────────────────────────────

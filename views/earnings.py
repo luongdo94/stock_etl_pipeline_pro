@@ -349,6 +349,45 @@ def render(ctx):
                 "EPS year ago": st.column_config.NumberColumn(format="%.2f"),
                 "EPS YoY %": st.column_config.NumberColumn(format="%+.1f%%"),
                 "Revenue YoY %": st.column_config.NumberColumn(format="%+.1f%%")})
+            gh_chrono = gh.sort_values("Reported").copy()
+            n_eps = gh_chrono["EPS YoY %"].notna().sum()
+            n_rev = gh_chrono["Revenue YoY %"].notna().sum()
+            if n_eps >= 3 or n_rev >= 3:
+                fig_gh = go.Figure()
+                q_ends = [f"{pd.Timestamp(d):%Y-%m-%d}" if pd.notna(d) else "N/A" for d in gh_chrono["Quarter end"]]
+                if n_eps >= 3:
+                    fig_gh.add_trace(go.Scatter(
+                        x=gh_chrono["Reported"],
+                        y=gh_chrono["EPS YoY %"],
+                        mode="lines+markers",
+                        name="EPS YoY %",
+                        connectgaps=False,
+                        line=dict(color="#0284C7", width=2),
+                        marker=dict(size=7),
+                        customdata=q_ends,
+                        hovertemplate="<b>EPS YoY</b>: %{y:+.1f}%<br>Reported: %{x|%Y-%m-%d}<br>Quarter end: %{customdata}<extra></extra>"
+                    ))
+                if n_rev >= 3:
+                    fig_gh.add_trace(go.Scatter(
+                        x=gh_chrono["Reported"],
+                        y=gh_chrono["Revenue YoY %"],
+                        mode="lines+markers",
+                        name="Revenue YoY %",
+                        connectgaps=False,
+                        line=dict(color="#10b981", width=2),
+                        marker=dict(size=7),
+                        customdata=q_ends,
+                        hovertemplate="<b>Revenue YoY</b>: %{y:+.1f}%<br>Reported: %{x|%Y-%m-%d}<br>Quarter end: %{customdata}<extra></extra>"
+                    ))
+                fig_gh.add_hline(y=0, line_color="#64748b", line_width=1)
+                fig_gh.update_layout(
+                    title=dict(text="Growth History (YoY %)", font=dict(size=14)),
+                    height=280,
+                    yaxis=dict(ticksuffix="%", zeroline=False),
+                    legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
+                    margin=dict(l=10, r=20, t=40, b=45)
+                )
+                st.plotly_chart(fig_gh, use_container_width=True)
             st.caption("EPS is as reported to analysts, in the reporting currency; a year-ago EPS of zero or below gives no "
                        "percentage. Revenue growth needs the same quarter a year earlier, and the data provider serves only "
                        "about the last 5 quarterly statements, so older rows are blank (the history fills in as the ETL stores "

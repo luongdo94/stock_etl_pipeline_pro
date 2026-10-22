@@ -1779,6 +1779,33 @@ def _render_stress_and_ledger(ctx, tickers, weights, nav_eur, meta, port_beta, r
                      "return": st.column_config.NumberColumn("NAV change", format="%+.1f%%"),
                      "loss_eur": st.column_config.NumberColumn("€", format="€%+,.0f"),
                      "worst": st.column_config.TextColumn("Largest contributors (share of NAV)")})
+    valid_res = res.dropna(subset=["return"]).copy()
+    if len(valid_res) > 1:
+        s_plot = valid_res.sort_values("return", ascending=True).copy()
+        s_plot["ret_pct"] = s_plot["return"] * 100
+        bar_colors = ["#e74c3c" if r < -limit else "#0284C7" for r in s_plot["return"]]
+        fig_stress = go.Figure()
+        fig_stress.add_trace(go.Bar(
+            y=s_plot["scenario"],
+            x=s_plot["ret_pct"],
+            orientation="h",
+            marker=dict(color=bar_colors),
+            customdata=s_plot["loss_eur"],
+            hovertemplate="<b>%{y}</b>: %{x:+.1f}%<br>Loss: €%{customdata:+,.0f}<extra></extra>"
+        ))
+        limit_pct = limit * 100
+        fig_stress.add_vline(x=-limit_pct, line_dash="dash", line_color="#e74c3c", line_width=1.5,
+                             annotation_text=f"Limit −{limit_pct:.0f}%", annotation_position="top right")
+        fig_stress.add_vline(x=0, line_color="#64748b", line_width=1)
+        fig_stress.update_layout(
+            title=dict(text="Modelled scenario loss — not a forecast", font=dict(size=14)),
+            height=280,
+            xaxis=dict(ticksuffix="%", zeroline=False),
+            yaxis=dict(autorange="reversed"),
+            margin=dict(l=10, r=20, t=40, b=30),
+            showlegend=False
+        )
+        st.plotly_chart(fig_stress, use_container_width=True)
     worst = float(res["return"].min()) if not res.empty else 0.0
     rate_known = int(sens["rate_beta"].notna().sum()) if not sens.empty else 0
     st.caption(f"Each holding moves by its own estimated market beta × the market move, its rate sensitivity × the "
@@ -1834,6 +1861,34 @@ def _render_stress_and_ledger(ctx, tickers, weights, nav_eur, meta, port_beta, r
                 "Drift pp": st.column_config.NumberColumn(format="%+.1f"),
                 "Allowed %": st.column_config.NumberColumn(format="%.1f%%"),
                 "Trade (shares)": st.column_config.NumberColumn(format="%+.2f")})
+            target_rows = [r for r in rows if not pd.isna(r.get("Target %")) and not pd.isna(r.get("Drift pp"))]
+            if target_rows:
+                t_df = pd.DataFrame(sorted(target_rows, key=lambda r: abs(r["Drift pp"]), reverse=True))
+                t_df["label"] = ["Over target" if d > 0 else ("Under target" if d < 0 else "At target") for d in t_df["Drift pp"]]
+                color_map = {"Over target": "#38bdf8", "Under target": "#fbbf24", "At target": "#64748b"}
+                fig_drift = go.Figure()
+                for grp in ("Over target", "Under target", "At target"):
+                    sub = t_df[t_df["label"] == grp]
+                    if not sub.empty:
+                        fig_drift.add_trace(go.Bar(
+                            y=sub["Ticker"],
+                            x=sub["Drift pp"],
+                            name=grp,
+                            orientation="h",
+                            marker=dict(color=color_map[grp]),
+                            customdata=np.stack((sub["Allowed %"], sub["Why limited"]), axis=-1),
+                            hovertemplate="<b>%{y}</b>: %{x:+.1f} pp<br>Allowed: %{customdata[0]:.1f}%<br>Why limited: %{customdata[1]}<extra></extra>"
+                        ))
+                fig_drift.add_vline(x=0, line_color="#64748b", line_width=1)
+                fig_drift.update_layout(
+                    title=dict(text="Target Weight Drift (pp)", font=dict(size=14)),
+                    height=max(260, min(340, 35 * len(t_df) + 90)),
+                    xaxis=dict(ticksuffix=" pp", zeroline=False),
+                    yaxis=dict(autorange="reversed"),
+                    legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
+                    margin=dict(l=10, r=20, t=40, b=45)
+                )
+                st.plotly_chart(fig_drift, use_container_width=True)
             st.caption("Allowed = the target after the same rules as every rebalance: only BUY-stance lines may grow, the "
                        "position cap, liquidity / stop sizing and the sector / currency / stress budgets. Execute with "
                        "Add Trade so the ledger records it.")

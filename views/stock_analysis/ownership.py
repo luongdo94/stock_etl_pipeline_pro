@@ -34,8 +34,8 @@ def render(dd, ctx):
             # a pie only when the parts and the remainder add up to the whole: it shows shares of 100 %
             values = [inst_own, insider_own, max(0.0, 1.0 - inst_own - insider_own)]
             fig_own = go.Figure(data=[go.Pie(labels=["Institutions", "Insiders", "Public/other"], values=values, hole=.65)])
-            fig_own.update_traces(hoverinfo='label+percent', textinfo='none',
-                                  marker=dict(colors=['#00d2ff', '#3a7bd5', 'rgba(255,255,255,0.05)'],
+            fig_own.update_traces(hoverinfo='label+percent', textinfo='label+percent',
+                                  marker=dict(colors=['#00d2ff', '#3a7bd5', '#64748b'],
                                               line=dict(color='#0d0e14', width=2)))
             fig_own.update_layout(
                 title=dict(text="Corporate Ownership Structure", font=dict(size=18)),
@@ -59,29 +59,13 @@ def render(dd, ctx):
     with col_own2:
         if short_pct is None:
             st.info("Short interest is not reported for this listing (not 0%).")
-        else:
-            squeeze_color = "#e74c3c" if short_pct > 0.15 else "#f39c12" if short_pct > 0.05 else "#2ecc71"
-
-            fig_short = go.Figure(go.Indicator(
-                mode = "gauge+number",
-                value = short_pct * 100,
-                number = {'suffix': "%", 'font': {'size': 45, 'color': squeeze_color}},
-                title = {'text': "Short % of Float (Squeeze Risk)", 'font': {'size': 18}},
-                gauge = {
-                    'axis': {'range': [None, max(30, (short_pct*100)+5)], 'tickwidth': 1},
-                    'bar': {'color': squeeze_color},
-                    'borderwidth': 0,
-                    'steps': [
-                        {'range': [0, 5], 'color': "rgba(46, 204, 113, 0.15)"},
-                        {'range': [5, 15], 'color': "rgba(243, 156, 18, 0.15)"},
-                        {'range': [15, 100], 'color': "rgba(231, 76, 60, 0.15)"}],
-                }
-            ))
-            fig_short.update_layout(height=300, margin=dict(l=20, r=20, t=50, b=20))
-            st.plotly_chart(fig_short, use_container_width=True)
-
-        ratio_txt = "N/A" if short_ratio is None else f"{short_ratio:.1f} days"
-        st.markdown(f"<p style='text-align:center; color:inherit; font-size:1rem;'>Short Ratio (Days to Cover): <b>{ratio_txt}</b></p>", unsafe_allow_html=True)
+        st.markdown("**Short interest & coverage**")
+        sc1, sc2 = st.columns(2)
+        with sc1:
+            st.metric("Short interest / float", "N/A" if short_pct is None else f"{short_pct:.1%}")
+        with sc2:
+            st.metric("Days to Cover", "N/A" if short_ratio is None else f"{short_ratio:.1f} days")
+        st.caption("5% and 15% bands are heuristics for elevated short interest; keep N/A when not reported.")
 
     _render_insider_activity(dd)
 

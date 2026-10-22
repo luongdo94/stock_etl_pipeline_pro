@@ -118,4 +118,4 @@ def test_market_pulse_rotation_chart_switches_between_one_and_three_months(rotat
     at.toggle(key="mp_rotation_rel").set_value(True).run()
     assert not at.exception, [e.value for e in at.exception]
     assert bars() == {"Technology": -6.0, "Utilities": 1.0, "Energy": 8.0}      # minus SPY's +2.0
-    assert any("S&P 500 (SPY) over 1 month: +2.0%" in c.value for c in at.caption)
+    assert any("S&P 500 (SPY) over 1 month: +2.00% in USD" in c.value for c in at.caption)

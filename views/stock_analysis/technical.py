@@ -74,7 +74,8 @@ def render(dd, ctx):
             _proj = _src.startswith("projected")
             fig_tech.add_trace(go.Scatter(
                 x=[dates_range[0], dates_range[-1]], y=[_val, _val],
-                name=f"{_lvl} {'Support' if _lvl[0] == 'S' else 'Resistance'} €{_val:.2f} · {_src or 'zone'}",
+                name=f"{_lvl} · {_src or 'zone'}",
+                hovertemplate=f"{_lvl} {'Support' if _lvl[0] == 'S' else 'Resistance'} €{_val:.2f} · {_src or 'zone'}<extra></extra>",
                 mode='lines',
                 line=dict(color='rgba(160,160,160,0.6)' if _proj else _col, width=1 if _proj else _w,
                           dash='dot' if _proj else ('dot' if _lvl.endswith('1') else 'dash')),
@@ -121,18 +122,18 @@ def render(dd, ctx):
             xaxis2=dict(showgrid=True, zeroline=False),
             yaxis=dict(showgrid=True, zeroline=False, tickprefix='€'),
             yaxis2=dict(showgrid=True, zeroline=False),
-            # Legend → outside right side
+            # Legend → horizontal below the plot
             legend=dict(
-                orientation="v",
+                orientation="h",
                 yanchor="top",
-                y=1.0,
-                xanchor="left",
-                x=1.01,
+                y=-0.12,
+                xanchor="center",
+                x=0.5,
                 font=dict(size=11),
                 itemsizing="constant",
                 traceorder="normal"
             ),
-            margin=dict(r=180, t=60, l=60, b=40)
+            margin=dict(r=20, t=60, l=60, b=50)
         )
         fig_tech.update_yaxes(title_text="Price (€)", row=1, col=1)
         fig_tech.update_yaxes(title_text="RSI", row=2, col=1, range=[0, 100])

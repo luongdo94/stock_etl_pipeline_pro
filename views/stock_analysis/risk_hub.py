@@ -2,6 +2,7 @@
 from datetime import datetime, timezone
 import os
 
+import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
@@ -359,48 +360,27 @@ def render(dd, ctx):
 
 
     with quant_col:
-
-        # Radar of the sub-scores behind Quality (and the Value / Momentum scores); unknown axes are left out
+        # Table of the sub-scores behind Quality and the Value / Momentum scores
         _cmp = dd.scores.get("components") or {}
         def _avg(keys):
             v = [_cmp[k] for k in keys if _cmp.get(k) is not None]
             return sum(v) / len(v) if v else None
-        _axes = {
-            "Returns on capital": _avg(["q_roc", "q_roe"]),
-            "Margins": _avg(["q_op_margin", "q_gross_margin", "q_fcf_margin", "q_net_margin"]),
-            "Growth & stability": _avg(["q_growth_stability"]),
-            "Balance sheet": _avg(["q_balance_sheet"]),
-            "Cash conversion": _avg(["q_earnings_quality"]),
-            "Value (vs peers)": dd.scores.get("value"),
-            "Momentum (timing)": dd.scores.get("momentum"),
-        }
-        _axes = {k: round(v, 1) for k, v in _axes.items() if v is not None}
-        _radar_labels = list(_axes)
-        _radar_vals_closed = list(_axes.values()) + list(_axes.values())[:1]
-        _radar_labels_closed = _radar_labels + _radar_labels[:1]
-
-        fig_radar = go.Figure()
-        fig_radar.add_trace(go.Scatterpolar(
-            r=_radar_vals_closed,
-            theta=_radar_labels_closed,
-            fill="toself",
-            fillcolor="rgba(2,132,199,0.12)",
-            line=dict(color="#0284C7", width=2),
-            name=deep_ticker
-        ))
-        fig_radar.update_layout(
-            polar=dict(
-                radialaxis=dict(
-                    visible=True, range=[0, 100], autorange=False,
-                    tickfont=dict(size=9)
-                ),
-                angularaxis=dict(
-                    tickfont=dict(size=11)
-                )
-            ),
-            showlegend=False,
-            height=290,
-            margin=dict(t=20, b=10, l=40, r=40),
-        )
-        with st.container():
-            st.plotly_chart(fig_radar, use_container_width=True)
+        _sub_items = [
+            ("Quality component", "Returns on capital", _avg(["q_roc", "q_roe"])),
+            ("Quality component", "Margins", _avg(["q_op_margin", "q_gross_margin", "q_fcf_margin", "q_net_margin"])),
+            ("Quality component", "Growth & stability", _avg(["q_growth_stability"])),
+            ("Quality component", "Balance sheet", _avg(["q_balance_sheet"])),
+            ("Quality component", "Cash conversion", _avg(["q_earnings_quality"])),
+            ("Valuation / Momentum", "Value (vs peers)", dd.scores.get("value")),
+            ("Valuation / Momentum", "Momentum (timing)", dd.scores.get("momentum")),
+        ]
+        df_risk_scores = pd.DataFrame([
+            {
+                "Pillar": grp,
+                "Dimension": name,
+                "Score / 100": f"{round(float(val)):d} / 100" if val is not None and not pd.isna(val) else "N/A",
+            }
+            for grp, name, val in _sub_items
+        ])
+        st.markdown("<div style='color:#0284C7; font-size:0.85rem; font-weight:700; text-transform:uppercase; letter-spacing:1px; margin-top:16px; margin-bottom:8px; border-bottom:1px solid rgba(2,132,199,0.3); padding-bottom:6px;'>Pillars & Quality Components</div>", unsafe_allow_html=True)
+        st.dataframe(df_risk_scores, hide_index=True, width="stretch")
