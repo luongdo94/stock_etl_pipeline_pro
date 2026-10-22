@@ -289,7 +289,7 @@ def render(ctx):
         _asof = f" Stored {tv_sector_rotation['_extracted_at'].max():%d %b %Y %H:%M}."
     st.caption("Price change of the 11 US SPDR sector ETFs (Yahoo, USD, dividend-adjusted closes; 1 week = 5 sessions, "
                "1 / 3 / 6 months = 21 / 63 / 126, YTD from the last close of last year). Price performance, not fund flows "
-               "— the data has no subscriptions or redemptions." + _asof)
+               "— estimated creations/redemptions are shown separately below." + _asof)
 
     from etl.sector_rotation import BENCHMARK
     _periods = {"1 week": "perf_1w", "1 month": "perf_1m", "3 months": "perf_3m", "6 months": "perf_6m",
@@ -349,6 +349,7 @@ def render(ctx):
     else:
         st.info("Sector ETF performance is not in this snapshot (it is collected by the ETL).")
 
+    _rotation_context(tv_sector_rotation, ctx.get("data_version"))
     st.markdown("---")
 
 
@@ -371,3 +372,39 @@ def render(ctx):
         _mp_comp.html(_CALENDAR, height=520)
     st.markdown("##### Global Cross-Asset Performance")
     _mp_comp.html(_CROSS, height=420)
+
+
+def _rotation_context(rotation, generation=None):
+    from core.sector_rotation import estimate_flows, rotation_warnings
+    from etl.config_manager import load_config
+    from etl.sector_rotation import BENCHMARK
+    from services.db import load_etf_shares_snapshots
+    try:
+        snapshots = load_etf_shares_snapshots(generation)
+    except Exception:
+        snapshots = pd.DataFrame()
+        st.info("ETF flow history could not be read.")
+    flows = estimate_flows(snapshots)
+    if rotation.empty:                      # no sector data is unknown, not "no warnings"
+        st.caption("Rotation warnings need the sector ETF performance above.")
+    else:
+        warnings = rotation_warnings(rotation, load_config("etl_config")["sector_rotation"], flows)
+        for item in warnings[:5]:
+            (st.warning if item["severity"] == "warning" else st.info)(item["message"])
+        if not warnings:
+            st.info("No rotation warnings for this snapshot.")
+    st.caption("Context only — not used in the Decision.")
+    if not flows.empty:
+        show = flows[flows.sector != BENCHMARK].copy()
+        display = {"Sector": show.sector, "Snapshot": show.as_of.dt.strftime("%Y-%m-%d")}
+        for period in ("1w", "1m"):
+            label = period.upper()
+            display[f"{label} USD ($M)"] = show[f"flow_{period}_usd"].map(
+                lambda v: f"{v / 1e6:+.2f}" if pd.notna(v) else "N/A")
+            display[f"{label} % AUM"] = show[f"flow_{period}_pct"].map(lambda v: f"{v:+.2f}%" if pd.notna(v) else "N/A")
+            display[f"{label} note"] = show[f"flow_{period}_note"]
+        st.dataframe(pd.DataFrame(display), hide_index=True, width="stretch")
+    history_note = (f"history collected by this app since {min(flows.history_start)}." if not flows.empty
+                    else "No ETF share snapshots collected yet; flows are N/A.")
+    st.caption("Estimated from changes in shares outstanding reported by Yahoo (creations / redemptions × price); "
+               + history_note)

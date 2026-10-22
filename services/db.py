@@ -1015,7 +1015,7 @@ def clear_snapshot_caches() -> None:
     from services import earnings, market_data, screener
     from ui import signal_hub
     for fn in (signal_hub._market, load_snapshot, load_track_record, load_etl_exceptions, load_ticker_provenance, load_data_health,
-               _evidence_cached, load_decision_snapshots, load_discovery, load_recorded_decision,
+               _evidence_cached, load_decision_snapshots, load_discovery, load_recorded_decision, load_etf_shares_snapshots,
                screener.get_master_screener_data, market_data.fetch_macro_data, market_data.stored_macro,
                earnings.load_earnings_events,
                earnings.universe_reactions):
@@ -1040,3 +1040,13 @@ def check_for_new_data(loaded_version) -> dict:
         return {"status": "latest", "version": version, "message": f"Already the latest data ({how})."}
     clear_snapshot_caches()          # the rerun loads `version`; the app then records the version it actually read
     return {"status": "updated", "version": version, "message": f"Newer data found ({how}) — reloading."}
+
+
+@snapshot_cached(ttl=600)
+def load_etf_shares_snapshots(generation=None) -> pd.DataFrame:
+    """Accumulated Yahoo share counts for Market Pulse; optional in older snapshots."""
+    try:
+        with get_db_connection(read_only=True) as conn:
+            return conn.execute("SELECT * FROM raw.etf_shares_snapshots").df()
+    except duckdb.CatalogException:
+        return pd.DataFrame()

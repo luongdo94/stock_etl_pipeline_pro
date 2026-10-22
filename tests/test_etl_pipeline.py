@@ -60,6 +60,11 @@ def env(tmp_path, monkeypatch):
     import etl.snapshot as snapshot
 
     monkeypatch.setattr(pl.analyst_actions, "extract", lambda *a, **k: pd.DataFrame())
+    # Sector context stays offline too: fake Yahoo download and current ETF info.
+    monkeypatch.setattr(pl.sector_rotation, "extract", lambda: pd.DataFrame())
+    real_snapshot = pl.etf_shares_snapshots.snapshot
+    monkeypatch.setattr(pl.etf_shares_snapshots, "snapshot", lambda conn: real_snapshot(
+        conn, info=lambda ticker: {"sharesOutstanding": 100, "totalAssets": 1000, "regularMarketPrice": 10}))
     world = World(monkeypatch)
     paths = {"DB_PATH": str(tmp_path / "prod.duckdb"), "SHADOW_DB_PATH": str(tmp_path / "shadow.duckdb"),
              "AUDIT_DB_PATH": str(tmp_path / "audit.duckdb")}
@@ -120,6 +125,7 @@ def test_full_then_incremental_run(env):
     rows1 = prod(env, "SELECT COUNT(*), MAX(date) FROM raw.stock_prices")[0]
     assert prod(env, "SELECT value FROM raw.pipeline_state WHERE key = 'last_price_rebase'")      # a full run is a rebase
     assert prod(env, "SELECT COUNT(*) FROM raw.universe")[0][0] == N_TICKERS + 1
+    assert prod(env, "SELECT COUNT(*) FROM raw.etf_shares_snapshots")[0][0] == 12
     before = prod(env, "SELECT date, close FROM raw.stock_prices WHERE ticker = 'T05' ORDER BY date")
 
     env.cut = env.dates[-1]                                        # one more trading day appears
@@ -325,3 +331,14 @@ def test_rebase_due_logic():
     integrity.set_state(conn, integrity.LAST_REBASE_KEY, "2026-01-01")
     assert not integrity.rebase_due(conn, 7, today=date(2026, 1, 5))
     assert integrity.rebase_due(conn, 7, today=date(2026, 1, 8))
+
+
+def test_full_refresh_keeps_etf_share_history_and_first_observation_today(env):
+    assert run(env)
+    with duckdb.connect(env.paths["DB_PATH"]) as c:
+        c.execute("INSERT INTO raw.etf_shares_snapshots (ticker, as_of, shares_outstanding, total_assets, price_close) "
+                  "VALUES ('XLK', DATE '2020-01-01', 50, 500, 10)")
+        c.execute("UPDATE raw.etf_shares_snapshots SET shares_outstanding=90 WHERE as_of=CURRENT_DATE")
+    assert run(env, force_full=True), env.last_error
+    assert prod(env, "SELECT COUNT(*) FROM raw.etf_shares_snapshots")[0][0] == 13
+    assert prod(env, "SELECT DISTINCT shares_outstanding FROM raw.etf_shares_snapshots WHERE as_of=CURRENT_DATE") == [(90.0,)]

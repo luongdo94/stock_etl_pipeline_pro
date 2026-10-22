@@ -19,7 +19,7 @@ from etl.transform import run_transforms
 from etl.universe  import resolve_universe, sync_company_sectors
 from etl.utils     import get_last_price_dates, needs_full_refresh, needs_earnings_refresh, needs_fundamentals_refresh, needs_metadata_refresh, get_smart_recovery_targets, needs_insider_refresh
 from etl.insider_trading import extract_insider_summary, extract_insider_transactions
-from etl import earnings_events, analyst_actions, sector_rotation
+from etl import earnings_events, analyst_actions, sector_rotation, etf_shares_snapshots
 
 LOCK_PATH = str(_WAREHOUSE_DIR / "etl.lock")
 TRACK_DB_PATH = str(_WAREHOUSE_DIR / "track_record.duckdb")     # survives full rebuilds (security master, track record)
@@ -613,10 +613,15 @@ def _run_pipeline_locked(lookback_days, force_full, fast_mode):
                 carry_forward_reference(conn, DB_PATH)
                 from etl import estimate_snapshots
                 estimate_snapshots.carry_forward(conn, DB_PATH)       # the consensus history is not re-fetchable
+                etf_shares_snapshots.carry_forward(conn, DB_PATH)
                 try:
                     analyst_actions.carry_forward(conn, DB_PATH)
                 except Exception as e:
                     logger.warning(f"Analyst actions carry-forward skipped: {e}")
+            try:
+                etf_shares_snapshots.snapshot(conn)
+            except Exception as e:
+                logger.warning(f"ETF shares snapshot skipped: {e}")
             logger.info(f"   ⏱  Load: {time.time()-t0:.1f}s")
 
             # ── STEP 3b: INDEPENDENT SOURCES + POINT-IN-TIME DATES ───────────────

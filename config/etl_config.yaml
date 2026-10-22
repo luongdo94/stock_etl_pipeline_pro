@@ -97,3 +97,10 @@ data_quality:
   min_market_cap: 1000000
   jump_pct: 60            # |daily return| above this in the last 10 days is flagged (split / unit error candidate)
   jump_systemic_tickers: 3  # ... and is critical when more than max(this, 2% of the universe) tickers jump
+
+# Market Pulse context only: percentage-point reversals/gaps and % of starting AUM; never Decision inputs.
+sector_rotation:
+  reversal_pp: 1.5
+  group_gap_pp: 3.0
+  broad_weakness_count: 8
+  flow_aum_pct: 2.0
