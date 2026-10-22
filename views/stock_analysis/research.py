@@ -14,7 +14,7 @@ _PRESET_LABELS = {"moat": "Business model & moat", "risks": "Key risk factors", 
 
 
 def render(dd, ctx):
-    layer_banner("3B", "Research with citations (SEC filings, methodology)", "#16a085", top=20, bottom=5)
+    layer_banner("3B", "Research with citations (SEC filings, methodology, news)", "#16a085", top=20, bottom=5)
     st.caption("Answers are written by an LLM **only from the passages shown under each answer** — every statement "
                "is cited, numbers that appear in none of the passages are flagged. Research context, not a signal: "
                "the Decision does not use it.")
@@ -22,11 +22,13 @@ def render(dd, ctx):
         st.info("Set COHERE_API_KEY to ask questions (retrieval, re-ranking and the cited answer use Cohere).")
         return
     lang = st.radio("Answer language", ["English", "Vietnamese"], horizontal=True, key=f"rag_lang_{dd.ticker}")
-    tab_f, tab_d = st.tabs(["Ask the filings", "Why this Decision?"])
+    tab_f, tab_d, tab_n = st.tabs(["Ask the filings", "Why this Decision?", "News digest"])
     with tab_f:
         _filings_tab(dd, lang)
     with tab_d:
         _decision_tab(dd, lang, ctx.get("data_version"))
+    with tab_n:
+        _news_tab(dd, lang)
 
 
 def _store(ticker) -> list:
@@ -130,6 +132,31 @@ def _render_answer(item):
             for r in hits.itertuples():
                 n = numbering[str(r.chunk_id)]
                 mark = "Cited" if str(r.chunk_id) in cited else "Retrieved"
-                link = f" — [open filing]({r.url})" if isinstance(getattr(r, "url", None), str) else ""
-                st.markdown(f"{mark} **[{n}] {r.title}**{link}")
+                url = getattr(r, "link", None) if item.get("kind") == "news" else getattr(r, "url", None)
+                label = "open source" if item.get("kind") == "news" else "open filing"
+                link = f" — [{label}]({url})" if isinstance(url, str) and url else ""
+                title = ("Filings · SEC · " if item.get("kind") == "news" and getattr(r, "origin", None) == "filings" else "") + r.title
+                st.markdown(f"{mark} **[{n}] {title}**{link}")
                 st.caption(str(r.text)[:700] + ("…" if len(str(r.text)) > 700 else ""))
+
+
+def _news_tab(dd, lang):
+    st.caption("Context only — not used by the Decision")
+    st.caption("Headlines and summaries from Google News / Yahoo, plus stored US 8-K earnings releases. "
+               "The button refreshes Yahoo and calls the language model once when passages exist.")
+    if st.button("Summarise news (last 30 days)", key=f"news_digest_btn_{dd.ticker}"):
+        with st.spinner("Reading stored news and writing a cited digest…"):
+            try:
+                res = research.news_digest(dd.ticker, dd.meta.get("company", dd.ticker), lang)
+                if res.get("yahoo_error"):
+                    st.warning(f"Yahoo news unavailable: {res['yahoo_error']}")
+                if res["status"] != "available":
+                    st.info(res["status"])
+                    st.caption("Load headlines first: use Load headlines and sentiment above in Risks & data, then retry.")
+                else:
+                    _keep(dd.ticker, {"kind": "news", "q": "News digest (last 30 days)", "res": res, "hits": res["hits"]})
+            except Exception as exc:
+                st.error(f"News digest unavailable: {type(exc).__name__}: {exc}")
+    for item in [x for x in _store(dd.ticker) if x["kind"] == "news"]:
+        st.caption("Passages: " + ", ".join(f"{origin}: {n}" for origin, n in item["res"]["origin_counts"].items()))
+        _render_answer(item)

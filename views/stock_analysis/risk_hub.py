@@ -45,9 +45,13 @@ def _render_news(meta, ticker, snapshot=None):
                  help="Reads recent headlines from Google News and scores them with FinBERT. The first use downloads "
                       "the model (~440 MB). Headline sentiment is context only — it does not feed the Decision."):
         with st.spinner(f"Reading headlines for {meta.get('company', ticker)}..."):
-            rec = fetch_news_sentiment(meta.get("company", ticker), ticker, get_pipe=get_finbert_pipeline)
+            rec = fetch_news_sentiment(meta.get("company", ticker), ticker, get_pipe=get_finbert_pipeline, include_yahoo=True)
         rec = dict(rec, ticker=ticker, snapshot=snapshot)
         st.session_state[key] = rec
+    if rec and rec.get("yahoo", {}).get("items"):
+        st.caption(f"Yahoo Finance: {len(rec['yahoo']['items'])} headlines fetched; see Stored headlines below.")
+    if rec and rec.get("yahoo", {}).get("error"):
+        st.caption(f"Yahoo news unavailable: {rec['yahoo']['error']}")
     with st.expander("Stored headlines (last 30 days)"):
         try:
             rows = stored_headlines(ticker)
@@ -65,7 +69,7 @@ def _render_news(meta, ticker, snapshot=None):
         st.caption(f"News feed unavailable: {rec['error']}")
         return
     if not rec["items"]:
-        st.info("No recent news found for this ticker.")
+        st.info("No recent Google News headlines found for this ticker.")
         return
     if rec["error"]:
         st.caption(f"News context incomplete: {rec['error']}")

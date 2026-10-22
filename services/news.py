@@ -1,4 +1,4 @@
-"""On-request Google News context; never an input of the Decision."""
+"""On-request Google / Yahoo News context; never an input of the Decision."""
 import logging
 import re
 import urllib.parse
@@ -38,12 +38,14 @@ def _normalized(title):
 
 def _published(value):
     try:
+        if isinstance(value, (int, float)):
+            return datetime.fromtimestamp(value, timezone.utc)
         try:
             dt = parsedate_to_datetime(str(value))
         except (TypeError, ValueError):
             dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
         return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
-    except (TypeError, ValueError, OverflowError):
+    except (TypeError, ValueError, OverflowError, OSError):
         return None
 
 
@@ -68,15 +70,30 @@ def _store_headlines(ticker, result):
                 ticker VARCHAR, fetched_at TIMESTAMPTZ, published TIMESTAMPTZ, title VARCHAR, source VARCHAR,
                 link VARCHAR, lang VARCHAR, label VARCHAR, score DOUBLE, headline_key VARCHAR,
                 PRIMARY KEY (ticker, headline_key))""")
-            con.executemany("INSERT OR IGNORE INTO news.headlines VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+            for col in ("summary", "origin"):
+                con.execute(f"ALTER TABLE news.headlines ADD COLUMN IF NOT EXISTS {col} VARCHAR")
+            existing = {(_normalized(t), o or "google") for t, o in con.execute(
+                "SELECT title, origin FROM news.headlines WHERE ticker = ?", [ticker]).fetchall()}
+            items = []
+            for i in result["items"]:
+                key, origin = _normalized(i["title"]), i.get("origin", "google")
+                if any(k == key and o != origin for k, o in existing):
+                    continue
+                items.append(i)
+                existing.add((key, origin))
+            if not items:
+                return
+            con.executemany("""INSERT OR IGNORE INTO news.headlines
+                (ticker, fetched_at, published, title, source, link, lang, label, score, headline_key, summary, origin)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", [
                 (ticker, result["fetched_at"], _published(i["published"]), i["title"], i["source"], i["link"],
-                 i["lang"], i["label"], i["score"], "link:" + i["link"] if i["link"] else "title:" + _normalized(i["title"]))
-                for i in result["items"]])
+                 i["lang"], i["label"], i["score"], "link:" + i["link"] if i["link"] else "title:" + _normalized(i["title"]),
+                 i.get("summary", ""), i.get("origin", "google")) for i in items])
     except Exception as exc:
         logging.getLogger(__name__).warning("News history write failed: %s", exc)
 
 
-def stored_headlines(ticker):
+def stored_headlines(ticker, *, digest=False, days=30, as_of=None):
     """Read only; absent history is empty, read failures propagate to their own UI message."""
     if not Path(NEWS_DB_PATH).exists():
         return []
@@ -85,8 +102,18 @@ def stored_headlines(ticker):
         if not con.execute("SELECT count(*) FROM information_schema.tables WHERE table_schema='news' "
                            "AND table_name='headlines'").fetchone()[0]:
             return []
+        if digest:
+            cols = {r[1] for r in con.execute("PRAGMA table_info('news.headlines')").fetchall()}
+            summary = "COALESCE(summary, '')" if "summary" in cols else "''"
+            origin = "COALESCE(origin, 'google')" if "origin" in cols else "'google'"
+            now = as_of or datetime.now(timezone.utc)
+            rows = con.execute(f"""SELECT headline_key, published, title, source, link, {summary} AS summary,
+                {origin} AS origin FROM news.headlines WHERE ticker = ? AND fetched_at <= ?
+                AND published BETWEEN ? - (? * INTERVAL '1 day') AND ? ORDER BY published DESC""",
+                [ticker, now, now, days, now])
+            return [dict(zip([c[0] for c in rows.description], r)) for r in rows.fetchall()]
         rows = con.execute("""SELECT published, title, source, lang,
-            COALESCE(label, CASE WHEN lang LIKE 'en-%' THEN 'Unscored' ELSE 'not scored (non-English)' END) AS sentiment
+            COALESCE(label, CASE WHEN lang = 'en' OR lang LIKE 'en-%' THEN 'Unscored' ELSE 'not scored (non-English)' END) AS sentiment
             FROM news.headlines WHERE ticker = ? AND COALESCE(published, fetched_at)
             BETWEEN current_timestamp - INTERVAL '30 days' AND current_timestamp
             ORDER BY COALESCE(published, fetched_at) DESC""", [ticker])
@@ -94,7 +121,8 @@ def stored_headlines(ticker):
 
 
 def fetch_news_sentiment(company: str, ticker: str, parse: Optional[Callable] = None,
-                         get_pipe: Optional[Callable] = None, max_items: int = 10) -> dict:
+                         get_pipe: Optional[Callable] = None, max_items: int = 10, *,
+                         include_yahoo=False, yahoo_factory=None) -> dict:
     """Shared RSS normalization. Inject parse/get_pipe for offline use; get_pipe=lambda: None skips FinBERT."""
     out = {"items": [], "avg": None, "mood": None, "scored": False, "fetched_at": datetime.now(timezone.utc),
            "error": None, "status": "no_news", "n_scored": 0, "undated": 0}
@@ -124,7 +152,7 @@ def fetch_news_sentiment(company: str, ticker: str, parse: Optional[Callable] = 
                 seen.add(key)
                 out["items"].append({"title": title, "source": (e.get("source") or {}).get("title", "Google News"),
                     "published": e.get("published", "N/A"), "link": e.get("link") or "", "lang": lang,
-                    "label": None, "score": None})
+                    "label": None, "score": None, "summary": "", "origin": "google"})
         except Exception as exc:
             errors.append(f"{lang}: {type(exc).__name__}: {str(exc)[:80]}")
     items = out["items"]
@@ -154,4 +182,36 @@ def fetch_news_sentiment(company: str, ticker: str, parse: Optional[Callable] = 
             out["error"] = (out["error"] + "; " if out["error"] else "") + f"sentiment model failed: {type(exc).__name__}"
     if items:
         _store_headlines(ticker, out)
+    if include_yahoo:
+        out["yahoo"] = fetch_yahoo_news(ticker, ticker_factory=yahoo_factory)
+    return out
+
+
+def fetch_yahoo_news(ticker, *, ticker_factory=None):
+    """On-request yfinance news, old/new formats; inject Ticker for offline tests. No sentiment scoring."""
+    out = {"items": [], "fetched_at": datetime.now(timezone.utc), "status": "no_news", "error": None}
+    try:
+        if ticker_factory is None:
+            from yfinance import Ticker as ticker_factory
+        entries = ticker_factory(ticker).news
+        if not isinstance(entries, (list, tuple)):
+            raise ValueError("unreadable Yahoo news response")
+        seen = set()
+        for entry in entries:
+            c = entry.get("content", entry)
+            title = _title(c.get("title") or "")
+            key = _normalized(title)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            out["items"].append({"title": title, "summary": c.get("summary") or "",
+                "source": (c.get("provider") or {}).get("displayName") or c.get("publisher") or "Yahoo Finance",
+                "published": _published(c.get("pubDate") or c.get("providerPublishTime") or c.get("displayTime")),
+                "link": (c.get("canonicalUrl") or {}).get("url") or (c.get("clickThroughUrl") or {}).get("url")
+                        or c.get("link") or "", "lang": "en", "origin": "yahoo", "label": None, "score": None})
+        if out["items"]:
+            out["status"] = "available"
+            _store_headlines(ticker, out)
+    except Exception as exc:
+        out.update(items=[], status="unavailable", error=f"{type(exc).__name__}: {str(exc)[:120]}")
     return out
