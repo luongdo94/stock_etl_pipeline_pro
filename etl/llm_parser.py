@@ -11,8 +11,6 @@ Usage:
 import os
 import json
 import re
-import feedparser
-import urllib.parse
 from typing import Optional
 from dotenv import load_dotenv
 
@@ -34,36 +32,12 @@ def _get_client():
 
 
 # ── News Fetcher (Free — Google News RSS) ────────────────────────────────────
-def _fetch_recent_headlines(ticker: str, company_name: str, max_items: int = 12) -> list[str]:
-    """Fetch recent news headlines from Google News RSS for a given ticker."""
-    
-    # 1. Use URL encoding for company names with spaces
-    # 2. Append when:7d to ensure news is fresh and relevant
-    q_company = urllib.parse.quote(f"{company_name} stock when:7d")
-    q_ticker = urllib.parse.quote(f"{ticker} stock when:7d")
-    
-    queries = [
-        f"https://news.google.com/rss/search?q={q_company}&hl=en-US&gl=US&ceid=US:en",
-        f"https://news.google.com/rss/search?q={q_ticker}&hl=en-US&gl=US&ceid=US:en",
-    ]
-    headlines = []
-    for url in queries:
-        try:
-            feed = feedparser.parse(url)
-            for entry in feed.entries[:max_items]:
-                title = entry.get("title", "").split(" - ")[0].strip()
-                if title and len(title) > 10:
-                    headlines.append(title)
-        except Exception:
-            pass
-    # Deduplicate while preserving order
-    seen = set()
-    unique = []
-    for h in headlines:
-        if h.lower() not in seen:
-            seen.add(h.lower())
-            unique.append(h)
-    return unique[:15]
+def _fetch_recent_headlines(ticker: str, company_name: str, max_items: int = 12, parse=None) -> list[str]:
+    from services.news import fetch_news_sentiment
+    rec = fetch_news_sentiment(company_name, ticker, parse=parse, get_pipe=lambda: None, max_items=max_items)
+    if rec["status"] == "unavailable":          # one locale failing while another answered is still news
+        raise RuntimeError(f"News feed unavailable: {rec['error']}")
+    return [i["title"] for i in rec["items"]][:15]
 
 
 # ── LLM Risk Analysis (Core Engine) ─────────────────────────────────────────
@@ -153,7 +127,8 @@ def analyze_risk_with_llm(
     company_name: str,
     macro_context: str = "NEUTRAL | VIX=N/A",
     quant_context: Optional[dict] = None,
-    language: str = "English"
+    language: str = "English",
+    parse=None,
 ) -> dict:
     """
     Main entry point for LLM Risk Audit.
@@ -179,9 +154,10 @@ def analyze_risk_with_llm(
     }
 
     default_result = {
-        "red_flag_score": 0,
-        "headline_sentiment_score": 50,
-        "confidence": 0,
+        "red_flag_score": None,
+        "headline_sentiment_score": None,
+        "confidence": None,
+        "status": "unavailable",
         "sentiment": "N/A",
         "risk_categories": ["None"],
         "risk_category": "None",  # backward-compat for UI
@@ -193,8 +169,9 @@ def analyze_risk_with_llm(
 
     try:
         # 1. Fetch headlines
-        headlines = _fetch_recent_headlines(ticker, company_name)
+        headlines = _fetch_recent_headlines(ticker, company_name, parse=parse)
         if not headlines:
+            default_result["status"] = "no_news"
             default_result["key_insights"] = ["No recent news found for this ticker."]
             return default_result
 
@@ -254,6 +231,7 @@ def analyze_risk_with_llm(
         if _bad:
             result["confidence"] = min(int(result.get("confidence") or 0), 40)
         result["error"] = None
+        result["status"] = "available"
         result["headlines_analyzed"] = len(headlines)
         result["_prompt_debug"] = prompt   # for in-UI debug expander
 

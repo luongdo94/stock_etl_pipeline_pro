@@ -12,7 +12,6 @@ import streamlit as st
 
 from core import risk_range as rr
 from core.smart_money import get_volume_flow
-from services.ai import analyze_sentiment_finbert
 
 from ui.components import format_value
 from ui.sticky import follow_active_ticker, my_tickers, remember_ticker, sticky, sticky_choice, ticker_options
@@ -26,24 +25,14 @@ def _tile(title, value, sub="", colour="inherit", border="#3498db"):
             f"<div style='color:inherit; font-size:0.8rem;'>{html.escape(str(sub))}</div></div>")
 
 
-def _news_sentiment(company, ticker):
-    """(mean FinBERT sentiment of the latest Google News headlines, number of headlines); (None, 0) when none are found -
-    no headlines is not a neutral reading."""
-    import urllib.parse
-
-    import feedparser
-    q = urllib.parse.quote(f"{company or ticker} stock when:7d")
-    feed = feedparser.parse(f"https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en")
-    titles = [e.get("title", "").split(" - ")[0] for e in feed.entries[:10]]
-    status = feed.get("status") if hasattr(feed, "get") else getattr(feed, "status", None)
-    bozo = feed.get("bozo") if hasattr(feed, "get") else getattr(feed, "bozo", None)
-    if not titles and (bozo or (status is not None and status != 200)):
-        raise RuntimeError(f"news feed unavailable (status {status})")      # shown as Unavailable, not No headlines
-    try:
-        sent = analyze_sentiment_finbert(titles) if titles else None
-    except Exception:
-        sent = None
-    return sent, len(titles)
+def _news_sentiment(company, ticker, parse=None, get_pipe=None, detail=None):
+    from services.news import fetch_news_sentiment
+    rec = fetch_news_sentiment(company, ticker, parse=parse, get_pipe=get_pipe)
+    if rec["status"] == "unavailable":
+        raise RuntimeError(f"News feed unavailable: {rec['error']}")
+    if detail is not None:
+        detail.update(rec)
+    return rec["avg"], len(rec["items"])
 
 
 def _stale_reason(previous, current):
@@ -208,23 +197,32 @@ def render(ctx):
     st.markdown("---")
     render_header("activity", "Context (not part of the range)")
     if st.button("Load headline context — Contacts Google News", key="risk_news"):
+        detail = {}
         try:
-            sent, n_titles = _news_sentiment(company, ticker)
-        except Exception:
+            sent, n_titles = _news_sentiment(company, ticker, detail=detail)
+        except Exception as exc:
             sent, n_titles = None, None
-        saved["news"] = {"sent": sent, "n": n_titles, "at": pd.Timestamp.now(tz="UTC")}
+            detail["error"] = str(exc)
+        saved["news"] = {"sent": sent, "n": n_titles, "at": pd.Timestamp.now(tz="UTC"),
+                         "detail": detail}
     news = saved.get("news")
     sent, n_titles = (news["sent"], news["n"]) if news else (None, None)
     if news:
+        detail = news.get("detail", {})
+        st.caption(f"{detail.get('n_scored', 0)}/{n_titles or 0} headlines scored; weighted by recency (half-life 3 days); "
+                   f"{detail.get('undated', 0)} without publication date (7-day weight).")
+        if detail.get("error"):
+            st.caption(detail["error"])
         st.caption(f"Google News / FinBERT · requested {news['at']:%Y-%m-%d %H:%M UTC} · external context, outside the snapshot.")
     k1, k2, k3 = st.columns(3)
     if not news:
         k1.metric("News sentiment (FinBERT)", "Not loaded", delta="Load headline context to request it", delta_color="off")
     elif sent is None:
         k1.metric("News sentiment (FinBERT)", "Unavailable" if n_titles is None else "Unscored" if n_titles else "No headlines",
-                  delta="lookup failed" if n_titles is None else f"{n_titles} headlines; model unavailable" if n_titles else "none in the last 7 days", delta_color="off")
+                  delta="lookup failed" if n_titles is None else f"{n_titles} headlines; none scored" if n_titles else "none in the last 7 days", delta_color="off")
     else:
-        mood = "Bullish" if sent > 0.1 else "Bearish" if sent < -0.1 else "Neutral"
+        from services.news import mood as news_mood
+        mood = news_mood(sent).title()
         k1.metric("News sentiment (FinBERT)", mood, delta=f"{sent:.2f} · {n_titles} headlines", delta_color="off")
     k2.metric("Volume Flow", f"{sm['signal']} ({sm['strength']}/100)",
               delta=sm.get("reason") or ("HIGH_VOLUME" if sm["layer"] == "INSTITUTIONAL_VOLUME" else sm["layer"]), delta_color="off")

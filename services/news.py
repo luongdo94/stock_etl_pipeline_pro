@@ -1,20 +1,50 @@
-"""Recent headlines of a company and their FinBERT sentiment — fetched only when the user asks.
-
-Opening Stock Analysis used to query Google News and load / run FinBERT every time (the model alone is ~440 MB on the
-first use). Now `fetch_news_sentiment` is called from a button and its result is kept in the session. Sentiment of
-headlines is context, never an input of the Decision.
-"""
+"""On-request Google News context; never an input of the Decision."""
+import logging
+import re
 import urllib.parse
-from datetime import datetime
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from pathlib import Path
 from typing import Callable, Optional
 
-MOOD_BAND = 0.1          # |average score| above this is BULLISH / BEARISH, otherwise NEUTRAL
+from services.db import DB_PATH
+
+MOOD_BAND = 0.1
+NEWS_DB_PATH = str(Path(DB_PATH).parent / "news_history.duckdb")
+LOCALES = {
+    "DE": ("de-DE", "DE"), "PA": ("fr-FR", "FR"), "AS": ("nl-NL", "NL"),
+    "MI": ("it-IT", "IT"), "MC": ("es-ES", "ES"), "SW": ("de-CH", "CH"), "L": ("en-GB", "GB"),
+    "T": ("ja-JP", "JP"), "HK": ("zh-HK", "HK"), "SS": ("zh-CN", "CN"), "SZ": ("zh-CN", "CN"),
+    "TW": ("zh-TW", "TW"), "TWO": ("zh-TW", "TW"), "KS": ("ko-KR", "KR"), "KQ": ("ko-KR", "KR"),
+    "VN": ("vi-VN", "VN"),
+}
 
 
-def news_url(company: str, ticker: str) -> str:
-    # search by company name: a bare ticker clashes with US symbols
-    q = urllib.parse.quote(f"{company or ticker} stock when:7d")
-    return f"https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en"
+def news_url(company: str, ticker: str, lang="en-US", country="US") -> str:
+    name = (company or "").strip()
+    if not name or name.upper() == ticker.upper():
+        name = ticker if "." in ticker else f"{ticker} (NYSE OR NASDAQ)"
+    q = urllib.parse.quote(f"{name} stock when:7d")
+    return f"https://news.google.com/rss/search?q={q}&hl={lang}&gl={country}&ceid={country}:{lang.split('-')[0]}"
+
+
+def _title(title):
+    return str(title).rsplit(" - ", 1)[0].strip()
+
+
+def _normalized(title):
+    return " ".join(re.sub(r"[^\w\s]|_", "", str(title).lower()).split())
+
+
+def _published(value):
+    try:
+        try:
+            dt = parsedate_to_datetime(str(value))
+        except (TypeError, ValueError):
+            dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt.astimezone(timezone.utc)
+    except (TypeError, ValueError, OverflowError):
+        return None
 
 
 def signed_score(label: str, score: float) -> float:
@@ -28,54 +58,100 @@ def mood(avg: Optional[float]) -> Optional[str]:
     return "BULLISH" if avg > MOOD_BAND else ("BEARISH" if avg < -MOOD_BAND else "NEUTRAL")
 
 
+def _store_headlines(ticker, result):
+    import duckdb
+    try:
+        Path(NEWS_DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+        with duckdb.connect(str(NEWS_DB_PATH)) as con:
+            con.execute("CREATE SCHEMA IF NOT EXISTS news")
+            con.execute("""CREATE TABLE IF NOT EXISTS news.headlines (
+                ticker VARCHAR, fetched_at TIMESTAMPTZ, published TIMESTAMPTZ, title VARCHAR, source VARCHAR,
+                link VARCHAR, lang VARCHAR, label VARCHAR, score DOUBLE, headline_key VARCHAR,
+                PRIMARY KEY (ticker, headline_key))""")
+            con.executemany("INSERT OR IGNORE INTO news.headlines VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", [
+                (ticker, result["fetched_at"], _published(i["published"]), i["title"], i["source"], i["link"],
+                 i["lang"], i["label"], i["score"], "link:" + i["link"] if i["link"] else "title:" + _normalized(i["title"]))
+                for i in result["items"]])
+    except Exception as exc:
+        logging.getLogger(__name__).warning("News history write failed: %s", exc)
+
+
+def stored_headlines(ticker):
+    """Read only; absent history is empty, read failures propagate to their own UI message."""
+    if not Path(NEWS_DB_PATH).exists():
+        return []
+    import duckdb
+    with duckdb.connect(str(NEWS_DB_PATH), read_only=True) as con:
+        if not con.execute("SELECT count(*) FROM information_schema.tables WHERE table_schema='news' "
+                           "AND table_name='headlines'").fetchone()[0]:
+            return []
+        rows = con.execute("""SELECT published, title, source, lang,
+            COALESCE(label, CASE WHEN lang LIKE 'en-%' THEN 'Unscored' ELSE 'not scored (non-English)' END) AS sentiment
+            FROM news.headlines WHERE ticker = ? AND COALESCE(published, fetched_at)
+            BETWEEN current_timestamp - INTERVAL '30 days' AND current_timestamp
+            ORDER BY COALESCE(published, fetched_at) DESC""", [ticker])
+        return [dict(zip([c[0] for c in rows.description], r)) for r in rows.fetchall()]
+
+
 def fetch_news_sentiment(company: str, ticker: str, parse: Optional[Callable] = None,
                          get_pipe: Optional[Callable] = None, max_items: int = 10) -> dict:
-    """{"items": [{title, source, published, link, label, score}], "avg": float | None, "mood": str | None,
-    "scored": bool, "fetched_at": datetime, "error": str | None}.
-
-    `parse` (feedparser.parse) and `get_pipe` (services.ai.get_finbert_pipeline) are injectable for tests. A feed that
-    cannot be read is an error, not "no news"; headlines without a sentiment model are listed unscored."""
-    out = {"items": [], "avg": None, "mood": None, "scored": False, "fetched_at": datetime.now(), "error": None}
-    try:
-        if parse is None:
-            import feedparser
-            parse = feedparser.parse
-        feed = parse(news_url(company, ticker))
-        entries = list(feed.entries)[:max_items]
-    except Exception as e:
-        out["error"] = f"{type(e).__name__}: {str(e)[:80]}"
-        return out
-    if not entries:
-        # feedparser reports a failed download as a RESULT (an HTTP status, `bozo` with the exception), not by raising:
-        # an empty feed with that evidence is "unavailable", an empty feed without it is "no news"
-        status = getattr(feed, "status", None)
-        exc = getattr(feed, "bozo_exception", None)
-        if (isinstance(status, int) and status >= 400) or (getattr(feed, "bozo", False) and exc is not None):
-            out["error"] = (f"HTTP {status}" if isinstance(status, int) and status >= 400
-                            else f"{type(exc).__name__}: {str(exc)[:80]}")
-            return out
-    titles = [str(e.get("title", "")).split(" - ")[0] for e in entries]
-    items = [{"title": t, "source": (e.get("source") or {}).get("title", "Google News"),
-              "published": e.get("published", "N/A"), "link": e.get("link"), "label": None, "score": None}
-             for t, e in zip(titles, entries)]
-    pipe = None
-    if titles:
+    """Shared RSS normalization. Inject parse/get_pipe for offline use; get_pipe=lambda: None skips FinBERT."""
+    out = {"items": [], "avg": None, "mood": None, "scored": False, "fetched_at": datetime.now(timezone.utc),
+           "error": None, "status": "no_news", "n_scored": 0, "undated": 0}
+    locales = [("en-US", "US")]
+    local = LOCALES.get(ticker.upper().rsplit(".", 1)[-1]) if "." in ticker else None
+    if local:
+        locales.append(local)
+    seen, errors = set(), []
+    for lang, country in locales:
+        try:
+            if parse is None:
+                import feedparser
+                parse = feedparser.parse
+            feed = parse(news_url(company, ticker, lang, country))
+            status = getattr(feed, "status", None)
+            if isinstance(status, int) and status >= 400:
+                raise RuntimeError(f"HTTP {status}")
+            # feedparser flags recoverable XML issues (e.g. an encoding override) as bozo too: only a bozo feed without
+            # entries is unreadable
+            if getattr(feed, "bozo", False) and not list(feed.entries):
+                raise getattr(feed, "bozo_exception", None) or ValueError("unreadable feed: invalid XML")
+            for e in list(feed.entries)[:max_items]:
+                title = _title(e.get("title", ""))
+                key = _normalized(title)
+                if not key or key in seen:
+                    continue
+                seen.add(key)
+                out["items"].append({"title": title, "source": (e.get("source") or {}).get("title", "Google News"),
+                    "published": e.get("published", "N/A"), "link": e.get("link") or "", "lang": lang,
+                    "label": None, "score": None})
+        except Exception as exc:
+            errors.append(f"{lang}: {type(exc).__name__}: {str(exc)[:80]}")
+    items = out["items"]
+    out["status"] = ("partial" if items else "unavailable") if errors else ("available" if items else "no_news")
+    out["error"] = "; ".join(errors) or None
+    english = [i for i in items if i["lang"].startswith("en-")]
+    out["undated"] = sum(_published(i["published"]) is None for i in items)
+    if english:
         try:
             if get_pipe is None:
                 from services.ai import get_finbert_pipeline as get_pipe
             pipe = get_pipe()
-        except Exception:
-            pipe = None
-    if pipe and titles:
-        try:
-            for it, res in zip(items, pipe(titles)):
-                it["label"], it["score"] = str(res["label"]).upper(), float(res["score"])
-            scores = [signed_score(i["label"], i["score"]) for i in items if i["label"]]
-            if scores:
-                out["avg"] = sum(scores) / len(scores)
-                out["mood"] = mood(out["avg"])
-                out["scored"] = True
-        except Exception as e:
-            out["error"] = f"sentiment model failed: {type(e).__name__}"
-    out["items"] = items
+            if pipe:
+                results = list(pipe([i["title"] for i in english]))
+                if len(results) != len(english):
+                    raise ValueError("incomplete sentiment result")
+                for it, res in zip(english, results):
+                    it["label"], it["score"] = str(res["label"]).upper(), float(res["score"])
+                ages = [(out["fetched_at"] - dt).total_seconds() / 86400 if (dt := _published(i["published"])) else 7
+                        for i in english]
+                weights = [2 ** (-max(0, age) / 3) for age in ages]
+                out["avg"] = sum(signed_score(i["label"], i["score"]) * w for i, w in zip(english, weights)) / sum(weights)
+                out.update(mood=mood(out["avg"]), scored=True, n_scored=len(english))
+        except Exception as exc:
+            for it in english:
+                it["label"], it["score"] = None, None
+            out["error"] = (out["error"] + "; " if out["error"] else "") + f"sentiment model failed: {type(exc).__name__}"
+    if items:
+        _store_headlines(ticker, out)
     return out

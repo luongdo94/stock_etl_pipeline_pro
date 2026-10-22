@@ -37,7 +37,7 @@ def _saved_context(rec, ticker, snapshot):
 def _render_news(meta, ticker, snapshot=None):
     """Headline sentiment, fetched when the user asks (it used to run on every page open: a request to Google News, and
     the ~440 MB FinBERT model on first use). The result is kept in the session per ticker."""
-    from services.news import fetch_news_sentiment
+    from services.news import fetch_news_sentiment, stored_headlines
     key = f"news_sent::{ticker}"
     rec = st.session_state.get(key)
     label = "Refresh headlines" if rec else "Load headlines and sentiment"
@@ -48,6 +48,15 @@ def _render_news(meta, ticker, snapshot=None):
             rec = fetch_news_sentiment(meta.get("company", ticker), ticker, get_pipe=get_finbert_pipeline)
         rec = dict(rec, ticker=ticker, snapshot=snapshot)
         st.session_state[key] = rec
+    with st.expander("Stored headlines (last 30 days)"):
+        try:
+            rows = stored_headlines(ticker)
+            if rows:
+                st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+            else:
+                st.info("No stored headlines yet")
+        except Exception as exc:
+            st.error(f"Stored headlines unavailable: {type(exc).__name__}: {exc}")
     if not rec:
         st.caption("Not loaded — headlines and their sentiment are fetched only when you ask.")
         return
@@ -58,18 +67,24 @@ def _render_news(meta, ticker, snapshot=None):
     if not rec["items"]:
         st.info("No recent news found for this ticker.")
         return
+    if rec["error"]:
+        st.caption(f"News context incomplete: {rec['error']}")
     if rec["scored"]:
         colour = {"BULLISH": "#2ecc71", "BEARISH": "#e74c3c", "NEUTRAL": "#f1c40f"}[rec["mood"]]
-        st.markdown(f"<div style='margin-bottom:12px;padding:8px 12px;background:var(--secondary-background-color, transparent);border-radius:6px;border-left:3px solid {colour};font-size:0.85rem;'><b style='color:{colour};'>{rec['mood']}</b> &nbsp;·&nbsp; FinBERT: {rec['avg']:+.2f} on {len(rec['items'])} headlines</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='margin-bottom:12px;padding:8px 12px;background:var(--secondary-background-color, transparent);border-radius:6px;border-left:3px solid {colour};font-size:0.85rem;'><b style='color:{colour};'>{rec['mood']}</b> &nbsp;·&nbsp; FinBERT: {rec['avg']:+.2f} on {rec.get('n_scored', len(rec['items']))}/{len(rec['items'])} headlines</div>", unsafe_allow_html=True)
     else:
-        st.caption("Headlines are listed without a sentiment score (the model was not available).")
+        st.caption("Headlines are listed without a sentiment score.")
+    st.caption(f"{rec.get('n_scored', 0)}/{len(rec['items'])} headlines scored; weighted by recency (half-life 3 days); "
+               f"{rec.get('undated', 0)} without publication date (7-day weight).")
     st.caption(f"Fetched {rec['fetched_at']:%d %b %H:%M}. Headlines are context, not an input of the Decision.")
     with st.popover(f"View {len(rec['items'])} Detailed Headlines", width="stretch"):
         st.markdown("### Recent Headlines")
         for it in rec["items"]:
             sentiment = {"POSITIVE": "Positive", "NEGATIVE": "Negative", "NEUTRAL": "Neutral"}.get(it["label"], "Unscored")
+            if not it.get("lang", "en-US").startswith("en-"):
+                sentiment = "not scored (non-English)"
             with st.expander(f"{sentiment}: {it['title'][:70]}..."):
-                st.caption(f"**Source:** {it['source']} | **Date:** {it['published']}")
+                st.caption(f"**Source:** {it['source']} | **Date:** {it['published']} | **Language:** {it.get('lang', 'en-US')}")
                 st.markdown(f"[Read Article ↗]({it['link']})")
 
 
@@ -109,13 +124,13 @@ def render(dd, ctx):
         st.caption("Saved language-model review · " + _saved_context(_uv_data, deep_ticker, ctx.get("data_version")))
 
     # Initialize safe defaults to prevent NameErrors in later blocks
-    _nlp_score, _nlp_sent = 0, "N/A"
+    _nlp_score, _nlp_sent = None, "N/A"
     _is_conflict, _ai_score_snap, _audit_time = False, 0, ""
     _unified_report = ""
 
     if _uv_data:
-        _nlp_score     = _uv_data.get("nlp_score", 0)
-        _nlp_sent      = _uv_data.get("nlp_sentiment", "Neutral")
+        _nlp_score     = _uv_data.get("nlp_score")
+        _nlp_sent      = _uv_data.get("nlp_sentiment") or "N/A"
         _is_conflict   = _uv_data.get("is_conflict", False)
         _ai_score_snap = _uv_data.get("ai_score_snap", 0)
         _audit_time    = _uv_data.get("extracted_at", "")
@@ -174,6 +189,9 @@ def render(dd, ctx):
             llm_res = analyze_risk_with_llm(deep_ticker, meta['company'], macro_context=_llm_macro_ctx, quant_context=_llm_quant_ctx, language=llm_language)
             if llm_res.get("error"):
                 st.error(f"NLP Error: {llm_res['error'][:80]}")
+                st.caption("Risk exposure / headline sentiment / confidence: N/A.")
+            elif llm_res.get("red_flag_score") is None:
+                st.info("No recent headlines. Risk exposure / headline sentiment / confidence: N/A.")
             else:
                 _cohere_key_ra = (
                     os.environ.get("COHERE_API_KEY", "")
@@ -267,7 +285,7 @@ def render(dd, ctx):
     # ── AI Risk Cockpit: 3-Column Premium Scorecard (Full-Width) ──
     if _uv_data:
         _pulse_style = "border: 1px solid rgba(230,126,34,0.6); box-shadow: 0 0 15px rgba(230,126,34,0.15); border-left: 4px solid #e67e22;" if _is_conflict else "border: 1px solid rgba(255,255,255,0.08); border-left: 4px solid #444;"
-        _r_color = "#e74c3c" if _nlp_score >= 60 else "#f39c12" if _nlp_score >= 30 else "#2ecc71"
+        _r_color = "#8899aa" if _nlp_score is None else "#e74c3c" if _nlp_score >= 60 else "#f39c12" if _nlp_score >= 30 else "#2ecc71"
         _s_color = "#0284C7" if _nlp_sent == "Positive" else "#e74c3c" if _nlp_sent in ["Negative", "Critical"] else "#8899aa"
 
         st.markdown(f"""
@@ -291,11 +309,11 @@ def render(dd, ctx):
     <div style='padding:15px; background:var(--secondary-background-color, transparent); border-radius:10px;'>
         <div style='font-size:0.65rem; color:inherit; text-transform:uppercase; letter-spacing:1px; margin-bottom:8px;'>Risk Exposure</div>
         <div style='display:flex; align-items:baseline; gap:6px;'>
-            <span style='font-size:1.4rem; font-weight:700; color:{_r_color};'>{_nlp_score}</span>
+            <span style='font-size:1.4rem; font-weight:700; color:{_r_color};'>{_nlp_score if _nlp_score is not None else 'N/A'}</span>
             <span style='font-size:0.75rem; color:inherit;'>/100</span>
         </div>
         <div style='width:100%; height:3px; background:var(--secondary-background-color, transparent); border-radius:2px; margin-top:8px;'>
-            <div style='width:{_nlp_score}%; height:100%; background:{_r_color}; border-radius:2px;'></div>
+            <div style='width:{_nlp_score if _nlp_score is not None else 0}%; height:100%; background:{_r_color}; border-radius:2px;'></div>
         </div>
     </div>
 </div>

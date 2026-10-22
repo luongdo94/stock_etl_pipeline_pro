@@ -60,3 +60,10 @@ def _isolated_filings_store(tmp_path, monkeypatch):
     # .env is loaded on import (etl/llm_parser.py): the pipeline's filings step must not reach SEC or Cohere in a test
     monkeypatch.setattr(filings, "_sec_user_agent", lambda: None)
     monkeypatch.setattr(filings, "_llm_available", lambda: False)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_news_history(tmp_path, monkeypatch):
+    """News tests must never access the project warehouse history."""
+    from services import news
+    monkeypatch.setattr(news, "NEWS_DB_PATH", str(tmp_path / "news_history.duckdb"))
