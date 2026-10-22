@@ -340,6 +340,7 @@ def build_financial_dims(conn) -> None:
             EXTRACT(YEAR FROM a.date) AS year,
             a.date AS report_date,
             a.revenue, a.net_income, a.total_equity, a.eps, a.eps_diluted,
+            a.src_currency, NULLIF(a.fx_to_eur, 0) AS fx_to_eur,  -- raw metadata, never legacy rate-1 fallback
             a.ebit, a.tax_rate, a.cash, a.total_debt,          -- ROIC inputs (audit F-04)
             CASE WHEN y.src_currency IS NOT DISTINCT FROM a.src_currency THEN {_growth('a.rev_l', 'y.rev_l')} END
                 AS revenue_growth_pct,

@@ -580,7 +580,11 @@ def read_warehouse(conn):
         hist_fcf_f = conn.execute("SELECT * FROM raw.hist_fcf ORDER BY ticker, year").df()
         # every column valuation needs (FCF, SBC, interest paid in financing, lease principal — audit A01/F-03);
         # SELECT * keeps older warehouses working: missing columns are simply absent and valuation skips them
+        # fetch date per row: one fetch converts every year at one FX rate, so a CAGR within a fetch carries no FX
+        _fetched = pd.to_datetime(hist_fcf_f["_extracted_at"]).dt.date if "_extracted_at" in hist_fcf_f else None
         hist_fcf_f = hist_fcf_f.drop(columns=[c for c in hist_fcf_f.columns if c.startswith("_")], errors="ignore")
+        if _fetched is not None:
+            hist_fcf_f["fetched_at"] = _fetched
     except duckdb.Error:
         try:
             hist_fcf_f = conn.execute("SELECT ticker, year, free_cash_flow, operating_cash_flow FROM raw.hist_fcf ORDER BY ticker, year").df()

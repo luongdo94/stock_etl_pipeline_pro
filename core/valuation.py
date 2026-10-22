@@ -178,11 +178,21 @@ def anchor_growth(revenue_growth=None, earnings_growth=None, hist_fcf_cagr=None,
 
 
 def revenue_cagr(annual_fin: Optional[pd.DataFrame], ticker: str, years: int = 3) -> Optional[float]:
-    """Revenue CAGR over the last `years` annual statements (needs years+1 points)."""
-    if annual_fin is None or annual_fin.empty or "revenue" not in annual_fin.columns:
+    """Operating revenue CAGR in verified source currency; valuation amounts stay EUR."""
+    columns = ["ticker", "year", "revenue", "src_currency", "fx_to_eur"]
+    if annual_fin is None or annual_fin.empty or not set(columns).issubset(annual_fin.columns):
         return None
-    rows = annual_fin[annual_fin["ticker"] == ticker].sort_values("year")[["year", "revenue"]].dropna().tail(years + 1)
-    return cagr_by_year(rows["year"], rows["revenue"]) if len(rows) >= 3 else None
+    rows = annual_fin[annual_fin["ticker"] == ticker].sort_values("year")[columns] \
+        .dropna(subset=["year", "revenue"]).tail(years + 1)
+    if len(rows) < 3:
+        return None
+    # Verify every selected year, including middle years; never drop unknown metadata.
+    currencies, rates = rows["src_currency"], rows["fx_to_eur"].map(_finite)
+    if currencies.isna().any() or currencies.nunique() != 1 or not str(currencies.iloc[0]).strip():
+        return None
+    if rates.isna().any() or (rates <= 0).any():
+        return None
+    return cagr_by_year(rows["year"], rows["revenue"] / rates)
 
 
 # Cash paid to lenders / lessors that IFRS (and some US GAAP filers) report in FINANCING cash flow. OCF − capex of
@@ -946,7 +956,13 @@ def _valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, m
     shares = mcap / price if mcap and price else None
     hist_rows = _with_estimates(hist_fcf[hist_fcf["ticker"] == ticker].sort_values("year")).tail(5) \
         if hist_fcf is not None and not hist_fcf.empty else pd.DataFrame(columns=["year", "free_cash_flow"])
-    hist_cagr = cagr_by_year(hist_rows["year"], _after_sbc(hist_rows, dctx, ticker)) if not hist_rows.empty else None
+    # Each fetch converts every year at one FX rate, which cancels in a CAGR; years kept from an earlier fetch carry
+    # another rate (L606), so only the latest fetch counts. No fetch date -> FX unverified, source omitted.
+    if "fetched_at" in hist_rows.columns and not hist_rows.empty:
+        hist_rows = hist_rows[hist_rows["fetched_at"] == hist_rows["fetched_at"].iloc[-1]]
+        hist_cagr = cagr_by_year(hist_rows["year"], _after_sbc(hist_rows, dctx, ticker))
+    else:
+        hist_cagr = None
     growth, sources = anchor_growth(meta.get("revenue_growth"), meta.get("earnings_growth"),
                                     hist_cagr, revenue_cagr=revenue_cagr(annual_fin, ticker))
     valuable = bool(fcfe and fcfe > 0 and shares)
@@ -967,8 +983,8 @@ def _valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, m
     tv_share = terminal_value_share(fcfe, growth, coe, tg) if valuable else None
     growth_note = None
     if valuable and rev_cagr is None:
-        growth_note = ("Growth anchor is not a multi-year revenue CAGR (fewer than 3 annual statements) — it rests on "
-                       "single-quarter YoY figures; treat the base value as low-evidence.")
+        growth_note = ("Growth anchor is not a multi-year revenue CAGR (fewer than 3 annual statements or unverified "
+                       "currency/FX) — it rests on single-quarter YoY figures; treat the base value as low-evidence.")
     if reliable and tv_share is not None and tv_share > MAX_TERMINAL_SHARE:
         reliable, note = False, (f"{tv_share:.0%} of the value is terminal value — the result is a perpetuity "
                                  f"assumption, not a forecast. Not used for BUY/AVOID.")
