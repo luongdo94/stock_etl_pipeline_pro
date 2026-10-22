@@ -171,38 +171,33 @@ def fama_macbeth(fr: pd.DataFrame, h: int, score_col: str = "quality", controls=
             "days_skipped": skipped, "identified": bool(require_controls or used >= set(controls))}
 
 
-def rebalance_dates(dates, h: int) -> list:
-    """Non-overlapping h-trading-day holding periods (greedy, calendar spacing as in calendar_blocks)."""
-    span = pd.Timedelta(days=int(np.ceil(h * 365 / 252)))
-    out, start = [], None
-    for d in sorted(pd.to_datetime(pd.Index(dates)).unique()):
-        if start is None or d >= start + span:
-            out.append(d)
-            start = d
-    return out
-
-
 def quintile_net_of_costs(fr: pd.DataFrame, h: int, score_col: str = "quality", cost_bps: Optional[dict] = None) -> dict:
     """Top-quintile portfolio held over non-overlapping h-day periods: {periods, gross_pct, net_pct, turnover, cost_pct}
     (means per period, excess over the equal-weight universe)."""
     cost_bps = {**DEFAULT_COST_BPS, **(cost_bps or {})}
     col = f"fwd_{h}"
-    d = fr.dropna(subset=[score_col, col])
+    d = fr.dropna(subset=[score_col])
     if d.empty:
         return {"periods": 0, "gross_pct": None, "net_pct": None, "turnover": None, "cost_pct": None}
     # Audit F17: costs follow WEIGHTS. The holdings drift with their returns over the period; each rebalance trades from
     # the drifted weights to equal weights — buys at the bought name's regional cost, sells at the sold name's. (The
     # name-count version charged the incoming names' cost for the sells and an unchanged set nothing for drift.)
-    rows, held, held_region = [], pd.Series(dtype=float), {}
+    rows, held, held_region, last_exit = [], pd.Series(dtype=float), {}, None
     bps_of = lambda reg: cost_bps.get(str(reg), cost_bps["OTHER"])            # noqa: E731
-    for day in rebalance_dates(d["as_of_date"].unique(), h):
-        g = d[d["as_of_date"] == day]
+    for day, g in d.groupby("as_of_date", sort=True):
+        if last_exit is not None and pd.to_datetime(g["entry_date"]).min() < last_exit:
+            continue
         if len(g) < 10:
             continue
         bins = pd.qcut(g[score_col], 5, labels=False, duplicates="drop")
         if bins.nunique() != 5:
             continue
         top = g[bins == 4]
+        # The top is fixed from the scores before any outcome is known (T03): a holding without an outcome makes the
+        # period unresolved — it supplies no drift weights and does not count — never a re-picked top.
+        if top[col].isna().any() or top[f"exit_date_{h}"].isna().any():
+            continue
+        last_exit = pd.to_datetime(top[f"exit_date_{h}"]).max()
         reg = top.set_index("ticker")["region"].to_dict() if "region" in top.columns else {}
         target = pd.Series(1.0 / len(top), index=top["ticker"])
         prev = held.reindex(target.index.union(held.index)).fillna(0.0)
@@ -211,14 +206,17 @@ def quintile_net_of_costs(fr: pd.DataFrame, h: int, score_col: str = "quality", 
         buys, sells = delta.clip(lower=0), (-delta).clip(lower=0)
         cost = (sum(w * bps_of(reg.get(t, "OTHER")) for t, w in buys.items() if w)
                 + sum(w * bps_of(held_region.get(t, reg.get(t, "OTHER"))) for t, w in sells.items() if w)) / 1e4
+        # benchmark: the equal-weight universe names whose outcome is known (one stale name must not void the period)
         gross = float(top[col].mean() - g[col].mean())
         rows.append({"date": day, "gross": gross, "net": gross - cost, "turnover": float(buys.sum()), "cost": cost})
-        grown = target * (1 + top.set_index("ticker")[col].reindex(target.index).fillna(0.0))
+        grown = target * (1 + top.set_index("ticker")[col].reindex(target.index))
         held = grown / grown.sum() if grown.sum() > 0 else target                # weights at the next rebalance
         held_region = {**held_region, **reg}
     if not rows:
         return {"periods": 0, "gross_pct": None, "net_pct": None, "turnover": None, "cost_pct": None}
-    r = pd.DataFrame(rows)
+    r = pd.DataFrame(rows).dropna(subset=["net"])
+    if r.empty:
+        return {"periods": 0, "gross_pct": None, "net_pct": None, "turnover": None, "cost_pct": None}
     return {"periods": len(r), "gross_pct": float(r["gross"].mean() * 100), "net_pct": float(r["net"].mean() * 100),
             "turnover": float(r["turnover"].mean()), "cost_pct": float(r["cost"].mean() * 100)}
 
@@ -231,8 +229,9 @@ def p_value(t) -> Optional[float]:
 
 
 def holm(pvals: dict) -> dict:
-    """Holm step-down adjusted p-values {key: p_adj} (None stays None)."""
-    known = sorted(((k, p) for k, p in pvals.items() if p is not None), key=lambda kv: kv[1])
+    """Holm over finite observed probabilities only; missing/invalid cells stay None."""
+    known = sorted(((k, p) for k, p in pvals.items()
+                    if p is not None and np.isfinite(p) and 0 <= p <= 1), key=lambda kv: kv[1])
     m, out, running = len(known), {k: None for k in pvals}, 0.0
     for i, (k, p) in enumerate(known):
         running = max(running, min(1.0, (m - i) * p))
@@ -265,5 +264,6 @@ def evidence_table(snapshots: pd.DataFrame, prices: pd.DataFrame, horizons=HORIZ
         t[c] = pd.to_numeric(t[c], errors="coerce").astype(float)
     t["p_holm"] = pd.to_numeric(t.index.map(holm(t["p"].where(t["p"].notna(), None).to_dict())), errors="coerce")
     t["significant"] = ((t["premium_pct"].fillna(0) > 0) & (t["p_holm"].fillna(1) < alpha)
-                        & (t["n_independent"] >= min_independent) & (t["top_net_pct"].fillna(-1) > 0))
+                        & (t["n_independent"] >= min_independent) & (t["periods"] >= min_independent)
+                        & (t["top_net_pct"].fillna(-1) > 0))
     return t

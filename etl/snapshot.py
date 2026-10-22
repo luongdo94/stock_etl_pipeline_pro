@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 TRACK_DB_PATH = str(Path(DB_PATH).parent / "track_record.duckdb")
 RUN_ID = uuid.uuid4().hex[:12]
+RETURN_REVISION_SESSIONS = 5  # Recent bars can change intraday or when missing sessions are backfilled.
 _CONFIG = Path(__file__).resolve().parent.parent / "config"
 
 # One row per (as_of_date, ticker); the primary key is what makes INSERT OR IGNORE keep the FIRST knowledge (A14).
@@ -85,11 +86,11 @@ def rules_version() -> str:
 
 
 def save_track_prices(db_path: str = DB_PATH, track_db_path: str = TRACK_DB_PATH) -> int:
-    """Append-only history of DAILY RETURNS in the track-record DB (survives full warehouse rebuilds, A07), computed
-    inside each warehouse snapshot so every return uses one adjustment basis. Levels are never stored: a split or a
+    """DAILY RETURNS survive warehouse rebuilds (A07); recent sessions are revised, older ones keep their first write.
+    Returns are computed inside each warehouse snapshot on one adjustment basis. Levels are never stored: a split or a
     dividend re-basing rescales the provider's whole history, and mixing first-seen levels across bases produced a
     fake −50% on a 2:1 split (R2-01). marts.track_prices is the total-return index rebuilt from the stored returns."""
-    from core.track_record import daily_returns_from_prices, price_index_from_returns
+    from core.track_record import daily_returns_from_prices
     with duckdb.connect(db_path, read_only=True) as wconn:
         px = wconn.execute("SELECT date, ticker, price_close FROM marts.fct_daily_returns WHERE price_close > 0").df()
     rets = daily_returns_from_prices(px) if not px.empty else pd.DataFrame(columns=["date", "ticker", "ret"])
@@ -97,11 +98,24 @@ def save_track_prices(db_path: str = DB_PATH, track_db_path: str = TRACK_DB_PATH
         tconn.execute("CREATE SCHEMA IF NOT EXISTS signals")
         tconn.execute("CREATE TABLE IF NOT EXISTS signals.track_returns (date DATE, ticker VARCHAR, ret DOUBLE, "
                       "first_seen_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (date, ticker))")
+        tconn.execute("ALTER TABLE signals.track_returns ADD COLUMN IF NOT EXISTS revised_at TIMESTAMP")
         if not rets.empty:
             tconn.register("ret_rows", rets)
+            tconn.execute("UPDATE signals.track_returns AS old SET ret = fresh.ret, revised_at = CURRENT_TIMESTAMP "
+                          "FROM (SELECT *, row_number() OVER (PARTITION BY ticker ORDER BY date DESC) AS rn "
+                          "FROM ret_rows) AS fresh WHERE old.ticker = fresh.ticker AND old.date = CAST(fresh.date AS DATE) "
+                          "AND fresh.rn <= ?", [RETURN_REVISION_SESSIONS])
             tconn.execute("INSERT OR IGNORE INTO signals.track_returns (date, ticker, ret) "
                           "SELECT CAST(date AS DATE), ticker, ret FROM ret_rows")
             tconn.unregister("ret_rows")
+    rebuild_track_prices(db_path, track_db_path)
+    return len(rets)
+
+
+def rebuild_track_prices(db_path: str = DB_PATH, track_db_path: str = TRACK_DB_PATH) -> None:
+    """Mirror the archived return index; also used after an explicit repair."""
+    from core.track_record import price_index_from_returns
+    with duckdb.connect(track_db_path, read_only=True) as tconn:
         stored = tconn.execute("SELECT date, ticker, ret FROM signals.track_returns").df()
     index = price_index_from_returns(stored) if not stored.empty else pd.DataFrame(columns=["date", "ticker", "price_close"])
     with duckdb.connect(db_path) as wconn:
@@ -110,18 +124,22 @@ def save_track_prices(db_path: str = DB_PATH, track_db_path: str = TRACK_DB_PATH
         wconn.execute("CREATE OR REPLACE TABLE marts.track_prices AS "
                       "SELECT CAST(date AS DATE) AS date, ticker, CAST(price_close AS DOUBLE) AS price_close FROM idx_rows")
         wconn.unregister("idx_rows")
-    return len(rets)
 
 
 def track_history(track_db_path: str = TRACK_DB_PATH) -> pd.DataFrame:
     """The total-return index from the track DB (empty if none yet) — the evidence dataset for every consumer."""
     from core.track_record import price_index_from_returns
-    try:
-        with duckdb.connect(track_db_path, read_only=True) as tconn:
-            stored = tconn.execute("SELECT date, ticker, ret FROM signals.track_returns").df()
-        return price_index_from_returns(stored)
-    except Exception:
-        return pd.DataFrame(columns=["date", "ticker", "price_close"])
+    empty = pd.DataFrame(columns=["date", "ticker", "price_close"])
+    if not Path(track_db_path).exists():
+        return empty
+    with duckdb.connect(track_db_path, read_only=True) as tconn:
+        exists = tconn.execute("SELECT count(*) FROM information_schema.tables "
+                               "WHERE table_schema = 'signals' AND table_name = 'track_returns'").fetchone()[0]
+        if not exists:
+            return empty
+        stored = tconn.execute("SELECT date, ticker, ret FROM signals.track_returns").df()
+    return price_index_from_returns(stored)
+
 
 def build_snapshot(db_path: str = DB_PATH, track_db_path: str = TRACK_DB_PATH) -> pd.DataFrame:
     """Run the dashboard's screener on the warehouse and return today's snapshot rows."""
@@ -153,7 +171,8 @@ def build_snapshot(db_path: str = DB_PATH, track_db_path: str = TRACK_DB_PATH) -
             past = tconn.execute("SELECT * FROM signals.score_snapshots").df()
         hist = track_history(track_db_path)               # same evidence dataset as the dashboard (R2-05)
         track_ok = bool(evidence_status(past, hist if not hist.empty else prices[["date", "ticker", "price_close"]])["ok"])
-    except Exception:
+    except Exception as e:
+        logger.warning("Track Record evidence not computable: %s", e)
         track_ok = False
     earnings_cal = frames[5] if len(frames) > 5 else None
     table = build_screener_table(companies, prices, quarterly, annual, hist_fcf, macro, estimates,

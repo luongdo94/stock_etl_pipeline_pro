@@ -78,7 +78,10 @@ def test_f17_costs_follow_the_traded_weights_and_both_regions():
         top = [("VN1", "VN"), ("VN2", "VN")] if k == 0 else [("US8", "US"), ("US9", "US")]
         for t, reg in top:
             rows.append({"as_of_date": d, "ticker": t, "quality": 100, "fwd_21": 0.0, "region": reg})
-    q = quintile_net_of_costs(pd.DataFrame(rows), 21, cost_bps={"US": 10, "VN": 40})
+    frame = pd.DataFrame(rows)
+    frame["entry_date"] = frame["as_of_date"] + pd.offsets.BDay(1)
+    frame["exit_date_21"] = frame["as_of_date"] + pd.offsets.BDay(22)
+    q = quintile_net_of_costs(frame, 21, cost_bps={"US": 10, "VN": 40})
     # period 1: buy 100% VN (40bp); period 2: sell 100% VN (40) + buy 100% US (10) = 50bp; period 3: no trade
     assert q["periods"] == 3 and q["cost_pct"] == pytest.approx((0.40 + 0.50 + 0.0) / 3)
 
@@ -114,10 +117,10 @@ def test_f06_a_gross_signal_that_loses_after_costs_cannot_enable_buys(monkeypatc
                    + [pd.DataFrame({"date": days, "ticker": "SPY", "price_close": 100.0 + np.arange(len(days)) * 0.01})])
     snaps = pd.DataFrame([(d, t, i) for d in days[:-260] for i, t in enumerate(tick)], columns=["as_of_date", "ticker", "quality"])
     monkeypatch.setattr(ft, "fama_macbeth", lambda *a, **k: {"premium": 1.0, "t_stat": 3.0, "n_independent": 6})
-    monkeypatch.setattr(ft, "quintile_net_of_costs", lambda *a, **k: {"net_pct": -0.4})
+    monkeypatch.setattr(ft, "quintile_net_of_costs", lambda *a, **k: {"net_pct": -0.4, "periods": 6})
     res = tr.evidence_status(snaps, px)
     assert res["ok"] is False and "after costs" in res["label"]
-    monkeypatch.setattr(ft, "quintile_net_of_costs", lambda *a, **k: {"net_pct": 0.8})
+    monkeypatch.setattr(ft, "quintile_net_of_costs", lambda *a, **k: {"net_pct": 0.8, "periods": 6})
     assert tr.evidence_status(snaps, px)["ok"] is True
 
 

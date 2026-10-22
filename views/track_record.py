@@ -55,9 +55,10 @@ def render(ctx):
     prices_full = ctx['prices_full']
 
     render_header("trophy", "Track Record — Are the Signals Any Good?")
-    st.caption("Recorded signals, evaluated later: every ETL run stores the score and decision the dashboard showed "
+    st.caption("Recorded signals, evaluated later: the first write for each ticker/day stores the score and decision shown "
                "that day; here they are compared with what happened next, relative to SPY. Until the primary test is "
                "supported, treat BUY/SELL labels as unproven hypotheses.")
+    st.caption("EUR, adjusted closes, gross of tax; top-net subtracts regional cost bps only.")
 
     try:
         all_snaps = load_track_record()
@@ -104,8 +105,12 @@ def render(ctx):
     if _cov:
         st.caption("Outcome coverage (matured signals with a known return): " + " · ".join(
             f"{tr.horizon_label(hh)} {1 - c['share']:.1%} of {c['matured']:,}" for hh, c in _cov)
-            + (f". Missing outcomes (stopped quoting): {', '.join(_cov[-1][1]['tickers'][:8])}" if _cov[-1][1]["tickers"] else "")
+            + (f". Overdue, missing prices (cause unknown): {', '.join(_cov[-1][1]['tickers'][:8])}" if _cov[-1][1]["tickers"] else "")
             + f". Above {tr.MAX_CENSORED_SHARE:.0%} missing, the evidence gate does not trust the result.")
+
+    primary_cov = tr.outcome_coverage(fr, _px, tr.EVIDENCE_HORIZON)
+    st.caption(f"12 months: not enough horizon yet = {primary_cov.get('pending', 0)} ticker-days; "
+               f"resolved asset returns missing SPY = {primary_cov.get('missing_benchmark', 0)}.")
 
     # ── 1. Information coefficient per horizon ─────────────────────────────────
     avail = [k for k in tr.SCORES if k in fr.columns and fr[k].notna().any()]
@@ -131,6 +136,8 @@ def render(ctx):
 
     # ── 2. Quintiles ──────────────────────────────────────────────────────────
     q = tr.quintile_returns(fr, h, score_col)
+    st.caption(f"Quintiles: resolved subset; arithmetic mean weighted by resolved ticker-day rows; "
+               f"n = ticker-days, windows overlap; usable days = {q.attrs.get('usable_days', 0)}.")
     if q.attrs.get("skipped_days"):
         st.caption(f"Quintiles exclude {q.attrs['skipped_days']} day(s): scores could not form five distinct groups "
                    "without splitting ties.")
@@ -142,7 +149,8 @@ def render(ctx):
         else:
             fig = go.Figure(go.Bar(x=[f"Q{i}" for i in q["quintile"]], y=q["mean_excess_pct"],
                                    marker_color=["#e74c3c" if v < 0 else "#2ecc71" for v in q["mean_excess_pct"]],
-                                   text=[f"{v:+.1f}%<br>n={n}" for v, n in zip(q["mean_excess_pct"], q["n"])]))
+                                   text=[f"{v:+.1f}%<br>n={n}" if pd.notna(v) else "N/A"
+                                         for v, n in zip(q["mean_excess_pct"], q["n"])]))
             fig.update_layout(height=320, yaxis_title="Mean excess %",
                               xaxis_title="Q1 = lowest score … Q5 = highest", margin=dict(t=10, b=10))
             st.plotly_chart(fig, width="stretch")
@@ -150,18 +158,23 @@ def render(ctx):
     with c2:
         _by = "decision" if "decision" in fr.columns and fr["decision"].notna().any() else "action"
         st.markdown(f"**Share outperforming the benchmark, by {'Decision' if _by == 'decision' else 'Signal'} ({tr.horizon_label(h)})**")
-        # Decisions are judged against the equal-weight snapshot universe (region-neutral), the Signal against SPY
+        if _by == "decision":
+            st.caption(f"Current Decision policy only: {len(fr) - len(tr.current_decision_policy(fr))} "
+                       "rows excluded because their policy differs or is unknown.")
+        # Decisions use the snapshot universe; Signals use SPY.
         sc = tr.decision_scorecard(fr, h) if _by == "decision" else tr.action_scorecard(fr, h, action_col=_by)
+        st.caption(f"Scorecard: resolved subset; arithmetic mean weighted by resolved ticker-day rows; "
+                   f"n = ticker-days, windows overlap; usable days = {sc.attrs.get('usable_days', 0)}.")
         if sc.empty:
             st.info("Not enough resolved snapshots for this horizon yet.")
         else:
             _bm = "universe avg" if _by == "decision" else "SPY"
             st.dataframe(sc, hide_index=True, width="stretch", column_config={
                 "hit_rate_pct": st.column_config.NumberColumn(f"Share beating {_bm}", format="%.0f%%",
-                                                              help="Share of calls whose return beat the benchmark. Not an accuracy: for an AVOID call a LOW share is the good outcome."),
+                                                              help="Share of resolved ticker-day rows whose return beat the benchmark. Not an accuracy: for an AVOID call a LOW share is the good outcome."),
                 "mean_excess_pct": st.column_config.NumberColumn(f"Excess vs {_bm}", format="%+.1f%%"),
             })
-            st.caption("Decisions: excess over the equal-weight average of all stocks snapshotted that day (not region- "
+            st.caption("Decisions: excess over the equal-weight resolved subset of stocks snapshotted under the current policy (not region- "
                        "or sector-neutral). Signal: excess over SPY. Returns run from the first session after the "
                        "signal was knowable." if _by == "decision" else
                        "Excess over SPY; returns run from the first session after the signal was knowable.")
@@ -175,13 +188,14 @@ def render(ctx):
     else:
         st.dataframe(ev.assign(horizon=ev["horizon"].map(tr.horizon_label), turnover=ev["turnover"] * 100)[
             ["score", "horizon", "raw_premium_pct", "premium_pct", "t_stat", "p_holm", "n_independent",
-             "top_gross_pct", "top_net_pct", "turnover", "significant"]],
+             "periods", "top_gross_pct", "top_net_pct", "turnover", "significant"]],
             hide_index=True, width="stretch", column_config={
                 "raw_premium_pct": st.column_config.NumberColumn("Raw % / SD", format="%+.2f"),
                 "premium_pct": st.column_config.NumberColumn("Factor-adj. % / SD", format="%+.2f"),
                 "t_stat": st.column_config.NumberColumn("t (NW)", format="%.1f"),
                 "p_holm": st.column_config.NumberColumn("p (Holm)", format="%.3f"),
                 "n_independent": st.column_config.NumberColumn("Indep. periods"),
+                "periods": st.column_config.NumberColumn("Resolved net periods"),
                 "top_gross_pct": st.column_config.NumberColumn("Top 20% gross", format="%+.2f%%"),
                 "top_net_pct": st.column_config.NumberColumn("Top 20% net", format="%+.2f%%"),
                 "turnover": st.column_config.NumberColumn("Turnover", format="%.0f%%"),
@@ -189,22 +203,23 @@ def render(ctx):
                                                                "NOT the primary test at the top, which alone feeds the BUY gate.")})
     st.caption("Raw = forward return per +1 standard deviation of the score. Factor-adjusted = the same with market "
                "beta, size, value (book/price) and 12-1 month momentum held fixed, within each region (Fama-MacBeth, "
-               "Newey-West t). p (Holm) accounts for testing 4 scores × 4 horizons. Top 20% = equal-weight top quintile "
+               "Newey-West t). p (Holm) adjusts the finite p-values available across 4 scores × 4 horizons. Top 20% = equal-weight top quintile "
                "over non-overlapping periods vs the universe, before and after the one-way costs of the names it "
                "replaces (decision_rules.yaml → costs.one_way_bps_by_region). Exploratory pass = factor-adjusted premium > 0, "
-               "Holm p < 5%, ≥ 6 independent periods and positive after costs — a screen across many cells, separate from "
+               "Holm p < 5%, ≥ 6 independent periods, ≥ 6 resolved net periods and positive after costs — a screen across many cells, separate from "
                "the primary test (Quality, 12 months) at the top.")
 
     # ── 4. Recommendation log ─────────────────────────────────────────────────
     st.markdown("**Recorded decision changes — every change of call, and the asset's return since entry**")
-    _call = "decision" if "decision" in snaps.columns and snaps["decision"].notna().any() else "action"
-    log = tr.recommendation_log(snaps, action_col=_call)
+    _call = "decision" if "decision" in all_snaps.columns and all_snaps["decision"].notna().any() else "action"
+    log = tr.recommendation_log(all_snaps, action_col=_call)
     # one price basis: the stored return index (or the dashboard history), entry = first session after the call
     _sc = tr.since_call_frame(log, _px)
     log = log.assign(since_call_pct=_sc["ret"] * 100, entry_date=_sc["entry_date"], last_date=_sc["last_date"])
     st.caption(f"Showing {min(300, len(log))} of {len(log)} changes.")
     st.dataframe(
-        log[["as_of_date", "ticker", "previous_action", _call, "quality", "price_close", "entry_date", "since_call_pct", "last_date"]].head(300),
+        log.reindex(columns=["as_of_date", "ticker", "previous_action", _call, "rules_version", "quality", "price_close",
+                             "entry_date", "since_call_pct", "last_date"]).head(300),
         hide_index=True, width="stretch",
         column_config={
             "as_of_date": st.column_config.DateColumn("Date"),

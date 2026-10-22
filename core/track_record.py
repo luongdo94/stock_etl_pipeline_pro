@@ -35,7 +35,7 @@ def _ns(s) -> pd.Series:
 def daily_returns_from_prices(prices: pd.DataFrame) -> pd.DataFrame:
     """Close-to-close returns computed INSIDE one price snapshot (one adjustment basis). A split or dividend re-basing
     of the provider's history rescales all earlier closes by the same factor, so the returns between them do not
-    change — storing returns, not levels, keeps an append-only history consistent across corporate actions (R2-01)."""
+    change — storing returns, not levels, keeps the return history consistent across corporate actions (R2-01)."""
     px = prices[["date", "ticker", "price_close"]].dropna().copy()
     px["date"] = _ns(px["date"])
     px = px[px["price_close"] > 0].sort_values(["ticker", "date"])
@@ -81,16 +81,24 @@ def forward_returns(snapshots: pd.DataFrame, prices: pd.DataFrame,
     bench_by_date = bench.set_index("date")["price_close"]
     lookup = px.set_index(["ticker", "pos"])[["date", "price_close"]]
     pos = anchored["pos"].astype("Int64")
+
+    def benchmark_at(dates):
+        days = pd.DatetimeIndex(_ns(dates))
+        if bench_by_date.empty:
+            return np.full(len(days), np.nan)
+        values = bench_by_date.reindex(days, method="ffill", tolerance=pd.Timedelta(days=5)).to_numpy()
+        return np.where(days <= bench_by_date.index.max(), values, np.nan)
+
     for h in horizons:
         keys = [(t, (p + h) if pd.notna(p) else -1) for t, p in zip(anchored["ticker"], pos)]
         fut = lookup.reindex(keys)
+        anchored[f"exit_date_{h}"] = fut["date"].to_numpy()
         anchored[f"fwd_{h}"] = fut["price_close"].to_numpy() / anchored["px0"].to_numpy() - 1
         # benchmark over the same calendar window (entry session → exit session)
-        b0 = bench_by_date.reindex(_ns(anchored["entry_date"]), method="ffill").to_numpy() if len(bench_by_date) else np.nan
-        b1 = bench_by_date.reindex(_ns(pd.Series(fut["date"].to_numpy())), method="ffill").to_numpy() \
-            if len(bench_by_date) else np.nan
+        b0 = benchmark_at(anchored["entry_date"])
+        b1 = benchmark_at(pd.Series(fut["date"].to_numpy()))
         anchored[f"xs_{h}"] = anchored[f"fwd_{h}"] - (b1 / b0 - 1)
-    return anchored.drop(columns=["pos", "_known"])
+    return anchored.drop(columns=["pos"]).rename(columns={"_known": "known_date"})
 
 
 def newey_west_t(x, lag: int) -> Optional[float]:
@@ -130,8 +138,7 @@ def information_coefficient(fr: pd.DataFrame, h: int, score_col: str = "quality"
 
 
 def calendar_blocks(dates, h: int) -> int:
-    """Number of non-overlapping h-trading-day periods among the signal origins (greedy on calendar days). Every origin
-    passed in already has a matured h-day outcome, so each selected origin is one complete, non-overlapping period."""
+    """Calendar-block proxy among signal origins; actual holding windows are checked separately for top-net."""
     span = pd.Timedelta(days=int(np.ceil(h * 365 / 252)))
     n, start = 0, None
     for d in sorted(pd.to_datetime(pd.Index(dates)).unique()):
@@ -143,7 +150,7 @@ def calendar_blocks(dates, h: int) -> int:
 def quintile_returns(fr: pd.DataFrame, h: int, score_col: str = "quality") -> pd.DataFrame:
     """Mean forward excess return per score quintile (Q1 = lowest score), computed within each day."""
     col = f"xs_{h}"
-    d = fr.dropna(subset=[score_col, col]).copy()
+    d = fr.dropna(subset=[score_col]).copy()
     if d.empty:
         return pd.DataFrame(columns=["quintile", "mean_excess_pct", "n"])
     def bins(scores):
@@ -155,8 +162,16 @@ def quintile_returns(fr: pd.DataFrame, h: int, score_col: str = "quality") -> pd
     out.columns = ["quintile", "mean_excess_pct", "n"]
     out["mean_excess_pct"] *= 100
     out["quintile"] = out["quintile"].astype(int)
+    out["n_days"] = d.dropna(subset=[col]).groupby("quintile")["as_of_date"].nunique().reindex(out["quintile"]).fillna(0).to_numpy()
+    out.attrs["usable_days"] = d.dropna(subset=["quintile", col])["as_of_date"].nunique()
     out.attrs["skipped_days"] = d.loc[d["quintile"].isna(), "as_of_date"].nunique()
     return out
+
+
+def current_decision_policy(fr: pd.DataFrame) -> pd.DataFrame:
+    """Decision cohorts require the complete current policy, including its scoring definition."""
+    from etl.snapshot import rules_version
+    return fr[fr["rules_version"] == rules_version()] if "rules_version" in fr else fr.iloc[:0]
 
 
 def decision_scorecard(fr: pd.DataFrame, h: int = 252) -> pd.DataFrame:
@@ -165,24 +180,27 @@ def decision_scorecard(fr: pd.DataFrame, h: int = 252) -> pd.DataFrame:
     col = f"fwd_{h}"
     if "decision" not in fr.columns or col not in fr.columns:
         return pd.DataFrame(columns=["decision", "n", "hit_rate_pct", "mean_excess_pct"])
-    d = fr.dropna(subset=[col, "decision"]).copy()
-    if d.empty:
-        return pd.DataFrame(columns=["decision", "n", "hit_rate_pct", "mean_excess_pct"])
+    d = current_decision_policy(fr).copy()
+    # The snapshot universe includes names without a Decision; its resolved subset supplies the benchmark.
     d["xs_universe"] = d[col] - d.groupby("as_of_date")[col].transform("mean")
     g = d.groupby("decision")["xs_universe"]
-    out = pd.DataFrame({"n": g.size(), "hit_rate_pct": g.apply(lambda s: (s > 0).mean() * 100),
+    out = pd.DataFrame({"n": g.count(), "hit_rate_pct": g.apply(lambda s: (s.dropna() > 0).mean() * 100),
                         "mean_excess_pct": g.mean() * 100}).reset_index()
+    out["n_days"] = out["decision"].map(d.dropna(subset=["xs_universe"]).groupby("decision")["as_of_date"].nunique()).fillna(0)
+    out.attrs["usable_days"] = d.dropna(subset=["decision", "xs_universe"])["as_of_date"].nunique()
     return out.sort_values("mean_excess_pct", ascending=False)
 
 
 def action_scorecard(fr: pd.DataFrame, h: int, action_col: str = "action") -> pd.DataFrame:
     col = f"xs_{h}"
-    d = fr.dropna(subset=[col])
+    d = fr
     if d.empty:
         return pd.DataFrame(columns=[action_col, "n", "hit_rate_pct", "mean_excess_pct"])
     g = d.groupby(action_col)[col]
-    out = pd.DataFrame({"n": g.size(), "hit_rate_pct": g.apply(lambda s: (s > 0).mean() * 100),
+    out = pd.DataFrame({"n": g.count(), "hit_rate_pct": g.apply(lambda s: (s.dropna() > 0).mean() * 100),
                         "mean_excess_pct": g.mean() * 100}).reset_index()
+    out["n_days"] = out[action_col].map(d.dropna(subset=[col]).groupby(action_col)["as_of_date"].nunique()).fillna(0)
+    out.attrs["usable_days"] = d.dropna(subset=[action_col, col])["as_of_date"].nunique()
     return out.sort_values("mean_excess_pct", ascending=False)
 
 
@@ -240,11 +258,18 @@ def outcome_coverage(fr: pd.DataFrame, prices: pd.DataFrame, h: int) -> dict:
         return {"matured": 0, "censored": 0, "share": None, "tickers": []}
     last = pd.to_datetime(prices["date"]).max()
     span = pd.Timedelta(days=int(np.ceil(h * 365 / 252)) + 7)              # a week of slack for holidays
-    matured = pd.to_datetime(fr["as_of_date"]) + span <= last
+    known = pd.to_datetime(fr["known_date"] if "known_date" in fr else fr["as_of_date"])
+    if "knowledge_at" in fr and "known_date" not in fr:
+        ka = pd.to_datetime(fr["knowledge_at"], errors="coerce").dt.tz_localize(None).dt.normalize()
+        known = pd.concat([known, ka], axis=1).max(axis=1)
+    entry = pd.to_datetime(fr["entry_date"]) if "entry_date" in fr else known + pd.Timedelta(days=1)
+    matured = entry.fillna(known + pd.Timedelta(days=1)) + span <= last
     censored = matured & fr[col].isna()
     n = int(matured.sum())
     return {"matured": n, "censored": int(censored.sum()), "share": (float(censored.sum()) / n) if n else None,
-            "tickers": sorted(fr.loc[censored, "ticker"].unique().tolist())[:20]}
+            "tickers": sorted(fr.loc[censored, "ticker"].unique().tolist())[:20],
+            "pending": int((~matured & fr[col].isna()).sum()),
+            "missing_benchmark": int((fr[col].notna() & fr[f"xs_{h}"].isna()).sum()) if f"xs_{h}" in fr else 0}
 
 
 def history_days(snapshots: pd.DataFrame) -> int:
@@ -309,7 +334,7 @@ def evidence_status(snapshots: pd.DataFrame, prices: pd.DataFrame, h: int = EVID
     n_ind = ic.get("n_independent", 0)
     enough = ic["n_days"] >= MIN_EVIDENCE_DAYS and n_ind >= MIN_INDEPENDENT_PERIODS
     fm = {"premium": None, "t_stat": None, "n_independent": 0}
-    net = {"net_pct": None}
+    net = {"net_pct": None, "periods": 0}
     if enough:
         # the rank correlation must survive the factors an index fund already sells (beta, size, value, momentum):
         # a Quality score that only picks large low-beta stocks is a risk tilt, not evidence (core/factor_test.py).
@@ -327,7 +352,7 @@ def evidence_status(snapshots: pd.DataFrame, prices: pd.DataFrame, h: int = EVID
     ok = bool(enough and (ic["ic"] or 0) > 0 and (ic["t_stat"] or 0) > 2
               and (fm["premium"] or 0) > 0 and (fm["t_stat"] or 0) > 2
               and (fm.get("n_independent") or 0) >= MIN_INDEPENDENT_PERIODS
-              and (net["net_pct"] or 0) > 0
+              and (net["net_pct"] or 0) > 0 and net.get("periods", 0) >= MIN_INDEPENDENT_PERIODS
               and (cover["share"] is None or cover["share"] <= MAX_CENSORED_SHARE))
     if not enough:
         label = (f"{days} snapshot day(s); {ic['n_days']} usable for a {h}-day test = {n_ind} independent period(s) "
@@ -340,13 +365,14 @@ def evidence_status(snapshots: pd.DataFrame, prices: pd.DataFrame, h: int = EVID
                  else "; factor-adjusted premium n/a (controls not available on enough days)")
         f_txt += (f"; top quintile {net['net_pct']:+.2f}% per period after costs" if net["net_pct"] is not None
                   else "; after-cost result n/a")
+        f_txt += f"; {net.get('periods', 0)} resolved net periods (need {MIN_INDEPENDENT_PERIODS})"
         if cover["share"] is not None and cover["share"] > MAX_CENSORED_SHARE:
             f_txt += (f"; {cover['censored']} of {cover['matured']} matured signals have no outcome "
                       f"({cover['share']:.0%}, delisted / stopped quoting) — survivorship risk")
         label = (f"{h}-day IC {ic['ic']:+.3f} (Newey-West t = {t_txt}, {n_ind} independent periods){f_txt} — "
                  + ("statistically supported." if ok else "NOT statistically supported."))
     return {**ic, "ok": ok, "label": label, "factor_premium": fm["premium"], "factor_t": fm["t_stat"],
-            "net_top_pct": net["net_pct"], "outcome_coverage": cover}
+            "net_top_pct": net["net_pct"], "periods": net.get("periods", 0), "outcome_coverage": cover}
 
 
 def evidence_headline(ev: dict) -> str:

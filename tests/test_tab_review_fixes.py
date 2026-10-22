@@ -317,7 +317,8 @@ def test_b03_ties_never_split_by_row_order():
     from core.track_record import quintile_returns
     from core.factor_test import quintile_net_of_costs
     fr = pd.DataFrame({"ticker": [str(i) for i in range(10)], "as_of_date": pd.Timestamp("2026-01-01"),
-                       "quality": 50., "xs_21": [i / 100 for i in range(10)], "fwd_21": [i / 100 for i in range(10)]})
+                       "quality": 50., "xs_21": [i / 100 for i in range(10)], "fwd_21": [i / 100 for i in range(10)],
+                       "entry_date": pd.Timestamp("2026-01-02"), "exit_date_21": pd.Timestamp("2026-02-02")})
     q = quintile_returns(fr, 21)
     assert q.empty and q.attrs["skipped_days"] == 1
     assert quintile_net_of_costs(fr, 21)["periods"] == 0

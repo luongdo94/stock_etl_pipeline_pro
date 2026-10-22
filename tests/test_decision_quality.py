@@ -65,7 +65,8 @@ def test_top_quintile_pays_for_its_turnover():
     for k, d in enumerate(pd.bdate_range("2024-01-02", periods=300)[::30]):
         score = np.arange(20) if k % 2 == 0 else np.arange(20)[::-1]          # the top quintile flips every period
         rows.append(pd.DataFrame({"as_of_date": d, "ticker": [f"T{i}" for i in range(20)], "quality": score,
-                                  "fwd_21": np.where(score >= 16, 0.02, 0.0), "region": "US"}))
+                                  "fwd_21": np.where(score >= 16, 0.02, 0.0), "region": "US",
+                                  "entry_date": d + pd.offsets.BDay(1), "exit_date_21": d + pd.offsets.BDay(22)}))
     q = ft.quintile_net_of_costs(pd.concat(rows), 21, cost_bps={"US": 50})
     assert q["turnover"] == pytest.approx(1.0) and q["gross_pct"] == pytest.approx(1.6)
     assert q["net_pct"] < q["gross_pct"] and q["cost_pct"] == pytest.approx((0.5 + 9 * 1.0) / 10, rel=1e-6)
@@ -89,7 +90,7 @@ def test_evidence_needs_the_factor_adjusted_premium_too(monkeypatch):
     snaps = pd.DataFrame([(d, t, i) for d in days[:-260] for i, t in enumerate(tick)],
                          columns=["as_of_date", "ticker", "quality"])
     monkeypatch.setattr(ft, "fama_macbeth", lambda *a, **k: {"premium": 1.0, "t_stat": 3.0, "n_independent": 6})
-    monkeypatch.setattr(ft, "quintile_net_of_costs", lambda *a, **k: {"net_pct": 0.5})
+    monkeypatch.setattr(ft, "quintile_net_of_costs", lambda *a, **k: {"net_pct": 0.5, "periods": 6})
     assert tr.evidence_status(snaps, px)["ok"] is True                      # higher score → higher return, by design
     monkeypatch.setattr(ft, "fama_macbeth", lambda *a, **k: {"premium": 0.1, "t_stat": 0.5, "n_independent": 6})
     res = tr.evidence_status(snaps, px)
