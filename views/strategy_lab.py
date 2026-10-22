@@ -9,7 +9,7 @@ from core import lab_view as lv
 from core.backtest import STATIC_QUALITY, run_backtest_simulation
 from core.track_record import evidence_headline
 from services import db
-from ui.components import render_metric_tile
+from ui.components import phone_safe_chart, render_metric_tile
 from ui.icons import render_header
 from ui.sticky import follow_active_ticker, my_tickers, remember_ticker, sticky, sticky_choice, ticker_options
 
@@ -151,7 +151,7 @@ def render(ctx):
         fig.add_trace(go.Scatter(x=r["dates_arr"], y=r["equity_curve"], name=r["strategy"], line=dict(color="#0284C7", width=3)))
         fig.update_layout(height=420, yaxis_title="Equity (€)", hovermode="x unified",
                           legend=dict(orientation="h", y=1.05))
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(phone_safe_chart(fig), use_container_width=True)
         with st.expander("Trade log"):
             trades = pd.DataFrame(r["trade_log"]).drop(columns=["_pnl"], errors="ignore")
             if "Action" in trades:

@@ -55,7 +55,9 @@ def render(dd, ctx):
         _pillar("Volume Flow", r["sm_label"], r["p_sm_c"], sm_extra),
     ])
     bg = _hex_rgb(dd.act_color)
-    st.markdown(f"""
+    # Markdown ends an HTML block at a blank line and shows indented lines after it as code: with no rr_html the
+    # `{rr_html}` line was blank and the closing </div> tags appeared on the page. Emit one unindented line per tag.
+    html = f"""
     <div style='background:var(--secondary-background-color, transparent); border:1px solid rgba(128,128,128,0.25); border-radius:12px; padding:20px; margin-bottom:25px;'>
         <div style='display:flex; justify-content:space-between; text-align:center; margin-bottom:20px; flex-wrap:wrap; gap:10px;'>{pillars}</div>
         <div style='background:rgba({bg},0.12); border-left:6px solid {dd.act_color}; padding:20px; border-radius:8px; box-shadow:0 4px 15px rgba(0,0,0,0.3);'>
@@ -70,4 +72,5 @@ def render(dd, ctx):
             {rr_html}
         </div>
     </div>
-    """, unsafe_allow_html=True)
+    """
+    st.markdown("\n".join(line.strip() for line in html.splitlines() if line.strip()), unsafe_allow_html=True)

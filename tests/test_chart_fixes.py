@@ -25,7 +25,8 @@ def _block(path, start, end, **env):
     begin = source.rfind("\n", 0, begin) + 1
     stop = source.index(end, begin)
     stop = source.rfind("\n", 0, stop) + 1
-    env = dict(pd=pd, np=np, go=go, px=px, st=UI(), render_header=lambda *a, **k: None, **env)
+    env = dict(pd=pd, np=np, go=go, px=px, st=UI(), render_header=lambda *a, **k: None,
+               phone_safe_chart=lambda fig: fig, **env)
     exec(compile(dedent(source[begin:stop]), path, "exec"), env)
     return env
 
@@ -142,7 +143,7 @@ def test_c04_cloud_uses_invested_budget_cap_and_zero_cash_return(monkeypatch):
     trace = env["fig_mpt"].data[0]
     assert np.allclose(trace.y, marker_ret) and np.allclose(trace.x, marker_vol)
     assert np.allclose(trace.marker.color, marker_sharpe)
-    layout = _block("views/portfolio.py", "fig_mpt.update_layout(", "st.plotly_chart(fig_mpt", fig_mpt=go.Figure())
+    layout = _block("views/portfolio.py", "fig_mpt.update_layout(", "st.plotly_chart(phone_safe_chart(fig_mpt)", fig_mpt=go.Figure())
     assert layout["fig_mpt"].layout.yaxis.title.text == "Annualised trailing mean, shrunk 50%"
     assert "Higher Return ↑" in layout["fig_mpt"].layout.annotations[0].text
     assert "targets before policy" in " ".join(env["st"].messages)

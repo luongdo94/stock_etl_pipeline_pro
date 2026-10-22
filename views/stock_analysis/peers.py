@@ -8,6 +8,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from ui.sticky import sticky_choice
+from ui.components import phone_safe_chart
 from views.stock_analysis.layout import layer_banner
 
 from ui.icons import render_header
@@ -378,7 +379,7 @@ def render(dd, ctx):
                     legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
                     margin=dict(l=10, r=20, t=40, b=45)
                 )
-                st.plotly_chart(fig_dots, use_container_width=True)
+                st.plotly_chart(phone_safe_chart(fig_dots), use_container_width=True)
 
     else:
         st.info(f"No peers found in the **{_peer_group_label}** {_match_level} to compare with.")

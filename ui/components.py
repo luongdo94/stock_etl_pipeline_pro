@@ -7,6 +7,35 @@ import plotly.express as px
 import streamlit as st
 
 
+def phone_safe_chart(fig):
+    """Ensure a Plotly chart fits phone screens (automargin on axes, legend horizontal under plot,
+
+    no fixed large left/right margins) without altering desktop design, heights, or traces.
+    """
+    if fig is None:
+        return fig
+    fig.update_xaxes(automargin=True)
+    fig.update_yaxes(automargin=True)
+    from ui.sidebar import is_phone_layout
+    if not is_phone_layout():          # desktop keeps each chart's own legend and margins
+        return fig
+
+    # plotly layout objects expose attributes, not dict .get()
+    legend, margin = fig.layout.legend, fig.layout.margin
+    layout_update = {}
+    if legend.orientation != "h" or (legend.y is not None and legend.y >= 1.0):
+        layout_update["legend"] = dict(orientation="h", yanchor="top", y=-0.15, xanchor="center", x=0.5)
+    layout_update["margin"] = dict(l=min(margin.l, 15) if margin.l is not None else 10,
+                                   r=min(margin.r, 15) if margin.r is not None else 10,
+                                   t=margin.t if margin.t is not None else 20,
+                                   b=margin.b if margin.b is not None else 20)
+    fig.update_layout(**layout_update)
+    return fig
+
+
+make_phone_safe = phone_safe_chart
+
+
 def format_value(value, spec="", *, prefix="", suffix="", reason=None):
     """Plain display text. Missing/non-finite numbers are N/A; a real zero is preserved.
 
@@ -103,7 +132,7 @@ def render_sector_health_matrix(m_df: pd.DataFrame):
         yaxis=dict(zeroline=False)
     )
 
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(phone_safe_chart(fig), use_container_width=True)
 
     # 3. Methodology Footer
     st.markdown(f"""
@@ -160,11 +189,13 @@ def render_metric_tile(label, value, delta=None, suffix="", is_pct=False, color_
             delta_html = f"<div style='color:inherit;font-size:0.68rem;'>{delta}</div>"
 
     tooltip_attr = f'title="{html.escape(str(help_text), quote=True)}"' if help_text else ""
-    st.markdown(f"""
+    tile = f"""
         <div {tooltip_attr} style='background:var(--secondary-background-color, transparent);border:1px solid rgba(128,128,128,0.25);
                     border-radius:6px;padding:5px 8px;margin-bottom:5px;text-align:center;cursor:help;'>
             <div style='color:inherit;font-size:0.8rem;font-weight:600;text-transform:uppercase;letter-spacing:0.04em;margin-bottom:2px;'>{label}</div>
             <div style='color:inherit;font-size:0.95rem;font-weight:700;display:flex;align-items:center;justify-content:center;'>{value}{suffix}</div>
             {delta_html}
         </div>
-    """, unsafe_allow_html=True)
+    """
+    # without a delta the {delta_html} line is blank: markdown would end the HTML block there and print </div>
+    st.markdown("\n".join(line.strip() for line in tile.splitlines() if line.strip()), unsafe_allow_html=True)

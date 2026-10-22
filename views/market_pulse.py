@@ -10,6 +10,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from core import market_regime as mr
+from ui.components import phone_safe_chart
 from ui.icons import render_header
 from ui.sticky import sticky, sticky_segmented
 
@@ -244,7 +245,7 @@ def render(ctx):
                 yaxis_title="SPY in € (includes EUR/USD moves)",
                 legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
             )
-            st.plotly_chart(fig_spy, use_container_width=True)
+            st.plotly_chart(phone_safe_chart(fig_spy), use_container_width=True)
         else:
             _closes = df_spy_filtered.dropna(subset=["price_close"])
             if not _closes.empty:
@@ -279,7 +280,7 @@ def render(ctx):
                 yaxis=dict(title="% Above MA50", range=[0, 100], ticksuffix="%"),
                 xaxis_title="", showlegend=False
             )
-            st.plotly_chart(fig_br, use_container_width=True)
+            st.plotly_chart(phone_safe_chart(fig_br), use_container_width=True)
         else:
             st.info("No breadth history in this snapshot.")
 
@@ -349,7 +350,7 @@ def render(ctx):
             cliponaxis=False
         )
 
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(phone_safe_chart(fig), use_container_width=True)
         st.caption(f"S&P 500 (SPY) over {_period.lower() if _period != 'YTD' else 'the year to date'}: "
                    + (f"{_bench + 0:+.2f}% in USD (the € index chart above includes EUR/USD moves)."
                       if _bench is not None else "not available in this snapshot."))

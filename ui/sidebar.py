@@ -184,3 +184,28 @@ def render_macro_panel(macro, fred=None, live=None):
                        "funds) are not stored: press Fetch live. Context only — not a signal.")
         if live:
             st.caption(f"Economy: FRED, latest {month}. 3M = 13-week T-bill (^IRX).")
+
+
+# ── PHONE LAYOUT SWITCH ───────────────────────────────────────────────────────────────────────────────────────────
+def is_phone_layout() -> bool:
+    """True if URL has ?phone=1 or ui_phone_layout toggle is enabled."""
+    if st.query_params.get("phone") == "1":
+        return True
+    from ui.sticky import kept_key
+    return bool(st.session_state.get(kept_key("ui_phone_layout"), st.session_state.get("ui_phone_layout", False)))
+
+
+def render_phone_toggle() -> bool:
+    """Opt-in Phone layout toggle in the sidebar. Persisted with ui.sticky ('ui_phone_layout') and activated by ?phone=1."""
+    from ui.sticky import kept_key, sticky as _sticky
+    phone_param = st.query_params.get("phone") == "1"
+    if phone_param and not st.session_state.get(kept_key("ui_phone_layout")):
+        st.session_state[kept_key("ui_phone_layout")] = True
+    val = _sticky(
+        st.sidebar.toggle,
+        "Phone layout",
+        phone_param,
+        "ui_phone_layout",
+        help="Optimises tables, charts and views for phone screens (360-430 px)."
+    )
+    return bool(val)

@@ -180,6 +180,7 @@ regime, regime_ui_color, _macro_regime = _regime["regime"], _regime["color"], _r
 
 # ── Header ──────────────────────────────────────────────────────────────────────────────────
 sidebar.render_macro_panel(macro, None, st.session_state.get("_live_markets"))
+phone_layout = sidebar.render_phone_toggle()
 st.sidebar.markdown("---")
 auth.render_user_profile(cm)                         # account last
 head_l, head_r = st.columns([5, 1])
@@ -250,6 +251,8 @@ ctx = dict(
     regime_advice=_regime["advice"],
     _vix_val=_vix_val, _dxy_pct=_dxy_pct, conf_score_global=conf_score_global, conf_reason_str=conf_reason_str,
     df_spy_global=df_spy_global, breadth_ts_global=breadth_ts_global, latest_breadth_global=latest_breadth_global,
+    # mobile layout switch:
+    phone_layout=phone_layout,
 )
 # Floating research assistant: before the tab (a tab may st.stop()); fixed bottom-right, reruns on its own
 from ui import assistant as _assistant  # noqa: E402

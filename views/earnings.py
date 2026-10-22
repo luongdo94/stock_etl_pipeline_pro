@@ -10,7 +10,7 @@ from core import earnings as er
 from core import earnings_highlights as _eh
 from services import earnings as svc
 
-from ui.components import format_value
+from ui.components import format_value, phone_safe_chart
 from ui.sticky import (follow_active_ticker, my_tickers, remember_ticker, sticky, sticky_choice, sticky_radio,
                        ticker_options)
 from ui.icons import render_header
@@ -317,7 +317,7 @@ def render(ctx):
             fig.update_layout(height=380, margin=dict(t=10, l=10, r=10, b=10),
                               yaxis=dict(title="Surprise %"), yaxis2=dict(title="Reaction %", overlaying="y", side="right"),
                               legend=dict(orientation="h", y=1.1))
-            st.plotly_chart(fig, width="stretch")
+            st.plotly_chart(phone_safe_chart(fig), use_container_width=True)
             corr = rt.loc[~rt.get("small_base", pd.Series(False, index=rt.index)).fillna(False).astype(bool),
                           ["surprise_pct", "ret_2d"]].dropna()
             if len(corr) >= 6:
@@ -387,7 +387,7 @@ def render(ctx):
                     legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
                     margin=dict(l=10, r=20, t=40, b=45)
                 )
-                st.plotly_chart(fig_gh, use_container_width=True)
+                st.plotly_chart(phone_safe_chart(fig_gh), use_container_width=True)
             st.caption("EPS is as reported to analysts, in the reporting currency; a year-ago EPS of zero or below gives no "
                        "percentage. Revenue growth needs the same quarter a year earlier, and the data provider serves only "
                        "about the last 5 quarterly statements, so older rows are blank (the history fills in as the ETL stores "

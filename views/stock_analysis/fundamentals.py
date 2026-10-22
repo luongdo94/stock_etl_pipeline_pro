@@ -6,6 +6,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from views.stock_analysis.layout import layer_banner
+from ui.components import phone_safe_chart
 
 from services.db import load_ticker_provenance
 from ui.provenance import pit_caption
@@ -277,7 +278,7 @@ def render(dd, ctx):
             fig_fin.update_yaxes(title_text=f"Amount (€{unit})", secondary_y=False, range=[min(0, _min_amt / scale * 1.3), (max_val/scale)*1.3])
             fig_fin.update_yaxes(title_text="Earnings Per Share (€)", secondary_y=True)
             
-            st.plotly_chart(fig_fin, use_container_width=True)
+            st.plotly_chart(phone_safe_chart(fig_fin), use_container_width=True)
             st.caption("Years are the calendar year of each fiscal year-end; missing years are gaps, not zero. Amounts "
                        "in EUR. Revenue and basic EPS growth in the reporting currency (a moving exchange rate is not "
                        "growth); FCF growth in EUR, so it includes currency moves.")
@@ -533,7 +534,7 @@ def render(dd, ctx):
                 fig_fin_q.update_yaxes(title_text=f"Amount (€{unit_q})", secondary_y=False, range=y_range_q)
                 fig_fin_q.update_yaxes(title_text="Earnings Per Share (€)", secondary_y=True)
                 
-                st.plotly_chart(fig_fin_q, use_container_width=True)
+                st.plotly_chart(phone_safe_chart(fig_fin_q), use_container_width=True)
                 st.caption("Labels are the calendar quarter of each period end, not the company's fiscal quarter; missing "
                            "quarters are gaps, not zero. Amounts in EUR. Revenue and GAAP EPS "
                            "growth year on year in the reporting currency; FCF growth in EUR, so it includes currency "

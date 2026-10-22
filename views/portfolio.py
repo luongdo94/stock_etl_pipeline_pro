@@ -22,7 +22,8 @@ from core.ledger import adjustments_from_edit, history_incomplete, realized_pnl,
 from core.stress import estimate_sensitivities, historical_replay, load_scenarios, scenario_losses
 from services.user_store import (append_trades, load_portfolio_with_cash, load_trades, save_portfolio_checked,
                                  save_portfolio_to_db)
-from ui.components import format_value, render_metric_tile
+from ui.components import format_value, phone_safe_chart, render_metric_tile
+from ui.sidebar import is_phone_layout
 from ui.sticky import sticky, sticky_choice, sticky_radio
 from ui.decision_panel import render_alert_inbox
 from ui.icons import render_header
@@ -588,10 +589,14 @@ def render(ctx):
                         "Drift (pp)": st.column_config.NumberColumn("Drift", format="%+.1f pp", disabled=True,
                                                                     help="Weight minus target, percentage points of NAV.")
                     },
-                    column_order=["Ticker", "Current Decision", "Action", "Market Value", "Weight (%)", "Shares",
-                                  "Price (€)", "Cost Basis (€)", "Target (%)", "Drift (pp)", "Company", "Stop (orig)",
-                                  "Total Cost (€)", "Unrealized PnL (€)", "Unrealized PnL (%)", "Z-Score", "RSI (14)",
-                                  "Smart Money", "Contribution (%)"],
+                    column_order=(
+                        ["Ticker", "Action", "Market Value", "Weight (%)", "Shares", "Price (€)", "Cost Basis (€)", "Target (%)"]
+                        if (ctx.get("phone_layout") or is_phone_layout())
+                        else ["Ticker", "Current Decision", "Action", "Market Value", "Weight (%)", "Shares",
+                              "Price (€)", "Cost Basis (€)", "Target (%)", "Drift (pp)", "Company", "Stop (orig)",
+                              "Total Cost (€)", "Unrealized PnL (€)", "Unrealized PnL (%)", "Z-Score", "RSI (14)",
+                              "Smart Money", "Contribution (%)"]
+                    ),
                     hide_index=True,
                     width="stretch",
                     key=f"p_portfolio_editor_v{_cur_version}"
@@ -1010,7 +1015,7 @@ def render(ctx):
                         height=500,
                         yaxis_title="Value (€)", margin=dict(t=10, l=10, r=10, b=10)
                     )
-                    st.plotly_chart(fig_bt, use_container_width=True)
+                    st.plotly_chart(phone_safe_chart(fig_bt), use_container_width=True)
 
                 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -1052,7 +1057,7 @@ def render(ctx):
                         height=360,
                         margin=dict(l=0, r=0, t=10, b=0),
                     )
-                    st.plotly_chart(fig_sun, use_container_width=True)
+                    st.plotly_chart(phone_safe_chart(fig_sun), use_container_width=True)
                     st.caption(f"Cash: {_cash_eur / nav_eur:.1%} of NAV. Inner ring: region / holdings; "
                                "outer ring: sector / parent region. Holdings exclude cash.")
 
@@ -1071,7 +1076,7 @@ def render(ctx):
                             aspect="auto"
                         )
                         fig_corr.update_layout(height=360, margin=dict(l=0, r=0, t=10, b=0))
-                        st.plotly_chart(fig_corr, use_container_width=True)
+                        st.plotly_chart(phone_safe_chart(fig_corr), use_container_width=True)
 
                 _render_factor_tilts(ctx, dict(zip(current_tickers, weights)))
                 st.markdown("<br>", unsafe_allow_html=True)
@@ -1725,7 +1730,7 @@ def render(ctx):
                         align="left"
                     )],
                 )
-                st.plotly_chart(fig_mpt, use_container_width=True)
+                st.plotly_chart(phone_safe_chart(fig_mpt), use_container_width=True)
 
                 st.markdown("---")
                 # ── Risk Contribution ─────────────────────────────────────────
@@ -1740,7 +1745,7 @@ def render(ctx):
                     color=risk_pct, color_continuous_scale="Reds"
                 )
                 fig_risk_b.update_layout(height=380)
-                st.plotly_chart(fig_risk_b, use_container_width=True)
+                st.plotly_chart(phone_safe_chart(fig_risk_b), use_container_width=True)
 
 
             elif _section == "Rebalance" and len(current_tickers) == 1:
@@ -1805,7 +1810,7 @@ def _render_stress_and_ledger(ctx, tickers, weights, nav_eur, meta, port_beta, r
             margin=dict(l=10, r=20, t=40, b=30),
             showlegend=False
         )
-        st.plotly_chart(fig_stress, use_container_width=True)
+        st.plotly_chart(phone_safe_chart(fig_stress), use_container_width=True)
     worst = float(res["return"].min()) if not res.empty else 0.0
     rate_known = int(sens["rate_beta"].notna().sum()) if not sens.empty else 0
     st.caption(f"Each holding moves by its own estimated market beta × the market move, its rate sensitivity × the "
@@ -1888,7 +1893,7 @@ def _render_stress_and_ledger(ctx, tickers, weights, nav_eur, meta, port_beta, r
                     legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
                     margin=dict(l=10, r=20, t=40, b=45)
                 )
-                st.plotly_chart(fig_drift, use_container_width=True)
+                st.plotly_chart(phone_safe_chart(fig_drift), use_container_width=True)
             st.caption("Allowed = the target after the same rules as every rebalance: only BUY-stance lines may grow, the "
                        "position cap, liquidity / stop sizing and the sector / currency / stress budgets. Execute with "
                        "Add Trade so the ledger records it.")
@@ -1912,7 +1917,7 @@ def _render_factor_tilts(ctx, weights: dict):
                            textposition="auto"))
     fig.update_layout(height=230, margin=dict(l=0, r=0, t=10, b=0),
                       xaxis_title="weighted exposure, standard deviations of the universe")
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(phone_safe_chart(fig), use_container_width=True)
     st.caption("0 = like the average stock in the universe. Beyond ±0.5 SD the portfolio is a deliberate bet on that "
                "factor: high beta loses most in sell-offs, small size and value tilts earn (or lose) their premia over "
                "years, momentum reverses sharply in rebounds. Size uses log market cap; value book / price.")

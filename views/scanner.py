@@ -17,6 +17,7 @@ from core.scoring import SCORE_VERSION
 from ui.icons import render_header
 from ui.watchlist_status import status_label
 from ui.sticky import forget, kept_key, sticky, sticky_choice, sticky_multi, sticky_pills
+from ui.sidebar import is_phone_layout
 
 # Default columns answer the four questions of a long-horizon screen, each with a number every stock has:
 #   is the business good (Quality), is the price cheap (Value, FCF yield), what does the price already assume
@@ -461,7 +462,8 @@ def render(ctx):
     # ── result ──────────────────────────────────────────────────────────────────────────────────────────────────────
     c_cols1, c_cols2 = st.columns([1, 3])
     with c_cols1:
-        compact = sticky(st.toggle, "Compact view", False, "scan_compact",
+        default_compact = bool(ctx.get("phone_layout") or is_phone_layout())
+        compact = sticky(st.toggle, "Compact view", default_compact, "scan_compact",
                          help="Show 6 core columns (Ticker, Company, Verdict, Quality, Value, Next ER) for quick scanning.")
     with c_cols2:
         extras = sticky_multi("More columns", EXTRA_COLS, [], "scan_extra_cols",
@@ -560,7 +562,7 @@ def render(ctx):
             "<div style='margin-top:16px; padding:14px 18px; background:var(--secondary-background-color, transparent); border:1px solid rgba(128,128,128,0.25); border-radius:10px;'>"
             "<div style='font-size:0.78rem; font-weight:700; color:inherit; text-transform:uppercase; letter-spacing:0.08em; margin-bottom:10px;'>"
             f"Scores {SCORE_VERSION} — independent 0-100 numbers per stock, ranked against sector peers</div>"
-            "<div style='display:grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap:10px;'>"
+            "<div style='display:grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap:10px;'>"
             + _card("#2ecc71", "QUALITY — the business", "Return on capital 20 · margins 25 · growth &amp; stability 20 · balance sheet (net debt/EBITDA) 20 · FCF conversion 15. Banks/insurers: ROE, net margin, stability.",
                     f"Red flags subtract points: loss-making, debt without EBITDA, net debt/EBITDA &gt; 5x, dividend not covered by FCF, negative equity. Tiers: ELITE ≥ {ELITE} · SOLID ≥ {SOLID} · FAIR ≥ {FAIR}.")
             + _card("#3498db", "VALUE — the price", "FCF yield 25 · EV/EBITDA 20 · earnings yield 20 · PEG 15 · shareholder yield 10 · P/S 10, each half peer percentile, half absolute band.",

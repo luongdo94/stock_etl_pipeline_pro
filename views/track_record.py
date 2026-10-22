@@ -5,6 +5,7 @@ import streamlit as st
 
 from core import track_record as tr
 from services.db import load_price_history, load_track_record
+from ui.components import phone_safe_chart
 from ui.icons import render_header
 from ui.sticky import sticky_radio
 
@@ -153,7 +154,7 @@ def render(ctx):
                                          for v, n in zip(q["mean_excess_pct"], q["n"])]))
             fig.update_layout(height=320, yaxis_title="Mean excess %",
                               xaxis_title="Q1 = lowest score … Q5 = highest", margin=dict(t=10, b=10))
-            st.plotly_chart(fig, width="stretch")
+            st.plotly_chart(phone_safe_chart(fig), use_container_width=True)
             st.caption("A working score rises steadily from Q1 to Q5.")
     with c2:
         _by = "decision" if "decision" in fr.columns and fr["decision"].notna().any() else "action"

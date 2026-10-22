@@ -15,6 +15,7 @@ from core.valuation import risk_free_from_macro, valuation_inputs  # noqa: F401 
 from core.portfolio_risk import candidate_impact
 from core.rating import quality_tier, value_tier
 from core.track_record import evidence_status
+from ui.components import phone_safe_chart
 
 _STANCE_COLORS = {dec.BUY: "#2ecc71", dec.RESEARCH: "#3498db", dec.HOLD: "#f1c40f",
                   dec.AVOID: "#e74c3c", dec.NO_DATA: "#8899aa"}
@@ -41,7 +42,7 @@ def _score_tile(title, sub, score, colour):
     bar = ("" if val is None else
            f"<div style='height:3px; border-radius:2px; background:rgba(128,128,128,0.25); margin:5px 0 4px; "
            f"overflow:hidden;'><div style='width:{max(0, min(100, val))}%; height:100%; background:{colour};'></div></div>")
-    return (f"<div style='flex:1; min-width:150px; background:var(--secondary-background-color, transparent); padding:10px 12px; "
+    return (f"<div style='flex:1; min-width:min(100%, 140px); background:var(--secondary-background-color, transparent); padding:10px 12px; "
             f"border-radius:8px; border-top:3px solid {colour};'>"
             f"<div style='font-size:0.65em; color:inherit; text-transform:uppercase; letter-spacing:1px;'>{title}</div>"
             f"<div style='font-weight:900; font-size:1.3em; color:{colour}; font-variant-numeric:tabular-nums;'>{shown}"
@@ -112,6 +113,7 @@ def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, re
         wanted_add = max(total_limit / 100 - cur_w.get(ticker, 0.0), 0.0)
         allowed, why = max_candidate_weight(cur_w, ticker, wanted_add, policy_meta, load_policy(rules))
         suggested = min(total_limit, (cur_w.get(ticker, 0.0) + allowed) * 100)
+
     sc, cc = _STANCE_COLORS.get(d.stance, "#8899aa"), _CONF_COLORS[d.confidence]
     _H = (vin.get("irr") or {}).get("horizon_years") or dec.load_rules()["valuation"].get("horizon_years", 4)
     fmt = lambda v, s="%": f"{v:+.1f}{s}" if v is not None else "N/A"
@@ -122,15 +124,23 @@ def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, re
         <div><div style='color:inherit; font-size:0.7rem; text-transform:uppercase; letter-spacing:1px;'>Decision Summary</div>
              <div style='color:{sc}; font-size:1.6rem; font-weight:900;'>{d.stance}</div>
              <div style='color:{cc}; font-size:0.8rem; font-weight:700;'>Confidence: {d.confidence}</div></div>
-        <div style='display:grid; grid-template-columns:repeat(4, auto); gap:6px 22px; text-align:right;'>
-          <div style='color:inherit; font-size:0.7rem;'>Model IRR, base ({_H}y, gross)</div>
-          <div style='color:inherit; font-size:0.7rem;'>Bear-case loss</div>
-          <div style='color:inherit; font-size:0.7rem;'>Reward / Risk</div>
-          <div style='color:inherit; font-size:0.7rem;'>Suggested size</div>
-          <div style='color:inherit; font-weight:800;'>{fmt(d.horizon_irr_pct)}</div>
-          <div style='color:#e74c3c; font-weight:800;'>{("-" + format(d.bear_case_loss_pct, ".1f") + "%") if d.bear_case_loss_pct else ("none" if d.horizon_irr_pct is not None else "N/A")}</div>
-          <div style='color:inherit; font-weight:800;'>{f"{d.reward_risk:.1f}x" if d.reward_risk is not None else ("no upside" if (d.net_expected_return_pct is not None and d.net_expected_return_pct <= 0) else "N/A")}</div>
-          <div style='color:inherit; font-weight:800;'>{f"{suggested:.1f}% of portfolio" if total_limit else "—"}</div>
+        <div style='display:grid; grid-template-columns:repeat(auto-fit, minmax(min(100%, 110px), 1fr)); gap:6px 22px; text-align:right;'>
+          <div>
+            <div style='color:inherit; font-size:0.7rem;'>Model IRR, base ({_H}y, gross)</div>
+            <div style='color:inherit; font-weight:800;'>{fmt(d.horizon_irr_pct)}</div>
+          </div>
+          <div>
+            <div style='color:inherit; font-size:0.7rem;'>Bear-case loss</div>
+            <div style='color:#e74c3c; font-weight:800;'>{("-" + format(d.bear_case_loss_pct, ".1f") + "%") if d.bear_case_loss_pct else ("none" if d.horizon_irr_pct is not None else "N/A")}</div>
+          </div>
+          <div>
+            <div style='color:inherit; font-size:0.7rem;'>Reward / Risk</div>
+            <div style='color:inherit; font-weight:800;'>{f"{d.reward_risk:.1f}x" if d.reward_risk is not None else ("no upside" if (d.net_expected_return_pct is not None and d.net_expected_return_pct <= 0) else "N/A")}</div>
+          </div>
+          <div>
+            <div style='color:inherit; font-size:0.7rem;'>Suggested size</div>
+            <div style='color:inherit; font-weight:800;'>{f"{suggested:.1f}% of portfolio" if total_limit else "—"}</div>
+          </div>
         </div>
       </div>
     </div>""", unsafe_allow_html=True)
@@ -306,7 +316,7 @@ def _render_financial_valuation(meta, price, vin, companies=None):
                                  textposition="top center", name=meta.get("ticker"), marker=dict(color="#f1c40f", size=14)))
         fig.update_layout(height=320, xaxis_title="ROE (%)", yaxis_title="P/B",
                           margin=dict(t=10, b=10), showlegend=False)
-        st.plotly_chart(fig, width="stretch")
+        st.plotly_chart(phone_safe_chart(fig), width="stretch")
         rel = fit["residual_pct"]
         if rel is None or pd.isna(rel):
             st.caption(f"The peer line is not interpretable here (it implies P/B {fit['fitted_pb']:.2f}x at this ROE); "

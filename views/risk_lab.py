@@ -13,7 +13,7 @@ import streamlit as st
 from core import risk_range as rr
 from core.smart_money import get_volume_flow
 
-from ui.components import format_value
+from ui.components import format_value, phone_safe_chart
 from ui.sticky import follow_active_ticker, my_tickers, remember_ticker, sticky, sticky_choice, ticker_options
 from ui.icons import render_header
 
@@ -176,7 +176,7 @@ def render(ctx):
                                   (95, "P95", "rgba(46,204,113,0.35)", "dot")):
         fig.add_trace(go.Scatter(x=steps, y=np.percentile(paths, q, axis=1), name=name, line=dict(color=colour, width=2, dash=dash)))
     fig.update_layout(height=460, xaxis_title="Trading sessions ahead", yaxis_title="Price (€)", margin=dict(t=10, l=10, r=10, b=10))
-    st.plotly_chart(fig, width="stretch")
+    st.plotly_chart(phone_safe_chart(fig), use_container_width=True)
 
     # ── calibration ─────────────────────────────────────────────────────────────────────────
     st.markdown("---")

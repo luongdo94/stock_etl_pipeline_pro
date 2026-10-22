@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from ui.icons import render_header
+from ui.components import phone_safe_chart
 
 
 
@@ -31,4 +32,4 @@ def render(dd, ctx):
     fig_rel.add_trace(go.Scatter(x=common_dates, y=ticker_cum, name=f"{deep_ticker} (%)", line=dict(color="#3498db", width=3)))
     fig_rel.add_trace(go.Scatter(x=common_dates, y=spy_cum, name="SPY (%)", line=dict(color="#64748b", width=2, dash="dot")))
     fig_rel.update_layout(height=450, yaxis_title="Return (%)", hovermode="x unified", margin=dict(t=20, l=10, r=10, b=10))
-    st.plotly_chart(fig_rel, use_container_width=True)
+    st.plotly_chart(phone_safe_chart(fig_rel), use_container_width=True)
