@@ -83,7 +83,7 @@ the company is positioned to benefit from the current trend.
 - RSI (14-day): {rsi} — momentum indicator; >70 = overbought, <30 = oversold
 - Price Z-Score (5-year): {z_score} — where the price sits vs its own 5-year average; a TREND measure, not a valuation
 - 52-Week Position: {w52_pos}% (0% = at 52W Low, 100% = at 52W High)
-- Smart Money Signal: {smart_money} (Accumulation = institutional buying, Distribution = selling)
+- Volume Flow: {smart_money} (public price-volume heuristic (OBV/MFI); cannot identify institutional buying/selling; context only — not used in the Decision or the timing signal)
 - Debt/EBITDA: {debt_ebitda}
 - Earnings Surprise (last 2Q): {earnings_surprise}
 
@@ -296,7 +296,7 @@ You have received a complete snapshot of a client's equity portfolio. Your role 
 - **Z-Score**: Price deviation from 200-day mean. >+2 = extended/overbought; <-2 = oversold/deep value
 - **RSI**: Relative Strength 14-day. >70 = overbought; <30 = oversold
 - **MA200%**: % above/below 200-day moving average. Negative = below MA200 (bearish trend)
-- **SM (Smart Money)**: Institutional flow. ACCUMULATION = buying; DISTRIBUTION = selling
+- **Volume Flow**: public price-volume heuristic (OBV/MFI); cannot identify institutional buying/selling; context only — not used in the Decision or the timing signal. ACCUMULATION / DISTRIBUTION are patterns; N/A means unavailable.
 - **Action**: the Decision (BUY CANDIDATE / RESEARCH CANDIDATE (unvalidated, no size) / HOLD / WATCH / AVOID / TRIM / NOT ENOUGH DATA)
 - **UP%**: Analyst consensus price target upside from current price
 - **ROE%**: Return on Equity — profitability. >15% = strong
@@ -396,7 +396,7 @@ def analyze_portfolio_with_llm(
                 f"Z:{p.get('z_score',0):+.2f} "
                 f"RSI:{p.get('rsi',50):.0f} "
                 f"MA200:{p.get('ma200_pct',0):+.1f}% "
-                f"SM:{p.get('smart_money','N/A')} "
+                f"Volume Flow:{p.get('smart_money','N/A')} "
                 f"ACT:{p.get('action','HOLD')} "
                 f"UP:{p.get('upside_pct',0):+.1f}% | "
                 f"ROE:{p.get('roe_pct',0):.1f}% "
@@ -516,7 +516,7 @@ def get_rebalance_directives(
                 f"PnL:{p.get('pnl_pct', 0):+.1f}% "
                 f"Z:{p.get('z_score', 0):+.2f} "
                 f"RSI:{p.get('rsi', 50):.0f} "
-                f"SM:{p.get('smart_money', 'N/A')} "
+                f"Volume Flow:{p.get('smart_money', 'N/A')} "
                 f"ACT:{p.get('action', 'HOLD')} "
                 f"Q_score:{p.get('quality_score', 0)} "
                 f"RevG:{rev_g}"

@@ -7,7 +7,7 @@ import streamlit as st
 
 from core.levels import get_tactical_metrics
 from core.rating import compute_institutional_rating
-from core.smart_money import get_sm_spirit_unified_v2
+from core.smart_money import get_volume_flow
 from core.valuation import relative_valuation
 from ui.decision_panel import valuation_inputs
 
@@ -176,8 +176,8 @@ def build(ctx, deep_ticker):
                 track_record_ok=bool(ctx.get("track_record_ok", False)), rules=load_rules())
     usable = bool(vin["base"] and vin["reliable"])
 
-    # Smart money on the full history (OBV is path-dependent)
-    sm = get_sm_spirit_unified_v2(_df_levels, sector=str(meta.get("sector", "Unknown")))
+    # Volume Flow on the full history (OBV is path-dependent)
+    sm = get_volume_flow(_df_levels, sector=str(meta.get("sector", "Unknown")))
     def _signal(stance):
         return compute_institutional_rating(
             ai_score=ai_score, ma_sig=ma_sig, latest_rsi=tm["rsi"], upside=float(upside),
@@ -189,7 +189,7 @@ def build(ctx, deep_ticker):
     rating = _signal(_d.stance)
     signal_conflict = None
     if rating["clamped"] and _d.stance == BUY:          # same conflict rule as the scanner (R3-E)
-        signal_conflict = (f"timing context is {rating['raw_label']} (trend / value / volume flow against "
+        signal_conflict = (f"timing context is {rating['raw_label']} (trend / value against "
                            f"the valuation case)")
         _d = with_conflict(_d, signal_conflict)
         rating = _signal(_d.stance)

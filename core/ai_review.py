@@ -42,7 +42,7 @@ STOCK: {ticker} - {company}
 Today: {today}. Data below is from the user's screener as of {as_of} (a starting point that may be wrong):
 - Sector: {sector} - Region: {region}
 - Quality {quality}/100 (business quality), Value {value}/100 (vs sector peers), Momentum {momentum}/100 (timing only)
-- Upside to the analysts' mean target: {upside}% - RSI {rsi} - Trend: {trend} - Smart money: {smart_money}
+- Upside to the analysts' mean target: {upside}% - RSI {rsi} - Trend: {trend} - Volume Flow: {smart_money} (public price-volume heuristic (OBV/MFI); cannot identify institutional buying/selling; context only — not used in the Decision or the timing signal)
 - The system's own DCF (free cash flow to equity): {dcf}
 - The screener labels it "BUY CANDIDATE". That label is UNVALIDATED (its statistical evidence is not established): treat
   it as a hypothesis to challenge.

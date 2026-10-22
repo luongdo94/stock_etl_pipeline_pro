@@ -101,12 +101,14 @@ class TestSmartMoneyAnalysis:
         """Test Smart Money calculation with valid price/volume data."""
         # Create sample price data
         dates = pd.date_range('2024-01-01', periods=150, freq='D')
+        rng = np.random.default_rng(7)
+        close = np.cumsum(rng.normal(size=150)) + 100
         df = pd.DataFrame({
             'date': dates,
-            'price_close': np.cumsum(np.random.randn(150)) + 100,
-            'volume': np.random.randint(1000000, 5000000, 150),
-            'price_high': np.cumsum(np.random.randn(150)) + 102,
-            'price_low': np.cumsum(np.random.randn(150)) + 98
+            'price_close': close,
+            'volume': rng.integers(1000000, 5000000, 150),
+            'price_high': close + 2,
+            'price_low': close - 2
         })
         
         from core.smart_money import get_sm_spirit_unified_v2
@@ -119,7 +121,7 @@ class TestSmartMoneyAnalysis:
         assert "layer" in result
         assert result["signal"] in ["ACCUMULATION", "DISTRIBUTION", "NEUTRAL"]
         assert 0 <= result["strength"] <= 100
-        assert result["layer"] in ["DIVERGENCE", "TREND", "NONE"]
+        assert result["layer"] in ["DIVERGENCE", "INSTITUTIONAL_VOLUME", "TREND", "NONE"]
     
     def test_smart_money_with_insufficient_data(self):
         """Test Smart Money with insufficient data."""
@@ -136,7 +138,8 @@ class TestSmartMoneyAnalysis:
         result = get_sm_spirit_unified_v2(df)
         
         assert isinstance(result, dict)
-        assert result["signal"] == "NEUTRAL"
+        assert result["signal"] == "N/A"
+        assert "history" in result["reason"]
         assert result["strength"] == 0
         assert result["layer"] == "NONE"
 

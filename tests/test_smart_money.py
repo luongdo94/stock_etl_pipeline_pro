@@ -55,7 +55,8 @@ def test_detects_genuine_volume_flow(on_up_days, expected):
     assert hits / 200 >= 0.75
 
 
-def test_insufficient_history_is_neutral():
+def test_insufficient_history_is_unavailable():
     rng = np.random.default_rng(0)
     r = smart_money(_frame(*_random_walk(rng, n=20)))
-    assert r["signal"] == "NEUTRAL" and r["strength"] == 0
+    assert r["signal"] == "N/A" and r["strength"] == 0
+    assert "history" in r["reason"]

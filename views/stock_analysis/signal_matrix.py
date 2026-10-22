@@ -25,7 +25,7 @@ def _tick(colour):
 
 def render(dd, ctx):
     layer_banner(2, "Timing context", "#e67e22", top=35, bottom=-10)
-    render_header("activity", "Timing context — trend and volume flow (the Signal behind the arrow)")
+    render_header("activity", "Timing context (the Signal behind the arrow)")
 
     r = dd.rating
     # Quality, Value and Reward/Risk are shown once, in the Decision Summary and the score tiles above; here they only
@@ -49,10 +49,10 @@ def render(dd, ctx):
                    f"<ul style='margin:0; padding-left:18px; color:inherit; font-size:0.82em;'>{items}</ul></div>")
 
     sm_extra = (f"<div style='font-size:0.65em; color:inherit; margin-top:4px;'>Strength: {dd.sm['strength']}/100</div>"
-                f"<div style='font-size:0.6em; color:inherit; margin-top:2px;'>Points: {r['sm_points']:.2f}</div>")
+                "<div style='font-size:0.6em; color:inherit; margin-top:2px;'>context only — not used in the Decision or the timing signal</div>")
     pillars = "".join([
         _pillar("Technical Trend", r["p_trend"], r["p_trend_c"]),
-        _pillar("Volume flow", r["sm_label"], r["p_sm_c"], sm_extra),
+        _pillar("Volume Flow", r["sm_label"], r["p_sm_c"], sm_extra),
     ])
     bg = _hex_rgb(dd.act_color)
     st.markdown(f"""

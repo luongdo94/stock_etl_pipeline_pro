@@ -36,12 +36,12 @@ def test_breakout_is_labelled_not_penalised():
     assert (r["p_risk"], r["p_risk_c"]) == ("BREAKOUT", "#3498db")
 
 
-def test_reduce_text_only_claims_distribution_when_flow_says_so():
+def test_signal_description_does_not_depend_on_context_only_flow():
     r = _rate()
     neutral = action_description("WEAKENING", r, s1=90, price=100, rsi=50, sm_signal="NEUTRAL")
     dist = action_description("WEAKENING", r, s1=90, price=100, rsi=50, sm_signal="DISTRIBUTION")
     assert "distribution" not in neutral.lower()
-    assert "distribution" in dist.lower()
+    assert dist == neutral
 
 
 @pytest.mark.parametrize("rr, level", [(0.8, "LOW"), (1.2, "LOW"), (2.0, "MEDIUM"), (3.0, "HIGH")])

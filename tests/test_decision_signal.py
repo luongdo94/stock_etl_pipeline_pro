@@ -32,8 +32,8 @@ def test_avoid_turns_the_reward_risk_pillar_into_a_penalty():
 
 def test_avoid_can_never_read_as_a_favourable_setup_even_with_strong_flow():
     r = rate(ai_score=85, ma_sig="STRONG BULL", sm_status="ACCUMULATION", sm_strength=90, decision_stance=DECISION_AVOID)
-    assert r["pts"] == 3.0                                       # trend + quality + value + 1 flow − 1 penalty
-    assert r["action_label"] == "NEUTRAL" and r["clamped"]       # would have been FAVOURABLE; the guard holds it back
+    assert r["pts"] == 2.0                                       # trend + quality + value − DCF penalty
+    assert r["action_label"] == "NEUTRAL" and not r["clamped"]   # flow adds no point
 
 
 def test_avoid_does_not_lift_an_already_negative_signal():

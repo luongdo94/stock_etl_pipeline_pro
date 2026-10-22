@@ -11,7 +11,7 @@ VALUE_TIERS = ((65, "UNDERVALUED", "#2ecc71"), (50, "FAIR VS PEERS", "#f1c40f"),
                (35, "FULL VALUATION", "#e67e22"), (20, "EXPENSIVE", "#e74c3c"))
 
 
-# The Signal (technical trend + quality + value + reward/risk + volume flow) is CONTEXT for the Decision, not a
+# The Signal (technical trend + quality + value + reward/risk) is CONTEXT for the Decision, not a
 # recommendation. Its labels deliberately avoid BUY / SELL so the two can never be mistaken for each other.
 SIGNAL_LABELS = {"strong": "STRONG SETUP", "favourable": "FAVOURABLE", "neutral": "NEUTRAL",
                  "weakening": "WEAKENING", "unfavourable": "UNFAVOURABLE"}
@@ -67,7 +67,7 @@ def compute_institutional_rating(
     decision_stance: str = None,
 ) -> dict:
     """
-    Signal engine — technical trend, quality, value and reward/risk, confirmed by volume flow.
+    Signal engine — technical trend, quality, value and reward/risk; Volume Flow is context only.
 
     v16 (replaces the 6-pillar v15):
     * It is context for the Decision and is labelled that way (STRONG SETUP … UNFAVOURABLE, never BUY / SELL).
@@ -76,7 +76,7 @@ def compute_institutional_rating(
       support/resistance ratio that disagrees with the Decision.
     * The 52-week position is shown but no longer scored: stocks near their 52-week high tend to keep
       outperforming (George & Hwang 2004), so "near the low = low risk" was the wrong sign.
-    * Pillars worth a point: trend, quality, value, reward/risk (max 4) + volume flow (-1..+1).
+    * Pillars worth a point: trend, quality, value, reward/risk (max 4). Volume Flow never contributes points.
       STRONG SETUP needs ELITE quality; thresholds are the old ones scaled by 4/5.
 
     Returns:
@@ -154,9 +154,9 @@ def compute_institutional_rating(
         p_val, p_val_c = "AVERAGE", "#95a5a6"
 
     # ── PILLAR 4: 52-WEEK POSITION (context, not scored) ───────────────────
-    _is_canslim_breakout = w52_pos > 80 and _ma_upper == "STRONG BULL" and sm_status.upper() == "ACCUMULATION"
+    _is_canslim_breakout = w52_pos > 80 and _ma_upper == "STRONG BULL"
     if _is_canslim_breakout:
-        p_risk, p_risk_c = "BREAKOUT", "#3498db"         # new highs on volume in a confirmed uptrend
+        p_risk, p_risk_c = "BREAKOUT", "#3498db"         # new highs in a confirmed uptrend
     elif w52_pos > 80:
         p_risk, p_risk_c = "NEAR 52W HIGH", "#95a5a6"    # momentum, but little room to the old ceiling
     elif w52_pos < 20:
@@ -180,48 +180,41 @@ def compute_institutional_rating(
     else:
         p_conv, p_conv_c = "LOW", "#e74c3c"
 
-    # ── PILLAR 6: SMART MONEY (Soft Scoring v14.0) ──────────────────────
-    # Determine Smart Money contribution based on signal + strength
+    # ── VOLUME FLOW: context only, no timing/Decision contribution ─────────
     sm_signal = sm_status.upper()
     sm_points = 0.0
     sm_label = "NEUTRAL"
     
     if sm_signal == "ACCUMULATION":
         if sm_strength >= 65:
-            sm_points = 1.0   # Strong accumulation — hard cap ±1.0 (v15.0)
             sm_label = "ACCUMULATION_STRONG"
             p_sm_c = "#00ffcc" if sm_strength >= 80 else "#2ecc71"
         elif sm_strength >= 40:
-            sm_points = 0.5   # Moderate accumulation
             sm_label = "ACCUMULATION_WEAK"
             p_sm_c = "#3498db"
         else:
-            sm_points = 0.0   # Weak signal, ignore
             sm_label = "ACCUMULATION_WEAK"
             p_sm_c = "#95a5a6"
 
     elif sm_signal == "DISTRIBUTION":
         if sm_strength >= 65:
-            sm_points = -1.0   # Strong distribution — hard cap ±1.0 (v15.0)
             sm_label = "DISTRIBUTION_STRONG"
             p_sm_c = "#c0392b" if sm_strength >= 80 else "#e74c3c"
         elif sm_strength >= 40:
-            sm_points = -0.5   # Moderate distribution
             sm_label = "DISTRIBUTION_WEAK"
             p_sm_c = "#e67e22"
         else:
-            sm_points = 0.0    # Weak signal, ignore
             sm_label = "DISTRIBUTION_WEAK"
             p_sm_c = "#95a5a6"
 
     else:  # NEUTRAL
         sm_points = 0.0
-        sm_label = "NEUTRAL"
+        sm_label = "N/A" if sm_signal == "N/A" else "NEUTRAL"
         p_sm_c = "#95a5a6"
     
     # Add layer info to label for transparency
     if sm_layer != "NONE":
-        sm_label = f"{sm_label} ({sm_layer})"
+        sm_label = f"{sm_label} ({'HIGH_VOLUME' if sm_layer == 'INSTITUTIONAL_VOLUME' else sm_layer})"
 
     # ── SYNTHESIS ──────────────────────────────────────────────────────────
     L = SIGNAL_LABELS
@@ -230,7 +223,7 @@ def compute_institutional_rating(
         (1 if p_qual_c  in ["#2ecc71", "#00ffcc"] else 0) +
         (1 if p_val_c   in ["#2ecc71", "#00ffcc"] else 0) +
         (1 if p_conv_c  in ["#2ecc71", "#00ffcc"] else 0)
-    ) + sm_points - (1 if overvalued else 0)
+    ) - (1 if overvalued else 0)
 
     if pts >= 4.0 and p_qual_c == "#00ffcc":
         action_label = L["strong"]
@@ -239,8 +232,6 @@ def compute_institutional_rating(
     elif p_trend_c in ("#e74c3c", "#c0392b") and p_val_c == "#e74c3c":
         action_label = L["unfavourable"]
     elif pts <= 1.5 and p_qual_c == "#e74c3c":
-        action_label = L["unfavourable"]
-    elif pts <= 1.5 and sm_points <= -0.5:
         action_label = L["unfavourable"]
     elif pts <= 2.0 and p_qual_c in ["#2ecc71", "#00ffcc"]:
         action_label = L["neutral"]

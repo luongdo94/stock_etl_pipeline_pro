@@ -4,7 +4,7 @@ import pandas as pd
 
 from core.levels import get_tactical_metrics
 from core.rating import compute_institutional_rating, verdict
-from core.smart_money import get_sm_spirit_unified_v2
+from core.smart_money import get_volume_flow
 from core.decision import BUY, decide, load_rules, to_date, with_conflict
 from core.valuation import uses_book_model, valuation_inputs
 from core.scoring import score_universe
@@ -169,7 +169,7 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
         _mos = (_vin["base"] / float(cur_p) - 1) * 100 if (_vin["base"] and _vin["reliable"]) else None
 
         # Volume flow (Unified v6.0 with sector awareness)
-        sm_result = get_sm_spirit_unified_v2(ticker_prices, sector=str(row.get('sector', 'Unknown')))
+        sm_result = get_volume_flow(ticker_prices, sector=str(row.get('sector', 'Unknown')))
         sm_spirit = sm_result["signal"]
         sm_strength = sm_result["strength"]
         sm_layer = sm_result["layer"]
@@ -195,7 +195,7 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
         _rating = _signal(_dec.stance)
         if _rating["clamped"] and _dec.stance == BUY:
             # BUY vs an UNFAVOURABLE set-up: a review state, not a relabelled signal (R3-E)
-            _dec = with_conflict(_dec, f"timing context is {_rating['raw_label']} (trend / value / volume flow against "
+            _dec = with_conflict(_dec, f"timing context is {_rating['raw_label']} (trend / value against "
                                        f"the valuation case)")
             _rating = _signal(_dec.stance)
         action_label = _rating["action_label"]
@@ -282,7 +282,7 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
             "MCap (B)": round(mcap_b, 1),
             "RSI (14)": round(latest_rsi, 1),
             "Z-Score": round(ticker_prices['price_z_score'].iloc[-1], 2) if 'price_z_score' in ticker_prices.columns else float("nan"),
-            "Smart Money": sm_spirit,
+            "Smart Money": sm_spirit if sm_spirit != "N/A" else f"N/A ({sm_result['reason']})",
             "vs MA200 (%)": round(ticker_prices['pct_from_ma200'].iloc[-1], 1) if 'pct_from_ma200' in ticker_prices.columns else float("nan"),
             "Yield (%)": round(div_yield, 2),
             "Net Payout (%)": round(net_payout, 2),

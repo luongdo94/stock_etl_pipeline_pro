@@ -11,7 +11,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from core import risk_range as rr
-from core.smart_money import get_sm_spirit_unified_v2
+from core.smart_money import get_volume_flow
 from services.ai import analyze_sentiment_finbert
 
 from ui.components import format_value
@@ -111,7 +111,7 @@ def render(ctx):
                 m = rr.risk_metrics(paths, last)
                 _max_w = max(0, (len(closes) - 1 - 250) // max(horizon, 1))
                 cov = rr.coverage_backtest(closes, horizon, windows=min(_max_w, 60), n_sims=500) if check else None
-                sm = get_sm_spirit_unified_v2(df, sector=str(sector) if sector else "Unknown")
+                sm = get_volume_flow(df, sector=str(sector) if sector else "Unknown")
             st.session_state["_risk_run"] = {"spec": spec, "at": pd.Timestamp.now(tz="UTC"),
                 "df": df, "company": company, "last": last, "returns": returns, "fit": fit,
                 "paths": paths, "sim_diag": sim_diag, "metrics": m, "coverage": cov, "max_windows": _max_w, "sm": sm}
@@ -225,7 +225,7 @@ def render(ctx):
     else:
         mood = "Bullish" if sent > 0.1 else "Bearish" if sent < -0.1 else "Neutral"
         k1.metric("News sentiment (FinBERT)", mood, delta=f"{sent:.2f} · {n_titles} headlines", delta_color="off")
-    k2.metric("Volume flow", f"{sm['signal']} ({sm['strength']}/100)",
-              delta=(f"{sm['layer']}" if sm["layer"] != "NONE" else "no signal"), delta_color="off")
+    k2.metric("Volume Flow", f"{sm['signal']} ({sm['strength']}/100)",
+              delta=sm.get("reason") or ("HIGH_VOLUME" if sm["layer"] == "INSTITUTIONAL_VOLUME" else sm["layer"]), delta_color="off")
     k3.metric("Horizon", f"{horizon} trading days", delta=f"{n_sims:,} paths", delta_color="off")
-    st.caption("Sentiment and volume flow are unvalidated context. They do not change the range, and none of this is investment advice.")
+    st.caption("Volume Flow: context only — not used in the Decision or the timing signal. Sentiment is unvalidated context. They do not change the range, and none of this is investment advice.")

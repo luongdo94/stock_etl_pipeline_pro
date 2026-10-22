@@ -2,30 +2,51 @@
 NOTE (audit A12): daily OHLCV cannot show who is buying. "Smart money" / "institutional" here means a heuristic
 PRICE-VOLUME PATTERN score (OBV / MFI / volume); its strength is a heuristic 0-100, not a probability and not
 observed institutional flow.
-Smart Money institutional-flow engine (pure pandas/numpy)."""
+Volume Flow price-volume engine (pure pandas/numpy)."""
 import numpy as np
 import pandas as pd
 
 
-# ── ANALYTICS ENGINE: Smart Money Institutional Flow ────────────────────────
+def _unavailable(reason):
+    return {"signal": "N/A", "strength": 0, "layer": "NONE", "volume_quality": 0,
+            "mfi_confirm": False, "reason": reason}
+
+
+def get_volume_flow(df_raw: "pd.DataFrame", sector: str = "Unknown") -> dict:
+    """Restore listing OHLC on a copy before calling the price-volume engine. Volume is unchanged."""
+    if df_raw is None or df_raw.empty or "date" not in df_raw or len(df_raw) < 30:
+        return _unavailable("insufficient history (need 30 sessions)")
+    df = df_raw.sort_values("date").drop_duplicates("date").tail(126).copy()
+    if not {"fx_rate", "price_scale"} <= set(df.columns):
+        return _unavailable("listing-currency basis unknown")
+    basis = df[["fx_rate", "price_scale"]].apply(pd.to_numeric, errors="coerce")
+    if not (np.isfinite(basis) & basis.gt(0)).all().all():
+        return _unavailable("listing-currency basis unknown")
+    cols = [c for c in ("price_open", "price_high", "price_low", "price_close") if c in df]
+    # Remove floating-point conversion dust so flat listing prices stay flat.
+    df[cols] = df[cols].mul(basis["price_scale"], axis=0).div(basis["fx_rate"], axis=0).round(10)
+    return get_sm_spirit_unified_v2(df, sector)
+
+
+# ── ANALYTICS ENGINE: Volume Flow ──────────────────────────────────────────
 def get_sm_spirit_unified_v2(df_raw: "pd.DataFrame", sector: str = "Unknown") -> dict:
     """
-    Enhanced Institutional Flow Engine (v6.0) with Multi-Factor Validation.
+    Public Price-Volume Engine (v6.0) with Multi-Factor Validation.
 
     Major Improvements over v5.0:
     1. Money Flow Index (MFI) cross-validation with OBV
-    2. Institutional volume detection (large block trades > 2x avg)
+    2. High-volume day detection (> 2x avg)
     3. Sector-specific thresholds (Tech/Growth vs Banks/Utilities)
-    4. Volume quality scoring (institutional vs retail pattern detection)
+    4. Volume pattern quality scoring
     5. Three-layer architecture with priority hierarchy
 
     Three-layer architecture:
 
     Layer 1 — OBV Divergence + MFI Confirmation (Highest Priority):
         Detects when OBV and price move in OPPOSITE directions.
-        - OBV rising + Price falling  → Hidden Accumulation (institutions buying dips)
-        - OBV falling + Price rising  → Hidden Distribution (institutions selling into rallies)
-        NEW: MFI must confirm the signal (MFI divergence in same direction)
+        - OBV rising + Price falling  → Accumulation pattern
+        - OBV falling + Price rising  → Distribution pattern
+        MFI confirmation is optional (a strength bonus)
         Strength bonus: +15 pts if MFI confirms
 
     Layer 2 — High-Volume Day Pattern (Medium Priority):
@@ -45,19 +66,27 @@ def get_sm_spirit_unified_v2(df_raw: "pd.DataFrame", sector: str = "Unknown") ->
 
     Returns:
         dict: {
-            "signal": "ACCUMULATION" | "DISTRIBUTION" | "NEUTRAL",
-            "strength": 0-100 (confidence score),
+            "signal": "ACCUMULATION" | "DISTRIBUTION" | "NEUTRAL" | "N/A" (with reason),
+            "strength": 0-100 (heuristic strength),
             "layer": "DIVERGENCE" | "INSTITUTIONAL_VOLUME" | "TREND" | "NONE",
-            "volume_quality": 0-100 (institutional vs retail pattern score),
+            "volume_quality": 0-100 (volume pattern score),
             "mfi_confirm": bool (whether MFI confirms OBV signal)
         }
     """
     if df_raw is None or df_raw.empty or len(df_raw) < 30:
-        return {"signal": "NEUTRAL", "strength": 0, "layer": "NONE", "volume_quality": 0, "mfi_confirm": False}
+        return _unavailable("insufficient history (need 30 sessions)")
+    if not {'date', 'price_close', 'volume', 'price_high', 'price_low'} <= set(df_raw.columns):
+        return _unavailable("missing OHLCV history")
 
     # ── Prep ──────────────────────────────────────────────────────────────────
     df = df_raw[['date', 'price_close', 'volume', 'price_high', 'price_low']].copy()
     df = df.sort_values("date").drop_duplicates("date").tail(126).reset_index(drop=True)
+    if len(df) < 30:
+        return _unavailable("insufficient history (need 30 sessions)")
+    if not pd.to_numeric(df['volume'], errors="coerce").gt(0).any():
+        return _unavailable("volume unavailable")
+    if pd.to_numeric(df['price_close'], errors="coerce").gt(0).sum() < 30:
+        return _unavailable("insufficient price history")
     df['price_close'] = df['price_close'].ffill().fillna(0)
     df['volume']      = df['volume'].fillna(0)
     df['price_high']  = df['price_high'].ffill().fillna(df['price_close'])

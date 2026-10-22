@@ -18,7 +18,7 @@ def action_description(action, rating, *, s1, price, rsi, sm_signal):
                 "supported by the cash flows. Where the DCF and the multiples disagree, check the Decision's notes.")
     if rating.get("clamped") and action == "NEUTRAL":
         return ("The Decision Summary calls this a buy candidate, so the context is not shown as unfavourable; the "
-                "weaker trend, quality or flow readings above are the risks to monitor.")
+                "weaker trend or quality readings above are the risks to monitor.")
     if action == "STRONG SETUP":
         return (f"Trend, quality, value and reward/risk all line up. Nearest support to watch: €{s1:.2f} "
                 f"(price €{price:.2f}). Whether to act is the Decision Summary's call.")
@@ -28,14 +28,12 @@ def action_description(action, rating, *, s1, price, rsi, sm_signal):
     if action == "UNFAVOURABLE":
         if rating["p_trend_c"] in ("#e74c3c", "#c0392b") and rating["p_val_c"] == "#e74c3c":
             return "Negative trend together with an expensive valuation: the context is working against the stock."
-        return "Weak quality or distribution flow with little else in favour: the context is unfavourable."
+        return "Weak quality with little else in favour: the context is unfavourable."
     if action == "NEUTRAL" and rating["p_qual_c"] in GOOD:
         return "Good business, but trend, price or reward/risk do not yet line up. Wait for a better set-up."
     if action == "WEAKENING":
         if rsi > 70:
             return f"Locally overbought (RSI {rsi:.1f}) with few pillars behind it: tactical risk is elevated."
-        if str(sm_signal).upper() == "DISTRIBUTION":
-            return f"Volume flow shows distribution; RSI {rsi:.1f} does not offset it."
         return "Technical structure is weakening and the other pillars do not compensate."
     return "Mixed signals across the pillars; nothing decisive either way."
 

@@ -171,7 +171,7 @@ def test_deep_dive_shows_each_number_once(warehouse):
     for gone in ("Quant Health", "Revision Signal", "52-week position", "Reward/Risk (Decision)", "THESIS STOP",
                  "Short Float", "Inst Own", "Smart Money Flow", "Risk &amp; Volume", "Risk & Volume"):
         assert gone not in html, gone
-    for kept in ("Technical Trend", "Volume flow", "Quality — the business", "Revisions — estimate changes", "Risk & Solvency"):
+    for kept in ("Technical Trend", "Volume Flow", "Quality — the business", "Revisions — estimate changes", "Risk & Solvency"):
         assert kept in html or kept.replace("&", "&amp;") in html, kept
 
 

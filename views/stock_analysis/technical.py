@@ -138,19 +138,22 @@ def render(dd, ctx):
         fig_tech.update_yaxes(title_text="RSI", row=2, col=1, range=[0, 100])
     # Smart Money reading, then the chart: the local chart first; TradingView only when asked for
     # Smart Money badge (our own volume-flow reading, not TradingView's)
-    _sm_color = "#2ecc71" if p_sm == "ACCUMULATION" else "#e74c3c"
+    _sm_color = {"ACCUMULATION": "#2ecc71", "DISTRIBUTION": "#e74c3c"}.get(p_sm, "#95a5a6")
     _sm_badge_html = f"""
     <div style="display:flex; gap:10px; align-items:center; margin-bottom:8px; flex-wrap:wrap;">
         <span style="background:{_sm_color}22; border:1px solid {_sm_color}; color:{_sm_color};
                      padding:4px 12px; border-radius:20px; font-size:0.82rem; font-weight:700;">
-            Smart Money: {p_sm} ({p_sm_strength})
+            Volume Flow: {p_sm} ({p_sm_strength})
         </span>
         <span style="background:var(--secondary-background-color, transparent); border:1px solid rgba(128,128,128,0.25); color:inherit;
                      padding:4px 12px; border-radius:20px; font-size:0.82rem;">
-            Layer: {p_sm_layer}
+            Layer: {'HIGH_VOLUME' if p_sm_layer == 'INSTITUTIONAL_VOLUME' else p_sm_layer}
         </span>
     </div>"""
     st.markdown(_sm_badge_html, unsafe_allow_html=True)
+    st.caption("Volume Flow: context only — not used in the Decision or the timing signal")
+    if dd.sm.get("reason"):
+        st.caption(f"Volume Flow N/A: {dd.sm['reason']}")
     tech_tab_1, tech_tab_2 = st.tabs(["Chart (local data)", "TradingView (opt-in)"])
 
     with tech_tab_1:

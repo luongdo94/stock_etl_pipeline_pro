@@ -35,6 +35,7 @@ SUMMARY_FIELDS = ("decision", "confidence", "mos_pct", "expected_return_pct", "q
                   "fcf_yield_pct", "roic_pct", "net_debt_ebitda", "pe_forward", "market_cap_bn_eur", "sector")
 OPS = {">": "gt", ">=": "ge", "<": "lt", "<=": "le", "=": "eq", "==": "eq", "!=": "ne", "contains": "contains"}
 MAX_ROWS = 15
+FLOW_CONTEXT = "smart_money is displayed as Volume Flow: public price-volume heuristic (OBV/MFI); cannot identify institutional buying/selling; context only — not used in the Decision or the timing signal."
 
 SPECS = [
     {"name": "get_decision",
@@ -49,14 +50,14 @@ SPECS = [
      "parameters": {"type": "object", "required": ["ticker"], "properties": {"ticker": {"type": "string"}}}},
     {"name": "screen",
      "description": "Find stocks in the universe by conditions on screener fields. Fields: " + ", ".join(FIELDS) +
-                    ". Operators: > >= < <= = != contains.",
+                    ". Operators: > >= < <= = != contains. " + FLOW_CONTEXT,
      "parameters": {"type": "object", "properties": {
          "conditions": {"type": "array", "items": {"type": "object", "required": ["field", "op", "value"],
                         "properties": {"field": {"type": "string"}, "op": {"type": "string"}, "value": {}}}},
          "sort_by": {"type": "string"}, "descending": {"type": "boolean"},
          "limit": {"type": "integer", "description": f"at most {MAX_ROWS}"}}}},
     {"name": "compare",
-     "description": "Side-by-side screener fields for 2-6 stocks.",
+     "description": "Side-by-side screener fields for 2-6 stocks. " + FLOW_CONTEXT,
      "parameters": {"type": "object", "required": ["tickers"], "properties": {
          "tickers": {"type": "array", "items": {"type": "string"}},
          "fields": {"type": "array", "items": {"type": "string"}}}}},

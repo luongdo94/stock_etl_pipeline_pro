@@ -153,7 +153,7 @@ _COL_CFG = {
         "Sector":          st.column_config.TextColumn("Sector", width="small"),
         "Verdict":         st.column_config.TextColumn("Decision", width="medium",
                                                    help="The recommendation (same as the Decision Summary in Stock Analysis). "
-                                                        "▲ / · / ▼ = timing context (trend, quality, value, volume flow) supportive / neutral / against. "
+                                                        "▲ / · / ▼ = timing context (trend, quality, value, reward/risk) supportive / neutral / against. "
                                                         "The arrow never changes the recommendation."),
         "MoS (%)":         st.column_config.NumberColumn("MoS", format="%+d%%",
                                                      help="Margin of safety vs base-case DCF value (blank = DCF not informative)"),
@@ -171,7 +171,8 @@ _COL_CFG = {
                                                    help="Median daily traded value, last 60 sessions. Under 1 is illiquid."),
         "Flags":           st.column_config.TextColumn("Red flags", width="medium",
                                                  help="Loss-making, debt without EBITDA, high net debt/EBITDA, uncovered dividend, negative equity"),
-        "Smart Money":     st.column_config.TextColumn("Smart Money", width="small"),
+        "Smart Money":     st.column_config.TextColumn("Volume Flow", width="small",
+                                                      help="Public price-volume heuristic (OBV/MFI); context only — not used in the Decision or the timing signal"),
         "RSI (14)":        st.column_config.NumberColumn("RSI", format="%d"),
         "Z-Score":         st.column_config.NumberColumn("Z-Score", format="%+.2f"),
         "vs MA200 (%)":    st.column_config.NumberColumn("vs MA200", format="%+.1f%%"),
@@ -428,7 +429,7 @@ def render(ctx):
                                    help="Free cash flow after stock comp / market cap. Leave at -10 to keep everything.")
             skip_er = sticky(st.checkbox, "Hide stocks reporting within 7 days", False, "scan_skip_er",
                              help="No new position into a release: the Decision blocks BUYs in that window anyway.")
-            filter_sm = sticky_choice("Smart Money", ["🌎 All", "🟢 Accumulation only", "🔴 Distribution only"],
+            filter_sm = sticky_choice("Volume Flow", ["🌎 All", "🟢 Accumulation only", "🔴 Distribution only"],
                                       "🌎 All", "custom_sm_filter", format_func=lambda value: value.split(" ", 1)[1])
     # A refinement applies only once moved off its default — otherwise stocks with an unknown value
     # (no forward P/E, no PEG) were silently removed from every preset, including "All".
@@ -464,6 +465,7 @@ def render(ctx):
                          help="Show 6 core columns (Ticker, Company, Verdict, Quality, Value, Next ER) for quick scanning.")
     with c_cols2:
         extras = sticky_multi("More columns", EXTRA_COLS, [], "scan_extra_cols",
+                              format_func=lambda c: "Volume Flow" if c == "Smart Money" else c,
                               help="Detail behind the scores. Hidden by default: Quality, Value and Momentum already summarise them.")
     base_cols = COMPACT_COLS if compact else DEFAULT_COLS
     display_cols = sv.columns_for(view, base_cols, extras, f_df.columns)
@@ -495,7 +497,7 @@ def render(ctx):
             st.button("Show all stocks", key="scan_show_all", on_click=_show_all)
         else:
             st.info("Nothing in this view with the current scope and filters.")
-    st.caption("▲ timing context supportive · neutral ▼ against (trend, quality, value, volume flow). "
+    st.caption("▲ timing context supportive · neutral ▼ against (trend, quality, value, reward/risk). "
                "The label is the recommendation; the arrow is context only.")
 
     if 'radar_limit' not in st.session_state:
@@ -574,7 +576,7 @@ def render(ctx):
     with st.expander("How to read the table"):
         st.write("""
         - **Decision** is the recommendation; **MoS** (margin of safety vs the DCF base value) is its evidence. Blank = DCF not informative.
-        - The arrow after the Decision is the **timing context** (the Signal): ▲ supportive, · neutral, ▼ against — trend, quality, value, reward/risk, volume flow. Add the "Action" column for the full Signal label.
+        - The arrow after the Decision is the **timing context** (the Signal): ▲ supportive, · neutral, ▼ against — trend, quality, value, reward/risk. Add the "Action" column for the full Signal label.
         - **Quality / Value / Momentum** are independent 0-100 ranks vs sector peers; **Revisions** is the 30-day change in analysts' EPS estimates.
         - A cheap stock with Quality below 45 is a value-trap candidate; a high Quality stock with RSI < 30 is a pullback to research, not a signal.
         """)

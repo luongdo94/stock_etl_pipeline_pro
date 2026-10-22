@@ -299,7 +299,7 @@ Your task: explain the system's COMPUTED decision in the light of both. You do n
 - 52W Range: €{_f(low_52w)} – €{_f(high_52w)} | % from MA200: {pct_from_ma200} | 52W Position: {_f(metrics.get('w52_pos','N/A'), 0)}%
 - Technical Levels: S1=€{_f(support_s1)} | S2=€{_f(support_s2)} | R1=€{_f(resistance_r1)} | R2=€{_f(resistance_r2)} | Stop=€{_f(stop_loss_tech)}
 - Moving Averages: MA20=€{_f(ma20_cur)} | MA50=€{_f(ma50_cur)}
-- RSI: {_f(rsi, 1) if rsi is not None else 'N/A'} | MA Signal: {ma_signal} | Smart Money: {smart_money} | Forward P/E: {_f(metrics.get('forward_pe', pe), 1)}x | PEG: {_f(peg, 2)} | FCF Margin: {_f(fcf, 1, '%')}
+- RSI: {_f(rsi, 1) if rsi is not None else 'N/A'} | MA Signal: {ma_signal} | Volume Flow: {smart_money} (public price-volume heuristic (OBV/MFI); cannot identify institutional buying/selling; context only — not used in the Decision or the timing signal) | Forward P/E: {_f(metrics.get('forward_pe', pe), 1)}x | PEG: {_f(peg, 2)} | FCF Margin: {_f(fcf, 1, '%')}
 - Profitability: ROE: {f"{roe_pct:+.1f}%" if roe_pct is not None else 'N/A'} | Operating Margin: {f"{op_margin_pct:.1f}%" if op_margin_pct is not None else 'N/A'} | Gross Margin: {f"{gross_margin_pct:.1f}%" if gross_margin_pct is not None else 'N/A'}
 - Enterprise Valuation: EV/EBITDA: {f"{float(ev_ebitda):.1f}x" if ev_ebitda is not None else 'N/A'} | FCF Yield: {f"{fcf_yield:.1f}%" if fcf_yield is not None else 'N/A'}
 - Debt/EBITDA: {_f(metrics.get('debt_ebitda', 'N/A'), 2)}x | Net Payout Yield: {_f(metrics.get('net_payout_yield_pct', 'N/A'), 2)}%

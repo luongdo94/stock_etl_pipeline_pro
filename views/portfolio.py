@@ -471,7 +471,8 @@ def render(ctx):
                 _act = meta.get("Decision", "NOT ENOUGH DATA")
                 _act_emoji = "🔵 " if "RESEARCH" in _act else "🟢 " if "BUY" in _act else "🔴 " if "AVOID" in _act else "🟡 " if "HOLD" in _act else "⚪ "
 
-                _sm = meta.get("Smart Money", "Neutral")
+                _sm = meta.get("Smart Money", "N/A")
+                _sm = _sm if pd.notna(_sm) else "N/A"
                 _sm_emoji = "🟢 " if "ACCUMULATION" in _sm else "🔴 " if "DISTRIBUTION" in _sm else "⚪ "
 
                 init_data.append({
@@ -504,6 +505,10 @@ def render(ctx):
             _pdf["Current Decision"] = [_cur.get(t, "NOT ENOUGH DATA") for t in _pdf["Ticker"]]
             _pdf["Action"] = [_emoji(_cur.get(t, "NOT ENOUGH DATA")) + holding_action(_cur.get(t, "NOT ENOUGH DATA"), held=True)
                               for t in _pdf["Ticker"]]
+
+        # Refresh only derived context; keep the editor draft and its raw Action guard.
+        _flow = m_df.set_index("Ticker")["Smart Money"].to_dict() if {"Ticker", "Smart Money"} <= set(m_df.columns) else {}
+        _pdf["Smart Money"] = _pdf["Ticker"].map(_flow).fillna("N/A")
 
         # 2. BULK DATA EDITOR
 
@@ -548,7 +553,8 @@ def render(ctx):
                         "Region": st.column_config.TextColumn("Region", disabled=True),
                         "Z-Score": st.column_config.NumberColumn("Z-Score", format="%.2f", disabled=True),
                         "RSI (14)": st.column_config.NumberColumn("RSI", format="%.1f", disabled=True),
-                        "Smart Money": st.column_config.TextColumn("Smart Money", disabled=True),
+                        "Smart Money": st.column_config.TextColumn("Volume Flow", disabled=True,
+                                                                 help="context only — not used in the Decision or the timing signal"),
                         "Price (€)": st.column_config.NumberColumn("Market Price", format="€%.2f", disabled=True),
                         "Shares": st.column_config.NumberColumn("Shares", min_value=0.0, step=0.01, format="%.4g"),
                         "Cost Basis (€)": st.column_config.NumberColumn("Unit Cost", min_value=0.0, step=0.01, format="€%.2f"),
@@ -677,7 +683,7 @@ def render(ctx):
                     # Pull technical signals from m_df (same source as screener)
                     _m_row = m_df[m_df["Ticker"] == _t]
                     _m = _m_row.iloc[0] if not _m_row.empty else {}
-                    _sm_raw = str(_m.get("Smart Money", "NEUTRAL"))
+                    _sm_raw = str(_m.get("Smart Money", "N/A"))
                     # Strip emojis from Smart Money label
                     _sm_clean = _sm_raw.replace("🟢 ", "").replace("🔴 ", "").replace("⚪ ", "").strip()
                     _action_raw = str(_m.get("Decision", "NOT ENOUGH DATA"))

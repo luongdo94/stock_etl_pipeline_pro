@@ -126,8 +126,8 @@ def render(ctx):
           the exit-capacity cap when a NAV is configured. Portfolio additions and rebalances also use the configured
           sector, currency and correlated-crash stress budgets (`portfolio` in the rule file). A stop is a trigger,
           not a guaranteed price. All assumptions: `config/decision_rules.yaml`.
-        - **Signal** (STRONG SETUP … UNFAVOURABLE: trend, quality, value, the Decision's reward/risk and volume flow),
-          **Momentum**, **Revisions**, **Smart Money**, LLM narratives and ML forecasts are *context*; only the
+        - **Signal** (STRONG SETUP … UNFAVOURABLE: trend, quality, value, the Decision's reward/risk),
+          **Momentum**, **Revisions**, **Volume Flow**, LLM narratives and ML forecasts are *context*; only the
           Decision is a recommendation. The 52-week position is shown but not scored.
         """)
 
@@ -136,8 +136,10 @@ def render(ctx):
         - **Risk Lab** estimates a volatility range (GJR-GARCH + Monte Carlo) and checks its calibration; it forecasts no direction. The neural price forecasts were removed after failing a walk-forward test against a no-change forecast;
           the Decision ignores them.
         - **Market regime gauge** and *regime read* texts are heuristics, not validated against returns.
-        - **Smart Money** is a volume-flow heuristic on daily data (it cannot see who traded);
-          calibrated to stay NEUTRAL on random data most of the time.
+        - **Volume Flow** is a public daily price–volume heuristic (OBV/MFI), not observed institutional buying/selling.
+          It is **context only — not used in the Decision or the timing signal**; strength is not a probability.
+          OHLC is restored to listing currency with stored fx_rate/price_scale on a copy; volume stays unchanged.
+          Unknown conversion basis or insufficient history/volume is N/A with a reason, never NEUTRAL.
         """)
 
     _methodology_qa()

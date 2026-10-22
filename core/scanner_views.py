@@ -251,7 +251,7 @@ def columns_for(view: str, default_cols: list, extras: list, available) -> list:
 
 # ── export ──────────────────────────────────────────────────────────────────────────────────────────────────────────
 _FORMULA = re.compile(r"^[=+\-@\t\r]")
-UNITS = {"MCap (B)": "MCap (EUR bn)", "ADV (EUR M)": "ADV (EUR M)", "FCF Yield (%)": "FCF Yield (%)"}
+UNITS = {"MCap (B)": "MCap (EUR bn)", "ADV (EUR M)": "ADV (EUR M)", "FCF Yield (%)": "FCF Yield (%)", "Smart Money": "Volume Flow"}
 
 
 def _safe_text(v):

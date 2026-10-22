@@ -2,7 +2,7 @@
 
 Kept deliberately short: each preset answers a distinct question. Presets that overlapped another one
 almost entirely, returned (nearly) nothing on the real universe, or rested only on the volume-flow
-heuristic were removed; RSI / Z-Score / Smart Money remain available as Custom Refinement sliders.
+heuristic were removed; RSI / Z-Score / Volume Flow remain available as Custom Refinement sliders.
 """
 from dataclasses import dataclass
 from typing import Callable
