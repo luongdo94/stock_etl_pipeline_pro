@@ -1,12 +1,15 @@
 """Floating assistant (bottom-right on every tab): a popover chat that reruns on its own (st.fragment), so a question
 does not reload the page. Answers come from services/assistant.py with citations to the tool documents."""
+import os
 from datetime import date
+from time import perf_counter
 
 import pandas as pd
 import streamlit as st
 
 from services import assistant
 from services.assistant_tools import ToolBox
+from ui.sticky import sticky_radio
 
 _HISTORY_KEY = "assistant_history"
 _MAX_KEPT = 20
@@ -86,6 +89,7 @@ def _render_turn(turn):
         st.markdown(turn["q"])
     res = turn["res"]
     with st.chat_message("assistant"):
+        st.caption(f"{turn.get('model', 'Cohere')} · {turn.get('elapsed', 0):.1f}s")
         if res.get("error") and not res.get("text"):
             st.error(f"The assistant could not answer: {res['error']}")
             return
@@ -121,9 +125,14 @@ def render(ctx):
             st.markdown("**Research assistant** — answers from the app's data, your portfolio and SEC filings, "
                         "with sources. It explains the computed Decision; it never gives its own rating.")
             if not assistant.available():
-                st.info("Set COHERE_API_KEY in .env to use the assistant.")
+                st.info("Set COHERE_API_KEY or install Codex locally to use the assistant.")
                 return
             _own_session()
+            options = assistant.models()
+            default = "Codex (local)" if not os.environ.get("COHERE_API_KEY") and len(options) > 1 else "Cohere"
+            model = sticky_radio("Model", options, default, key="assistant_model", horizontal=True)
+            if model == "Codex (local)":
+                st.caption("local, ~1–2 min per question")
             hist = st.session_state.setdefault(_HISTORY_KEY, [])
             c1, c2 = st.columns([3, 1])
             if c2.button("Clear", key="assistant_clear", width="stretch"):
@@ -135,13 +144,15 @@ def render(ctx):
                 ticker = st.session_state.get("active_ticker") if tab == "Stock Analysis" else None
                 with box:
                     with st.spinner("Looking it up…"):
+                        started = perf_counter()
                         res = assistant.ask(q, _toolbox(ctx), history=[(h["q"], h["res"]["text"]) for h in hist],
-                                            tab=tab, ticker=ticker)
+                                            tab=tab, ticker=ticker,
+                                            chat=assistant._codex_chat() if model == "Codex (local)" else None)
                 st.session_state["assistant_llm_calls"] = st.session_state.get("assistant_llm_calls", 0) + res["llm_calls"]
-                hist.append({"q": q, "res": res})
+                hist.append({"q": q, "res": res, "model": model, "elapsed": perf_counter() - started})
                 del hist[:-_MAX_KEPT]
-            c1.caption(f"{st.session_state.get('assistant_llm_calls', 0)} LLM calls this session · "
-                       "trial key: 20/min, 1,000/month")
+            c1.caption(f"{st.session_state.get('assistant_llm_calls', 0)} LLM calls this session"
+                       + (" · trial key: 20/min, 1,000/month" if model == "Cohere" else ""))
             with box:
                 if not hist:
                     t = st.session_state.get("active_ticker") or "AAPL"

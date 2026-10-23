@@ -161,7 +161,7 @@ def test_codex_command_stdin_output_and_cleanup(local_codex, monkeypatch):
         output = Path(args[args.index("-o") + 1])
         assert output.parent == Path(args[args.index("-C") + 1])
         assert output.parent != Path.cwd()
-        assert kw["input"] == ("Answer directly in markdown. Do not run any command or read any file; "
+        assert kw["input"] == ("Answer directly. Do not run any command or read any file; "
                                "everything you need is below.\n" + prompt)
         assert kw["timeout"] == 300 and kw["text"] is True
         assert not kw.get("shell", False)
