@@ -238,28 +238,33 @@ def stored_macro(generation=None) -> dict:
 stored_macro = snapshot_cached(ttl=600)(stored_macro)
 
 
-def stored_fx_rate(source="USD", generation=None):
+def stored_fx_rate(source="USD", generation=None, *, with_date=False):
     """Rate `source` currency → EUR from the loaded snapshot (the newest stored fx_rate of a ticker quoted in it), or None.
-    No request to a provider (CR-07): a page that only opens must not call Yahoo. Pence (GBp / GBX) = GBP / 100."""
+    No request to a provider (CR-07): a page that only opens must not call Yahoo. Pence (GBp / GBX) = GBP / 100.
+    With with_date=True, return (rate, stored date) instead of a scalar."""
     src = str(source or "").strip()
     if not src:
         return None
     pence = src in ("GBp", "GBX", "GBx")
     ccy = "GBP" if pence else src.upper()
     if ccy == "EUR":
-        return 0.01 if pence else 1.0
-    rate = _stored_fx(ccy, generation)
-    return rate * (0.01 if pence else 1.0) if rate else None
+        return (1.0, None) if with_date else 1.0
+    quote = _stored_fx(ccy, generation)
+    if quote is None:
+        return None
+    rate, rate_date = quote
+    rate *= 0.01 if pence else 1.0
+    return (rate, rate_date) if with_date else rate
 
 
 def _stored_fx(ccy, generation=None):
     with get_db_connection(read_only=True) as conn:
         try:
-            row = conn.execute("SELECT fx_rate FROM raw.stock_prices WHERE upper(currency) = ? AND fx_rate > 0 "
+            row = conn.execute("SELECT fx_rate, date FROM raw.stock_prices WHERE upper(currency) = ? AND fx_rate > 0 "
                                "ORDER BY date DESC LIMIT 1", [ccy]).fetchone()
         except Exception:
             return None
-    return _finite(row[0]) if row else None
+    return (_finite(row[0]), row[1]) if row and _finite(row[0]) is not None else None
 
 
 _stored_fx = snapshot_cached(ttl=600)(_stored_fx)

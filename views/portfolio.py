@@ -11,13 +11,14 @@ import streamlit as st
 from core.alerts import METRICS as ALERT_METRICS, earnings_soon, evaluate_rules, latest_snapshot
 from core.alerts import opening_stops, position_stop_triggers
 from core.decision import holding_action
+from core.currency import MINOR_UNITS, major_currency
 from core.decision import load_rules as load_decision_rules
 from core.portfolio_policy import check as policy_check, describe as policy_describe, exposures as policy_exposures
 from core.portfolio_policy import load_policy
 from core.portfolio_risk import (apply_rebalance, complete_returns, rebalance_limits, rebalance_policy,
                                  record_trade, shrink_expected_returns, weight_budget)
 from services.alerts import add_alert_rule, delete_alert_rule, load_alert_rules
-from services.market_data import fetch_dividend_calendar
+from services.market_data import fetch_dividend_calendar, stored_fx_rate
 from core.ledger import adjustments_from_edit, history_incomplete, realized_pnl, trade as ledger_trade, trades_from_diff
 from core.stress import estimate_sensitivities, historical_replay, load_scenarios, scenario_losses
 from services.user_store import (append_trades, load_portfolio_with_cash, load_trades, save_portfolio_checked,
@@ -112,18 +113,27 @@ def _proposal_stale(proposal, tickers, saved_spec, current_spec):
             set(proposal.loc[proposal["Ticker"] != "CASH", "Ticker"]) != set(tickers))
 
 
-def _stage_import(idf, stock_tickers, mode):
+def _stage_import(idf, stock_tickers, mode, details=None):
     """Parse the whole file before changing any session state; keep the first pre-import book."""
+    idf = idf.rename(columns=lambda c: str(c).lower().replace("\ufeff", "").strip())
+    if "symbol" in idf.columns and "ticker" not in idf.columns:
+        idf = idf.rename(columns={"symbol": "ticker"})
     if "ticker" not in idf.columns:
         raise ValueError("A ticker column is required.")
     shares = {} if mode == "Overwrite" else dict(st.session_state.portfolio_shares)
     costs = {} if mode == "Overwrite" else dict(st.session_state.portfolio_cost)
     valid, missing = [], []
+    ambiguous, conversions = [], {}
+    currency_column = next((c for c in ("currency", "ccy", "cost_currency") if c in idf.columns), None)
     for _, row in idf.iterrows():
         raw = str(row["ticker"]).upper().strip()
-        ticker = next((t for t in stock_tickers if t == raw or t.startswith(f"{raw}.")), None)
+        candidates = sorted({t for t in stock_tickers if t.startswith(f"{raw}.")})
+        ticker = raw if raw in stock_tickers else candidates[0] if len(candidates) == 1 else None
         if raw == "NOVO B":
             ticker = "NVO" if "NVO" in stock_tickers else None
+        elif not ticker and len(candidates) > 1:
+            ambiguous.append(f"{raw} → {', '.join(candidates)}")
+            continue
         if not ticker:
             if raw not in ("NAN", ""):
                 missing.append(raw)
@@ -133,6 +143,17 @@ def _stage_import(idf, stock_tickers, mode):
         cost = float(cost) if pd.notna(cost) else np.nan
         if any(pd.notna(v) and (not np.isfinite(v) or v < 0) for v in (qty, cost)):
             raise ValueError(f"Invalid shares or cost for {raw}.")
+        currency = row.get(currency_column)
+        currency = str(currency).strip() if pd.notna(currency) else ""
+        currency = currency or "EUR"
+        ccy = major_currency(currency)
+        if ccy != "EUR":
+            if currency not in conversions:
+                quote = stored_fx_rate(ccy, with_date=True)
+                if quote is None or quote[1] is None or not np.isfinite(quote[0]) or quote[0] <= 0:
+                    raise ValueError(f"Unknown currency or no stored EUR rate for {currency} ({raw}).")
+                conversions[currency] = (quote[0] / (100 if currency in MINOR_UNITS else 1), quote[1])
+            cost *= conversions[currency][0]
         if ticker in shares:                      # duplicates are lots in both modes
             old_qty, old_cost = shares[ticker], costs.get(ticker)
             total = old_qty + qty if pd.notna(old_qty) and pd.notna(qty) else np.nan
@@ -149,6 +170,8 @@ def _stage_import(idf, stock_tickers, mode):
         previous = [] if mode == "Overwrite" else st.session_state.portfolio_tickers
         st.session_state.portfolio_tickers = list(dict.fromkeys(previous + valid))
         st.session_state['_portfolio_version'] += 1
+    if details is not None:
+        details.update(ambiguous=ambiguous, conversions=conversions)
     return list(dict.fromkeys(valid)), missing
 
 
@@ -159,6 +182,7 @@ def _discard_import():
     st.session_state.update(saved)
     st.session_state.pop("_import_toast", None)
     st.session_state.pop("_import_warnings", None)
+    st.session_state.pop("_import_ambiguous", None)
     st.session_state['_portfolio_version'] += 1
 
 
@@ -348,13 +372,15 @@ def render(ctx):
             st.success(_imp)
         if _imp_w:
             st.warning(_imp_w)
+        if _ambiguous := st.session_state.pop("_import_ambiguous", None):
+            st.warning(_ambiguous)
         # --- 2. Portfolio Management Tools (New Layout) ---
         tc1, tc2 = st.columns(2)
 
         with tc1:
             # --- CSV / Excel Portfolio Importer ---
             with st.popover("Import Portfolio", width="stretch"):
-                st.markdown("**Format:** `ticker` (Required), `shares`, `cost` (Optional)")
+                st.markdown("**Format:** `ticker` (required), `shares`, `cost`, `currency` (optional, default EUR)")
                 uploaded_file = st.file_uploader("Select file", type=["csv", "xlsx"], label_visibility="collapsed")
                 import_mode = sticky_radio("Mode", ["Overwrite", "Merge (Accumulate)"], "Overwrite", "pf_import_mode", horizontal=True, label_visibility="collapsed")
                 _n_now = len(st.session_state.get("portfolio_tickers", []))
@@ -380,17 +406,20 @@ def render(ctx):
                             else:
                                 idf = pd.read_excel(uploaded_file)
 
-                            idf.columns = [str(c).lower().replace('\ufeff', '').strip() for c in idf.columns]
-                            if 'symbol' in idf.columns and 'ticker' not in idf.columns:
-                                idf.rename(columns={'symbol': 'ticker'}, inplace=True)
-
-                            valid, missing_tickers = _stage_import(idf, stock_tickers, import_mode)
+                            details = {}
+                            valid, missing_tickers = _stage_import(idf, stock_tickers, import_mode, details)
                             if valid:
                                 st.session_state['_import_toast'] = f"Imported {len(valid)} assets! Not saved yet: review the grid, then “Save & Calculate”."
                             else:
                                 st.session_state['_import_toast'] = "No supported tickers imported; the portfolio is unchanged."
                             if missing_tickers:
                                 st.session_state['_import_warnings'] = f"Skipped {len(missing_tickers)} unsupported: {', '.join(missing_tickers[:5])}"
+                            if details['ambiguous']:
+                                st.session_state['_import_ambiguous'] = "Ambiguous tickers: " + "; ".join(details['ambiguous']) + ". Use the full ticker including its suffix."
+                            if valid and details['conversions']:
+                                st.session_state['_import_toast'] += " Cost converted to EUR: " + "; ".join(
+                                    f"{ccy} → EUR @ {rate:g} (rate of {day:%Y-%m-%d})"
+                                    for ccy, (rate, day) in details['conversions'].items())
                             st.rerun()
                         except Exception as e:
                             st.error(f"Import failed: {e}")
