@@ -43,6 +43,19 @@ def needs_refresh(conn: duckdb.DuckDBPyConnection, threshold_hours: int = 168) -
     return last is None or (pd.Timestamp.now() - pd.Timestamp(last)).total_seconds() / 3600 > threshold_hours
 
 
+def recent_unreported_tickers(conn, now=None) -> list:
+    """Retry missing actual EPS 6 hours to 14 days after the announcement (UTC)."""
+    stamp = pd.Timestamp.now(tz="UTC") if now is None else pd.Timestamp(now)
+    stamp = stamp.tz_localize("UTC") if stamp.tzinfo is None else stamp.tz_convert("UTC")
+    try:
+        return [r[0] for r in conn.execute(f"""
+            SELECT DISTINCT ticker FROM {TABLE} WHERE eps_actual IS NULL
+              AND earnings_ts >= ? AND earnings_ts <= ? ORDER BY ticker
+        """, [stamp - pd.Timedelta(days=14), stamp - pd.Timedelta(hours=6)]).fetchall()]
+    except duckdb.Error:
+        return []
+
+
 def parse_earnings_dates(ticker: str, raw: pd.DataFrame, now=None) -> pd.DataFrame:
     """Yahoo `get_earnings_dates` frame → rows of COLUMNS. Surprise is stored as a fraction (6.74% → 0.0674), as
     reported: a surprise above 500 % is a near-zero estimate (−0.05 → −0.37), not a units error — the analysis flags it

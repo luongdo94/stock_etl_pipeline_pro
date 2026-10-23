@@ -1,6 +1,7 @@
 """View: 🗓️ Earnings — earnings-report (ER) analysis: upcoming reports, a stock's beat / miss and reaction history,
 an AI note on the latest report, and a universe study of what prices did after surprises."""
 import html
+import time
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -397,7 +398,9 @@ def render(ctx):
         st.markdown("---")
         render_header("zap", "AI note on the latest report", level="####")
         lang = sticky_radio("Language", ["English", "Vietnamese"], "English", "er_lang", horizontal=True)
-        if not svc.api_key():
+        summariser = sticky_radio("Summariser", svc.summariser_options(), "Cohere", "er_summariser", horizontal=True)
+        model = "Codex (local)" if summariser == "Codex (local)" else svc.LLM_MODEL
+        if model == svc.LLM_MODEL and not svc.api_key():
             sticky(st.text_input, "Cohere API key (kept only for this session)", "", "cohere_api_key", type="password",
                           help="Or set COHERE_API_KEY in the environment.")
         reported = hist[hist["eps_actual"].notna()].sort_values("earnings_ts", ascending=False)
@@ -416,7 +419,7 @@ def render(ctx):
             f"(surprise {_pct(last['surprise_pct'])}); 2-day price reaction {_pct(ret_2d)}." if last is not None else None,
             f"- Beat rate over the last {b['n']} reports: {_pct(b['beat_rate'], 0, False)}." if b["n"] else None,
             f"- Next report: {nxt_txt}." if nxt is not None else None]))
-        key = svc.note_key(t, last["earnings_ts"] if last is not None else None, lang, facts)
+        key = svc.note_key(t, last["earnings_ts"] if last is not None else None, lang, facts, model=model)
         if st.button("Summarise the latest report", key="er_ai"):
             company = names.get(t, t)
             mismatch = None
@@ -446,15 +449,28 @@ def render(ctx):
                     st.caption("Same report, facts and source text as the note below — kept (no new LLM call).")
                 else:
                     try:
+                        prompt = svc.build_summary_prompt(company, t, facts or "- none", source, text, lang)
+                        started = time.perf_counter()
                         with st.spinner("Writing the note..."):
-                            note = svc.summarise_earnings(svc.api_key(), company, t, facts or "- none", source, text, lang)
+                            note = (svc.summarise_earnings_codex(prompt) if model == "Codex (local)" else
+                                    svc.summarise_earnings(svc.api_key(), company, t, facts or "- none", source, text, lang))
+                        elapsed = time.perf_counter() - started
+                        from services.ai import ungrounded_numbers
+                        from core.retrieval import select_passages
+                        sent_text = select_passages(text, svc.SECTION_QUERIES, budget=15000)
                         st.session_state[key] = {"note": note, "source": source, "text_id": text_id,
-                                                 "created_at": pd.Timestamp.now()}
+                                                 "created_at": pd.Timestamp.now(), "model": model, "elapsed": elapsed,
+                                                 "ungrounded": ungrounded_numbers(note, facts + "\n" + sent_text)}
                     except Exception as e:
                         st.error(f"AI summary unavailable: {e}")
         if key in st.session_state:                    # a note of this report, facts, language and model only
             rec = st.session_state[key]
             st.markdown(rec["note"])
+            if "elapsed" in rec:
+                st.caption(f"Summariser: {rec['model']} · Runtime: {rec['elapsed']:.1f}s")
+            if rec.get("ungrounded"):
+                st.warning("Numbers not found in the supplied facts and source: " +
+                           ", ".join(f"{n:g}" for n in rec["ungrounded"]))
             st.caption(f"Source: {rec['source']}. Written {rec['created_at']:%d %b %Y %H:%M} by an LLM from that text — "
                        "check the original before relying on it. A new source text, or new figures for this report, "
                        "make a new note.")

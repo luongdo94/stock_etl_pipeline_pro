@@ -33,6 +33,7 @@ import duckdb
 import pandas as pd
 
 from core.retrieval import chunk_text
+from core.sec_documents import pick_exhibit99
 
 logger = logging.getLogger(__name__)
 
@@ -187,8 +188,7 @@ def _filing_url(cik: int, accession: str, doc: str) -> str:
 def _release_url(cik: int, accession: str, primary: str, ua: str, get=None) -> str:
     base = f"https://www.sec.gov/Archives/edgar/data/{cik}/{accession.replace('-', '')}"
     names = [i["name"] for i in sec_get(f"{base}/index.json", ua, get).json()["directory"]["item"]]
-    ex = [n for n in names if re.search(r"ex[-_]?99", n, re.I) and n.lower().endswith((".htm", ".html", ".txt"))]
-    return f"{base}/{(ex or [primary])[0]}"
+    return f"{base}/{pick_exhibit99(names) or primary}"
 
 
 def ingest_ticker(conn, ticker: str, cik: int, ua: str, cfg: dict, get=None) -> int:

@@ -271,11 +271,19 @@ def _extract_all(conn, universe, watermarks, is_incremental, lookback_days, fast
 
     # Earnings announcements (dates + EPS estimate / actual) for the Earnings tab: weekly. Never fails the run.
     events_df = pd.DataFrame()
-    if not fast_mode and earnings_events.needs_refresh(conn, threshold_hours=refresh["earnings_hours"]):
-        try:
-            events_df = earnings_events.extract_earnings_events(equities)
-        except Exception as e:
-            logger.warning(f"   ⚠️ Earnings-events extraction failed ({e}) — previous events kept")
+    try:
+        if not fast_mode and earnings_events.needs_refresh(conn, threshold_hours=refresh["earnings_hours"]):
+            event_targets = equities
+        else:
+            pending = set(earnings_events.recent_unreported_tickers(conn))
+            if not is_incremental and Path(DB_PATH).exists():
+                with duckdb.connect(DB_PATH, read_only=True) as stored:
+                    pending.update(earnings_events.recent_unreported_tickers(stored))
+            event_targets = [t for t in equities if t in pending]
+        if event_targets:
+            events_df = earnings_events.extract_earnings_events(event_targets)
+    except Exception as e:
+        logger.warning(f"Earnings-events extraction failed ({e}) - previous events kept")
 
     actions_df = pd.DataFrame()
     if not fast_mode:

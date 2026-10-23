@@ -5,6 +5,10 @@ text an AI summary is built from (SEC press release for US listings, recent head
 import logging
 import os
 import re
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
 import urllib.parse
 from functools import lru_cache
 
@@ -12,6 +16,7 @@ import pandas as pd
 import streamlit as st
 
 from core import earnings as er
+from core.sec_documents import pick_exhibit99
 from services.db import get_db_connection
 
 logger = logging.getLogger(__name__)
@@ -62,13 +67,13 @@ def text_hash(text: str) -> str:
     return hashlib.sha1(str(text).encode("utf-8", "ignore")).hexdigest()[:12]
 
 
-def note_key(ticker: str, event_ts, language: str, facts: str = "") -> str:
+def note_key(ticker: str, event_ts, language: str, facts: str = "", model: str = None) -> str:
     """Session key of an AI note: one report of one ticker, its facts, in one language, by one model / prompt (new
     figures for the same report — a corrected EPS, a new beat rate — are a new note). The source text is fetched on
     the click and named under the note; the 8-K filing-date check binds it to the report in time, not to a fiscal
     period."""
     import hashlib
-    h = hashlib.sha1(f"{LLM_MODEL}|{SUMMARY_PROMPT}|{facts}".encode()).hexdigest()[:10]
+    h = hashlib.sha1(f"{model or LLM_MODEL}|{SUMMARY_PROMPT}|{facts}".encode()).hexdigest()[:10]
     return f"er_note::{ticker}::{pd.Timestamp(event_ts).isoformat() if event_ts is not None else 'none'}::{language}::{h}"
 
 
@@ -134,9 +139,10 @@ def sec_press_release(ticker: str, user_agent: str):
                 acc_nd = acc.replace("-", "")
                 base = f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc_nd}"
                 names = [i["name"] for i in _sec_get(f"{base}/index.json", user_agent).json()["directory"]["item"]]
-                ex = [n for n in names if re.search(r"ex[-_]?99", n, re.I) and n.lower().endswith((".htm", ".html", ".txt"))]
-                url = f"{base}/{(ex or [doc])[0]}"
-                return html_to_text(_sec_get(url, user_agent).text, limit=RELEASE_MAX_CHARS), url, fdate
+                exhibit = pick_exhibit99(names)
+                url = f"{base}/{exhibit or doc}"
+                where = url if exhibit else f"{url} (primary document; no Exhibit 99 found)"
+                return html_to_text(_sec_get(url, user_agent).text, limit=RELEASE_MAX_CHARS), where, fdate
         return None, "no 8-K earnings release (Item 2.02) among the recent filings", None
     except Exception as e:
         return None, f"SEC request failed: {type(e).__name__}", None
@@ -195,6 +201,17 @@ SECTION_QUERIES = ["revenue net income earnings per share results compared with 
                    "next quarter pipeline backlog orders investment plans"]
 
 
+def build_summary_prompt(company: str, ticker: str, facts: str, source: str, text: str,
+                         language: str = "English") -> str:
+    # the whole release is read; a long one is reduced to the passages that answer the note's sections (the tables
+    # and the outlook sit at the end and used to be cut off after 15,000 characters)
+    from core.retrieval import select_passages
+    text = select_passages(text, SECTION_QUERIES, budget=15000)
+    prompt = SUMMARY_PROMPT.format(company=company, ticker=ticker, facts=facts, source=source, text=text,
+                                   language=language)
+    return prompt
+
+
 def summarise_earnings(api_key: str, company: str, ticker: str, facts: str, source: str, text: str,
                        language: str = "English") -> str:
     """LLM note on the latest report (Cohere). Raises on a missing key or an API error."""
@@ -202,14 +219,46 @@ def summarise_earnings(api_key: str, company: str, ticker: str, facts: str, sour
         raise ValueError("COHERE_API_KEY is not set")
     import cohere
     co = cohere.ClientV2(api_key=api_key)
-    # the whole release is read; a long one is reduced to the passages that answer the note's sections (the tables
-    # and the outlook sit at the end and used to be cut off after 15,000 characters)
-    from core.retrieval import select_passages
-    text = select_passages(text, SECTION_QUERIES, budget=15000)
-    prompt = SUMMARY_PROMPT.format(company=company, ticker=ticker, facts=facts, source=source, text=text,
-                                   language=language)
+    prompt = build_summary_prompt(company, ticker, facts, source, text, language)
     resp = co.chat(model=LLM_MODEL, messages=[{"role": "user", "content": prompt}], max_tokens=1200)
     return resp.message.content[0].text
+
+
+def codex_path():
+    """Local executable only; cloud sessions never offer Codex."""
+    if os.environ.get("SUPABASE_REMOTE_MODE", "false").lower() == "true":
+        return None
+    candidates = [os.environ.get("CODEX_PATH"), shutil.which("codex"),
+                  str(Path(os.environ.get("LOCALAPPDATA", "")) / "Programs/OpenAI/Codex/bin/codex.exe")]
+    return next((p for p in candidates if p and Path(p).is_file()), None)
+
+
+def summariser_options() -> list:
+    return ["Cohere"] + (["Codex (local)"] if codex_path() else [])
+
+
+def summarise_earnings_codex(prompt, timeout=300):
+    executable = codex_path()
+    if not executable:
+        raise RuntimeError("Codex unavailable: local executable missing or remote mode enabled")
+    instruction = "Answer directly in markdown. Do not run any command or read any file; everything you need is below."
+    with tempfile.TemporaryDirectory(prefix="er_codex_") as workdir:
+        output = Path(workdir) / "summary.md"
+        try:
+            result = subprocess.run([executable, "exec", "-s", "read-only", "--skip-git-repo-check",
+                                     "-C", workdir, "-o", str(output), "-"],
+                                    input=instruction + "\n" + prompt, text=True, encoding="utf-8",
+                                    capture_output=True, timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError(f"Codex timed out after {timeout} seconds") from exc
+        except OSError as exc:
+            raise RuntimeError(f"Codex could not start: {exc}") from exc
+        if result.returncode:
+            raise RuntimeError(f"Codex failed with exit code {result.returncode}")
+        note = output.read_text(encoding="utf-8").strip() if output.is_file() else ""
+        if not note:
+            raise RuntimeError("Codex returned an empty summary file")
+        return note
 
 
 def api_key() -> str:
