@@ -21,7 +21,7 @@ def render(dd, ctx):
     deep_ticker = dd.ticker
     indices_list = ctx["indices_list"]
     meta = dd.meta
-    prices = ctx["prices"]
+    prices = ctx.get("prices_full", ctx["prices"])
     # ── PEER COMPARISON ────────────────────────────────────────────
     layer_banner(8, "Competitive intelligence & peer benchmarking", "#f39c12", top=10)
 

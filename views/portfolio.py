@@ -24,7 +24,7 @@ from core.stress import historical_replay
 from core.portfolio_review import correlation, portfolio_tilts, review_returns, risk_contribution, stress, target_drift
 from services.user_store import (append_trades, load_portfolio_with_cash, load_trades, save_portfolio_checked,
                                  save_portfolio_to_db)
-from ui.components import format_value, phone_safe_chart, render_metric_tile
+from ui.components import format_value, phone_safe_chart, range_caption, render_metric_tile
 from ui.sidebar import is_phone_layout
 from ui.sticky import sticky, sticky_choice, sticky_radio
 from ui.decision_panel import render_alert_inbox
@@ -198,7 +198,8 @@ def _render_summary(ctx, prices):
     if summary["pnl"] is None:
         st.caption("P&L: N/A — a price or cost basis is missing.")
     held = list(st.session_state.get("portfolio_shares", {}))
-    dated = prices[prices["ticker"].isin(held)].sort_values("date").groupby("ticker").tail(1)
+    prices_full = ctx.get("prices_full", prices)   # latest closes, not the chart range
+    dated = prices_full[prices_full["ticker"].isin(held)].sort_values("date").groupby("ticker").tail(1)
     if not dated.empty:
         with st.expander("Valuation dates and source"):
             st.dataframe(dated[["ticker", "date", "price_close"]], hide_index=True, width="stretch")
@@ -783,7 +784,7 @@ def render(ctx):
 
                     # Risk tiles stacked vertically
                     render_metric_tile("Weighted Return", f"{(cum_returns.iloc[-1]-1)*100:.1f}%", delta=(cum_returns.iloc[-1]-1)*100)
-                    st.caption(f"Timeframe: {selected_horizon}")
+                    range_caption(ctx)
                     if sharpe > 2.0: s_label, s_color = "ELITE", "#0284C7"
                     elif sharpe > 1.5: s_label, s_color = "STRONG", "#2ecc71"
                     elif sharpe > 1.0: s_label, s_color = "OK", "#f1c40f"
@@ -844,6 +845,7 @@ def render(ctx):
                         yaxis_title="Value (€)", margin=dict(t=10, l=10, r=10, b=10)
                     )
                     st.plotly_chart(phone_safe_chart(fig_bt), use_container_width=True)
+                    range_caption(ctx)
 
                 st.markdown("<br>", unsafe_allow_html=True)
 
@@ -905,6 +907,7 @@ def render(ctx):
                         )
                         fig_corr.update_layout(height=360, margin=dict(l=0, r=0, t=10, b=0))
                         st.plotly_chart(phone_safe_chart(fig_corr), use_container_width=True)
+                        range_caption(ctx)
 
                 _render_factor_tilts(ctx, dict(zip(current_tickers, weights)))
                 st.markdown("<br>", unsafe_allow_html=True)
@@ -1559,6 +1562,7 @@ def render(ctx):
                     )],
                 )
                 st.plotly_chart(phone_safe_chart(fig_mpt), use_container_width=True)
+                range_caption(ctx)
 
                 st.markdown("---")
                 # ── Risk Contribution ─────────────────────────────────────────
@@ -1572,6 +1576,7 @@ def render(ctx):
                 )
                 fig_risk_b.update_layout(height=380)
                 st.plotly_chart(phone_safe_chart(fig_risk_b), use_container_width=True)
+                range_caption(ctx)
 
 
             elif _section == "Rebalance" and len(current_tickers) == 1:
@@ -1685,11 +1690,17 @@ def _render_stress_and_ledger(ctx, tickers, weights, nav_eur, meta, port_beta, r
             st.caption("Estimated on up to 2 years of daily EUR returns against SPY and the change of the US 10-year "
                        "yield (one regression). Blank = not enough history; the scenario then uses the provider's beta "
                        "(or the policy's unknown beta) and no rate effect.")
-    rep = historical_replay(ret_matrix, w)
+    replay_returns, replay_missing = (review_returns(prices_full, tickers) if not prices_full.empty
+                                      else (pd.DataFrame(), list(tickers)))
+    rep = historical_replay(replay_returns, w) if not replay_missing else pd.DataFrame()
     if not rep.empty:
         st.caption("Historical replay (today's weights on the stored returns, no model): " + " · ".join(
             f"worst {r.window} {r['return']:+.1%} ({pd.Timestamp(r.start):%d %b %Y} → {pd.Timestamp(r.end):%d %b %Y})"
-            for _, r in rep.iterrows()) + ". Only as bad as the history in the selected horizon.")
+            for _, r in rep.iterrows()) + ". Based on full stored history (not the sidebar range).")
+    else:
+        st.caption("Historical replay: N/A — not enough full stored history (not the sidebar range)"
+                   + (f" for {', '.join(map(str, replay_missing))}" if replay_missing else "")
+                   + "; a missing return is unknown, not 0%.")
 
     # ── target weights: drift and the trades the policy allows ──
     targets = dict(st.session_state.get("portfolio_targets", {}) or {})

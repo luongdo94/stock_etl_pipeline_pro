@@ -27,7 +27,8 @@ def _block(path, start, end, **env):
     stop = source.rfind("\n", 0, stop) + 1
     from core.portfolio_review import correlation, risk_contribution
     env = dict(pd=pd, np=np, go=go, px=px, st=UI(), render_header=lambda *a, **k: None,
-               phone_safe_chart=lambda fig: fig, correlation=correlation, risk_contribution=risk_contribution, **env)
+               phone_safe_chart=lambda fig: fig, correlation=correlation, risk_contribution=risk_contribution,
+               range_caption=lambda ctx: None, ctx={}, **env)
     exec(compile(dedent(source[begin:stop]), path, "exec"), env)
     return env
 

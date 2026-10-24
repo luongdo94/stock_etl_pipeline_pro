@@ -10,7 +10,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from core import market_regime as mr
-from ui.components import phone_safe_chart
+from ui.components import phone_safe_chart, range_caption
 from ui.icons import render_header
 from ui.sticky import sticky, sticky_segmented
 
@@ -252,6 +252,7 @@ def render(ctx):
                 _last = _closes.iloc[-1]
                 st.caption(f"SPY: {pd.Timestamp(_last['date']):%Y-%m-%d} · €{_last['price_close']:,.2f}")
             st.info("SPY: need at least 2 closes for the selected period.")
+        range_caption(ctx)
 
 
     with c2:
@@ -283,6 +284,7 @@ def render(ctx):
             st.plotly_chart(phone_safe_chart(fig_br), use_container_width=True)
         else:
             st.info("No breadth history in this snapshot.")
+        range_caption(ctx)
 
 
 

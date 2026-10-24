@@ -7,6 +7,14 @@ import plotly.express as px
 import streamlit as st
 
 
+def range_caption(ctx):
+    """Label sidebar-scoped charts and metrics with the applied date range."""
+    if not all(k in ctx for k in ("selected_horizon", "t_start", "t_end")):
+        return
+    st.caption(f"Range: {ctx['selected_horizon']} ({pd.Timestamp(ctx['t_start']):%Y-%m-%d}–"
+               f"{pd.Timestamp(ctx['t_end']):%Y-%m-%d}), set in the sidebar")
+
+
 def phone_safe_chart(fig):
     """Ensure a Plotly chart fits phone screens (automargin on axes, legend horizontal under plot,
 
