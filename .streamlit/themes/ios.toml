@@ -1,0 +1,22 @@
+[theme]
+font = "-apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Segoe UI', Roboto, sans-serif"
+baseRadius = "12px"
+buttonRadius = "12px"
+showWidgetBorder = false
+chartCategoricalColors = ["#007AFF", "#34C759", "#FF9500", "#FF3B30", "#AF52DE", "#5AC8FA", "#FFCC00", "#5856D6"]
+
+[theme.light]
+primaryColor = "#0066CC"
+backgroundColor = "#F2F2F7"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#1C1C1E"
+linkColor = "#0066CC"
+borderColor = "#C6C6C8"
+
+[theme.dark]
+primaryColor = "#0A84FF"
+backgroundColor = "#000000"
+secondaryBackgroundColor = "#1C1C1E"
+textColor = "#FFFFFF"
+linkColor = "#0A84FF"
+borderColor = "#38383A"

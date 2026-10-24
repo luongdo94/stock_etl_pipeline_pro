@@ -180,6 +180,8 @@ regime, regime_ui_color, _macro_regime = _regime["regime"], _regime["color"], _r
 # ── Header ──────────────────────────────────────────────────────────────────────────────────
 sidebar.render_macro_panel(macro, None, st.session_state.get("_live_markets"))
 phone_layout = sidebar.render_phone_toggle()
+from ui import theme_switch as _theme_switch  # noqa: E402
+_theme_switch.render()                        # local only: Theme A / iOS / One UI; Light / Dark stays in ⋮ → Settings
 st.sidebar.markdown("---")
 auth.render_user_profile(cm)                         # account last
 head_l, head_r = st.columns([5, 1])
