@@ -2,7 +2,8 @@
 
 One regime result (core.market_regime, the same one the header and SIGNAL show) is stated first with its reasons and the
 inputs that were unknown; the SPY trend and the breadth follow the sidebar range for display only. The external
-TradingView widgets load only when switched on. Nothing here is a forecast or an allocation: no exposure %, no factor tilt.
+TradingView widgets load only when switched on. The optional Codex macro brief offers portfolio context on request;
+it never changes a stock's Decision.
 """
 import pandas as pd
 import plotly.express as px
@@ -207,6 +208,109 @@ def _economic_data(ctx):
                "Sources: FRED (US, Japan), Eurostat/FRED (euro area), NBS English releases (China).")
 
 
+def _macro_facts(ctx):
+    import json
+    from core.macro_view import table_for_display
+    from services.db import load_macro_indicators
+    stored = load_macro_indicators(ctx.get("data_version"))
+    if stored.attrs.get("unavailable") == "read_error":
+        raise RuntimeError("Economic data could not be read; this is not an empty dataset.")
+    macro = ctx.get("macro") or {}
+    prices = ctx["prices_full"]
+    facts = dict(regime=mr.regime_summary(
+        {"regime": ctx["regime"], "scoring_regime": ctx["_macro_regime"]}, ctx["conf_score_global"],
+        [r for r in ctx["conf_reason_str"].split(", ") if r and not r.startswith("No warning")],
+        breadth=ctx["latest_breadth_global"], vix=ctx["_vix_val"], dxy_pct=ctx["_dxy_pct"],
+        tnx_chg=macro.get("US10Y", {}).get("chg")), regime_advice=ctx.get("regime_advice"),
+        VIX=ctx["_vix_val"], DXY_5d_pct_or_daily_fallback=mr.dxy_5d_move(prices, ctx["_dxy_pct"]),
+        DXY_daily_pct=ctx["_dxy_pct"], US10Y=macro.get("US10Y"), macro_sources_dates=macro,
+        breadth_pct=ctx["latest_breadth_global"], data_version=ctx.get("data_version"))
+    facts["DXY_stored_dates"] = prices.loc[prices["ticker"] == "DX-Y.NYB", "date"].sort_values().tail(6).astype(str).tolist()
+    facts["DXY_window"] = "Up to 5 stored sessions in native units; daily fallback if unavailable."
+    for name, frame in (("economic_data", table_for_display(stored)),
+                        ("sector_rotation", ctx.get("tv_sector_rotation", pd.DataFrame()))):
+        facts[name] = json.loads(frame.to_json(orient="records", date_format="iso"))
+    for name in ("df_spy_global", "breadth_ts_global"):
+        frame = ctx.get(name, pd.DataFrame())
+        facts[name + "_as_of"] = str(frame["date"].max()) if not frame.empty else None
+    return facts
+
+
+def _macro_brief(ctx):
+    import json
+    from datetime import datetime
+    from time import perf_counter
+    from core.macro_brief import SCHEMA, build_prompt, validate
+    from services import codex_local
+    from ui.codex_options import render_codex_options, codex_label
+    from ui.sticky import sticky_radio
+    if not codex_local.codex_path():
+        st.caption("Codex runs on the local app only")
+        return
+    with st.expander("Macro brief (Codex)"):
+        model, effort = render_codex_options("macro")
+        language = sticky_radio("Language", ["English", "Vietnamese"], "English", "mp_macro_language")
+        signed_in = bool(st.session_state.get("user_id"))
+        spec = (ctx.get("data_version"), model or codex_local.DEFAULT_MODEL, effort or codex_local.DEFAULT_EFFORT,
+                language, signed_in, st.session_state.get("user_id"))
+        if st.button("Write macro brief — Codex with web search, ~2–4 min", key="mp_macro_write"):
+            started = perf_counter()
+            portfolio = None
+            if signed_in:                  # read on the click only: the landing tab must not value the book every rerun
+                try:
+                    from ui.assistant import _toolbox
+                    portfolio = _toolbox(ctx).run("my_portfolio", {})[0]
+                    if "error" in portfolio:
+                        raise RuntimeError(portfolio["error"])
+                except Exception as exc:
+                    st.error(f"Portfolio could not be read: {exc}")
+                    return
+            try:
+                with st.spinner("Codex is writing the macro brief with web search..."):
+                    prompt = build_prompt(_macro_facts(ctx), portfolio, datetime.now().date(), language)
+                    brief = validate(json.loads(codex_local.run_codex(
+                        prompt, timeout=600, model=model, effort=effort, web=True, schema=SCHEMA)))
+                    if brief is None or portfolio is None and brief["portfolio_notes"]:
+                        raise ValueError("Invalid macro brief JSON: required fields, types or allowed values do not match.")
+                st.session_state["mp_macro_brief"] = dict(spec=spec, brief=brief, model=codex_label(model, effort),
+                    elapsed=perf_counter() - started, written_at=datetime.now().isoformat(timespec="seconds"))
+            except Exception as exc:
+                st.error(f"Macro brief failed (Codex / JSON / app data): {exc}")
+                return
+        saved = st.session_state.get("mp_macro_brief")
+        if not saved:
+            return
+        if saved["spec"] != spec:
+            st.warning("Stale — inputs or options changed. Write the macro brief again.")
+            return
+        brief = saved["brief"]
+        st.markdown(brief["headline"])
+        st.markdown("**Regime read** — " + brief["regime_read"])
+        for region in brief["regions"]:
+            st.markdown(f"**{region['region']}** — {region['summary']}")
+            for point in region["data_points"]:
+                st.markdown("- " + point)
+        st.markdown("**Risks**")
+        for point in brief["risks"]:
+            st.markdown("- " + point)
+        st.markdown("**Watch next**")
+        st.dataframe(pd.DataFrame(brief["watch_next"]), hide_index=True, width="stretch")
+        posture = brief["posture"]
+        st.info(f"Portfolio posture: **{posture['risk_level']}**")
+        st.markdown(posture["cash"] + "\n\n" + posture["rationale"])
+        for tilt in posture["tilts"]:
+            st.markdown("- " + tilt)
+        if brief["portfolio_notes"]:
+            st.markdown("**Portfolio notes**")
+            for note in brief["portfolio_notes"]:
+                st.markdown("- " + note)
+        st.markdown("**Web facts — sources and dates**")
+        st.dataframe(pd.DataFrame(brief["web_facts"]), hide_index=True, width="stretch")
+        st.caption(f"Written by {saved['model']} · {saved['written_at']} · {saved['elapsed']:.1f}s · "
+                   f"facts_as_of: {brief['facts_as_of']} · confidence: {brief['confidence']}")
+        st.caption("Context only, not advice; it never changes a stock's Decision.")
+
+
 def render(ctx):
     """Render the 🌐 Market Pulse tab. ctx is the context dict built in app.py."""
     breadth_ts_global = ctx['breadth_ts_global']
@@ -216,6 +320,7 @@ def render(ctx):
     tv_sector_rotation = ctx['tv_sector_rotation']
     render_header("pulse", "Market Pulse — the market context for your research", level="###")
     _answer(ctx)
+    _macro_brief(ctx)
     st.markdown("---")
 
     # ROW 2: PRIMARY CHARTS

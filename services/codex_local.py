@@ -36,7 +36,7 @@ def codex_path():
     return next((p for p in candidates if p and Path(p).is_file()), None)
 
 
-def run_codex(prompt, timeout=300, model=None, effort=None) -> str:
+def run_codex(prompt, timeout=300, model=None, effort=None, web=False, schema=None) -> str:
     model = DEFAULT_MODEL if model is None else model
     effort = DEFAULT_EFFORT if effort is None else effort
     if model not in codex_models():
@@ -47,13 +47,19 @@ def run_codex(prompt, timeout=300, model=None, effort=None) -> str:
     if not executable:
         raise RuntimeError("Codex unavailable: local executable missing or remote mode enabled")
     instruction = "Answer directly. Do not run any command or read any file; everything you need is below."
+    if web:
+        instruction = "Answer directly. Do not run commands or read local files. Use web search for current facts."
     with tempfile.TemporaryDirectory(prefix="er_codex_") as workdir:
         output = Path(workdir) / "summary.md"
+        schema_path = Path(workdir) / "schema.json"
+        if schema is not None:
+            schema_path.write_text(json.dumps(schema), encoding="utf-8")
         try:
-            result = subprocess.run([executable, "exec", "-s", "read-only", "--skip-git-repo-check",
-                                     "-C", workdir, "-c", 'web_search="disabled"',
+            result = subprocess.run([executable, *(["--search"] if web else []), "exec", "-s", "read-only", "--skip-git-repo-check",
+                                     "-C", workdir, *([] if web else ["-c", 'web_search="disabled"']),
                                      "-c", "features.shell_tool=false", "-m", model,
-                                     "-c", f'model_reasoning_effort="{effort}"', "-o", str(output), "-"],
+                                     "-c", f'model_reasoning_effort="{effort}"', "-o", str(output),
+                                     *(["--output-schema", str(schema_path)] if schema is not None else []), "-"],
                                     input=instruction + "\n" + prompt, text=True, encoding="utf-8",
                                     capture_output=True, timeout=timeout)
         except subprocess.TimeoutExpired as exc:
