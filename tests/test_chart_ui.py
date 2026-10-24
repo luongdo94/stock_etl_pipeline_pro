@@ -28,12 +28,13 @@ def _portfolio(monkeypatch, *, scenarios=None, targets=None):
     ui.session_state["portfolio_targets"] = targets or {}
     monkeypatch.setattr(view, "st", ui)
     monkeypatch.setattr(view, "render_header", lambda *a, **k: None)
-    monkeypatch.setattr(view, "estimate_sensitivities", lambda *a: pd.DataFrame())
-    monkeypatch.setattr(view, "load_scenarios", lambda *a: {})
-    monkeypatch.setattr(view, "scenario_losses", lambda *a: pd.DataFrame(scenarios or [
+    from core import portfolio_review as review          # the tab's stress now runs through the shared helper
+    monkeypatch.setattr(review, "estimate_sensitivities", lambda *a: pd.DataFrame())
+    monkeypatch.setattr(review, "load_scenarios", lambda *a: {})
+    monkeypatch.setattr(review, "scenario_losses", lambda *a: pd.DataFrame(scenarios or [
         dict(scenario="Minor", **{"return": -.05}, worst="AAPL")]))
     monkeypatch.setattr(view, "historical_replay", lambda *a: pd.DataFrame())
-    monkeypatch.setattr(view, "rebalance_policy", lambda tickers, cur, *a, **k: dict(weights=cur, blocked={}))
+    monkeypatch.setattr(review, "rebalance_policy", lambda tickers, cur, *a, **k: dict(weights=cur, blocked={}))
     view._render_stress_and_ledger(dict(prices_full=pd.DataFrame()),
         ["AAPL", "MSFT", "GOOG", "CASH"], [.25, .12, .10, .53], 10000., {}, 1., pd.DataFrame(),
         {}, lambda nav: {}, {"policy": {"max_stress_loss_pct": 25., "base_currency": "EUR", "unknown_beta": 1.}}, {})

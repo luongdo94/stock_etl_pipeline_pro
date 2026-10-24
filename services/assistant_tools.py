@@ -65,6 +65,10 @@ SPECS = [
      "description": "The signed-in user's own portfolio: holdings, weights of NAV, gain vs cost, sector and currency "
                     "exposure, policy breaches, and each holding's computed Decision.",
      "parameters": {"type": "object", "properties": {}}},
+    {"name": "portfolio_risk",
+     "description": "Saved portfolio risk: return eligibility, stress scenarios and breaches, correlation, risk "
+                    "contributions, factor tilts and policy-allowed target drift. Unknown is N/A, never zero.",
+     "parameters": {"type": "object", "properties": {}}},
     {"name": "search_filings",
      "description": "Passages of a US company's SEC filings (10-K business, risk factors, MD&A, notes; earnings "
                     "releases) relevant to a question. For qualitative questions: moat, risks, drivers, guidance.",
@@ -108,13 +112,14 @@ class ToolBox:
                  hist_fcf: Optional[pd.DataFrame] = None, last_prices: Optional[dict] = None,
                  portfolio_reader: Optional[Callable] = None, deep_decision: Optional[Callable] = None,
                  filings: Optional[Callable] = None, methodology: Optional[Callable] = None,
-                 policy: Optional[dict] = None, as_of: Optional[date] = None):
+                 policy: Optional[dict] = None, as_of: Optional[date] = None, portfolio_risk_reader: Optional[Callable] = None):
         self.m = m_df if m_df is not None else pd.DataFrame()
         self.companies = companies if companies is not None else pd.DataFrame()
         self.annual, self.hist_fcf = annual_fin, hist_fcf
-        self.last_prices = last_prices or {}
+        self.last_prices = last_prices if last_prices is not None else {}
         self.portfolio_reader, self.deep_decision = portfolio_reader, deep_decision
         self.filings, self.methodology = filings, methodology
+        self.portfolio_risk_reader = portfolio_risk_reader
         self.policy = policy
         self.as_of = as_of or date.today()
         self._n = 0
@@ -321,6 +326,23 @@ class ToolBox:
             doc["stress_loss_pct_of_nav"] = ex["stress_loss"] * 100
             doc["policy_breaches"] = [describe(b) for b in check(w, meta, self.policy)]
         return [_clean(doc)]
+
+    def tool_portfolio_risk(self) -> list:
+        doc = {"id": self._id("portfolio_risk"), "title": "Your portfolio risk",
+               "source": "saved portfolio; core.portfolio_review (same calculations as Portfolio tab); EUR"}
+        if self.portfolio_risk_reader is None:
+            return [{**doc, "error": "portfolio risk not available (not signed in)"}]
+        try:
+            data = self.portfolio_risk_reader()
+        except Exception as e:
+            return [{**doc, "error": f"portfolio risk could not be read ({type(e).__name__}) — unknown, not empty"}]
+        data = dict(data)
+        for key, sort in (("risk_contribution", lambda r: -abs(r["pct"])),
+                          ("targets", lambda r: -abs(r["Drift pp"]) if pd.notna(r["Drift pp"]) else 0)):
+            if isinstance(data.get(key), list):
+                rows = sorted(data[key], key=sort)
+                data[key] = {"count": len(rows), "top_10": rows[:10]}
+        return [_clean({**doc, **data})]
 
     def _passages(self, df: pd.DataFrame, prefix: str, extra: dict) -> list:
         out = []

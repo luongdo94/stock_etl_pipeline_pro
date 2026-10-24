@@ -21,6 +21,14 @@ MODEL = "command-a-03-2025"
 MAX_STEPS = 3                     # tool rounds per question
 HISTORY_TURNS = 6                 # earlier question/answer pairs sent as context (text only)
 
+PORTFOLIO_REVIEW_QUESTION = """Call my_portfolio and portfolio_risk to review my saved portfolio. Cite those documents.
+Assess concentration by sector, currency and stock; holdings with Decision AVOID/TRIM or policy breaches;
+stress scenarios exceeding limits; notable correlations and risk contributions; factor tilts beyond +/-0.5 SD
+and their coverage; and drift vs user targets. List what needs review first, in priority order.
+Quote only computed Decision and policy: no independent rating, price target or order.
+Discuss weight adjustments only within the policy's Allowed %; N/A is unknown, never zero.
+Answer in {language}."""
+
 SYSTEM = """You are the research assistant inside "Honest Quant Intelligence", a decision-support app for equities.
 Today is {today}. The user is on the "{tab}" tab{ticker_note}.
 

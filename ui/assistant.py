@@ -63,21 +63,38 @@ def _toolbox(ctx) -> ToolBox:
             built[t] = (dd.extra.get("decision"), dd.vin, dd.scores, dd.extra.get("latest_date"))
         return built[t]
 
+    saved = {}
+
     def portfolio():
-        holdings, cash, stops, ok = read_portfolio_status()      # the signed-in user's rows only
+        if "book" in saved:
+            return saved["book"]
+        holdings, cash, stops, ok, targets = read_portfolio_status(with_targets=True)      # the signed-in user's rows only
         if not ok:
             raise RuntimeError("Portfolio could not be read; try asking again.")
-        held = [t for t in holdings if t not in last]
-        if held:                                               # held but outside the screener: latest close
+        held = list(holdings)
+        if held:                                               # same latest close as the Portfolio tab
             px = ctx["prices_full"]
+            px = px.sort_values("date") if "date" in px.columns else px
             for t in held:
-                s = px.loc[px["ticker"] == t, "price_close"]
-                if not s.empty:
-                    last[t] = float(s.iloc[-1])
-        return holdings, cash, stops
+                s = px.loc[px["ticker"] == t, "price_close"].dropna()
+                last[t] = float(s.iloc[-1]) if not s.empty else float("nan")
+        saved.update(book=(holdings, cash, stops), targets=targets)
+        return saved["book"]
+
+    def portfolio_risk():
+        from core.decision import load_rules
+        from core.portfolio_review import portfolio_review
+        holdings, cash, _ = portfolio()
+        indexed = m_df.set_index("Ticker")
+        def col(name):
+            return indexed[name].to_dict() if name in indexed else {}
+        return portfolio_review(holdings, cash, ctx["prices_full"], ctx["companies_full"], load_policy(), load_rules(),
+                                return_prices=ctx["prices"], meta_companies=ctx["companies"],
+                                stances=col("Decision"), targets=saved["targets"],
+                                adv=col("_adv_eur"), stop_distances=col("_stop_distance_pct"))
 
     return ToolBox(m_df, ctx["companies_full"], annual_fin=ctx.get("annual_fin"), hist_fcf=ctx.get("hist_fcf_full"),
-                   last_prices=last, portfolio_reader=portfolio, deep_decision=deep_decision,
+                   last_prices=last, portfolio_reader=portfolio, portfolio_risk_reader=portfolio_risk, deep_decision=deep_decision,
                    filings=lambda t, q: research.search_filings(t, q, as_of=date.today(), k=6),
                    methodology=lambda q: research.search_methodology(q, k=6),
                    policy=load_policy(), as_of=date.today())

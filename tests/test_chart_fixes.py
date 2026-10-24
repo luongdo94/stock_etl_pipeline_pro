@@ -25,8 +25,9 @@ def _block(path, start, end, **env):
     begin = source.rfind("\n", 0, begin) + 1
     stop = source.index(end, begin)
     stop = source.rfind("\n", 0, stop) + 1
+    from core.portfolio_review import correlation, risk_contribution
     env = dict(pd=pd, np=np, go=go, px=px, st=UI(), render_header=lambda *a, **k: None,
-               phone_safe_chart=lambda fig: fig, **env)
+               phone_safe_chart=lambda fig: fig, correlation=correlation, risk_contribution=risk_contribution, **env)
     exec(compile(dedent(source[begin:stop]), path, "exec"), env)
     return env
 
@@ -106,7 +107,9 @@ def _growth(benchmark, returns, **extra):
     return _block("views/portfolio.py", "initial_investment = total_cost_basis", 'st.markdown("<br>", unsafe_allow_html=True)',
                   total_cost_basis=100., total_p_val=100., cum_returns=cum, prices_full=benchmark,
                   sel_bench_ticker="SPY", sel_bench_label="SPY", t_start=returns.index.min(),
-                  t_end=returns.index.max(), _ret_raw=returns, _benchmark_values=_benchmark_values, **extra)
+                  t_end=returns.index.max(), _benchmark_values=_benchmark_values,
+                  prices=returns.stack().rename("daily_return_pct").reset_index().set_axis(["date", "ticker", "daily_return_pct"], axis=1),
+                  current_tickers=list(returns.columns), **extra)
 
 
 def test_c03_common_sessions_are_disclosed_and_missing_benchmark_is_not_zero():

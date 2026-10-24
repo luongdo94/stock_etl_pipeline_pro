@@ -269,9 +269,10 @@ def read_portfolio_snapshot() -> tuple:
         st.session_state["portfolio_load_failed"] = flag
 
 
-def read_portfolio_status() -> tuple:
+def read_portfolio_status(*, with_targets: bool = False) -> tuple:
     """(holdings, cash EUR, original stops, ok) — `ok` is the outcome of THIS read (review SIG-R01: the snapshot helper
-    restores the page's flag, so the flag after it says nothing about this read). The Portfolio page's flag is kept."""
+    restores the page's flag, so the flag after it says nothing about this read). The Portfolio page's flag is kept.
+    With with_targets=True, append saved targets from the SAME read, without touching page state."""
     flag = st.session_state.get("portfolio_load_failed")
     st.session_state["portfolio_load_failed"] = False
     try:
@@ -282,7 +283,8 @@ def read_portfolio_status() -> tuple:
     finally:
         st.session_state["portfolio_load_failed"] = flag
     holdings, cash, stops = split_reserved(raw)
-    return holdings, cash, stops, ok
+    result = (holdings, cash, stops, ok)
+    return result + (split_targets(raw),) if with_targets else result
 
 
 def read_watchlist_status() -> tuple:

@@ -15,12 +15,13 @@ from core.currency import MINOR_UNITS, major_currency
 from core.decision import load_rules as load_decision_rules
 from core.portfolio_policy import check as policy_check, describe as policy_describe, exposures as policy_exposures
 from core.portfolio_policy import load_policy
-from core.portfolio_risk import (apply_rebalance, complete_returns, rebalance_limits, rebalance_policy,
+from core.portfolio_risk import (apply_rebalance, rebalance_limits, rebalance_policy,
                                  record_trade, shrink_expected_returns, weight_budget)
 from services.alerts import add_alert_rule, delete_alert_rule, load_alert_rules
 from services.market_data import fetch_dividend_calendar, stored_fx_rate
 from core.ledger import adjustments_from_edit, history_incomplete, realized_pnl, trade as ledger_trade, trades_from_diff
-from core.stress import estimate_sensitivities, historical_replay, load_scenarios, scenario_losses
+from core.stress import historical_replay
+from core.portfolio_review import correlation, portfolio_tilts, review_returns, risk_contribution, stress, target_drift
 from services.user_store import (append_trades, load_portfolio_with_cash, load_trades, save_portfolio_checked,
                                  save_portfolio_to_db)
 from ui.components import format_value, phone_safe_chart, render_metric_tile
@@ -38,15 +39,6 @@ _STRATEGY_OPTIONS = {
     "🚀 Max Sharpe (Risk-Adjusted Growth)":  "max_sharpe",
     "🎯 Maximum Return (Highest Growth)":    "max_return",
 }
-
-
-def _known(v, nd):
-    """Rounded number, or None when unknown (NaN) — the LLM audit must not read a gap as 0."""
-    try:
-        v = float(v)
-    except (TypeError, ValueError):
-        return None
-    return round(v, nd) if v == v else None
 
 
 def _summary_values(shares, costs, cash, latest):
@@ -672,199 +664,8 @@ def render(ctx):
         _review_spec = {"snapshot": ctx.get("data_version"),
                         "holdings": sorted(st.session_state.get("portfolio_shares", {}).items()),
                         "costs": sorted(st.session_state.get("portfolio_cost", {}).items()), "cash": _cash_eur}
-        # ── CIO BOARD MEETING (AI Portfolio Review) ──────────────────────────────
-        _pf_cohere_key = (
-            os.environ.get("COHERE_API_KEY", "")
-            or st.session_state.get("cohere_api_key", "")
-        )
-        if _section == "AI review" and _pf_cohere_key:
-            _pf_lang_col, _pf_btn_col = st.columns([1, 4])
-            with _pf_lang_col:
-                _pf_language = sticky_choice("Language", ["English", "Vietnamese"], "English", "pf_review_lang", label_visibility="collapsed")
-            with _pf_btn_col:
-                _run_pf_review = st.button("Request CIO Portfolio Review — Calls the language model", type="secondary", use_container_width=True, key="run_portfolio_review_btn")
-
-            if _run_pf_review:
-                from etl.llm_parser import analyze_portfolio_with_llm
-                # We need the calculated metrics — recalculate here since we're outside the heavy block
-                _pf_df = st.session_state.portfolio_df.copy()
-                _pf_df["_mv"] = _pf_df["Price (€)"] * _pf_df["Shares"]
-                _pf_df["_cost"] = _pf_df["Cost Basis (€)"] * _pf_df["Shares"]
-                _pf_df["_pnl_pct"] = (_pf_df["_mv"] - _pf_df["_cost"]) / _pf_df["_cost"].replace(0, float("nan")) * 100
-                _total_mv = _pf_df["_mv"].sum()
-                _total_cost = _pf_df["_cost"].sum()
-                _total_pnl_pct = (_total_mv - _total_cost) / _total_cost * 100 if _total_cost > 0 else 0
-
-                # Sector concentration
-                _pf_df["_w"] = _pf_df["_mv"] / _total_mv * 100 if _total_mv > 0 else 0
-                _sector_w = _pf_df.groupby("Sector")["_w"].sum()
-                _top_sector = _sector_w.idxmax() if not _sector_w.empty else "N/A"
-                _top_sector_w = float(_sector_w.max()) if not _sector_w.empty else 0
-
-                # Quality score from m_df['Quality'] — same source as Capital Allocation Grid display
-                # This ensures LLM sees the exact score the user sees in the portfolio table
-                _q_map = m_df.set_index("Ticker")["Quality"].to_dict() if "m_df" in dir() and not m_df.empty else {}
-
-                # Build positions list for the prompt
-                # ETF detection: 3-tier heuristic (order matters)
-                _ETF_KW = {"etf", "fund", "trust", "index", "ishares", "vanguard",
-                           "amundi", "lyxor", "xtrackers", "invesco", "spdr", "ucits"}
-                # Exchange suffixes that typically indicate non-US ETFs or foreign instruments
-                _EU_SUFFIXES = {".pa", ".as", ".l", ".de", ".mi", ".br", ".sw", ".ls", ".mc"}
-                _positions = []
-                for _, _pr in _pf_df.iterrows():
-                    _t = _pr.get("Ticker", "?")
-                    _company_str = str(_pr.get("Company", ""))
-                    _company_lc = _company_str.lower()
-                    _sector_raw = str(_pr.get("Sector", "N/A"))
-                    _no_db_data = _company_str in ("", _t, "N/A", "nan")  # company defaulted to ticker → no metadata in DB
-                    _has_eu_suffix = any(_t.lower().endswith(s) for s in _EU_SUFFIXES)
-
-                    _is_etf = (
-                        # Tier 1: company name has clear ETF keywords
-                        any(kw in _company_lc for kw in _ETF_KW)
-                        or
-                        # Tier 2: no DB metadata found AND sector is N/A → likely foreign ETF/instrument
-                        (_no_db_data and _sector_raw in ("N/A", "nan", "None", ""))
-                        or
-                        # Tier 3: sector N/A + European exchange suffix (ETFs dominate this space)
-                        (_sector_raw in ("N/A", "nan", "None", "") and _has_eu_suffix)
-                    )
-                    # Pull technical signals from m_df (same source as screener)
-                    _m_row = m_df[m_df["Ticker"] == _t]
-                    _m = _m_row.iloc[0] if not _m_row.empty else {}
-                    _sm_raw = str(_m.get("Smart Money", "N/A"))
-                    # Strip emojis from Smart Money label
-                    _sm_clean = _sm_raw.replace("🟢 ", "").replace("🔴 ", "").replace("⚪ ", "").strip()
-                    _action_raw = str(_m.get("Decision", "NOT ENOUGH DATA"))
-                    _action_clean = _action_raw.replace("💎 ", "").replace("🟢 ", "").replace("🔴 ", "").replace("🟠 ", "").replace("🟡 ", "").strip()
-                    # Revenue Growth YoY from annual_fin (2 most recent years)
-                    _rev_growth_yoy = None
-                    if "annual_fin" in dir() and not annual_fin.empty:
-                        _af = annual_fin[annual_fin["ticker"] == _t].sort_values("year", ascending=False)
-                        if len(_af) >= 2:
-                            try:
-                                _r0 = float(_af["revenue"].iloc[0])
-                                _r1 = float(_af["revenue"].iloc[1])
-                                if _r1 > 0:
-                                    _rev_growth_yoy = round((_r0 / _r1 - 1) * 100, 1)
-                            except Exception:
-                                _rev_growth_yoy = None
-
-                    _positions.append({
-                        "ticker":         _t,
-                        "company":        _company_str if not _no_db_data else f"{_t} (ETF/Foreign)",
-                        "asset_type":     "ETF/Index Fund" if _is_etf else "Stock",
-                        "sector":         "Diversified (ETF)" if _is_etf else _sector_raw,
-                        "weight_pct":     round(float(_pr.get("_w", 0)), 1),
-                        "quality_score":  round(float(_q_map.get(_t, 0)), 0),
-                        "pnl_pct":        round(float(_pr.get("_pnl_pct", 0) or 0), 1),
-                        # Technical
-                        "z_score":        round(float(_pr.get("Z-Score", _m.get("Z-Score", 0)) or 0), 2),
-                        "rsi":            round(float(_pr.get("RSI (14)", _m.get("RSI (14)", 50)) or 50), 1),
-                        "ma200_pct":      round(float(_m.get("vs MA200 (%)", 0) or 0), 1),
-                        "smart_money":    _sm_clean,
-                        "action":         _action_clean,
-                        "upside_pct":     round(float(_m.get("Upside (%)", 0) or 0), 1),
-                        # Profitability
-                        "roe_pct":        _known(_m.get("ROE (%)"), 1),
-                        "fcf_margin":     _known(_m.get("FCF Margin (%)"), 1),
-                        # Valuation
-                        "ev_ebitda":      _known(_m.get("EV/EBITDA"), 1),
-                        "pe_fwd":         _known(_m.get("P/E (Fwd)"), 1),
-                        # Leverage & Growth
-                        "debt_ebitda":    _known(_m.get("Debt/EBITDA"), 2),
-                        "rev_growth_yoy": _rev_growth_yoy,
-                        "price":          float(_pr.get("Price (€)", 0)),
-                    })
-
-
-
-
-                _pf_macro_ctx = f"{regime} | VIX={_vix_val:.1f}" if isinstance(_vix_val, (int, float)) else regime
-
-                # Recalculate risk metrics inline (they are computed LATER in the script scope)
-                _pf_tickers = _pf_df["Ticker"].tolist()
-                # Use prices_full so SPY (US) and ETFs (EU) share the same date universe
-                _pf_prices_sub = prices_full[prices_full["ticker"].isin(_pf_tickers)]
-                _pf_ret_raw = (
-                    _pf_prices_sub
-                    .pivot(index="date", columns="ticker", values="daily_return_pct")
-                    .reindex(columns=_pf_tickers)
-                    / 100
-                )
-                # Restrict to the user's selected horizon (same as global `prices`)
-                _pf_ret_raw = _pf_ret_raw[_pf_ret_raw.index.isin(prices["date"].unique())]
-                # Complete case only — a missing return is unknown, not 0% (R3-K2). Ineligible lines are dropped from the
-                # risk figures and named in the payload so the review cannot read them as riskless.
-                _pf_ret_matrix, _pf_bad = complete_returns(_pf_ret_raw)
-                _pf_ret_matrix = _pf_ret_matrix.reindex(columns=_pf_tickers)
-                if _pf_bad:
-                    _pf_ret_matrix = _pf_ret_matrix.drop(columns=[t for t in _pf_bad if t in _pf_ret_matrix.columns])
-                    _pf_tickers = [t for t in _pf_tickers if t not in _pf_bad]
-                _pf_weights = _pf_df.set_index("Ticker")["_w"].reindex(_pf_tickers).fillna(0).values / 100
-                _pf_port_daily = (_pf_ret_matrix * _pf_weights).sum(axis=1)
-                _pf_sharpe = _pf_max_dd = _pf_vol = _pf_var95 = _pf_beta = None      # unknown, not 0
-                if len(_pf_port_daily) > 1:
-                    _pf_cum = (1 + _pf_port_daily).cumprod()
-                    _rf = 0.04 / 252
-                    _pf_excess = _pf_port_daily - _rf
-                    _pf_sharpe = float((_pf_excess.mean() / _pf_excess.std()) * np.sqrt(252)) if _pf_excess.std() > 0 else None
-                    _pf_max_dd = float((_pf_cum / _pf_cum.cummax() - 1).min() * 100)
-                    _pf_vol = float(_pf_port_daily.std() * np.sqrt(252) * 100)
-                    _pf_var95 = float(np.percentile(_pf_port_daily, 5) * 100)
-                    # Beta vs SPY — same dates only (no filled SPY returns)
-                    _spy_sub = (
-                        prices_full[prices_full["ticker"] == "SPY"]
-                        .set_index("date")["daily_return_pct"]
-                        .reindex(_pf_port_daily.index) / 100
-                    )
-                    _align = pd.concat([_pf_port_daily, _spy_sub], axis=1).dropna()
-                    _pf_beta = float(_align.iloc[:,0].cov(_align.iloc[:,1]) / _align.iloc[:,1].var()) if (len(_align) > 30 and _align.iloc[:,1].var() > 0) else None
-
-
-                _pf_payload = {
-                    "positions":          _positions,
-                    "total_value":        _total_mv,
-                    "pnl_pct":            _total_pnl_pct,
-                    "port_beta":          _pf_beta,
-                    "sharpe":             _pf_sharpe,
-                    "max_dd":             _pf_max_dd,
-                    "vol":                _pf_vol,
-                    "var_95":             _pf_var95,
-                    "top_sector":         _top_sector,
-                    "top_sector_weight":  _top_sector_w,
-                    "excluded_from_risk": _pf_bad,   # holdings without enough return history (risk figures exclude them)
-                }
-
-                with st.spinner("CRO is reviewing your portfolio..."):
-                    _pf_report, _pf_prompt = analyze_portfolio_with_llm(
-                        _pf_cohere_key, _pf_payload,
-                        macro_context=_pf_macro_ctx,
-                        language=_pf_language,
-                    )
-                st.session_state["portfolio_cio_review"] = {
-                    "report": _pf_report,
-                    "spec": _review_spec,
-                    "at": pd.Timestamp.now(tz="UTC"),
-                    "prompt": _pf_prompt,
-                    "payload": _pf_payload,
-                    "macro_ctx": _pf_macro_ctx,
-                }
-                st.rerun()
-
-            # Display stored review if available
-            _stored_review = st.session_state.get("portfolio_cio_review")
-            if _stored_review and _stored_review.get("report"):
-                st.markdown("---")
-                render_header("cpu", "CIO Board Meeting — Portfolio Review", level="#####")
-                if _stored_review.get("spec") != _review_spec:
-                    st.warning("Stale AI review: holdings, cash, costs or snapshot differ (or its original spec is unknown). Request a new review to refresh.")
-                st.caption(f"Saved AI review · created {_stored_review.get('at', 'unknown')} · snapshot {(_stored_review.get('spec') or {}).get('snapshot', 'unknown')}")
-                st.markdown(_stored_review["report"])
-                with st.expander("Debug: Raw Portfolio Review Prompt"):
-                    st.code(_stored_review.get("prompt", ""), language="markdown")
-
+        if _section == "AI review":
+            _render_agent_review(ctx, _review_spec, import_pending)
 
         if _section in ("Overview", "Holdings", "AI review"):
             if _section == "Overview":
@@ -872,8 +673,6 @@ def render(ctx):
                              hide_index=True, width="stretch",
                              column_config={"Action": "For your holding"})
                 st.caption("Select Holdings to edit, or a review section for analytics. Values use the loaded snapshot.")
-            elif _section == "AI review" and not _pf_cohere_key:
-                st.info("AI review is unavailable: no API key configured.")
             return
 
         edited_df["Market Value"] = edited_df["Price (€)"] * edited_df["Shares"]
@@ -884,10 +683,7 @@ def render(ctx):
         # missing return used to be filled with 0% — a stale or halted line then looked riskless.
         _ineligible = []
         if total_p_val > 0:
-            _ret_raw = (prices[prices["ticker"].isin(edited_df["Ticker"])]
-                        .pivot(index="date", columns="ticker", values="daily_return_pct")
-                        .reindex(columns=edited_df["Ticker"].tolist()) / 100)
-            _ret_clean, _ineligible = complete_returns(_ret_raw)
+            _ret_clean, _ineligible = review_returns(prices, edited_df["Ticker"].tolist())
             if _ineligible:
                 st.error("Portfolio analytics and optimisation are blocked: not enough return history in the selected "
                          f"horizon for {', '.join(map(str, _ineligible))} (a missing return is unknown, not 0%). Widen the "
@@ -1036,7 +832,10 @@ def render(ctx):
                             x=bench_values.index, y=bench_values,
                             name=sel_bench_label, line=dict(color="#f1c40f", width=2, dash="dot")
                         ))
-                    _dropped = len(_ret_raw.index.difference(cum_returns.index))
+                    # sessions any holding traded (the index of the return pivot review_returns builds) minus the
+                    # complete sessions the lines use
+                    _sessions = pd.Index(prices.loc[prices["ticker"].isin(current_tickers), "date"].unique())
+                    _dropped = len(_sessions.difference(cum_returns.index))
                     st.caption(f"Both lines use only sessions where every holding traded ({_dropped} dropped sessions)")
                     st.caption("Current weights are rebalanced each session; cash earns 0%. This hypothetical history "
                                f"does not follow actual trades. Initial simulated capital: €{initial_investment:,.0f}.")
@@ -1095,8 +894,8 @@ def render(ctx):
                     if n_assets < 2:
                         st.caption("correlation needs 2+ holdings")
                     else:
-                        corr_matrix = ret_matrix.corr()
-                        mean_corr = (corr_matrix.values.sum() - n_assets) / (n_assets**2 - n_assets) if n_assets > 1 else 0
+                        corr_matrix, corr_summary = correlation(ret_matrix)
+                        mean_corr = corr_summary["mean"]
                         if mean_corr > 0.45:
                             st.warning(f"High Correlation ({mean_corr:.2f}) — risk concentration!")
                         fig_corr = px.imshow(
@@ -1764,9 +1563,7 @@ def render(ctx):
                 st.markdown("---")
                 # ── Risk Contribution ─────────────────────────────────────────
                 render_header("risk", "Global Risk Contribution", level="#####")
-                mctr         = np.dot(cov_matrix, weights) / (curr_v if curr_v > 0 else 1)
-                risk_contrib = weights * mctr
-                risk_pct     = risk_contrib / np.sum(np.abs(risk_contrib)) * 100
+                risk_pct = risk_contribution(cov_matrix, weights)
 
                 fig_risk_b = px.bar(
                     x=current_tickers, y=risk_pct,
@@ -1789,6 +1586,40 @@ def render(ctx):
         st.markdown("---")
 
 
+def _render_agent_review(ctx, book_spec, import_pending):
+    from time import perf_counter
+    from services import assistant
+    from ui.assistant import _render_turn, _toolbox
+    if not assistant.available():
+        st.info("Set COHERE_API_KEY or install Codex locally to use the assistant.")
+        return
+    options = assistant.models()
+    default = "Codex (local)" if not os.environ.get("COHERE_API_KEY") and len(options) > 1 else "Cohere"
+    model = sticky_radio("Model", options, default, "pf_agent_model", horizontal=True)
+    language = sticky_radio("Language", ["English", "Vietnamese"], "English", "pf_review_lang", horizontal=True)
+    spec = dict(book_spec, model=model, language=language, owner=st.session_state.get("user_id"),
+                targets=sorted(st.session_state.get("portfolio_targets", {}).items()),
+                horizon=(ctx.get("t_start"), ctx.get("t_end")))
+    run = st.button("Run agent portfolio review", key="run_portfolio_review_btn", disabled=import_pending,
+                    type="secondary", use_container_width=True)
+    if import_pending:
+        st.info(_IMPORT_NOTICE)
+        return
+    if run:
+        question = assistant.PORTFOLIO_REVIEW_QUESTION.format(language=language)
+        with st.spinner("Reviewing your portfolio…"):
+            started = perf_counter()
+            res = assistant.ask(question, _toolbox(ctx), tab="Portfolio",
+                                chat=assistant._codex_chat() if model == "Codex (local)" else None)
+        st.session_state["portfolio_agent_review"] = {
+            "spec": spec, "at": pd.Timestamp.now(tz="UTC"),
+            "turn": {"q": question, "res": res, "model": model, "elapsed": perf_counter() - started}}
+    stored = st.session_state.get("portfolio_agent_review")
+    if stored and stored.get("spec") == spec:
+        st.caption(f"Agent portfolio review · {stored['at']}")
+        _render_turn(stored["turn"])
+
+
 def _render_stress_and_ledger(ctx, tickers, weights, nav_eur, meta, port_beta, ret_matrix, stances, sizing_limits,
                               portfolio_policy, latest_prices):
     """Scenario stress test, historical replay and target-weight drift (P3/c)."""
@@ -1796,17 +1627,8 @@ def _render_stress_and_ledger(ctx, tickers, weights, nav_eur, meta, port_beta, r
     rules = load_decision_rules()
     w = {t: float(x) for t, x in zip(tickers, weights)}
     render_header("alert-triangle", f"Stress Test — Scenarios and History (beta {port_beta:.2f})", level="#####")
-    sens = estimate_sensitivities(prices_full, tickers)
-    full_meta = {t: {**(meta.get(t) or {})} for t in tickers}
-    comp = ctx.get("companies_full")
-    if comp is not None and not comp.empty and "industry" in comp.columns:
-        ind = comp.drop_duplicates("ticker").set_index("ticker")["industry"].to_dict()
-        for t in tickers:
-            full_meta[t]["industry"] = ind.get(t)
-    res = scenario_losses(w, full_meta, sens, load_scenarios(rules), portfolio_policy["policy"]["base_currency"],
-                          portfolio_policy["policy"]["unknown_beta"])
-    limit = portfolio_policy["policy"]["max_stress_loss_pct"] / 100
-    res["loss_eur"] = res["return"] * nav_eur
+    res, sens, full_meta, limit, breached = stress(prices_full, w, nav_eur, meta, ctx.get("companies_full"),
+                                                   portfolio_policy["policy"], rules)
     st.dataframe(res.assign(**{"return": res["return"] * 100})[["scenario", "return", "loss_eur", "worst"]],
                  hide_index=True, width="stretch", column_config={
                      "scenario": st.column_config.TextColumn("Scenario"),
@@ -1847,7 +1669,7 @@ def _render_stress_and_ledger(ctx, tickers, weights, nav_eur, meta, port_beta, r
                f"rate effect), the translation loss of a stronger {portfolio_policy['policy']['base_currency']} on "
                f"foreign holdings, sector shocks and gaps. Cash does not move. Worst scenario {worst:+.1%} of NAV vs the "
                f"policy limit of −{limit:.0%} (config/decision_rules.yaml → portfolio).")
-    if worst < -limit:
+    if breached:
         st.error(f"A scenario loses more than the {limit:.0%} stress budget — reduce the most exposed lines first.")
     if not sens.empty:
         with st.expander("Per-holding sensitivities used above"):
@@ -1876,19 +1698,8 @@ def _render_stress_and_ledger(ctx, tickers, weights, nav_eur, meta, port_beta, r
             st.caption("Set a Target % per line in the Capital Allocation Grid and save; drift and the trades to reach "
                        "the targets appear here.")
         else:
-            cur = np.array([w[t] for t in tickers])
-            tgt = np.array([targets.get(t, w[t] * 100) / 100 for t in tickers])     # no target: keep the current weight
-            pol = rebalance_policy(tickers, cur, tgt, stances, float(rules["risk"]["max_position_pct"]),
-                                   limits=sizing_limits(nav_eur), portfolio=portfolio_policy)
-            allowed = np.asarray(pol["weights"], dtype=float)
-            rows = []
-            for i, t in enumerate(tickers):
-                px = float(latest_prices.get(t) or 0.0)
-                d_val = (allowed[i] - cur[i]) * nav_eur
-                rows.append({"Ticker": t, "Weight %": cur[i] * 100, "Target %": targets.get(t, float("nan")),
-                             "Drift pp": cur[i] * 100 - targets[t] if t in targets else float("nan"),
-                             "Allowed %": allowed[i] * 100, "Trade (shares)": d_val / px if px > 0 else float("nan"),
-                             "Why limited": pol["blocked"].get(t, "")})
+            rows = target_drift(tickers, weights, targets, nav_eur, latest_prices, stances, rules,
+                                sizing_limits(nav_eur), portfolio_policy)
             st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch", column_config={
                 "Weight %": st.column_config.NumberColumn(format="%.1f%%"),
                 "Target %": st.column_config.NumberColumn(format="%.1f%%"),
@@ -1930,7 +1741,6 @@ def _render_stress_and_ledger(ctx, tickers, weights, nav_eur, meta, port_beta, r
 
 def _render_factor_tilts(ctx, weights: dict):
     """Where the portfolio leans vs the average stock of the universe (P3 / exposure)."""
-    from core.factor_test import portfolio_tilts
     try:
         tilts = portfolio_tilts(weights, ctx["companies_full"], ctx["prices_full"])
     except Exception as e:                                   # diagnostics must never break the page
