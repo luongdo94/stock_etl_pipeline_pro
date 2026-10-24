@@ -67,7 +67,8 @@ _frames, _loaded_version = load_snapshot(_source_version)
 st.session_state["_data_version"] = _loaded_version       # "Check for new data" compares with this
 (prices_full, companies_full, monthly_full, annual_fin, quarterly_fin, earnings_cal, dq_warnings,
  hist_fcf_full, hist_fcf_q_full, etl_audit, total_universe_size, earnings_surprise_full,
- tv_sector_rotation, forward_estimates_full) = _frames
+ tv_sector_rotation, forward_estimates_full) = _frames[:14]
+sec_annual_history = _frames[14] if len(_frames) > 14 else None
 if prices_full.empty:
     st.error("The stored snapshot has no prices. Data requires a successful ETL run and snapshot publication.")
     st.caption("Retry reads the stored snapshot; it does not run ETL or call data providers.")
@@ -85,7 +86,7 @@ m_df = get_master_screener_data(companies_full, prices_full, quarterly_fin, annu
                                 risk_free_pct=macro.get("US10Y", {}).get("val"),
                                 hist_fcf_rows=len(hist_fcf_full), _estimates=forward_estimates_full,
                                 estimates_rows=len(forward_estimates_full), track_record_ok=_track_ok,
-                                _earnings_cal=earnings_cal)
+                                _earnings_cal=earnings_cal, _sec_annual_history=sec_annual_history)
 
 all_tickers = sorted(prices_full["ticker"].unique().tolist())
 ticker_to_name = dict(zip(companies_full["ticker"], companies_full["company"]))
@@ -236,6 +237,7 @@ active_tab = st.pills("Navigation", options=list(TABS), key="active_tab", label_
 
 ctx = dict(
     # data (full history)
+    sec_annual_history=sec_annual_history,
     prices_full=prices_full, companies_full=companies_full, annual_fin=annual_fin, quarterly_fin=quarterly_fin,
     earnings_cal=earnings_cal, earnings_surprise_full=earnings_surprise_full, hist_fcf_full=hist_fcf_full,
     hist_fcf_q_full=hist_fcf_q_full, tv_sector_rotation=tv_sector_rotation, all_tickers=all_tickers,

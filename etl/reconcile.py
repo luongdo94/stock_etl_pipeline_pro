@@ -25,6 +25,7 @@ from pathlib import Path
 import duckdb
 import pandas as pd
 import requests
+import yaml
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,9 @@ ANNUAL_FORMS = ("10-K", "10-K/A", "20-F", "20-F/A", "40-F", "40-F/A")
 QUARTER_FORMS = ("10-Q", "10-Q/A")
 
 RECON_DDL = """
+    CREATE TABLE IF NOT EXISTS raw.sec_annual_history (
+        ticker VARCHAR, period_end DATE, item VARCHAR, value DOUBLE, currency VARCHAR, tag VARCHAR,
+        form VARCHAR, first_filed DATE, _loaded_at TIMESTAMP);
     CREATE TABLE IF NOT EXISTS raw.source_reconciliation (
         ticker VARCHAR, check_name VARCHAR, period VARCHAR, ours DOUBLE, theirs DOUBLE, diff_pct DOUBLE,
         status VARCHAR, source VARCHAR, detail VARCHAR, checked_at TIMESTAMP);
@@ -235,6 +239,37 @@ def facts_annual(facts: dict, tags, currency: str = "USD") -> pd.DataFrame:
     return pd.DataFrame(columns=["period_end", "value", "first_filed", "form", "tag"])
 
 
+def facts_annual_history(facts: dict, currency: str, additional_facts=()) -> pd.DataFrame:
+    """Per-period tag priority within each CIK, then latest filing across CIKs; at most 15 annual periods."""
+    tags = {"revenue": REVENUE_TAGS,
+            "operating_cash_flow": ("NetCashProvidedByUsedInOperatingActivities",
+                                    "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"),
+            "capex": ("PaymentsToAcquirePropertyPlantAndEquipment", "PaymentsToAcquireProductiveAssets"),
+            "stock_based_comp": SEC_CASH_ITEMS["stock_based_comp"]}
+    rows = []
+    for source in (facts, *additional_facts):
+        for item, names in tags.items():
+            seen = set()
+            for tag in names:
+                frame = facts_annual(source, (tag,), currency)
+                if frame.empty:
+                    continue
+                frame = frame[~frame.period_end.isin(seen)]
+                seen.update(frame.period_end)
+                entries = source["facts"]["us-gaap"][tag]["units"][currency]
+                dates = pd.DataFrame([e for e in entries if e.get("form") in ANNUAL_FORMS
+                                      and 350 <= _duration_days(e) <= 380]).groupby("end")["filed"].max()
+                frame["_filed"] = frame.period_end.dt.strftime("%Y-%m-%d").map(dates)
+                rows.extend(frame.assign(item=item, currency=currency).to_dict("records"))
+    if not rows:
+        return pd.DataFrame(columns=["period_end", "value", "first_filed", "form", "tag", "item", "currency"])
+    df = pd.DataFrame(rows)
+    df["first_filed"] = df.groupby(["item", "period_end"])["first_filed"].transform("min")
+    df = df.sort_values("_filed", kind="stable").drop_duplicates(["item", "period_end"], keep="last").drop(columns="_filed")
+    periods = df["period_end"].drop_duplicates().sort_values().tail(15)
+    return df[df["period_end"].isin(periods)].sort_values("period_end", kind="stable").reset_index(drop=True)
+
+
 def facts_filings(facts: dict, tags=REVENUE_TAGS + NET_INCOME_TAGS) -> pd.DataFrame:
     """[period_end, form, fp, filed] — first filing date of every reported period (quarters and years)."""
     gaap = (facts.get("facts") or {}).get("us-gaap") or {}
@@ -344,21 +379,26 @@ def sec_targets(conn, tickers, cik_map: dict, limit: int) -> list:
 
 
 def reconcile_sec(conn, tickers, user_agent: str, tolerance_pct: float = 3.0, limit: int = 60, get=None,
-                  pause: float = 0.12) -> pd.DataFrame:
+                  pause: float = 0.12, cik_map=None, targets=None) -> pd.DataFrame:
     get = get or requests.get
-    cik_map = sec_cik_map(user_agent, get)
-    targets = sec_targets(conn, tickers, cik_map, limit)
-    rows, filings, cash_items = [], [], []
+    cik_map = sec_cik_map(user_agent, get) if cik_map is None else cik_map
+    targets = sec_targets(conn, tickers, cik_map, limit) if targets is None else targets
+    overrides = yaml.safe_load((Path(__file__).resolve().parent.parent / "config" / "sec_cik_overrides.yaml")
+                               .read_text(encoding="utf-8")) or {}
+    rows, filings, cash_items, history = [], [], [], []
+    history_tickers = []
     for t in targets:
         cik = cik_map[t.upper()]
         try:
             r = get(SEC_FACTS.format(cik=cik), headers={"User-Agent": user_agent}, timeout=30)
-            if r.status_code == 404:
+            if r.status_code == 404:                     # no XBRL facts for this filer: not covered, not an error
                 continue
             r.raise_for_status()
             facts = r.json()
         except Exception as e:
-            logger.debug(f"SEC facts {t}: {e}")
+            logger.warning(f"SEC facts {t}: {e}")
+            rows.append({"ticker": t, "check_name": "annual_statements", "status": "ERROR",
+                         "source": "SEC EDGAR", "detail": str(e), "checked_at": pd.Timestamp.now()})
             continue
         finally:
             time.sleep(pause)                            # SEC fair-access limit: ≤ 10 requests / second
@@ -371,6 +411,18 @@ def reconcile_sec(conn, tickers, user_agent: str, tolerance_pct: float = 3.0, li
                            "diff_pct": None, "status": "NOT_COVERED", "source": "SEC EDGAR",
                            "detail": f"no comparable {ccy} annual revenue / net income in the XBRL facts",
                            "checked_at": pd.Timestamp.now()}]
+        extra_facts = []
+        for extra_cik in overrides.get(t.upper(), []):
+            try:
+                r = get(SEC_FACTS.format(cik=extra_cik), headers={"User-Agent": user_agent}, timeout=30)
+                r.raise_for_status()
+                extra_facts.append(r.json())
+            except Exception as e:
+                logger.warning("SEC history %s CIK %s: %s", t, extra_cik, e)
+            finally:
+                time.sleep(pause)
+        history.append(facts_annual_history(facts, ccy, extra_facts).assign(ticker=t))
+        history_tickers.append(t)
         items = facts_cash_items(facts)
         if not items.empty:
             items.insert(0, "ticker", t)
@@ -380,6 +432,14 @@ def reconcile_sec(conn, tickers, user_agent: str, tolerance_pct: float = 3.0, li
             f.insert(0, "cik", cik)
             f.insert(0, "ticker", t)
             filings.append(f)
+    if history:
+        hdf = pd.DataFrame([r for h in history for r in h.to_dict("records")], columns=history[0].columns)
+        hdf["_loaded_at"] = pd.Timestamp.now()
+        conn.register("history_tmp", hdf)
+        conn.execute("DELETE FROM raw.sec_annual_history WHERE ticker = ANY(?)", [history_tickers])
+        conn.execute("""INSERT INTO raw.sec_annual_history SELECT ticker, period_end, item, value, currency,
+                        tag, form, first_filed, _loaded_at FROM history_tmp""")
+        conn.unregister("history_tmp")
     if cash_items:
         cdf = pd.concat(cash_items, ignore_index=True)
         cdf["_loaded_at"] = pd.Timestamp.now()

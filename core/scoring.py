@@ -276,6 +276,16 @@ def _sbc_last(hist_fcf) -> pd.Series:
     return h.groupby("ticker")["stock_based_comp"].last().astype(float)
 
 
+def in_sector_group(sector, industry, name: str, rules: dict = None):
+    """Exact lower-case sector OR industry match, shared by scoring and valuation."""
+    members = set((rules or load_rules())["sector_groups"].get(name, []))
+    def matches(value):
+        if isinstance(value, pd.Series):
+            return value.fillna("").astype(str).str.strip().str.lower().isin(members)
+        return str(value).strip().lower() in members if pd.notna(value) else False
+    return matches(sector) | matches(industry)
+
+
 def build_features(companies: pd.DataFrame, annual_fin: pd.DataFrame = None, prices: pd.DataFrame = None,
                    rules: dict = None, hist_fcf: pd.DataFrame = None) -> pd.DataFrame:
     """Derived inputs per investable ticker (index = ticker). Amounts are EUR, ratios currency-free."""
@@ -290,7 +300,7 @@ def build_features(companies: pd.DataFrame, annual_fin: pd.DataFrame = None, pri
     f = pd.DataFrame(index=c.index)
     f["sector"], f["industry"] = sector, industry
     grp = rules["sector_groups"]
-    in_group = lambda name: sector.isin(set(grp[name])) | industry.isin(set(grp[name]))   # noqa: E731
+    in_group = lambda name: in_sector_group(sector, industry, name, rules)   # noqa: E731
     f["is_financial"], f["is_relaxed"] = in_group("financial"), in_group("leveraged_ok")
     f["is_reit"] = in_group("reit")
     f["is_cyclical"] = in_group("cyclical") if "cyclical" in grp else pd.Series(False, index=c.index)

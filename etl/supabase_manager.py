@@ -46,6 +46,7 @@ TABLES = (
     # long outcome history for Track Record / evidence (R2-02); optional until the first snapshot run created it
     ("marts.track_prices", "track_prices", "SELECT * FROM marts.track_prices", "ticker, date", True),
     ("raw.hist_fcf", "hist_fcf", "SELECT * FROM raw.hist_fcf", None, False),
+    ("raw.sec_annual_history", "sec_annual_history", "SELECT * FROM raw.sec_annual_history", None, True),
     ("marts.etl_exceptions", "etl_exceptions", "SELECT * FROM marts.etl_exceptions", None, True),
     ("marts.security_lifecycle", "security_lifecycle", "SELECT * FROM marts.security_lifecycle", None, True),
     # data health tab: stable identity and the independent-source checks

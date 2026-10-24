@@ -27,7 +27,8 @@ sector_groups:         # lower-case sector / industry names (config/tickers.yaml
   reit:                # GAAP earnings are depressed by depreciation: no loss / dividend-cover flags
     [reits, tower & data reits, real estate]
   cyclical:            # earnings normalised over the longest history (not 3 years); trailing P/E ignored in earnings yield
-    [oil & gas, basic materials, energy specialty, automotive & ev, homebuilders, semiconductor tools, crypto/mining]
+    # 2026-10-25: semiconductors follow demand/inventory cycles; use cycle-normalised earnings and DCF.
+    [oil & gas, basic materials, energy specialty, automotive & ev, homebuilders, semiconductor tools, crypto/mining, semiconductors]
 
 quality:
   weights:

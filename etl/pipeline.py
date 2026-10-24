@@ -384,7 +384,7 @@ def run_pipeline(lookback_days: int = None, force_full: bool = False, fast_mode:
 CARRY_FORWARD_TABLES = ("raw.company_info", "raw.historical_financials", "raw.hist_fcf", "raw.cashflows",
                         "raw.insider_summary", "raw.insider_transactions")   # insider: a skipped / failed fetch keeps them
 # accumulated from other sources over many runs (not re-extracted by a full refresh): copied whole, no ledger entry
-REFERENCE_TABLES = ("raw.sec_filings", "raw.source_reconciliation", "raw.sec_cash_items", "raw.price_backfill_attempts")
+REFERENCE_TABLES = ("raw.sec_annual_history", "raw.sec_filings", "raw.source_reconciliation", "raw.sec_cash_items", "raw.price_backfill_attempts")
 
 
 # Audit F04: period-keyed history a full refresh must not lose (the provider only returns its current window)

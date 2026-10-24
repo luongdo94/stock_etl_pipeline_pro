@@ -45,22 +45,22 @@ def frame_fingerprint(*frames) -> str:
 
 @st.cache_data(ttl=3600)
 def _cached_screener(_companies_df, _prices_df, _quarterly_fin, _annual_fin, _hist_fcf, risk_free_pct, _estimates,
-                     track_record_ok, data_key: str, _earnings_cal=None, today: str = ""):
+                     track_record_ok, data_key: str, _earnings_cal=None, today: str = "", _sec_annual_history=None):
     macro = {"US10Y": {"val": risk_free_pct}} if risk_free_pct else {}
     return build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin, _hist_fcf, macro, _estimates,
-                                track_record_ok=track_record_ok, _earnings_cal=_earnings_cal)
+                                track_record_ok=track_record_ok, _earnings_cal=_earnings_cal, _sec_annual_history=_sec_annual_history)
 
 
 def get_master_screener_data(_companies_df, _prices_df, _quarterly_fin, _annual_fin, _hist_fcf=None,
                              risk_free_pct=None, hist_fcf_rows=None, _estimates=None, estimates_rows=None,
-                             track_record_ok=False, _earnings_cal=None):
+                             track_record_ok=False, _earnings_cal=None, _sec_annual_history=None):
     """Same signature as before (hist_fcf_rows / estimates_rows are accepted and ignored). The earnings calendar feeds
     the Decision's pre-earnings blackout; `today` is part of the key because that gate depends on the date."""
     from datetime import date
-    key = frame_fingerprint(_companies_df, _prices_df, _quarterly_fin, _annual_fin, _hist_fcf, _estimates, _earnings_cal)
+    key = frame_fingerprint(_companies_df, _prices_df, _quarterly_fin, _annual_fin, _hist_fcf, _estimates, _earnings_cal, _sec_annual_history)
     return _cached_screener(_companies_df, _prices_df, _quarterly_fin, _annual_fin, _hist_fcf, risk_free_pct,
                             _estimates, bool(track_record_ok), key, _earnings_cal=_earnings_cal,
-                            today=date.today().isoformat())
+                            today=date.today().isoformat(), _sec_annual_history=_sec_annual_history)
 
 
 get_master_screener_data.clear = _cached_screener.clear

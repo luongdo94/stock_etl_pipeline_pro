@@ -176,7 +176,8 @@ def build_snapshot(db_path: str = DB_PATH, track_db_path: str = TRACK_DB_PATH) -
         track_ok = False
     earnings_cal = frames[5] if len(frames) > 5 else None
     table = build_screener_table(companies, prices, quarterly, annual, hist_fcf, macro, estimates,
-                                 track_record_ok=track_ok, _earnings_cal=earnings_cal)
+                                 track_record_ok=track_ok, _earnings_cal=earnings_cal,
+                                 _sec_annual_history=frames[14] if len(frames) > 14 else None)
     if table.empty:
         return pd.DataFrame()
     as_of = pd.to_datetime(prices["date"]).max().date()

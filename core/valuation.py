@@ -18,6 +18,7 @@ When the price implies growth beyond what the model can represent, or the result
 """
 import contextvars
 import copy
+import logging
 from dataclasses import dataclass
 from datetime import date
 from typing import Iterable, Optional
@@ -175,6 +176,43 @@ def anchor_growth(revenue_growth=None, earnings_growth=None, hist_fcf_cagr=None,
     if rev_anchor is not None:
         g = float(np.clip(g, rev_anchor - GROWTH_BAND, rev_anchor + GROWTH_BAND))
     return float(np.clip(g, GROWTH_FLOOR, GROWTH_CAP)), list(used)
+
+
+def cycle_basis(meta, ticker, history, annual_fin, as_of=None):
+    """Complete SEC years known at valuation time; ratios require one reporting currency."""
+    from core.scoring import in_sector_group
+    if (not in_sector_group(meta.get("sector"), meta.get("industry"), "cyclical")
+            or history is None or history.empty or annual_fin is None or annual_fin.empty):
+        return None
+    cutoff = pd.Timestamp(as_of if as_of is not None else date.today())
+    h = history[history["ticker"] == ticker].copy()
+    h = h[pd.to_datetime(h["first_filed"], errors="coerce") <= cutoff]
+    if h.empty:
+        return None
+    h["period_end"] = pd.to_datetime(h["period_end"], errors="coerce")
+    h["value"] = pd.to_numeric(h["value"], errors="coerce").replace([np.inf, -np.inf], np.nan)
+    h = h[(h["period_end"] <= cutoff) & h["currency"].notna() & h["currency"].ne("")]
+    items = ["revenue", "operating_cash_flow", "capex", "stock_based_comp"]
+    wide = h.pivot_table(index=["period_end", "currency"], columns="item", values="value", aggfunc="last")
+    wide = wide.reindex(columns=items).dropna().reset_index().sort_values("period_end")
+    wide = wide[wide.revenue > 0].assign(year=lambda d: d.period_end.dt.year).drop_duplicates("year", keep="last").tail(10)
+    if len(wide) < 7 or wide.currency.nunique() != 1:
+        return None
+    latest = annual_fin[annual_fin["ticker"] == ticker].sort_values("year")
+    if "available_date" in latest:
+        latest = latest[pd.to_datetime(latest["available_date"], errors="coerce") <= cutoff]
+    revenue = _finite(latest.iloc[-1].get("revenue")) if not latest.empty else None
+    if revenue is None or revenue <= 0:
+        return None
+    if wide.year.max() < latest.iloc[-1]["year"] - 1:
+        logging.getLogger(__name__).debug("SEC cycle %s: latest complete year %s is older than revenue year %s - 1",
+                                        ticker, wide.year.max(), latest.iloc[-1]["year"])
+        return None
+    margin = float(((wide.operating_cash_flow - wide.capex.abs() - wide.stock_based_comp) / wide.revenue).median())
+    # Growth keeps the 3Y revenue anchor (owner, 2026-10-25): a 10Y trend starting at the 2015-16 trough made
+    # oil & gas MORE optimistic (+45% median base), the opposite of normalising a cycle.
+    return {"after_sbc": margin * revenue,
+            "note": f"SEC mid-cycle after-SBC FCF margin: {len(wide)} years, {margin:.1%}"}
 
 
 def verified_native_values(rows: pd.DataFrame, values):
@@ -454,11 +492,16 @@ def fcfe_adjustments(hist_fcf: pd.DataFrame, ticker: str, years: int = BASIS_YEA
 
 
 def normalized_statement_fcf(hist_fcf: pd.DataFrame, ticker: str, years: int = BASIS_YEARS,
-                             ctx: Optional[dict] = None) -> Optional[float]:
+                             ctx: Optional[dict] = None, after_sbc=None) -> Optional[float]:
     """Median of the basis years' statement FCF after the deductions that are reported (EUR) — damps spikes and cycles.
     A missing deduction is left out of the figure here; whether the figure may drive a trade is decided by
     fcfe_deduction_status (UNKNOWN → not reliable), never by this number."""
     rows = basis_rows(hist_fcf, ticker, years)
+    if after_sbc is not None and not rows.empty:
+        na = _not_applicable_registry().get(str(ticker), {})
+        deductions = [sum(resolve_deduction(r, item, ctx or {}, na)[1] for item in FINANCING_DEDUCTIONS)
+                      for _, r in rows.iterrows()]
+        return _finite(np.median(after_sbc - np.asarray(deductions)))
     return _finite(_after_sbc(rows, ctx, ticker).median()) if not rows.empty else None
 
 
@@ -919,20 +962,22 @@ def _irrs(scen, fcfe, shares, price, tg) -> dict:
 
 
 def valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, macro: dict,
-                     annual_fin: Optional[pd.DataFrame] = None, prices: Optional[pd.DataFrame] = None) -> dict:
+                     annual_fin: Optional[pd.DataFrame] = None, prices: Optional[pd.DataFrame] = None,
+                     sec_annual_history: Optional[pd.DataFrame] = None, as_of=None) -> dict:
     """Valuation of one issuer. Within this call the issuer's basis rows and deduction status are prepared once and
     reused (PERF-05: they were rebuilt ~7× per issuer); the memo lives only for the call, so nothing can go stale."""
     if _MEMO.get() is not None:
-        return _valuation_inputs(meta, price, hist_fcf, ticker, macro, annual_fin, prices)
+        return _valuation_inputs(meta, price, hist_fcf, ticker, macro, annual_fin, prices, sec_annual_history, as_of)
     token = _MEMO.set({})
     try:
-        return _valuation_inputs(meta, price, hist_fcf, ticker, macro, annual_fin, prices)
+        return _valuation_inputs(meta, price, hist_fcf, ticker, macro, annual_fin, prices, sec_annual_history, as_of)
     finally:
         _MEMO.reset(token)
 
 
 def _valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, macro: dict,
-                      annual_fin: Optional[pd.DataFrame] = None, prices: Optional[pd.DataFrame] = None) -> dict:
+                      annual_fin: Optional[pd.DataFrame] = None, prices: Optional[pd.DataFrame] = None,
+                      sec_annual_history: Optional[pd.DataFrame] = None, as_of=None) -> dict:
     """
     Company-anchored intrinsic value inputs + scenarios + reverse model (EUR, per share).
 
@@ -950,7 +995,9 @@ def _valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, m
 
     # Cash-flow-statement FCF after stock-based compensation (EUR) first; Yahoo's levered FCF only as a fallback
     dctx = deduction_context(meta, ticker)               # accounting-standard rules + disclosed assumptions
-    statement_fcf = normalized_statement_fcf(hist_fcf, ticker, ctx=dctx)
+    cycle = cycle_basis(meta, ticker, sec_annual_history, annual_fin, as_of) if not basis_rows(hist_fcf, ticker).empty else None
+    statement_fcf = normalized_statement_fcf(hist_fcf, ticker, ctx=dctx,
+                                             after_sbc=cycle["after_sbc"] if cycle else None)
     sbc = sbc_available(hist_fcf, ticker)
     fcfe = statement_fcf if statement_fcf is not None else _finite(meta.get("free_cashflow"))
     adj = fcfe_adjustments(hist_fcf, ticker, ctx=dctx)
@@ -985,8 +1032,13 @@ def _valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, m
         hist_cagr = cagr_by_year(hist_rows["year"], _after_sbc(hist_rows, dctx, ticker))
     else:
         hist_cagr = None
+    rev_cagr = revenue_cagr(annual_fin, ticker)
     growth, sources = anchor_growth(meta.get("revenue_growth"), meta.get("earnings_growth"),
-                                    hist_cagr, revenue_cagr=revenue_cagr(annual_fin, ticker))
+                                    hist_cagr, revenue_cagr=rev_cagr)
+    if cycle:
+        sources.append(cycle["note"])
+        fcf_source = cycle["note"] + "; financing deductions as in 3Y FCFE basis" + _deduction_evidence_text(
+            fcfe_deduction_status(hist_fcf, ticker, ctx=dctx))
     valuable = bool(fcfe and fcfe > 0 and shares)
     scen = dcf_scenarios(fcfe, shares, growth, coe, tg) if valuable else {}
     base = scen["base"].value_per_share if scen else None
@@ -1001,7 +1053,6 @@ def _valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, m
         reliable, note = False, ("REIT: an FCFE DCF ignores property acquisitions funded by new equity and debt, so it "
                                  "overstates distributable cash — value shown as context only (an AFFO / NAV model is "
                                  "needed). Not used for BUY/AVOID.")
-    rev_cagr = revenue_cagr(annual_fin, ticker)
     tv_share = terminal_value_share(fcfe, growth, coe, tg) if valuable else None
     growth_note = None
     if valuable and rev_cagr is None:

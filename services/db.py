@@ -191,6 +191,7 @@ _LEGACY_TABLE_MAP = {
     "marts.dim_annual_financials":  ["dim_annual_financials.parquet"],
     "marts.dim_quarterly_financials":["dim_quarterly_financials.parquet"],
     "raw.hist_fcf":                 ["hist_fcf.parquet"],
+    "raw.sec_annual_history":       ["sec_annual_history.parquet"],
     "raw.hist_fcf_quarterly":       ["hist_fcf_quarterly.parquet"],
     "raw.earnings_calendar":        ["earnings_calendar.parquet"],
     "raw.historical_financials":    ["historical_financials.parquet"],
@@ -655,10 +656,15 @@ def read_warehouse(conn):
     except Exception as e:
         logger.warning(f"⚠️ Memory optimization failed: {e}")
 
+    try:
+        sec_history_f = conn.execute("SELECT * FROM raw.sec_annual_history ORDER BY ticker, period_end").df()
+    except duckdb.CatalogException:  # snapshots published before SEC history existed
+        sec_history_f = pd.DataFrame()
+
     return (
         prices_f, companies_f, monthly_f, annual_f, quarterly_f, earnings_calendar,
         dq_warnings_f, hist_fcf_f, hist_fcf_q_f, etl_audit_f, total_tickers_f, earnings_surprise_f,
-        tv_sector_rotation_f, forward_estimates_f
+        tv_sector_rotation_f, forward_estimates_f, sec_history_f
     )
 
 

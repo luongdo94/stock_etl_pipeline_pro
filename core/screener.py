@@ -46,13 +46,14 @@ def _by_ticker(df) -> dict:
 
 def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
                          _hist_fcf=None, _macro=None, _estimates=None,
-                         track_record_ok=False, _earnings_cal=None) -> pd.DataFrame:
+                         track_record_ok=False, _earnings_cal=None, _sec_annual_history=None) -> pd.DataFrame:
     """
     One row per investable ticker. Two distinct outputs:
       - "Signal"   (column "Action"): 6-pillar technical + quality composite — an INPUT
       - "Decision": the single recommendation, from core.decision.decide — the same
                     function and inputs as the Decision Summary in the Stock Analysis tab
     """
+    _sec_by = _by_ticker(_sec_annual_history)
     _rules = load_rules()
     _track_record_ok = bool(track_record_ok)
     _hist_fcf = _hist_fcf if _hist_fcf is not None else pd.DataFrame()
@@ -158,7 +159,8 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
             cur_p,
             analyst_target=float(row.get('target_mean_price') or 0)
         )
-        _vin = valuation_inputs(row, float(cur_p), _t_fcf, ticker, _macro or {}, _t_ann, prices=ticker_prices)
+        _vin = valuation_inputs(row, float(cur_p), _t_fcf, ticker, _macro or {}, _t_ann, prices=ticker_prices,
+                                sec_annual_history=_sec_by.get(ticker))
         _dec = decide(
             price=float(cur_p), vin=_vin, stop_loss=_tm["stop_loss"], meta=row,
             scores={"quality": quality_raw, "value": value_score, "flags": _sc["flags"], "coverage": _cov,
