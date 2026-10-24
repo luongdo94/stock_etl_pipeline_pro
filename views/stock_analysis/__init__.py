@@ -56,7 +56,7 @@ def _chart_range_note(dd, ctx=None):
     else:
         first = f" (the first snapshot was written {rec['first_snapshot']:%d %b %Y})" if rec["first_snapshot"] else ""
         then = f" No Decision had been recorded by the end of {end:%d %b %Y}{first}."
-    st.info(f"The charts end on **{end:%d %b %Y}** (sidebar range). The Decision, prices and levels below use the "
+    st.info(f"The charts end on **{end:%d %b %Y}** (chart range). The Decision, prices and levels below use the "
             f"latest close of **{latest:%d %b %Y}** — the same Decision as the Scanner.{then}")
 
 
@@ -74,6 +74,7 @@ def _select_group() -> str:
 
 def render(ctx):
     """Render the 🔬 Stock Analysis tab."""
+    from ui.range_control import chart_range
     render_header("search", "Single Stock Deep Dive")
     if not ctx["current_universe"]:
         return
@@ -81,12 +82,22 @@ def render(ctx):
     if not ticker:
         return
     dd = context.build(ctx, ticker)
-    _chart_range_note(dd, ctx)
     group = _select_group()
     if group != "Overview":
         answer.render(dd, ctx)
+    sec_ctx = ctx
+    if group == "Price & timing":
+        import pandas as pd
+        range_res = chart_range(ctx)
+        df_deep = range_res.prices[range_res.prices["ticker"] == ticker].sort_values("date")
+        dd.df_deep = df_deep
+        dd.extra["chart_end"] = pd.to_datetime(df_deep["date"].iloc[-1]).date() if not df_deep.empty else range_res.t_end.date()
+        dd.extra["chart_bars"] = int(len(df_deep))
+        sec_ctx = dict(ctx, prices=range_res.prices, spy_prices=range_res.spy_prices,
+                       t_start=range_res.t_start, t_end=range_res.t_end, selected_horizon=range_res.horizon)
+        _chart_range_note(dd, sec_ctx)
     for section in GROUPS[group]:
-        section.render(dd, ctx)
+        section.render(dd, sec_ctx)
         if section is fundamentals:
             render_valuation_section(meta=dd.meta, price=float(dd.cur_p), vin=dd.vin, relval=dd.relval,
                                          companies=ctx["companies_full"])

@@ -38,10 +38,12 @@ def inject_global_css():
                 padding-top: 1rem;
                 padding-bottom: 1rem;
             }
+            [data-testid="stSegmentedControl"], [data-testid="stSegmentedControl"] > div,
             [data-testid="stButtonGroup"], [data-testid="stButtonGroup"] > div, div[role="radiogroup"] {
                 flex-wrap: wrap;
                 gap: 4px;
             }
+            [data-testid="stSegmentedControl"] button, [data-testid="stSegmentedControl"] [role="radio"],
             [data-testid="stButtonGroup"] button, [data-testid="stButtonGroup"] [role="radio"] {
                 font-size: 0.8rem;
                 padding: 4px 8px;

@@ -100,41 +100,15 @@ def _range(horizon, min_date, max_date, rng=None):
 
 
 def render_horizon(min_date, max_date, active_tab=None):
-    """Chart range → (horizon, start, end), clamped to the warehouse range. Shown only on the tabs that use it; on the
-    others the last choice is kept and the sidebar says the page always uses the full history."""
-    _label("This page")
+    """Deprecated: chart range control moved directly into sections (ui.range_control).
+
+    Returns (horizon, start, end) clamped to warehouse bounds without rendering sidebar UI.
+    """
     ss = st.session_state
-    saved_h = ss.get(_SAVED_HORIZON) or "1Y"
-    saved_rng = ss.get(_SAVED_CUSTOM)
-    if active_tab is not None and active_tab not in RANGE_TABS:
-        start, end = _range(saved_h, min_date, max_date, saved_rng)
-        st.sidebar.caption("No date range on this page — it always uses the full history.")
-        return saved_h, start, end
-    if ss.get("time_horizon_ctrl") not in HORIZONS:          # dropped while hidden (or first run): restore
-        ss["time_horizon_ctrl"] = saved_h if saved_h in HORIZONS else "1Y"
-    horizon = st.sidebar.selectbox("Chart range", HORIZONS, key="time_horizon_ctrl")
-    ss[_SAVED_HORIZON] = horizon
-    rng = saved_rng
-    if horizon == "Custom":
-        if not (isinstance(rng, (list, tuple)) and len(rng) == 2):
-            rng = (max(max_date - timedelta(days=365), min_date), max_date)
-        # the widget only accepts dates inside the bounds: clamp what is restored before the widget is built
-        restored = tuple(_clamp(d, min_date, max_date) for d in _range("Custom", min_date, max_date, rng))
-        cur = ss.get("custom_range")
-        if not (isinstance(cur, (list, tuple)) and cur and all(min_date <= d <= max_date for d in cur)):
-            ss["custom_range"] = restored
-        with st.sidebar.form("sb_custom_range", border=False):
-            picked = st.date_input("Custom dates", key="custom_range", min_value=min_date, max_value=max_date)
-            st.form_submit_button("Apply", width="stretch")
-        if isinstance(picked, (list, tuple)) and len(picked) == 2:
-            ss[_SAVED_CUSTOM] = rng = tuple(picked)               # applied: kept across tabs and presets
-        else:
-            st.sidebar.caption("Pick a start and an end date — the last full range stays applied.")
-            rng = restored
-    start, end = _range(horizon, min_date, max_date, rng)
-    st.sidebar.caption(f"{start:%d %b %Y} → {end:%d %b %Y} · changes the charts, returns and risk windows of this "
-                       "page; the Decision always uses the latest close.")
-    return horizon, start, end
+    saved_h = ss.get("time_horizon_ctrl") or ss.get(_SAVED_HORIZON) or "1Y"
+    saved_rng = ss.get("custom_range") or ss.get(_SAVED_CUSTOM)
+    start, end = _range(saved_h, min_date, max_date, saved_rng)
+    return saved_h, start, end
 
 
 # ── MACRO ─────────────────────────────────────────────────────────────────────────────────────────────────────────

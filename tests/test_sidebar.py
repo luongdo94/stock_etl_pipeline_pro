@@ -127,11 +127,11 @@ def test_the_chart_range_is_shown_only_where_it_matters(warehouse, tab, has_rang
     from test_app_smoke import _app
     at = _app(tab).run()
     assert not at.exception, [e.value for e in at.exception]
-    labels = [s.label for s in at.sidebar.selectbox]
-    assert ("Chart range" in labels) is has_range
+    sidebar_labels = [s.label for s in at.sidebar.selectbox]
+    assert "Chart range" not in sidebar_labels
     assert any("Check for new data" in b.label for b in at.sidebar.button)
-    if not has_range:
-        assert any("always uses the full history" in c.value for c in at.sidebar.caption)
+
+
 
 
 @pytest.mark.smoke
@@ -140,21 +140,24 @@ def test_the_applied_range_survives_a_tab_without_it(warehouse):
     sys.path.insert(0, os.path.dirname(__file__))
     from test_app_smoke import _app
     at = _app("🔬 Stock Analysis")
+    at.session_state["sa_group"] = "Price & timing"
     at.session_state["time_horizon_ctrl"] = "Custom"
     at.run()
-    hi = at.sidebar.date_input(key="custom_range").max
+    hi = at.date_input(key="custom_range").max
     picked = (hi - timedelta(days=120), hi - timedelta(days=30))
-    at.sidebar.date_input(key="custom_range").set_value(picked)
-    next(b for b in at.sidebar.button if b.label == "Apply").click().run()
+    at.date_input(key="custom_range").set_value(picked)
+    next(b for b in at.button if b.label == "Apply").click().run()
     for tab in ("🔭 Stock Scanner", "📖 Docs"):
         at.session_state["active_tab"] = tab
         at.run()
         assert not any(s.label == "Chart range" for s in at.sidebar.selectbox)
     at.session_state["active_tab"] = "🔬 Stock Analysis"
+    at.session_state["sa_group"] = "Price & timing"
     at.run()
     assert not at.exception, [e.value for e in at.exception]
-    assert at.sidebar.selectbox(key="time_horizon_ctrl").value == "Custom"
-    assert tuple(at.sidebar.date_input(key="custom_range").value) == picked
+    assert at.session_state["_range_horizon"] == "Custom"
+    saved = at.session_state["_range_custom"] if "_range_custom" in at.session_state else at.date_input(key="custom_range").value
+    assert tuple(saved) == picked
 
 
 # ── review of 5325df3 ────────────────────────────────────────────────────────────────────────────────────────────

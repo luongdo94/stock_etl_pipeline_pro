@@ -60,7 +60,7 @@ def test_replay_includes_crisis_outside_sidebar(monkeypatch, history, sidebar_se
     assert len(returns) == 159 and weights == {"A": .5, "B": .25}
     worst_month = replay.loc[replay.window == "21 trading days"].iloc[0]
     assert worst_month.end < history["t_start"] and worst_month["return"] < -.5
-    assert any("full stored history (not the sidebar range)" in s for s in ui.messages)
+    assert any("full stored history (not the chart range)" in s for s in ui.messages)
 
 
 @pytest.mark.parametrize("case", ["absent", "sparse", "short", "empty"])
@@ -119,14 +119,3 @@ def test_valuation_dates_use_latest_stored_session(monkeypatch, history):
     dated = ui.tables[0].set_index("ticker").loc["A"]
     assert dated.date == full.date.max() and dated.price_close == 259.
 
-
-@pytest.mark.parametrize("as_timestamp", [False, True])
-def test_range_caption_format(monkeypatch, as_timestamp):
-    from ui import components
-    ui = UI()
-    monkeypatch.setattr(components, "st", ui)
-    start, end = date(2024, 1, 2), date(2024, 3, 29)
-    if as_timestamp:
-        start, end = pd.Timestamp(start), pd.Timestamp(end)
-    components.range_caption(dict(selected_horizon="Custom", t_start=start, t_end=end))
-    assert ui.messages == ["Range: Custom (2024-01-02–2024-03-29), set in the sidebar"]

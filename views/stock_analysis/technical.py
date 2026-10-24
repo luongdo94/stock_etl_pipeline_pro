@@ -7,7 +7,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from services.db import load_ticker_provenance
-from ui.components import phone_safe_chart, range_caption
+from ui.components import phone_safe_chart
 from ui.provenance import history_jumps
 
 from views.stock_analysis.layout import layer_banner
@@ -160,10 +160,9 @@ def render(dd, ctx):
 
     with tech_tab_1:
         if fig_tech is None:
-            st.info("No price bars in the sidebar chart range — widen the range to see the chart.")
+            st.info("No price bars in the chart range — widen the range to see the chart.")
         else:
             st.plotly_chart(phone_safe_chart(fig_tech), use_container_width=True)
-        range_caption(ctx)
 
     with tech_tab_2:
         import streamlit.components.v1 as components

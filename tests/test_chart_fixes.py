@@ -240,7 +240,7 @@ def test_c13_price_lines_need_two_closes_and_correlation_needs_two_holdings(monk
     if count < 2:
         assert "need at least 2 closes" in " ".join(pulse["st"].messages)
     for n in (1, 2):
-        corr = _block("views/portfolio.py", "if n_assets < 2:", "_render_factor_tilts(ctx,",
+        corr = _block("views/portfolio.py", 'render_header("activity", "Asset Correlation Matrix"', "_render_factor_tilts(ctx,", _ineligible=False,
                       n_assets=n, ret_matrix=pd.DataFrame(np.arange(12).reshape(6, 2)[:, :n]))
         assert len(corr["st"].charts) == int(n == 2)
         if n == 1:

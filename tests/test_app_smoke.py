@@ -263,6 +263,7 @@ def test_the_sidebar_range_never_changes_the_decision(warehouse, monkeypatch, pa
     monkeypatch.setattr(context, "build", spy)
     at = _app("🔬 Stock Analysis")
     at.session_state["deep_ticker_selector"] = "AAPL"
+    at.session_state["sa_group"] = "Price & timing"
     if past_end:
         at.session_state["time_horizon_ctrl"] = "Custom"
         at.run()
@@ -328,7 +329,7 @@ def test_a_chart_range_without_bars_keeps_the_decision_and_the_assistant(warehou
     assert dd.df_deep.empty and dd.extra["chart_bars"] == 0
     assert dd.extra["decision"].stance == ctx["m_df"].set_index("Ticker").at["AAPL", "Decision"]
     assert "AAPL" in ctx["current_universe"]
-    assert any("No price bars in the sidebar chart range" in i.value for i in at.info)
+    assert any("No price bars in the chart range" in i.value for i in at.info)
 
 
 @pytest.mark.smoke

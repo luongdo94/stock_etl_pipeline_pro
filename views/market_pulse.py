@@ -10,8 +10,9 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from core import market_regime as mr
-from ui.components import phone_safe_chart, range_caption
+from ui.components import phone_safe_chart
 from ui.icons import render_header
+from ui.range_control import chart_range
 from ui.sticky import sticky, sticky_segmented
 
 _HEATMAP = """
@@ -145,8 +146,7 @@ def _answer(ctx):
         col.button(label, key=f"mp_go_{tab}", help=tip, width="stretch", on_click=_go, args=(tab,))
     _your_review()
     st.caption("Context for your research, not an instruction: the regime does not change any stock's Decision. The charts "
-               f"below follow the sidebar range ({ctx['t_start']:%d %b %Y} → {ctx['t_end']:%d %b %Y}); the regime above "
-               "always uses the latest data.")
+               "below follow the chart range; the regime above always uses the latest data.")
 
 
 def _your_review():
@@ -215,6 +215,8 @@ def render(ctx):
     st.markdown("---")
 
     # ROW 2: PRIMARY CHARTS
+    range_res = chart_range(ctx)
+    t_start, t_end = range_res.t_start, range_res.t_end
     # Filter SPY and breadth to the selected time horizon
     df_spy_filtered = df_spy_global[(df_spy_global["date"] >= t_start) & (df_spy_global["date"] <= t_end)]
     breadth_filtered = breadth_ts_global[(breadth_ts_global["date"] >= t_start) & (breadth_ts_global["date"] <= t_end)]
@@ -252,8 +254,6 @@ def render(ctx):
                 _last = _closes.iloc[-1]
                 st.caption(f"SPY: {pd.Timestamp(_last['date']):%Y-%m-%d} · €{_last['price_close']:,.2f}")
             st.info("SPY: need at least 2 closes for the selected period.")
-        range_caption(ctx)
-
 
     with c2:
         render_header("dna", "Market Breadth (% Stocks > MA 50)")
@@ -284,7 +284,6 @@ def render(ctx):
             st.plotly_chart(phone_safe_chart(fig_br), use_container_width=True)
         else:
             st.info("No breadth history in this snapshot.")
-        range_caption(ctx)
 
 
 

@@ -137,15 +137,14 @@ TAB_LABELS = {
 if st.session_state.get("active_tab") not in TABS:
     st.session_state["active_tab"] = next(iter(TABS))
 _active = st.session_state["active_tab"]
-selected_horizon, start_date, end_date = sidebar.render_horizon(prices_full["date"].min().date(),
-                                                                prices_full["date"].max().date(), _active)
-
 # ── Horizon-filtered views (display only — levels, scores and backtests use the full history) ─
-t_start, t_end = pd.Timestamp(start_date), pd.Timestamp(end_date)
+from ui.range_control import resolve_range
+_saved_h = st.session_state.get("_range_horizon") or st.session_state.get("time_horizon_ctrl") or "1Y"
+_saved_rng = st.session_state.get("_range_custom") or st.session_state.get("custom_range")
+_default_range = resolve_range(prices_full, horizon=_saved_h, custom_range=_saved_rng)
+selected_horizon, t_start, t_end = _default_range.horizon, _default_range.t_start, _default_range.t_end
+prices, spy_prices = _default_range.prices, _default_range.spy_prices
 indices_list = mr.INDICES
-in_window = (prices_full["date"] >= t_start) & (prices_full["date"] <= t_end)
-spy_prices = prices_full[in_window & (prices_full["ticker"] == "SPY")]
-prices = prices_full[in_window & ~prices_full["ticker"].isin(indices_list)]
 companies = companies_full[~companies_full["ticker"].isin(indices_list)]
 # every stock with data — a ticker without bars in the chart range keeps its Decision (only its charts are empty)
 current_universe = [t for t in all_tickers if t not in indices_list]

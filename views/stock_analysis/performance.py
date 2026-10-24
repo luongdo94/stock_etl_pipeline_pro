@@ -5,7 +5,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from ui.icons import render_header
-from ui.components import phone_safe_chart, range_caption
+from ui.components import phone_safe_chart
 
 
 
@@ -24,7 +24,6 @@ def render(dd, ctx):
             if not closes.empty:
                 st.caption(f"{label}: {pd.Timestamp(closes.index[-1]):%Y-%m-%d} · €{closes.iloc[-1]:,.2f}")
         st.info("need at least 2 closes on common sessions")
-        range_caption(ctx)
         return
     ticker_cum = (df_ticker_ret.loc[common_dates] / df_ticker_ret.loc[common_dates].iloc[0] - 1) * 100
     spy_cum = (df_spy_ret.loc[common_dates] / df_spy_ret.loc[common_dates].iloc[0] - 1) * 100
@@ -34,4 +33,3 @@ def render(dd, ctx):
     fig_rel.add_trace(go.Scatter(x=common_dates, y=spy_cum, name="SPY (%)", line=dict(color="#64748b", width=2, dash="dot")))
     fig_rel.update_layout(height=450, yaxis_title="Return (%)", hovermode="x unified", margin=dict(t=20, l=10, r=10, b=10))
     st.plotly_chart(phone_safe_chart(fig_rel), use_container_width=True)
-    range_caption(ctx)

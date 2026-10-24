@@ -24,7 +24,8 @@ from core.stress import historical_replay
 from core.portfolio_review import correlation, portfolio_tilts, review_returns, risk_contribution, stress, target_drift
 from services.user_store import (append_trades, load_portfolio_with_cash, load_trades, save_portfolio_checked,
                                  save_portfolio_to_db)
-from ui.components import format_value, phone_safe_chart, range_caption, render_metric_tile
+from ui.components import format_value, phone_safe_chart, render_metric_tile
+from ui.range_control import chart_range, resolve_range
 from ui.sidebar import is_phone_layout
 from ui.sticky import sticky, sticky_choice, sticky_radio
 from ui.decision_panel import render_alert_inbox
@@ -680,9 +681,24 @@ def render(ctx):
         total_p_val = edited_df["Market Value"].sum()
         _no_value = bool(edited_df["Market Value"].isna().any())        # a line without a price: its value is unknown
 
+        if _section == "Health":
+            render_header("activity", "Portfolio Health Dashboard")
+        # every section with range-dependent figures shows the control next to them (Health: simulation and risk tiles;
+        # Risk & income: correlation; Rebalance: frontier and risk contribution); stress and replay use full history
+        if _section in ("Health", "Risk & income", "Rebalance"):
+            range_res = chart_range(ctx, min_sessions=60, key="pf_range_ctrl",
+                                    label="Chart range — applies to the return-based figures below")
+            prices, t_start, t_end = range_res.prices, range_res.t_start, range_res.t_end
+        else:
+            _saved_h = st.session_state.get("_range_horizon") or st.session_state.get("time_horizon_ctrl") or "1Y"
+            _saved_rng = st.session_state.get("_range_custom") or st.session_state.get("custom_range")
+            range_res = resolve_range(prices_full, horizon=_saved_h, custom_range=_saved_rng, min_sessions=60)
+            prices, t_start, t_end = range_res.prices, range_res.t_start, range_res.t_end
+
         # Data-quality eligibility first (R3-K2): portfolio risk needs a return for every holding on the same dates. A
         # missing return used to be filled with 0% — a stale or halted line then looked riskless.
         _ineligible = []
+        _ret_clean = pd.DataFrame()
         if total_p_val > 0:
             _ret_clean, _ineligible = review_returns(prices, edited_df["Ticker"].tolist())
             if _ineligible:
@@ -690,7 +706,7 @@ def render(ctx):
                          f"horizon for {', '.join(map(str, _ineligible))} (a missing return is unknown, not 0%). Widen the "
                          "date range, refresh the data or remove the line.")
 
-        if total_p_val > 0 and not _ineligible and not _no_value:
+        if total_p_val > 0 and not _no_value:
             # NAV = holdings at market + cash: every weight, cap and rebalance is measured on it (R4-F01). Without
             # the cash, a 4-name book with 60% cash re-read as 25% per name after the first rebalance.
             nav_eur = float(total_p_val + _cash_eur)
@@ -698,16 +714,6 @@ def render(ctx):
             weights = (edited_df["Market Value"] / nav_eur).values
             current_tickers = edited_df["Ticker"].tolist()
             n_assets = len(current_tickers)
-
-            # ── 4. PERFORMANCE ENGINE (Weighted) ──
-            # Use filtered 'prices' to follow the global date filter
-            # Dates on which every holding has a return (complete case, checked above) — no zero-filling
-            ret_matrix = _ret_clean[current_tickers]
-            _max_pos_pct = float(load_decision_rules()["risk"]["max_position_pct"])
-            _budget = weight_budget(n_assets, _max_pos_pct)        # absolute cap; remainder is cash (R4-01)
-            _opt_cap, _invest = _budget["cap"], _budget["invested"]
-            _cap_binding = _budget["cash"] > 1e-9
-            # Current Decision per holding: the only source of "may this position grow?" (R4-01)
             _stances = (m_df.set_index("Ticker")["Decision"].astype(str).to_dict()
                         if (m_df is not None and not m_df.empty and {"Ticker", "Decision"} <= set(m_df.columns)) else {})
 
@@ -740,13 +746,23 @@ def render(ctx):
                 return rebalance_limits(current_tickers, nav_now, _col("_adv_eur"), _col("_stop_distance_pct"),
                                         load_decision_rules())
 
-            # ── Pre-compute matrices for Optimizer & Analytics ──
-            cov_matrix = ret_matrix.cov() * 252
-            # Expected returns for the optimisers: trailing means shrunk 50% toward their average.
-            # Raw trailing means make Max-Sharpe / Max-Return pile into last year's winners.
-            hist_rets  = shrink_expected_returns(ret_matrix.mean() * 252, intensity=0.5)
+            _max_pos_pct = float(load_decision_rules()["risk"]["max_position_pct"])
+            _budget = weight_budget(n_assets, _max_pos_pct)        # absolute cap; remainder is cash (R4-01)
+            _opt_cap, _invest = _budget["cap"], _budget["invested"]
+            _cap_binding = _budget["cash"] > 1e-9
 
-            if _section == "Health":
+            if not _ineligible:
+                # ── 4. PERFORMANCE ENGINE (Weighted) ──
+                # Use filtered 'prices' to follow the global date filter
+                # Dates on which every holding has a return (complete case, checked above) — no zero-filling
+                ret_matrix = _ret_clean[current_tickers]
+                # ── Pre-compute matrices for Optimizer & Analytics ──
+                cov_matrix = ret_matrix.cov() * 252
+                # Expected returns for the optimisers: trailing means shrunk 50% toward their average.
+                # Raw trailing means make Max-Sharpe / Max-Return pile into last year's winners.
+                hist_rets  = shrink_expected_returns(ret_matrix.mean() * 252, intensity=0.5)
+
+            if _section == "Health" and not _ineligible:
                 # Show Total Summary
                 total_cost_basis = (edited_df["Cost Basis (€)"] * edited_df["Shares"]).sum()
                 total_pnl = total_p_val - total_cost_basis
@@ -767,11 +783,9 @@ def render(ctx):
                 var_95 = np.percentile(port_daily, confidence_level * 100) * 100
                 cvar_95 = port_daily[port_daily <= np.percentile(port_daily, confidence_level * 100)].mean() * 100
 
-            if _section == "Health":
                 # ═══════════════════════════════════════════════════════════════════
                 # LAYER 1 · PORTFOLIO HEALTH DASHBOARD
                 # ═══════════════════════════════════════════════════════════════════
-                render_header("activity", "Portfolio Health Dashboard")
                 l1_left, l1_right = st.columns([1, 2])
                 with l1_left:
                     st.metric("NAV (holdings + cash)", f"€{nav_eur:,.2f}",
@@ -784,7 +798,6 @@ def render(ctx):
 
                     # Risk tiles stacked vertically
                     render_metric_tile("Weighted Return", f"{(cum_returns.iloc[-1]-1)*100:.1f}%", delta=(cum_returns.iloc[-1]-1)*100)
-                    range_caption(ctx)
                     if sharpe > 2.0: s_label, s_color = "ELITE", "#0284C7"
                     elif sharpe > 1.5: s_label, s_color = "STRONG", "#2ecc71"
                     elif sharpe > 1.0: s_label, s_color = "OK", "#f1c40f"
@@ -845,21 +858,24 @@ def render(ctx):
                         yaxis_title="Value (€)", margin=dict(t=10, l=10, r=10, b=10)
                     )
                     st.plotly_chart(phone_safe_chart(fig_bt), use_container_width=True)
-                    range_caption(ctx)
 
                 st.markdown("<br>", unsafe_allow_html=True)
 
             if _section == "Risk & income":
-                port_daily = (ret_matrix * weights).sum(axis=1)
+                port_daily = (ret_matrix * weights).sum(axis=1) if (not _ineligible and not _ret_clean.empty) else None
                 # ── FEAT 2: Historical Stress Test (Beta-weighted Drawdown) ──
                 # Calculate Portfolio Beta against SPY
-                bench_spy = prices_full[(prices_full["ticker"] == "SPY") & (prices_full["date"].isin(port_daily.index))].sort_values("date")
-                bench_spy_daily = bench_spy.set_index("date")["daily_return_pct"].fillna(0) / 100
-                align_df = pd.concat([port_daily, bench_spy_daily], axis=1).dropna()
-                port_beta = align_df.iloc[:, 0].cov(align_df.iloc[:, 1]) / align_df.iloc[:, 1].var() if (len(align_df) > 30 and align_df.iloc[:, 1].var() > 0) else 1.0
+                if port_daily is not None and not port_daily.empty:
+                    bench_spy = prices_full[(prices_full["ticker"] == "SPY") & (prices_full["date"].isin(port_daily.index))].sort_values("date")
+                    bench_spy_daily = bench_spy.set_index("date")["daily_return_pct"].fillna(0) / 100
+                    align_df = pd.concat([port_daily, bench_spy_daily], axis=1).dropna()
+                    port_beta = align_df.iloc[:, 0].cov(align_df.iloc[:, 1]) / align_df.iloc[:, 1].var() if (len(align_df) > 30 and align_df.iloc[:, 1].var() > 0) else 1.0
+                else:
+                    port_beta = 1.0
 
                 _render_stress_and_ledger(ctx, current_tickers, weights, nav_eur, _pol_meta, port_beta,
-                                          ret_matrix, _stances, _sizing_limits, _portfolio_policy, latest_prices)
+                                          ret_matrix if not _ineligible else pd.DataFrame(),
+                                          _stances, _sizing_limits, _portfolio_policy, latest_prices)
                 st.markdown("---")
 
                 # ═══════════════════════════════════════════════════════════════════
@@ -893,7 +909,9 @@ def render(ctx):
 
                 with l2c2:
                     render_header("activity", "Asset Correlation Matrix", level="#####")
-                    if n_assets < 2:
+                    if _ineligible:
+                        st.info("Correlation matrix blocked: not enough return history in the selected horizon.")
+                    elif n_assets < 2:
                         st.caption("correlation needs 2+ holdings")
                     else:
                         corr_matrix, corr_summary = correlation(ret_matrix)
@@ -907,7 +925,6 @@ def render(ctx):
                         )
                         fig_corr.update_layout(height=360, margin=dict(l=0, r=0, t=10, b=0))
                         st.plotly_chart(phone_safe_chart(fig_corr), use_container_width=True)
-                        range_caption(ctx)
 
                 _render_factor_tilts(ctx, dict(zip(current_tickers, weights)))
                 st.markdown("<br>", unsafe_allow_html=True)
@@ -1061,7 +1078,10 @@ def render(ctx):
 
 
 
-            if _section == "Rebalance":
+            if _section == "Rebalance" and _ineligible:
+                st.info("Portfolio optimization and rebalancing are blocked: not enough return history in the selected horizon.")
+
+            if _section == "Rebalance" and not _ineligible:
                 # ── 4.7. REBALANCING OPTIMIZER ───────────────────────────────────────────
                 st.markdown("### Portfolio Rebalancing Hub")
 
@@ -1263,7 +1283,10 @@ def render(ctx):
                              "Est. Value (€)": float("nan"), "Policy": "unallocated (cap / blocked increases)"})
                 return pd.DataFrame(rows)
 
-            if _section == "Rebalance":
+            if _section == "Rebalance" and _ineligible:
+                st.info("Portfolio optimization and rebalancing are blocked: not enough return history in the selected horizon.")
+
+            if _section == "Rebalance" and not _ineligible:
                 # ── Action Buttons ─────────────────────────────────────────────────
                 act_col1, act_col2 = st.columns([1, 1])
                 with act_col1:
@@ -1562,7 +1585,6 @@ def render(ctx):
                     )],
                 )
                 st.plotly_chart(phone_safe_chart(fig_mpt), use_container_width=True)
-                range_caption(ctx)
 
                 st.markdown("---")
                 # ── Risk Contribution ─────────────────────────────────────────
@@ -1576,7 +1598,6 @@ def render(ctx):
                 )
                 fig_risk_b.update_layout(height=380)
                 st.plotly_chart(phone_safe_chart(fig_risk_b), use_container_width=True)
-                range_caption(ctx)
 
 
             elif _section == "Rebalance" and len(current_tickers) == 1:
@@ -1696,9 +1717,9 @@ def _render_stress_and_ledger(ctx, tickers, weights, nav_eur, meta, port_beta, r
     if not rep.empty:
         st.caption("Historical replay (today's weights on the stored returns, no model): " + " · ".join(
             f"worst {r.window} {r['return']:+.1%} ({pd.Timestamp(r.start):%d %b %Y} → {pd.Timestamp(r.end):%d %b %Y})"
-            for _, r in rep.iterrows()) + ". Based on full stored history (not the sidebar range).")
+            for _, r in rep.iterrows()) + ". Based on full stored history (not the chart range).")
     else:
-        st.caption("Historical replay: N/A — not enough full stored history (not the sidebar range)"
+        st.caption("Historical replay: N/A — not enough full stored history (not the chart range)"
                    + (f" for {', '.join(map(str, replay_missing))}" if replay_missing else "")
                    + "; a missing return is unknown, not 0%.")
 

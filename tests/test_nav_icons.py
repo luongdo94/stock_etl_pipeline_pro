@@ -38,7 +38,7 @@ def test_tab_guard_precedes_horizon(raw):
     guard = next(n for n in tree.body if isinstance(n, ast.If)
                  and "st.session_state.get('active_tab')" in ast.unparse(n.test))
     horizon = next(n for n in tree.body if isinstance(n, ast.Assign)
-                   and isinstance(n.value, ast.Call) and ast.unparse(n.value.func) == "sidebar.render_horizon")
+                   and isinstance(n.value, ast.Call) and ast.unparse(n.value.func) == "resolve_range")   # the default chart range
     assert guard.lineno < horizon.lineno
     state = {} if raw is None else {"active_tab": raw}
     env = dict(values, st=SimpleNamespace(session_state=state))
