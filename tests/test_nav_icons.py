@@ -25,13 +25,13 @@ def test_tab_labels_cover_all_raw_ids():
     labels = values.get("TAB_LABELS", {})
     assert list(values["TABS"]) == TABS
     assert list(labels) == TABS
-    assert len(set(labels.values())) == 11
+    assert len(set(labels.values())) == 10
     assert all(label.isascii() for label in labels.values())
-    assert list(labels.values()) == ["Market Pulse", "Scanner", "Stock Analysis", "Earnings", "Risk Lab",
+    assert list(labels.values()) == ["Market Pulse", "Scanner", "Stock Analysis", "Earnings",
                                     "Strategy Lab", "Track Record", "Watchlist", "Portfolio", "Data Health", "Docs"]
 
 
-@pytest.mark.parametrize("raw", [None, "invalid", "💼 Portfolio", "🔬 Stock Analysis"])
+@pytest.mark.parametrize("raw", [None, "invalid", "💼 Portfolio", "🔬 Stock Analysis", "🎲 Risk Lab"])
 def test_tab_guard_precedes_horizon(raw):
     from types import SimpleNamespace
     tree, values = navigation()
@@ -43,7 +43,7 @@ def test_tab_guard_precedes_horizon(raw):
     state = {} if raw is None else {"active_tab": raw}
     env = dict(values, st=SimpleNamespace(session_state=state))
     exec(compile(ast.Module(body=[guard], type_ignores=[]), "tab-guard", "exec"), env)
-    assert state["active_tab"] == (raw if raw in TABS else TABS[0])
+    assert state["active_tab"] == (raw if raw in TABS else "🔬 Stock Analysis" if raw == "🎲 Risk Lab" else TABS[0])
 
 
 @pytest.mark.parametrize("raw,label", [
@@ -78,7 +78,7 @@ def test_bulk_status_tracks_ticker_after_delete_and_reorder():
             restore_statuses(edited.assign(Ticker=tickers), original)
 
 
-@pytest.mark.parametrize("raw", [None, "invalid", "📖 Docs"])
+@pytest.mark.parametrize("raw", [None, "invalid", "📖 Docs", "🎲 Risk Lab"])
 def test_menu_renders_clean_labels_and_keeps_selection(warehouse, monkeypatch, raw):
     import dotenv
     monkeypatch.setattr(dotenv, "load_dotenv", lambda *a, **k: False)
@@ -89,9 +89,9 @@ def test_menu_renders_clean_labels_and_keeps_selection(warehouse, monkeypatch, r
     assert not at.exception
     menu = next(group for group in at.get("button_group") if group.proto.label == "Navigation")
     assert [option.content for option in menu.proto.options] == list(navigation()[1]["TAB_LABELS"].values())
-    assert at.session_state["active_tab"] == (raw if raw in TABS else TABS[0])
+    assert at.session_state["active_tab"] == (raw if raw in TABS else "🔬 Stock Analysis" if raw == "🎲 Risk Lab" else TABS[0])
     at.run()
-    assert at.session_state["active_tab"] == (raw if raw in TABS else TABS[0])
+    assert at.session_state["active_tab"] == (raw if raw in TABS else "🔬 Stock Analysis" if raw == "🎲 Risk Lab" else TABS[0])
 
 
 @pytest.mark.parametrize("raw", ["ACTIVE", None, "CUSTOM"])

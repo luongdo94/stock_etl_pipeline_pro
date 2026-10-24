@@ -15,7 +15,7 @@ from core.market_regime import horizon_start
 
 HORIZONS = ["1D", "1W", "1M", "3M", "6M", "1Y", "YTD", "3Y", "5Y", "ALL", "Custom"]
 # the tabs whose content reads the range-filtered prices (an inventory of views/: ctx["prices"], spy_prices, t_start…).
-# Risk Lab fits and calibrates on the full history, so it has no range.
+# Stock Analysis → Risks & data → Price range fits and calibrates on the full history, independent of the chart range.
 RANGE_TABS = {"🌐 Market Pulse", "🔬 Stock Analysis", "💼 Portfolio"}
 # the applied choice, kept outside the widget keys: Streamlit drops a widget's state on a run that does not render it
 _SAVED_HORIZON, _SAVED_CUSTOM = "_range_horizon", "_range_custom"

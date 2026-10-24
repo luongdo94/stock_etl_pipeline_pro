@@ -8,7 +8,6 @@ import duckdb
 import pytest
 from services import news
 from etl import llm_parser
-from views import risk_lab
 from streamlit.testing.v1 import AppTest
 
 
@@ -40,8 +39,6 @@ def no_real_model(monkeypatch):
 def test_feed_failure_is_unavailable_in_all_callers(parse):
     r = news.fetch_news_sentiment("Company", "T", parse=parse, get_pipe=lambda: None)
     assert r["status"] == "unavailable" and r["error"] and r["avg"] is None
-    with pytest.raises(RuntimeError, match="unavailable"):
-        risk_lab._news_sentiment("Company", "T", parse=parse, get_pipe=lambda: None)
     r = llm_parser.analyze_risk_with_llm("T", "Company", parse=parse)
     assert r["status"] == "unavailable" and r["error"]
     assert "No recent news" not in str(r["key_insights"])
@@ -52,7 +49,6 @@ def test_empty_feed_is_no_news_without_neutral_defaults():
     r = llm_parser.analyze_risk_with_llm("T", "Company", parse=lambda u: feed())
     assert r["status"] == "no_news" and r["error"] is None
     assert all(r[k] is None for k in ("red_flag_score", "headline_sentiment_score", "confidence"))
-    assert risk_lab._news_sentiment("Company", "T", parse=lambda u: feed()) == (None, 0)
 
 
 @pytest.mark.parametrize("ticker,company", [("T", "AT&T"), ("J", "Jacobs"), ("KR", "Kroger"),
@@ -85,7 +81,6 @@ def test_local_feed_english_only_scoring_and_deduplication():
     assert len(r["items"]) == 2 and r["n_scored"] == 1 and r["avg"] == 1
     assert r["items"][1]["lang"] == "de-DE" and r["items"][1]["score"] is None
     assert "Gewinn" in llm_parser._fetch_recent_headlines("SAP.DE", "SAP", parse=parse)[1]
-    assert risk_lab._news_sentiment("SAP", "SAP.DE", parse=parse, get_pipe=lambda: positive) == (1., 2)
 
 
 @pytest.mark.parametrize("suffix,hl,gl", [(".PA", "fr-FR", "FR"), (".AS", "nl-NL", "NL"),
@@ -207,22 +202,16 @@ def test_partial_feed_keeps_items_with_explicit_error():
         return feed(entry()) if "en-US" in url else NS(entries=[], status=503)
     r = news.fetch_news_sentiment("SAP", "SAP.DE", parse=parse, get_pipe=lambda: positive)
     assert r["items"] and r["status"] == "partial" and "de-DE" in r["error"]
-    # the English edition answered: the context is usable, the failed locale is reported, not fatal
-    sent, n = risk_lab._news_sentiment("SAP", "SAP.DE", parse=parse, get_pipe=lambda: positive)
-    assert n == 1 and sent is not None
     assert llm_parser._fetch_recent_headlines("SAP.DE", "SAP", parse=parse) == [r["items"][0]["title"]]
     # nothing answered: unavailable, never "no news"
     dead = lambda url: NS(entries=[], status=503)              # noqa: E731
     assert news.fetch_news_sentiment("SAP", "SAP.DE", parse=dead)["status"] == "unavailable"
-    with pytest.raises(RuntimeError, match="unavailable"):
-        risk_lab._news_sentiment("SAP", "SAP.DE", parse=dead, get_pipe=lambda: positive)
 
 
 def test_only_local_headlines_never_load_finbert():
     parse = lambda url: feed() if "en-US" in url else feed(entry("Lokale Meldung - Zeitung"))
     r = news.fetch_news_sentiment("SAP", "SAP.DE", parse=parse)
     assert len(r["items"]) == 1 and r["n_scored"] == 0 and r["avg"] is None and r["mood"] is None
-    assert risk_lab._news_sentiment("SAP", "SAP.DE", parse=parse) == (None, 1)
     assert llm_parser._fetch_recent_headlines("SAP.DE", "SAP", parse=parse) == ["Lokale Meldung"]
 
 

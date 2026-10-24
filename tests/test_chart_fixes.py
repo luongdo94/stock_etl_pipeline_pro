@@ -260,7 +260,7 @@ def test_c14_holdings_exposure_uses_holdings_denominator_and_discloses_cash():
 
 def test_c15_risk_paths_use_steps_through_a_holiday_without_changing_quantiles():
     paths = np.arange(18, dtype=float).reshape(6, 3) + 100.
-    env = _block("views/risk_lab.py", "steps = np.arange(horizon + 1)", "# ── calibration",
+    env = _block("views/stock_analysis/price_range.py", "steps = np.arange(horizon + 1)", "# ── calibration",
                   df=pd.DataFrame(dict(date=[pd.Timestamp("2025-12-24")])), horizon=5, last=100., n_sims=3, paths=paths)
     assert env["fig"].layout.xaxis.title.text == "Trading sessions ahead"
     for trace in env["fig"].data:

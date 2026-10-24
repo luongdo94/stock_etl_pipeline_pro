@@ -168,19 +168,18 @@ def test_r9_apply_notice_is_visible_with_a_proposal_before_any_write(monkeypatch
 
 
 def test_r10_expensive_actions_name_the_cost_and_browsing_runs_nothing(monkeypatch):
-    from views import risk_lab
+    from views.stock_analysis import price_range
     from services import research
     calls = []
-    monkeypatch.setattr(risk_lab.rr, "fit_volatility", lambda *a, **k: calls.append("fit"))
+    monkeypatch.setattr(price_range.rr, "fit_volatility", lambda *a, **k: calls.append("fit"))
     monkeypatch.setattr(research, "answer", lambda *a, **k: calls.append("llm"))
 
     def page():
         import pandas as pd
         from types import SimpleNamespace
-        from views import risk_lab
+        from views.stock_analysis import price_range
         from views.stock_analysis.research import _decision_tab
-        risk_lab.render({"companies_full": pd.DataFrame(), "current_universe": ["AAPL"],
-                         "format_ticker": str, "prices_full": pd.DataFrame()})
+        price_range.render(SimpleNamespace(ticker="AAPL"), {"prices_full": pd.DataFrame()})
         _decision_tab(SimpleNamespace(ticker="AAPL", extra={}), "English")
     at = AppTest.from_function(page).run()
     assert not at.exception, [e.value for e in at.exception]
@@ -216,21 +215,21 @@ def _sym(label):
     return str(label).split(":")[0]
 
 
-def test_r8_risk_lab_follows_the_stock_researched_elsewhere_but_keeps_a_manual_choice(warehouse):
-    at = _app("🎲 Risk Lab")
-    at.session_state["active_ticker"] = "AAPL"
+def test_r8_price_range_uses_the_stock_analysis_selection(warehouse):
+    at = _app("🔬 Stock Analysis")
+    at.session_state["sa_group"] = "Risks & data"
+    at.session_state["deep_ticker_selector"] = "AAPL"
     at.run()
     assert not at.exception, [e.value for e in at.exception]
-    assert _sym(at.selectbox(key="risk_ticker_form").value) == "AAPL"
-    other = next(_sym(t) for t in at.selectbox(key="risk_ticker_form").options if _sym(t) != "AAPL")
-    at.selectbox(key="risk_ticker_form").select(next(t for t in at.selectbox(key="risk_ticker_form").options if _sym(t) == other)).run()
+    assert not any(s.key == "risk_ticker_form" for s in at.selectbox)
+    other = next(t for t in at.selectbox(key="deep_ticker_selector").options if _sym(t) != "AAPL")
+    at.session_state["deep_ticker_selector"] = _sym(other)
     at.run()
-    assert _sym(at.selectbox(key="risk_ticker_form").value) == other           # a manual choice survives reruns / tab visits
-    third = next(_sym(t) for t in at.selectbox(key="risk_ticker_form").options if _sym(t) not in ("AAPL", other))
-    at.session_state["active_ticker"] = third                            # the user researched another stock elsewhere
     at.run()
     assert not at.exception, [e.value for e in at.exception]
-    assert _sym(at.selectbox(key="risk_ticker_form").value) == third
+    assert _sym(at.selectbox(key="deep_ticker_selector").value) == _sym(other)
+    assert at.session_state["active_ticker"] == _sym(other)
+    assert any("Price range — how far can the price wander?" in m.value for m in at.markdown)
 
 
 def test_r9_import_says_what_overwrite_and_merge_do_and_that_nothing_is_saved_yet(warehouse):

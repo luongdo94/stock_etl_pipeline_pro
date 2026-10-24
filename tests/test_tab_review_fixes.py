@@ -270,21 +270,6 @@ def test_a10_scanner_changed_distinguishes_read_error(monkeypatch):
         assert bool(scanner._changes({})["previous"]) == (len(days) == 2)
 
 
-def test_b01_missing_or_failed_model_is_not_neutral(monkeypatch):
-    import feedparser
-    from services import ai
-    from views import risk_lab
-    monkeypatch.setattr(feedparser, "parse", lambda *a: NS(entries=[{"title": "headline"}], status=200))
-    monkeypatch.setattr(ai, "get_finbert_pipeline", lambda: None)
-    assert risk_lab._news_sentiment("A", "A") == (None, 1)
-    def failed(*a):
-        raise RuntimeError("model failure")
-    monkeypatch.setattr(ai, "get_finbert_pipeline", lambda: failed)
-    assert risk_lab._news_sentiment("A", "A") == (None, 1)
-    monkeypatch.setattr(ai, "get_finbert_pipeline", lambda: lambda *a: [{"label": "neutral", "score": 1.}])
-    assert risk_lab._news_sentiment("A", "A") == (0., 1)
-
-
 def test_b02_history_and_archive_read_failures_do_not_fallback(monkeypatch):
     from views import track_record as v
     db, state = fake_db(monkeypatch)

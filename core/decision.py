@@ -45,6 +45,14 @@ STANCES = (BUY, RESEARCH, HOLD, AVOID, NO_DATA)
 VETO_FLAGS = ("Net debt/EBITDA critical", "Negative book equity", "Debt with no positive EBITDA", "Illiquid")
 
 
+def is_fund(meta) -> bool:
+    """Display-only fund classification; company sector comes from the ticker config."""
+    if meta is None:
+        return False
+    return (str(meta.get("quote_type", "")).strip().upper() in {"ETF", "MUTUALFUND"}
+            or str(meta.get("sector", meta.get("Sector", ""))).strip().casefold() == "benchmark")
+
+
 def load_rules(path: Path = _RULES_PATH) -> dict:
     rules = {k: dict(v) for k, v in _DEFAULT_RULES.items()}
     try:

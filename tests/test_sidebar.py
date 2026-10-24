@@ -121,7 +121,7 @@ def test_the_custom_range_is_clamped_and_never_inverted():
 @pytest.mark.smoke
 @pytest.mark.parametrize("tab, has_range", [("🔭 Stock Scanner", False), ("🔬 Stock Analysis", True),
                                             ("📖 Docs", False), ("🌐 Market Pulse", True),
-                                            ("🎲 Risk Lab", False), ("💼 Portfolio", True)])
+                                            ("💼 Portfolio", True)])
 def test_the_chart_range_is_shown_only_where_it_matters(warehouse, tab, has_range):
     sys.path.insert(0, os.path.dirname(__file__))
     from test_app_smoke import _app

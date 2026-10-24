@@ -27,8 +27,9 @@ def test_unknown_formatting_preserves_real_zero(value, expected):
 
 
 def test_tiles_escape_plain_text_and_earnings_zero_move_is_known():
-    from views import earnings, risk_lab
-    for tile in (earnings._tile, risk_lab._tile):
+    from views import earnings
+    from views.stock_analysis import price_range
+    for tile in (earnings._tile, price_range._tile):
         text = tile("<title>", None, "<missing> & unknown")
         assert "N/A" in text and "&lt;title&gt;" in text and "&lt;missing&gt; &amp; unknown" in text
         assert "<title>" not in text
@@ -47,7 +48,7 @@ def test_summary_never_calls_partial_value_a_complete_nav():
 
 
 def test_risk_staleness_covers_controls_and_snapshot():
-    from views.risk_lab import _stale_reason
+    from views.stock_analysis.price_range import _stale_reason
     spec = dict(ticker="A", horizon=21, paths=1000, calibration=False, snapshot="A")
     assert not _stale_reason(spec, spec.copy())
     assert "horizon" in _stale_reason(spec, dict(spec, horizon=42))
@@ -86,33 +87,35 @@ def test_portfolio_summary_and_unrequested_sections_do_no_heavy_work(warehouse, 
 
 @pytest.mark.smoke
 def test_risk_result_survives_navigation_and_marks_new_spec_stale(warehouse, monkeypatch):
-    from views import risk_lab
-    original_render = risk_lab.render
+    from views.stock_analysis import price_range
+    original_render = price_range.render
     version = {"value": "snapshot-A"}
-    monkeypatch.setattr(risk_lab, "render", lambda ctx: original_render(dict(ctx, data_version=version["value"])))
+    monkeypatch.setattr(price_range, "render", lambda dd, ctx: original_render(dd, dict(ctx, data_version=version["value"])))
     calls = []
-    fit = risk_lab.rr.fit_volatility
+    fit = price_range.rr.fit_volatility
     def counted(*args, **kw):
         calls.append(1)
         return fit(*args, **kw)
-    monkeypatch.setattr(risk_lab.rr, "fit_volatility", counted)
-    monkeypatch.setattr(risk_lab, "_news_sentiment", lambda *a: pytest.fail("news loaded without action"))
-    at = _app("🎲 Risk Lab")
-    at.session_state["risk_ticker_form"] = "AAPL"
+    monkeypatch.setattr(price_range.rr, "fit_volatility", counted)
+    from services import news
+    monkeypatch.setattr(news, "fetch_news_sentiment", lambda *a, **k: pytest.fail("news loaded without action"))
+    at = _app("🔬 Stock Analysis")
+    at.session_state["sa_group"] = "Risks & data"
+    at.session_state["deep_ticker_selector"] = "AAPL"
     at.session_state["risk_cal_form"] = False
     at.run()
     assert not at.exception, [e.value for e in at.exception]
     at.button(key="risk_compute").click().run()
     assert not at.exception, [e.value for e in at.exception]
     assert len(calls) == 1
-    result_at = at.session_state["_risk_run"]["at"]
+    result_at = at.session_state["_risk_run::AAPL"]["at"]
     assert any("Warehouse close" in m.value for m in at.markdown)
     at.session_state["active_tab"] = "📖 Docs"
     at.run()
-    at.session_state["active_tab"] = "🎲 Risk Lab"
+    at.session_state["active_tab"] = "🔬 Stock Analysis"
     at.run()
     assert not at.exception, [e.value for e in at.exception]
-    assert at.session_state["_risk_run"]["at"] == result_at and len(calls) == 1
+    assert at.session_state["_risk_run::AAPL"]["at"] == result_at and len(calls) == 1
     at.slider(key="risk_days_form").set_value(30).run()
     assert any("Stale result" in w.value and "horizon" in w.value for w in at.warning)
     version["value"] = "snapshot-B"

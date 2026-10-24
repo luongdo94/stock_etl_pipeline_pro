@@ -8,7 +8,7 @@ import streamlit as st
 from ui.icons import render_header
 from ui.sticky import my_tickers, remember_ticker, ticker_options
 from views.stock_analysis import (ai_review, analyst, answer, context, diagnostics, fundamentals, header, ownership,
-                                      peers, performance, research, risk_hub, signal_matrix, technical,
+                                      peers, performance, price_range, research, risk_hub, signal_matrix, technical,
                                       watchlist_save)
 from ui.decision_panel import render_valuation_section
 
@@ -18,7 +18,7 @@ GROUPS = {
     "Overview": (header, ai_review, signal_matrix, watchlist_save),
     "Business & value": (diagnostics, fundamentals, analyst, peers),
     "Price & timing": (technical, performance),
-    "Risks & data": (risk_hub, research, ownership),
+    "Risks & data": (risk_hub, price_range, research, ownership),
 }
 DEFAULT_GROUP = "Overview"
 SECTIONS = tuple(m for group in GROUPS.values() for m in group)

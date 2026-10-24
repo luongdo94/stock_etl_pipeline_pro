@@ -72,18 +72,6 @@ def test_a_holding_without_a_price_is_unknown_and_blocks_the_analytics(warehouse
     assert any("ZZZNOPRICE" in w.value and "incomplete" in w.value for w in at.warning)
 
 
-def test_news_lookup_states_are_not_neutral():
-    import importlib
-    rl = importlib.import_module("views.risk_lab")
-    import types
-    fake = types.SimpleNamespace(parse=lambda url: types.SimpleNamespace(entries=[]))
-    sys.modules["feedparser"] = fake
-    try:
-        assert rl._news_sentiment("Apple", "AAPL") == (None, 0)           # no headlines: unknown, not 0.0 / Neutral
-    finally:
-        sys.modules.pop("feedparser", None)
-
-
 @pytest.mark.smoke
 def test_an_unreadable_watchlist_is_not_shown_as_empty(warehouse, monkeypatch):
     import pandas as pd

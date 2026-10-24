@@ -109,11 +109,15 @@ _CROSS = """
 
 _NEXT_STEPS = (("Look for ideas", "🔭 Stock Scanner", "Scanner — Decisions of the whole universe"),
                ("Check what you hold", "💼 Portfolio", "Portfolio — your holdings and their Decisions"),
-               ("One stock's range", "🎲 Risk Lab", "Risk Lab — the volatility range of a single stock"))
+               ("One stock's range — Risks & data → Price range", "🔬 Stock Analysis",
+                "Stock Analysis — Risks & data → Price range"))
 
 
 def _go(tab):
     st.session_state["active_tab"] = tab
+    if tab == "🔬 Stock Analysis":
+        st.session_state["sa_group"] = "Risks & data"
+        st.session_state["_sa_group"] = "Risks & data"
 
 
 def _answer(ctx):

@@ -113,7 +113,6 @@ TABS = {
     "🔭 Stock Scanner": "scanner",
     "🔬 Stock Analysis": "stock_analysis",
     "🗓️ Earnings": "earnings",
-    "🎲 Risk Lab": "risk_lab",
     "🧪 Strategy Lab": "strategy_lab",
     "📈 Track Record": "track_record",
     "📋 Watchlist": "watchlist",
@@ -126,7 +125,6 @@ TAB_LABELS = {
     "🔭 Stock Scanner": "Scanner",
     "🔬 Stock Analysis": "Stock Analysis",
     "🗓️ Earnings": "Earnings",
-    "🎲 Risk Lab": "Risk Lab",
     "🧪 Strategy Lab": "Strategy Lab",
     "📈 Track Record": "Track Record",
     "📋 Watchlist": "Watchlist",
@@ -135,7 +133,8 @@ TAB_LABELS = {
     "📖 Docs": "Docs",
 }
 if st.session_state.get("active_tab") not in TABS:
-    st.session_state["active_tab"] = next(iter(TABS))
+    st.session_state["active_tab"] = ("🔬 Stock Analysis" if st.session_state.get("active_tab") == "🎲 Risk Lab"
+                                      else next(iter(TABS)))
 _active = st.session_state["active_tab"]
 # ── Horizon-filtered views (display only — levels, scores and backtests use the full history) ─
 from ui.range_control import resolve_range

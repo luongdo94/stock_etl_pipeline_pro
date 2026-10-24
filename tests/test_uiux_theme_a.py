@@ -44,7 +44,7 @@ def test_streamlit_config_toml_theme_a():
     "views/portfolio.py",
     "views/strategy_lab.py",
     "views/stock_analysis/risk_hub.py",
-    "views/risk_lab.py",
+    "views/stock_analysis/price_range.py",
 ])
 def test_no_bright_cyan_literals_remain(rel_path):
     path = os.path.join(ROOT, rel_path)

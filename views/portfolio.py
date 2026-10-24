@@ -10,7 +10,7 @@ import streamlit as st
 
 from core.alerts import METRICS as ALERT_METRICS, earnings_soon, evaluate_rules, latest_snapshot
 from core.alerts import opening_stops, position_stop_triggers
-from core.decision import holding_action
+from core.decision import holding_action, is_fund
 from core.currency import MINOR_UNITS, major_currency
 from core.decision import load_rules as load_decision_rules
 from core.portfolio_policy import check as policy_check, describe as policy_describe, exposures as policy_exposures
@@ -482,6 +482,7 @@ def render(ctx):
     if not p_tickers:
         st.info("Add your first holding: select Holdings, then use “Add Trade” or Import; the Decision of each line appears here.")
     if p_tickers:
+        _funds = {r["ticker"] for r in ctx.get("companies_full", companies).to_dict("records") if is_fund(r)}
         latest_prices = (_now_px[_now_px["ticker"].isin(p_tickers)].sort_values("date")
                          .groupby("ticker")["price_close"].last().to_dict())
 
@@ -508,7 +509,7 @@ def render(ctx):
                 meta = m_df[m_df["Ticker"] == t].iloc[0] if not m_df[m_df["Ticker"] == t].empty else {}
 
                 # The single recommendation (same as Scanner / Stock Analysis), not the technical Signal
-                _act = meta.get("Decision", "NOT ENOUGH DATA")
+                _act = "N/A — fund" if t in _funds else meta.get("Decision", "NOT ENOUGH DATA")
                 _act_emoji = "🔵 " if "RESEARCH" in _act else "🟢 " if "BUY" in _act else "🔴 " if "AVOID" in _act else "🟡 " if "HOLD" in _act else "⚪ "
 
                 _sm = meta.get("Smart Money", "N/A")
@@ -520,7 +521,7 @@ def render(ctx):
                     "Company": meta.get("Company", t),
                     "Sector": meta.get("Sector", "N/A"),
                     # what the Decision means for a position you HOLD (P1/5): ADD / HOLD — no adds / TRIM / EXIT …
-                    "Action": _act_emoji + holding_action(_act, held=True),
+                    "Action": _act if t in _funds else _act_emoji + holding_action(_act, held=True),
                     "Stop (orig)": st.session_state.get("portfolio_stops", {}).get(t, float("nan")),
                     "Target (%)": st.session_state.get("portfolio_targets", {}).get(t, float("nan")),
                     "Region": meta.get("Region", "US"),
@@ -540,11 +541,12 @@ def render(ctx):
             _pdf["Price (€)"] = _pdf["Ticker"].map(latest_prices)
         if "Ticker" in _pdf.columns and "Action" in _pdf.columns and "Ticker" in m_df.columns:
             _cur = m_df.drop_duplicates("Ticker").set_index("Ticker")["Decision"].to_dict()
+            _cur.update({t: "N/A — fund" for t in _funds})
             _emoji = lambda d: ("🔵 " if "RESEARCH" in d else "🟢 " if "BUY" in d else "🔴 " if "AVOID" in d    # noqa: E731
                                 else "🟡 " if "HOLD" in d else "⚪ ")
             _pdf["Current Decision"] = [_cur.get(t, "NOT ENOUGH DATA") for t in _pdf["Ticker"]]
-            _pdf["Action"] = [_emoji(_cur.get(t, "NOT ENOUGH DATA")) + holding_action(_cur.get(t, "NOT ENOUGH DATA"), held=True)
-                              for t in _pdf["Ticker"]]
+            _pdf["Action"] = [d if d == "N/A — fund" else _emoji(d) + holding_action(d, held=True)
+                              for d in _pdf["Current Decision"]]
 
         # Refresh only derived context; keep the editor draft and its raw Action guard.
         _flow = m_df.set_index("Ticker")["Smart Money"].to_dict() if {"Ticker", "Smart Money"} <= set(m_df.columns) else {}

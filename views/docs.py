@@ -133,7 +133,7 @@ def render(ctx):
 
         st.markdown("### 5. Experimental modules")
         st.markdown("""
-        - **Risk Lab** estimates a volatility range (GJR-GARCH + Monte Carlo) and checks its calibration; it forecasts no direction. The neural price forecasts were removed after failing a walk-forward test against a no-change forecast;
+        - **Stock Analysis → Risks & data → Price range** estimates a volatility range (GJR-GARCH + Monte Carlo) and checks its calibration; it forecasts no direction. The neural price forecasts were removed after failing a walk-forward test against a no-change forecast;
           the Decision ignores them.
         - **Market regime gauge** and *regime read* texts are heuristics, not validated against returns.
         - **Volume Flow** is a public daily price–volume heuristic (OBV/MFI), not observed institutional buying/selling.

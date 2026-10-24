@@ -1,7 +1,7 @@
-"""View: 🎲 Risk Lab — a volatility risk range, tail risk and a calibration check.
+"""Section: Price range — a volatility risk range, tail risk and a calibration check.
 
 It forecasts no direction. The neural price forecasts that used to live here did not beat a no-change forecast on real stocks
-(scripts/tools/ml_walkforward.py) and are archived at the commit `06b9bf9` of the git history. Nothing on this tab feeds the Decision Summary.
+(scripts/tools/ml_walkforward.py) and are archived at the commit `06b9bf9` of the git history. Nothing in this section feeds the Decision Summary.
 """
 import html
 
@@ -11,10 +11,9 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from core import risk_range as rr
-from core.smart_money import get_volume_flow
 
 from ui.components import format_value, phone_safe_chart
-from ui.sticky import follow_active_ticker, my_tickers, remember_ticker, sticky, sticky_choice, ticker_options
+from ui.sticky import sticky, sticky_choice
 from ui.icons import render_header
 
 
@@ -25,16 +24,6 @@ def _tile(title, value, sub="", colour="inherit", border="#3498db"):
             f"<div style='color:inherit; font-size:0.8rem;'>{html.escape(str(sub))}</div></div>")
 
 
-def _news_sentiment(company, ticker, parse=None, get_pipe=None, detail=None):
-    from services.news import fetch_news_sentiment
-    rec = fetch_news_sentiment(company, ticker, parse=parse, get_pipe=get_pipe)
-    if rec["status"] == "unavailable":
-        raise RuntimeError(f"News feed unavailable: {rec['error']}")
-    if detail is not None:
-        detail.update(rec)
-    return rec["avg"], len(rec["items"])
-
-
 def _stale_reason(previous, current):
     changed = [name for name in ("ticker", "horizon", "paths", "calibration") if previous.get(name) != current.get(name)]
     reasons = (["controls changed (" + ", ".join(changed) + ")"] if changed else [])
@@ -43,33 +32,23 @@ def _stale_reason(previous, current):
     return "; ".join(reasons)
 
 
-def render(ctx):
-    """Render the 🎲 Risk Lab tab. ctx is the context dict built in app.py."""
-    companies_full = ctx["companies_full"]
-    current_universe = ctx["current_universe"]
-    format_ticker = ctx["format_ticker"]
+def render(dd, ctx):
+    """Render the price range for the stock selected in Stock Analysis."""
+    ticker = dd.ticker
+    run_key = f"_risk_run::{ticker}"
     prices_full = ctx["prices_full"]
 
-    render_header("zap", "Risk Lab — how far can the price wander?", subtitle="Volatility risk range · no direction forecast")
-    st.info("This tab does **not** predict where a stock will go. It estimates how wide the range of outcomes is "
+    render_header("zap", "Price range — how far can the price wander?", subtitle="Volatility risk range · no direction forecast")
+    st.info("This section does **not** predict where a stock will go. It estimates how wide the range of outcomes is "
             "(GJR-GARCH volatility, fat-tailed Monte Carlo, zero drift) and checks that range against past outcomes. "
             "The neural price forecasts that used to be here were removed: on 12 real stocks none beat a no-change forecast. "
             "Nothing here feeds the Decision Summary.")
 
     with st.container():
-        c1, c2, c3 = st.columns([2, 1, 1])
+        c1, c2 = st.columns(2)
         with c1:
-            at = st.session_state.get("active_ticker")
-            follow_active_ticker("risk_ticker_form", current_universe)
-            shown = st.session_state.get("_kept::risk_ticker_form")
-            options = ticker_options(current_universe, shown if shown in current_universe else at, my_tickers())
-            ticker = sticky_choice("Select ticker", options, at if at in current_universe else None,
-                                   "risk_ticker_form", format_func=format_ticker,
-                                   placeholder="Type a ticker or a company name...")
-            remember_ticker(ticker)
-        with c2:
             horizon = sticky(st.slider, "Horizon (trading days)", 21, "risk_days_form", min_value=5, max_value=90)
-        with c3:
+        with c2:
             n_sims = sticky_choice("Monte Carlo paths", [1000, 2000, 5000], 2000, "risk_sims_form")
         check = sticky(st.checkbox, "Calibration check (re-fits the model on up to 60 earlier non-overlapping windows and tests "
                             "the range)", True, "risk_cal_form")
@@ -82,12 +61,9 @@ def render(ctx):
     if run and ticker:
         df = prices_full[prices_full["ticker"] == ticker].sort_values("date")
         if len(df) < 150:
-            st.session_state.pop("_risk_run", None)
+            st.session_state.pop(run_key, None)
             st.warning(f"Only {len(df)} days of history for {ticker}; at least 150 are needed.")
             return
-        co = companies_full[companies_full["ticker"] == ticker]
-        sector = co.iloc[0]["sector"] if not co.empty else None
-        company = co.iloc[0]["company"] if not co.empty and "company" in co.columns else ticker
         closes = df["price_close"].astype(float).reset_index(drop=True)
         last = float(closes.iloc[-1])
         returns = df["daily_return_pct"].dropna() / 100
@@ -100,26 +76,25 @@ def render(ctx):
                 m = rr.risk_metrics(paths, last)
                 _max_w = max(0, (len(closes) - 1 - 250) // max(horizon, 1))
                 cov = rr.coverage_backtest(closes, horizon, windows=min(_max_w, 60), n_sims=500) if check else None
-                sm = get_volume_flow(df, sector=str(sector) if sector else "Unknown")
-            st.session_state["_risk_run"] = {"spec": spec, "at": pd.Timestamp.now(tz="UTC"),
-                "df": df, "company": company, "last": last, "returns": returns, "fit": fit,
-                "paths": paths, "sim_diag": sim_diag, "metrics": m, "coverage": cov, "max_windows": _max_w, "sm": sm}
+            st.session_state[run_key] = {"spec": spec, "at": pd.Timestamp.now(tz="UTC"),
+                "df": df, "last": last, "returns": returns, "fit": fit,
+                "paths": paths, "sim_diag": sim_diag, "metrics": m, "coverage": cov, "max_windows": _max_w}
         except Exception as exc:
-            st.session_state.pop("_risk_run", None)
+            st.session_state.pop(run_key, None)
             st.error(f"Risk range unavailable ({type(exc).__name__}). No result was saved for this request.")
             return
-    saved = st.session_state.get("_risk_run")
+    saved = st.session_state.get(run_key)
     if not saved:
-        st.caption("Pick a ticker and a horizon, then compute.")
+        st.caption("Choose a horizon, then compute the range for the selected stock.")
         return
     why = _stale_reason(saved["spec"], spec)
     if why:
         st.warning(f"Stale result: {why}. Showing the saved run; press Compute to refresh.")
     ticker, horizon = saved["spec"]["ticker"], saved["spec"]["horizon"]
     n_sims, check = saved["spec"]["paths"], saved["spec"]["calibration"]
-    df, company, last, returns = saved["df"], saved["company"], saved["last"], saved["returns"]
+    df, last, returns = saved["df"], saved["last"], saved["returns"]
     fit, paths, sim_diag, m, cov = saved["fit"], saved["paths"], saved["sim_diag"], saved["metrics"], saved["coverage"]
-    sigma, sm = fit["sigma"], saved["sm"]
+    sigma = fit["sigma"]
     st.caption(f"Saved range for {ticker} · {horizon} trading days · {n_sims:,} paths · "
                f"computed {saved['at']:%Y-%m-%d %H:%M UTC} · snapshot {saved['spec']['snapshot']}")
     if check and saved["max_windows"] < rr.MIN_CALIBRATION_WINDOWS:
@@ -192,39 +167,3 @@ def render(ctx):
         st.info(rr.calibration_verdict(cov))
     else:
         st.caption("Calibration check switched off.")
-
-    # ── context ─────────────────────────────────────────────────────────────────────────────
-    st.markdown("---")
-    render_header("activity", "Context (not part of the range)")
-    if st.button("Load headline context — Contacts Google News", key="risk_news"):
-        detail = {}
-        try:
-            sent, n_titles = _news_sentiment(company, ticker, detail=detail)
-        except Exception as exc:
-            sent, n_titles = None, None
-            detail["error"] = str(exc)
-        saved["news"] = {"sent": sent, "n": n_titles, "at": pd.Timestamp.now(tz="UTC"),
-                         "detail": detail}
-    news = saved.get("news")
-    sent, n_titles = (news["sent"], news["n"]) if news else (None, None)
-    if news:
-        detail = news.get("detail", {})
-        st.caption(f"{detail.get('n_scored', 0)}/{n_titles or 0} headlines scored; weighted by recency (half-life 3 days); "
-                   f"{detail.get('undated', 0)} without publication date (7-day weight).")
-        if detail.get("error"):
-            st.caption(detail["error"])
-        st.caption(f"Google News / FinBERT · requested {news['at']:%Y-%m-%d %H:%M UTC} · external context, outside the snapshot.")
-    k1, k2, k3 = st.columns(3)
-    if not news:
-        k1.metric("News sentiment (FinBERT)", "Not loaded", delta="Load headline context to request it", delta_color="off")
-    elif sent is None:
-        k1.metric("News sentiment (FinBERT)", "Unavailable" if n_titles is None else "Unscored" if n_titles else "No headlines",
-                  delta="lookup failed" if n_titles is None else f"{n_titles} headlines; none scored" if n_titles else "none in the last 7 days", delta_color="off")
-    else:
-        from services.news import mood as news_mood
-        mood = news_mood(sent).title()
-        k1.metric("News sentiment (FinBERT)", mood, delta=f"{sent:.2f} · {n_titles} headlines", delta_color="off")
-    k2.metric("Volume Flow", f"{sm['signal']} ({sm['strength']}/100)",
-              delta=sm.get("reason") or ("HIGH_VOLUME" if sm["layer"] == "INSTITUTIONAL_VOLUME" else sm["layer"]), delta_color="off")
-    k3.metric("Horizon", f"{horizon} trading days", delta=f"{n_sims:,} paths", delta_color="off")
-    st.caption("Volume Flow: context only — not used in the Decision or the timing signal. Sentiment is unvalidated context. They do not change the range, and none of this is investment advice.")

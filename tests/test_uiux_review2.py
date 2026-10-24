@@ -1,7 +1,6 @@
 """UI/UX review 2 (UIUX_REVIEW_2.md): fixes F02, F04, F07, F09, F10, F12, F13."""
 import os
 import sys
-import types
 
 import pandas as pd
 
@@ -57,24 +56,6 @@ def test_f07_earnings_says_when_the_researched_stock_has_no_records(warehouse):
     at.run()
     assert not at.exception, [e.value for e in at.exception]
     assert any("No earnings records are stored for ZZZ_NO_EARNINGS" in c.value for c in at.caption)
-
-
-def test_f10_a_failed_feed_is_unavailable_not_no_headlines():
-    from views import risk_lab
-    import pytest
-    for feed, expect_error in ((types.SimpleNamespace(entries=[], bozo=1, status=503,
-                                                      get=lambda k, d=None: {"bozo": 1, "status": 503}.get(k, d)), True),
-                               (types.SimpleNamespace(entries=[], bozo=0, status=200,
-                                                      get=lambda k, d=None: {"bozo": 0, "status": 200}.get(k, d)), False)):
-        sys.modules["feedparser"] = types.SimpleNamespace(parse=lambda url, f=feed: f)
-        try:
-            if expect_error:
-                with pytest.raises(RuntimeError):
-                    risk_lab._news_sentiment("Apple", "AAPL")
-            else:
-                assert risk_lab._news_sentiment("Apple", "AAPL") == (None, 0)
-        finally:
-            sys.modules.pop("feedparser", None)
 
 
 def test_f12_toggling_the_demo_marks_the_stored_run_stale():

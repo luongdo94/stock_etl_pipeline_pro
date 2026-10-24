@@ -16,6 +16,8 @@ from typing import Callable, Optional
 
 import pandas as pd
 
+from core.decision import is_fund
+
 # screener columns the assistant may read / filter / sort on (friendly name → column)
 FIELDS = {
     "decision": "Decision", "confidence": "Confidence", "verdict": "Verdict", "sector": "Sector", "region": "Region",
@@ -287,6 +289,7 @@ class ToolBox:
         if not holdings:
             return [{**doc, "holdings": [], "cash_eur": _num(cash), "note": "no holdings saved"}]
         rows, mv_total, unpriced = [], 0.0, []
+        funds = {r.get("ticker") for r in self.companies.to_dict("records") if is_fund(r)}
         for t, h in holdings.items():
             px = _num(self.last_prices.get(t), 6)
             if px is None or px <= 0:                          # missing, NaN, inf or non-positive: not a price
@@ -297,10 +300,29 @@ class ToolBox:
             unit_cost = _num(h.get("cost"), 6)
             cost = unit_cost * float(h.get("shares", 0)) if unit_cost is not None else None
             mv_total += mv
-            r = self._row(t)
+            r = self._row(t) if "Ticker" in self.m.columns else {}
+            fund = t in funds or is_fund(r)
+            stance, reasons, confidence = r.get("Decision"), r.get("_reasons"), r.get("Confidence")
+            vin, mos = r.get("_valuation"), _num(r.get("MoS (%)"))
+            if not fund and self.deep_decision is not None and (
+                    not isinstance(reasons, (list, tuple)) or not isinstance(vin, dict)):
+                try:
+                    d, vin, _scores, _date = self.deep_decision(t)
+                except KeyError:                         # ticker absent from the loaded Decision context
+                    pass
+                else:
+                    stance, reasons, confidence = d.stance, d.reasons, d.confidence
+                    base = _num(vin.get("base"))
+                    mos = (base / px - 1) * 100 if base is not None and vin.get("reliable") else None
+            vin = vin if isinstance(vin, dict) and not fund else {}
             rows.append({"ticker": t, "shares": h.get("shares"), "price_eur": px, "market_value_eur": mv,
                          "gain_vs_cost_pct": (mv / cost - 1) * 100 if cost is not None and cost > 0 else None,
-                         "decision": r.get("Decision"), "verdict": r.get("Verdict"), "sector": r.get("Sector")})
+                         "decision": "N/A — fund" if fund else stance,
+                         "decision_reasons": list(reasons[:3]) if not fund and isinstance(reasons, (list, tuple)) else None,
+                         "confidence": None if fund else confidence,
+                         "value_per_share_eur": {k: _num(vin.get(k)) for k in ("bear", "base", "bull")},
+                         "margin_of_safety_pct": None if fund else mos,
+                         "verdict": r.get("Verdict"), "sector": r.get("Sector")})
         nav = mv_total + float(cash or 0)
         rows.sort(key=lambda r: -r["market_value_eur"])
         if unpriced:

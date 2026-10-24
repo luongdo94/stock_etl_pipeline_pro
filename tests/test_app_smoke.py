@@ -19,7 +19,7 @@ from streamlit.testing.v1 import AppTest  # noqa: E402
 from tests.synthetic_warehouse import build  # noqa: E402
 from views import scanner as scanner_view  # noqa: E402
 
-TABS = ["🌐 Market Pulse", "🔭 Stock Scanner", "🔬 Stock Analysis", "🗓️ Earnings", "🎲 Risk Lab",
+TABS = ["🌐 Market Pulse", "🔭 Stock Scanner", "🔬 Stock Analysis", "🗓️ Earnings",
         "🧪 Strategy Lab", "📈 Track Record", "📋 Watchlist", "💼 Portfolio", "🩺 Data Health", "📖 Docs"]
 
 
@@ -176,10 +176,12 @@ def test_deep_dive_shows_each_number_once(warehouse):
 
 
 @pytest.mark.smoke
-def test_risk_lab_computes_a_range_without_forecasting_direction(warehouse):
-    at = _app("🎲 Risk Lab").run()
+def test_price_range_computes_a_range_without_forecasting_direction(warehouse):
+    at = _app("🔬 Stock Analysis")
+    at.session_state["sa_group"] = "Risks & data"
+    at.session_state["deep_ticker_selector"] = "AAPL"
+    at.run()
     assert not at.exception, [e.value for e in at.exception]
-    at.session_state["risk_ticker_form"] = "AAPL"
     at.session_state["risk_days_form"] = 10
     at.session_state["risk_sims_form"] = 1000
     next(b for b in at.button if "COMPUTE RISK RANGE" in str(b.label)).click().run()
