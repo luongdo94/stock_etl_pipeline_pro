@@ -97,7 +97,7 @@ def _toolbox(ctx) -> ToolBox:
                    last_prices=last, portfolio_reader=portfolio, portfolio_risk_reader=portfolio_risk, deep_decision=deep_decision,
                    filings=lambda t, q: research.search_filings(t, q, as_of=date.today(), k=6),
                    methodology=lambda q: research.search_methodology(q, k=6),
-                   policy=load_policy(), as_of=date.today())
+                   policy=load_policy(), as_of=date.today(), prices=ctx["prices_full"])
 
 
 def _render_turn(turn):

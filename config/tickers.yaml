@@ -939,7 +939,8 @@ tickers:
     name: SoftBank Group Corp.
     sector: Capital Markets
     region: JP
-  SSLN.MI:
+  # Yahoo không có lịch sử cho bản Milan; dùng cùng ETC trên LSE.
+  SSLN.L:
     name: iShares Physical Silver
     sector: Basic Materials
     region: EU

@@ -31,7 +31,7 @@ portfolio:
   # Aggregate budgets on NAV (holdings + cash), enforced on every BUY size and every rebalance (core/portfolio_policy.py).
   # Illustrative defaults — set them from your mandate. Only additions are cut; an existing breach is reported.
   max_sector_pct: 30.0          # one sector
-  max_currency_pct: 50.0        # each currency other than costs.base_currency
+  max_currency_pct: null        # 2026-10-24 owner: no currency budget (exposure still shown); a number sets one
   max_stress_loss_pct: 25.0     # NAV lost if every holding falls at once by min(100%, beta x market drop + gap)
   stress_market_drop_pct: 35.0  # market crash in the scenario
   stress_gap_pct: 10.0          # extra single-name gap that no stop prevents

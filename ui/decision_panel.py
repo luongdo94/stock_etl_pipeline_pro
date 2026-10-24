@@ -106,10 +106,8 @@ def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, re
     cur_w = {t: v / nav for t, v in holdings_value.items() if v} if nav is not None else {}
     current_pct = cur_w.get(ticker, 0.0) * 100 if nav is not None else None
     if nav is not None and d.stance == dec.BUY:
-        from core.portfolio_policy import load_policy, max_candidate_weight
-        cm = companies.drop_duplicates("ticker").set_index("ticker") if "ticker" in companies.columns else None
-        policy_meta = {t: {k: cm.at[t, k] for k in ("sector", "currency", "beta") if k in cm.columns}
-                       for t in list(cur_w) + [ticker] if cm is not None and t in cm.index}
+        from core.portfolio_policy import build_policy_meta, load_policy, max_candidate_weight
+        policy_meta = build_policy_meta(list(cur_w) + [ticker], companies, prices, load_policy(rules))
         wanted_add = max(total_limit / 100 - cur_w.get(ticker, 0.0), 0.0)
         allowed, why = max_candidate_weight(cur_w, ticker, wanted_add, policy_meta, load_policy(rules))
         suggested = min(total_limit, (cur_w.get(ticker, 0.0) + allowed) * 100)

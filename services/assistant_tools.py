@@ -112,7 +112,8 @@ class ToolBox:
                  hist_fcf: Optional[pd.DataFrame] = None, last_prices: Optional[dict] = None,
                  portfolio_reader: Optional[Callable] = None, deep_decision: Optional[Callable] = None,
                  filings: Optional[Callable] = None, methodology: Optional[Callable] = None,
-                 policy: Optional[dict] = None, as_of: Optional[date] = None, portfolio_risk_reader: Optional[Callable] = None):
+                 policy: Optional[dict] = None, as_of: Optional[date] = None, portfolio_risk_reader: Optional[Callable] = None,
+                 prices: Optional[pd.DataFrame] = None):
         self.m = m_df if m_df is not None else pd.DataFrame()
         self.companies = companies if companies is not None else pd.DataFrame()
         self.annual, self.hist_fcf = annual_fin, hist_fcf
@@ -120,6 +121,7 @@ class ToolBox:
         self.portfolio_reader, self.deep_decision = portfolio_reader, deep_decision
         self.filings, self.methodology = filings, methodology
         self.portfolio_risk_reader = portfolio_risk_reader
+        self.prices = prices
         self.policy = policy
         self.as_of = as_of or date.today()
         self._n = 0
@@ -314,11 +316,8 @@ class ToolBox:
         doc.update({"nav_eur": nav, "cash_eur": cash, "cash_pct_of_nav": (float(cash or 0) / nav * 100) if nav > 0 else None,
                     "holdings": rows, "unpriced_holdings": []})
         if self.policy is not None and nav > 0:
-            from core.portfolio_policy import check, describe, exposures
-            meta = {}
-            if not self.companies.empty:
-                for r in self.companies[self.companies["ticker"].isin(holdings)].to_dict("records"):
-                    meta[r["ticker"]] = r
+            from core.portfolio_policy import build_policy_meta, check, describe, exposures
+            meta = build_policy_meta(holdings, self.companies, self.prices, self.policy)
             w = {r["ticker"]: r["market_value_eur"] / nav for r in rows}
             ex = exposures(w, meta, self.policy)
             doc["sector_exposure_pct"] = {k: v * 100 for k, v in sorted(ex["sector"].items(), key=lambda kv: -kv[1])}

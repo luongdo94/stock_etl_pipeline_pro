@@ -11,7 +11,7 @@ import pytest
 from core import alerts, decision, portfolio_policy as pp, portfolio_risk as pr, valuation as v
 from services import local_store, user_store
 
-POL = pp.load_policy(decision.load_rules())
+POL = {**pp.load_policy(decision.load_rules()), "max_currency_pct": 50.0}   # the budget mechanism; the owner runs with none
 META = {"A": {"sector": "Tech", "currency": "EUR", "beta": 1.0}, "B": {"sector": "Tech", "currency": "EUR", "beta": 1.0},
         "C": {"sector": "Energy", "currency": "USD", "beta": 1.0}, "D": {"sector": "Health", "currency": "USD", "beta": 1.0},
         "E": {"sector": "Retail", "currency": "EUR", "beta": None}}

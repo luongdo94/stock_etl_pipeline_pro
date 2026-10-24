@@ -4,7 +4,7 @@ core/portfolio_policy.py — ONE portfolio-level risk policy (REPO_AUDIT roadmap
 Per-name sizing (core.decision.size_limits) cannot see that ten correlated 10% positions gap together. This module adds
 the aggregate budgets, measured on NAV (holdings + cash):
   - sector concentration      ≤ portfolio.max_sector_pct
-  - each non-base currency    ≤ portfolio.max_currency_pct
+  - each non-base currency    ≤ portfolio.max_currency_pct (null = no currency budget; exposure is still reported)
   - correlated-crash loss     ≤ portfolio.max_stress_loss_pct, where every holding falls at once by
                                 min(100%, β·market_drop + gap) — the market crash through the beta plus a single-name gap
                                 that no stop prevents. Unknown β uses portfolio.unknown_beta (conservative).
@@ -16,8 +16,9 @@ Limits are illustrative defaults in config/decision_rules.yaml → portfolio; se
 from typing import Optional
 
 import numpy as np
+import pandas as pd
 
-DEFAULT_POLICY = {"max_sector_pct": 30.0, "max_currency_pct": 50.0, "max_stress_loss_pct": 25.0,
+DEFAULT_POLICY = {"max_sector_pct": 30.0, "max_currency_pct": None, "max_stress_loss_pct": 25.0,
                   "stress_market_drop_pct": 35.0, "stress_gap_pct": 10.0, "unknown_beta": 1.5}
 
 
@@ -33,6 +34,35 @@ def load_policy(rules: Optional[dict] = None) -> dict:
 def _ccy(c) -> str:
     c = str(c or "Unknown")
     return "GBP" if c in ("GBp", "GBX", "GBx") else c.upper()
+
+
+def build_policy_meta(tickers, companies, prices, policy=None) -> dict:
+    """Provider beta first; otherwise reuse scenario regression after 252 returns shared with SPY. No IO."""
+    policy = policy if policy is not None else load_policy({})
+    records = (companies.drop_duplicates("ticker").set_index("ticker").to_dict("index")
+               if companies is not None and not companies.empty and "ticker" in companies else {})
+    meta = {t: dict(records.get(t, {})) for t in dict.fromkeys(tickers)}
+    betas = pd.to_numeric(pd.Series({t: m.get("beta") for t, m in meta.items()}, dtype=object), errors="coerce")
+    missing = []
+    for t, m in meta.items():
+        known = pd.notna(betas[t]) and np.isfinite(betas[t])
+        m["beta"] = float(betas[t]) if known else None
+        m["beta_source"] = "provider" if known else f"unknown → {policy['unknown_beta']:g}"
+        if not known:
+            missing.append(t)
+    if missing and prices is not None and not prices.empty and {"ticker", "date"} <= set(prices.columns):
+        from core.stress import estimate_sensitivities
+        p = prices[prices["ticker"].isin(missing + ["SPY"])].copy()
+        p["date"] = pd.to_datetime(p["date"])
+        p = p.sort_values(["ticker", "date"])
+        p["ret"] = (pd.to_numeric(p["daily_return_pct"], errors="coerce") if "daily_return_pct" in p
+                    else p.groupby("ticker")["price_close"].pct_change())
+        common = p.pivot_table(index="date", columns="ticker", values="ret").sort_index().tail(504)
+        for row in estimate_sensitivities(prices, missing).itertuples():
+            n = len(common[[row.ticker, "SPY"]].dropna()) if {row.ticker, "SPY"} <= set(common.columns) else 0
+            if n >= 252 and np.isfinite(row.beta):
+                meta[row.ticker].update(beta=float(row.beta), beta_source=f"estimated from {int(row.n)} sessions")
+    return meta
 
 
 def stress_loss_rate(beta, policy: dict) -> float:
@@ -63,7 +93,8 @@ def _groups(tickers, meta, policy):
     for s in {(meta.get(t, {}) or {}).get("sector") or "Unknown" for t in tickers}:
         mem = [t for t in tickers if ((meta.get(t, {}) or {}).get("sector") or "Unknown") == s]
         out.append(("sector", s, mem, {t: 1.0 for t in mem}, policy["max_sector_pct"] / 100))
-    for c in {_ccy((meta.get(t, {}) or {}).get("currency")) for t in tickers} - {policy["base_currency"]}:
+    currencies = set() if policy.get("max_currency_pct") is None else {_ccy((meta.get(t, {}) or {}).get("currency")) for t in tickers}
+    for c in currencies - {policy["base_currency"]}:
         mem = [t for t in tickers if _ccy((meta.get(t, {}) or {}).get("currency")) == c]
         out.append(("currency", c, mem, {t: 1.0 for t in mem}, policy["max_currency_pct"] / 100))
     out.append(("stress loss", "correlated crash", list(tickers),

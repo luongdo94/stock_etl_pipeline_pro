@@ -3,7 +3,7 @@ from logging.handlers import RotatingFileHandler
 import pandas as pd
 from pathlib import Path
 from etl.config_manager import get_etl_config
-from etl.extract   import extract_stock_prices, extract_company_info, extract_historical_financials, extract_quarterly_financials, extract_cashflows, extract_historical_fcf, extract_quarterly_fcf, extract_earnings_calendar, extract_earnings_history, extract_forward_estimates, get_equity_tickers
+from etl.extract   import price_backfill_targets, extract_stock_prices, extract_company_info, extract_historical_financials, extract_quarterly_financials, extract_cashflows, extract_historical_fcf, extract_quarterly_fcf, extract_earnings_calendar, extract_earnings_history, extract_forward_estimates, get_equity_tickers
 from etl.gates     import collect_stats, evaluate_gates, has_critical, persist_warnings, reconciliation_issues
 from etl.pit       import assign_available_dates
 from etl.reconcile import ensure_tables as ensure_reconciliation_tables, run_reconciliation, summary as reconcile_summary
@@ -203,14 +203,31 @@ def _run_data_quality(audit) -> bool:
     return True
 
 
+def _extract_prices(conn, universe, watermarks, is_incremental, lookback_days):
+    """Remove short histories' watermarks so they share the new-symbol bootstrap and normal UPSERT."""
+    now = pd.Timestamp.now()
+    marks = {t: d for t, d in watermarks.items() if t in universe} if is_incremental else {}
+    targets = price_backfill_targets(conn, marks, lookback_days, now) if is_incremental and conn is not None else []
+    marks = {t: d for t, d in marks.items() if t not in targets} if is_incremental else None
+    prices = pd.DataFrame()
+    try:
+        prices = extract_stock_prices(tickers=universe, lookback_days=lookback_days, watermarks=marks)
+        return prices
+    finally:
+        counts = prices.groupby("ticker").size().to_dict() if not prices.empty else {}
+        if targets:
+            conn.executemany("""INSERT INTO raw.price_backfill_attempts VALUES (?, ?, ?)
+                ON CONFLICT(ticker) DO UPDATE SET attempted_at=excluded.attempted_at, rows_found=excluded.rows_found""",
+                [(t, now, int(counts.get(t, 0))) for t in targets])
+
+
 def _extract_all(conn, universe, watermarks, is_incremental, lookback_days, fast_mode, cfg):
     """STEP 1 — everything the run needs from the outside world, for exactly the tickers of `universe`."""
     refresh = cfg["refresh_intervals"]
     equities = get_equity_tickers(universe)
     t0 = time.time()
 
-    prices_df = extract_stock_prices(tickers=universe, lookback_days=lookback_days,
-                                     watermarks=watermarks if is_incremental else None)
+    prices_df = _extract_prices(conn, universe, watermarks, is_incremental, lookback_days)
 
     # 🔗 SMART RECOVERY: always check for absolute data gaps regardless of mode
     recovery = get_smart_recovery_targets(conn, all_tickers=universe)
@@ -367,7 +384,7 @@ def run_pipeline(lookback_days: int = None, force_full: bool = False, fast_mode:
 CARRY_FORWARD_TABLES = ("raw.company_info", "raw.historical_financials", "raw.hist_fcf", "raw.cashflows",
                         "raw.insider_summary", "raw.insider_transactions")   # insider: a skipped / failed fetch keeps them
 # accumulated from other sources over many runs (not re-extracted by a full refresh): copied whole, no ledger entry
-REFERENCE_TABLES = ("raw.sec_filings", "raw.source_reconciliation", "raw.sec_cash_items")
+REFERENCE_TABLES = ("raw.sec_filings", "raw.source_reconciliation", "raw.sec_cash_items", "raw.price_backfill_attempts")
 
 
 # Audit F04: period-keyed history a full refresh must not lose (the provider only returns its current window)

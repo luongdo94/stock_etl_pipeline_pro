@@ -109,7 +109,7 @@ def build_items(hub) -> list:
         for t in user["holdings"]:
             if t not in last and t in mk["latest"].index:
                 last[t] = float(mk["latest"].at[t, "price_close"])
-        doc = ToolBox(m_df, hub["companies_full"], last_prices=last, policy=load_policy(),
+        doc = ToolBox(m_df, hub["companies_full"], last_prices=last, policy=load_policy(), prices=hub.get("prices_full"),
                       portfolio_reader=lambda: (user["holdings"], user["cash"], user["stops"])).run("my_portfolio", {})[0]
     return feed.personal_items(decisions=_decisions(m_df), latest=mk["latest"], holdings=user["holdings"],
                                holdings_ok=user["holdings_ok"], stops=user["stops"], watchlist=user["watchlist"],

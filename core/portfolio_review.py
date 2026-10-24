@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 
 from core.factor_test import portfolio_tilts
+from core.portfolio_policy import build_policy_meta
 from core.portfolio_risk import complete_returns, rebalance_limits, rebalance_policy
 from core.stress import estimate_sensitivities, load_scenarios, scenario_losses
 
@@ -81,7 +82,7 @@ def portfolio_review(holdings, cash, prices, companies, policy, rules, *, return
                          ("stress", "correlation", "risk_contribution", "factor_tilts", "targets")}}
     w = {t: float(holdings[t]["shares"]) * latest[t] / nav for t in tickers}
     mc = meta_companies if meta_companies is not None else companies
-    meta = mc.drop_duplicates("ticker").set_index("ticker").to_dict("index") if not mc.empty else {}
+    meta = build_policy_meta(tickers, mc, prices, policy)
     scenarios, _, _, limit, breached = stress(prices, w, nav, meta, companies, policy, rules)
     out["stress"] = {"limit_pct_nav": limit * 100, "breached": breached,
                      "scenarios": [{"name": r.scenario, "pct_nav": r["return"] * 100,

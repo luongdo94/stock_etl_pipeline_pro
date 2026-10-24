@@ -14,7 +14,7 @@ from core.decision import holding_action
 from core.currency import MINOR_UNITS, major_currency
 from core.decision import load_rules as load_decision_rules
 from core.portfolio_policy import check as policy_check, describe as policy_describe, exposures as policy_exposures
-from core.portfolio_policy import load_policy
+from core.portfolio_policy import build_policy_meta, load_policy
 from core.portfolio_risk import (apply_rebalance, rebalance_limits, rebalance_policy,
                                  record_trade, shrink_expected_returns, weight_budget)
 from services.alerts import add_alert_rule, delete_alert_rule, load_alert_rules
@@ -718,13 +718,9 @@ def render(ctx):
                         if (m_df is not None and not m_df.empty and {"Ticker", "Decision"} <= set(m_df.columns)) else {})
 
             # Aggregate budgets (sector / currency / correlated crash) — one policy for candidates and rebalances (P0/2)
-            _pol_meta = {}
-            if companies is not None and not companies.empty and "ticker" in companies.columns:
-                _cm = companies.drop_duplicates("ticker").set_index("ticker")
-                for t in current_tickers:
-                    if t in _cm.index:
-                        _pol_meta[t] = {k: _cm.at[t, k] for k in ("sector", "currency", "beta") if k in _cm.columns}
-            _portfolio_policy = {"meta": _pol_meta, "policy": load_policy(load_decision_rules())}
+            _portfolio_policy = {"policy": load_policy(load_decision_rules())}
+            _pol_meta = build_policy_meta(current_tickers, companies, prices_full, _portfolio_policy["policy"])
+            _portfolio_policy["meta"] = _pol_meta
             _now_breaches = policy_check(dict(zip(current_tickers, weights)), _pol_meta, _portfolio_policy["policy"])
             if _now_breaches:
                 st.error("Portfolio policy breached by the current holdings — additions to these groups are blocked, "
@@ -735,6 +731,9 @@ def render(ctx):
                            f"(limit {_portfolio_policy['policy']['max_stress_loss_pct']:.0f}%) · largest sector "
                            f"{max(_ex['sector'].values(), default=0):.1%} (limit "
                            f"{_portfolio_policy['policy']['max_sector_pct']:.0f}%).")
+
+            if any(v["kind"] == "stress loss" for v in _now_breaches):
+                st.caption("Policy beta: " + "; ".join(f"{t}: {m['beta_source']}" for t, m in _pol_meta.items()))
 
             def _sizing_limits(nav_now):
                 """Per-ticker sizing limits from the CURRENT screener data and NAV — called at Generate and again at

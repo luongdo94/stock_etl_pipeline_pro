@@ -650,6 +650,20 @@ def watermark_buckets(watermarks: dict, overlap_days: int, bucket_days: int = WA
     return [(datetime.combine(d, datetime.min.time()) - timedelta(days=overlap_days), ts) for d, ts in out]
 
 
+def price_backfill_targets(conn, watermarks, lookback_days, end=None):
+    """Retry truncated histories at most weekly; attempts live in the shadow alongside price rows."""
+    conn.execute("""CREATE TABLE IF NOT EXISTS raw.price_backfill_attempts (
+        ticker VARCHAR PRIMARY KEY, attempted_at TIMESTAMP, rows_found INTEGER)""")
+    if not watermarks:
+        return []
+    end = pd.Timestamp(end if end is not None else datetime.now())
+    first = dict(conn.execute("SELECT ticker, MIN(date) FROM raw.stock_prices GROUP BY ticker").fetchall())
+    attempts = dict(conn.execute("SELECT ticker, attempted_at FROM raw.price_backfill_attempts").fetchall())
+    cutoff = end - timedelta(days=lookback_days) + timedelta(days=30)
+    return [t for t in watermarks if first.get(t) is not None and pd.Timestamp(first[t]) > cutoff
+            and (attempts.get(t) is None or end - pd.Timestamp(attempts[t]) >= timedelta(days=7))]
+
+
 def extract_stock_prices(
     tickers: dict = TICKERS,
     lookback_days: int = 365,
@@ -665,13 +679,14 @@ def extract_stock_prices(
 
         New tickers (not in watermarks) always get the full `lookback_days`
         so historical data is bootstrapped correctly on first run.
+        The pipeline also removes short histories from the watermarks; an empty dict bootstraps all of them.
     """
     end_date   = datetime.now()
     all_ticker_list = list(tickers.keys())
 
     # ── INCREMENTAL: Calculate per-ticker start dates ─────────────────────────
     buckets = []
-    if watermarks:
+    if watermarks is not None:
         # Only the requested tickers' watermarks count, and tickers are downloaded in buckets of similar watermarks
         # (PERF-02): one stale or halted name (EA stopped at 2026-08-04) used to widen the download of every other
         # ticker to its date. Each ticker still starts at or before its own watermark minus the overlap buffer.
@@ -709,7 +724,7 @@ def extract_stock_prices(
     # ── BATCH DOWNLOAD: Incremental (or Full if no watermarks) ───────────────
     existing_tickers = [t for t in all_ticker_list if t not in new_tickers]
     ticker_start = {t: b_start for b_start, b_tickers in buckets for t in b_tickers}
-    for b_start, b_tickers in (buckets if watermarks else [(start_date, existing_tickers)] if existing_tickers else []):
+    for b_start, b_tickers in (buckets if watermarks is not None else [(start_date, existing_tickers)] if existing_tickers else []):
         raw_prices = _batch_download(b_tickers, b_start)
 
         if raw_prices.empty:
@@ -756,7 +771,7 @@ def extract_stock_prices(
                 logger.warning(f"   ❌ Recovery error for {ticker}: {e}")
 
     if not all_frames:
-        if not watermarks:
+        if watermarks is None:
             raise ValueError("❌ No price data returned from Yahoo Finance.")
         # Incremental run with nothing new (weekend/holiday): skip currency + FX API calls
         logger.info("ℹ️ No new price rows in the incremental window.")
@@ -926,7 +941,7 @@ def extract_stock_prices(
     final_df = final_df.dropna(subset=["close"])
     final_df["date"] = pd.to_datetime(final_df["date"])
 
-    mode = "INCREMENTAL" if watermarks else "FULL"
+    mode = "INCREMENTAL" if watermarks is not None else "FULL"
     logger.info(f"✅ {mode} EXTRACT COMPLETE: {len(final_df):,} rows across {final_df['ticker'].nunique()} tickers")
     return final_df
 
