@@ -99,6 +99,10 @@ tickers:
     name: Teradyne, Inc.
     sector: Semiconductors
     region: US
+  AMKR:
+    name: Amkor Technology, Inc.
+    sector: Semiconductors
+    region: US
   MDB:
     name: MongoDB, Inc.
     sector: SaaS
