@@ -35,7 +35,7 @@ SCHEMA = {
 }
 
 PROMPT = """You are an independent, cautious equity analyst. Review ONE stock as a candidate for a long-term (3-5 years)
-investment by a private investor in Europe (amounts in EUR). Be critical, not agreeable. Write in Vietnamese; keep
+investment by a private investor in Europe (amounts in EUR). Be critical, not agreeable. Write in {language}; keep
 metric names (ROIC, FCF yield, EV/EBITDA ...) and company names as they are.
 
 STOCK: {ticker} - {company}
@@ -110,7 +110,7 @@ def dcf_line(inputs, price=None) -> str:
         return "not available"
 
 
-def build_prompt(row: dict, today: str) -> str:
+def build_prompt(row: dict, today: str, language: str = "Vietnamese") -> str:
     def n(v, nd=0):
         try:
             f = float(v)
@@ -118,6 +118,7 @@ def build_prompt(row: dict, today: str) -> str:
             return "n/a"
         return "n/a" if f != f else f"{f:.{nd}f}"
     return PROMPT.format(
+        language=language,
         ticker=row["ticker"], company=row.get("company") or row["ticker"], today=today, as_of=row.get("as_of_date"),
         sector=row.get("sector") or "n/a", region=row.get("region") or "n/a", quality=n(row.get("quality")),
         value=n(row.get("value")), momentum=n(row.get("momentum")), upside=n(row.get("upside_pct"), 1),
@@ -147,7 +148,7 @@ def path_for(as_of: str, directory=None) -> Path:
 
 
 def load_latest(ticker: str, directory=None) -> Optional[dict]:
-    """{'as_of', 'generated_at', 'decision', 'review'} of the newest file that holds `ticker`, else None."""
+    """{'as_of', 'generated_at', 'model', 'decision', 'review', 'language'} of the newest file that holds `ticker`, else None."""
     d = Path(directory or DIR)
     if not d.is_dir():
         return None
@@ -159,7 +160,7 @@ def load_latest(ticker: str, directory=None) -> Optional[dict]:
             continue
         if item and validate(item.get("review")):
             return {"as_of": doc.get("as_of"), "generated_at": doc.get("generated_at"), "model": doc.get("model"),
-                    "decision": item.get("decision"), "review": item["review"]}
+                    "decision": item.get("decision"), "review": item["review"], "language": item.get("language", "Vietnamese")}
     return None
 
 

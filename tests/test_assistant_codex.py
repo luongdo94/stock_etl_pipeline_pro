@@ -203,7 +203,7 @@ def test_ui_codex_selection_persists_and_records_model_time(monkeypatch):
     at.chat_input(key="assistant_input").set_value("Beta?").run()
     assert not at.exception
     turn = at.session_state["assistant_history"][-1]
-    assert turn["model"] == "Codex (local)" and turn["elapsed"] >= 0
+    assert turn["model"] == "Codex (local): gpt-6.1-sol / high" and turn["elapsed"] >= 0
     assert turn["res"]["citations"][0]["ids"] == ["decision_1"]
     assert at.session_state["_kept::assistant_model"] == "Codex (local)"
     at.run()
@@ -212,4 +212,4 @@ def test_ui_codex_selection_persists_and_records_model_time(monkeypatch):
     at.chat_input(key="assistant_input").set_value("Beta?").run()
     assert not at.exception
     assert "COHERE_API_KEY" in at.session_state["assistant_history"][-1]["res"]["error"]
-    assert at.session_state["assistant_history"][0]["model"] == "Codex (local)"
+    assert at.session_state["assistant_history"][0]["model"] == "Codex (local): gpt-6.1-sol / high"

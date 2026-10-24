@@ -192,7 +192,7 @@ def _codex_citations(answer: str, ids: set):
     return text + answer[last:], citations
 
 
-def _codex_chat() -> Callable:
+def _codex_chat(model=None, effort=None) -> Callable:
     def call(messages, tools):
         rounds = sum(m["role"] == "assistant" and bool(m.get("tool_calls")) for m in messages)
         ids = {d["document"]["id"] for m in messages if m["role"] == "tool" for d in m["content"]}
@@ -206,7 +206,7 @@ def _codex_chat() -> Callable:
         if rounds >= 2:
             prompt += '\nTool limit reached: return an answer from the supplied documents; no more tool calls.'
         for attempt in range(2):
-            raw = run_codex(prompt)
+            raw = run_codex(prompt, model=model, effort=effort)
             try:
                 value = _codex_json(raw)
                 answer, calls = value.get("answer"), value.get("tool_calls")

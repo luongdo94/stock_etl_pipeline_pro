@@ -12,6 +12,7 @@ from core import earnings_highlights as _eh
 from services import earnings as svc
 
 from ui.components import format_value, phone_safe_chart
+from ui.codex_options import render_codex_options, codex_label
 from ui.sticky import (follow_active_ticker, my_tickers, remember_ticker, sticky, sticky_choice, sticky_radio,
                        ticker_options)
 from ui.icons import render_header
@@ -399,7 +400,10 @@ def render(ctx):
         render_header("zap", "AI note on the latest report", level="####")
         lang = sticky_radio("Language", ["English", "Vietnamese"], "English", "er_lang", horizontal=True)
         summariser = sticky_radio("Summariser", svc.summariser_options(), "Cohere", "er_summariser", horizontal=True)
-        model = "Codex (local)" if summariser == "Codex (local)" else svc.LLM_MODEL
+        model = svc.LLM_MODEL
+        if summariser == "Codex (local)":
+            codex_model, effort = render_codex_options("earnings")
+            model = codex_label(codex_model, effort)
         if model == svc.LLM_MODEL and not svc.api_key():
             sticky(st.text_input, "Cohere API key (kept only for this session)", "", "cohere_api_key", type="password",
                           help="Or set COHERE_API_KEY in the environment.")
@@ -452,7 +456,8 @@ def render(ctx):
                         prompt = svc.build_summary_prompt(company, t, facts or "- none", source, text, lang)
                         started = time.perf_counter()
                         with st.spinner("Writing the note..."):
-                            note = (svc.summarise_earnings_codex(prompt) if model == "Codex (local)" else
+                            note = (svc.summarise_earnings_codex(prompt, model=codex_model, effort=effort)
+                                    if summariser == "Codex (local)" else
                                     svc.summarise_earnings(svc.api_key(), company, t, facts or "- none", source, text, lang))
                         elapsed = time.perf_counter() - started
                         from services.ai import ungrounded_numbers

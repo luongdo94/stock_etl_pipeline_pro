@@ -4,6 +4,10 @@
     python scripts/tools/daily_buy_review.py --only IT UNH   just these tickers
     python scripts/tools/daily_buy_review.py --limit 2       the first 2 (a trial)
     python scripts/tools/daily_buy_review.py --force         redo tickers already reviewed for this date
+    python scripts/tools/daily_buy_review.py --language English  review in English
+
+Language: --language (Vietnamese | English) > AI_REVIEW_LANGUAGE > Vietnamese; invalid values exit with code 2.
+Reviews in another language are regenerated; older reviews without language count as Vietnamese.
 
 Writes warehouse/ai_reviews/<snapshot date>.json (resumable: finished tickers are kept). The dashboard shows the review
 in Stock Analysis → Overview; it never changes a Decision. Runs on THIS machine only (the Codex login lives here).
@@ -55,17 +59,17 @@ def buy_rows(db_path: str) -> list:
             .to_dict("records")
 
 
-def review_one(codex: str, row: dict, today: str, schema_path: Path, model) -> dict:
+def review_one(codex: str, row: dict, today: str, schema_path: Path, model, language="Vietnamese") -> dict:
     work = Path(tempfile.mkdtemp(prefix="buyreview_"))          # empty: the only thing Codex can see
     out = work / "out.json"
     cmd = [codex, "--search", "exec", "-s", "read-only", "--ephemeral", "--skip-git-repo-check", "-C", str(work),
-           "--output-schema", str(schema_path), "-o", str(out)]
+           "--output-schema", str(schema_path), "-o", str(out), "-c", 'model_reasoning_effort="high"']
     if model:
         cmd += ["-m", model]
     cmd.append("-")
     t0 = time.time()
     try:
-        p = subprocess.run(cmd, input=ar.build_prompt(row, today), text=True, encoding="utf-8", capture_output=True,
+        p = subprocess.run(cmd, input=ar.build_prompt(row, today, language), text=True, encoding="utf-8", capture_output=True,
                            timeout=TIMEOUT_S, cwd=work)
         raw = out.read_text(encoding="utf-8") if out.exists() else ""
         review = ar.validate(json.loads(raw)) if raw.strip() else None
@@ -86,9 +90,12 @@ def main(argv=None) -> int:
     ap.add_argument("--only", nargs="*")
     ap.add_argument("--limit", type=int)
     ap.add_argument("--force", action="store_true")
-    ap.add_argument("--model")
+    ap.add_argument("--model", default="gpt-6.1-sol")
+    ap.add_argument("--language", default=os.environ.get("AI_REVIEW_LANGUAGE", "Vietnamese"))
     ap.add_argument("--db", default=str(ROOT / "warehouse" / "stock_dw.duckdb"))
     a = ap.parse_args(argv)
+    if a.language not in ("Vietnamese", "English"):
+        ap.error("--language / AI_REVIEW_LANGUAGE must be Vietnamese or English")
 
     codex = find_codex()
     if not codex:
@@ -109,7 +116,8 @@ def main(argv=None) -> int:
             doc = json.loads(target.read_text(encoding="utf-8"))
         except ValueError:
             pass
-    todo = [r for r in rows if a.force or r["ticker"] not in doc.get("reviews", {})]
+    todo = [r for r in rows if a.force or r["ticker"] not in doc.get("reviews", {})
+            or doc["reviews"][r["ticker"]].get("language", "Vietnamese") != a.language]
     if a.limit:
         todo = todo[:a.limit]
     print(f"{len(rows)} BUY CANDIDATE(s) for {as_of}; reviewing {len(todo)}.")
@@ -118,15 +126,16 @@ def main(argv=None) -> int:
     today = datetime.now().strftime("%Y-%m-%d")
     failed = 0
     with ThreadPoolExecutor(max_workers=WORKERS) as pool:
-        for res in pool.map(lambda r: review_one(codex, r, today, schema_path, a.model), todo):
+        for res in pool.map(lambda r: review_one(codex, r, today, schema_path, a.model, a.language), todo):
             if res["review"]:
-                doc.setdefault("reviews", {})[res["ticker"]] = {"decision": res["decision"], "review": res["review"]}
+                doc.setdefault("reviews", {})[res["ticker"]] = {"decision": res["decision"],
+                                                             "review": res["review"], "language": a.language}
                 print(f"  ok   {res['ticker']:8s} {res['review']['label']} ({res['review']['confidence']}) {res['seconds']}s")
             else:
                 failed += 1
                 print(f"  FAIL {res['ticker']:8s} {res['error']}")
             doc["generated_at"] = datetime.now().isoformat(timespec="seconds")
-            doc["model"] = a.model or "codex default"
+            doc["model"] = a.model
             tmp = target.with_suffix(".tmp")
             tmp.write_text(json.dumps(doc, ensure_ascii=False, indent=1), encoding="utf-8")
             os.replace(tmp, target)                              # a crash never leaves half a file

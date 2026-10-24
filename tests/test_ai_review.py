@@ -61,7 +61,7 @@ def test_overview_shows_the_review_with_its_date_and_disclaimer(warehouse, tmp_p
     at.run()
     assert not at.exception, [e.value for e in at.exception]
     assert any("External AI review" in e.label and "Worth deeper research" in e.label for e in at.expander)
-    assert any("does not change it" in c.value or "does not change" in c.value for c in at.caption)
+    assert any("không làm thay đổi Decision" in c.value for c in at.caption)
     monkeypatch.setattr(ar, "DIR", tmp_path / "none")                            # no review file: the section is absent
     at.run()
     assert not any("External AI review" in e.label for e in at.expander)

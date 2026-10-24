@@ -1617,14 +1617,19 @@ def _render_agent_review(ctx, book_spec, import_pending):
     from time import perf_counter
     from services import assistant
     from ui.assistant import _render_turn, _toolbox
+    from ui.codex_options import render_codex_options, codex_label
     if not assistant.available():
         st.info("Set COHERE_API_KEY or install Codex locally to use the assistant.")
         return
     options = assistant.models()
     default = "Codex (local)" if not os.environ.get("COHERE_API_KEY") and len(options) > 1 else "Cohere"
     model = sticky_radio("Model", options, default, "pf_agent_model", horizontal=True)
+    model_name = model
+    if model == "Codex (local)":
+        codex_model, effort = render_codex_options("portfolio")
+        model_name = codex_label(codex_model, effort)
     language = sticky_radio("Language", ["English", "Vietnamese"], "English", "pf_review_lang", horizontal=True)
-    spec = dict(book_spec, model=model, language=language, owner=st.session_state.get("user_id"),
+    spec = dict(book_spec, model=model_name, language=language, owner=st.session_state.get("user_id"),
                 targets=sorted(st.session_state.get("portfolio_targets", {}).items()),
                 horizon=(ctx.get("t_start"), ctx.get("t_end")))
     run = st.button("Run agent portfolio review", key="run_portfolio_review_btn", disabled=import_pending,
@@ -1637,10 +1642,10 @@ def _render_agent_review(ctx, book_spec, import_pending):
         with st.spinner("Reviewing your portfolio…"):
             started = perf_counter()
             res = assistant.ask(question, _toolbox(ctx), tab="Portfolio",
-                                chat=assistant._codex_chat() if model == "Codex (local)" else None)
+                                chat=assistant._codex_chat(codex_model, effort) if model == "Codex (local)" else None)
         st.session_state["portfolio_agent_review"] = {
             "spec": spec, "at": pd.Timestamp.now(tz="UTC"),
-            "turn": {"q": question, "res": res, "model": model, "elapsed": perf_counter() - started}}
+            "turn": {"q": question, "res": res, "model": model_name, "elapsed": perf_counter() - started}}
     stored = st.session_state.get("portfolio_agent_review")
     if stored and stored.get("spec") == spec:
         st.caption(f"Agent portfolio review · {stored['at']}")

@@ -241,6 +241,7 @@ def test_ui_models_persist_separate_notes_and_warn_on_unsent_numbers(local_codex
     from services import db
     from ui import sticky as sticky_module
     from views import earnings as view
+    monkeypatch.setattr(view, "render_codex_options", lambda scope: (None, None))
     ui = FakeUI()
     monkeypatch.setattr(view, "st", ui)
     monkeypatch.setattr(sticky_module, "st", ui)
@@ -263,7 +264,7 @@ def test_ui_models_persist_separate_notes_and_warn_on_unsent_numbers(local_codex
     monkeypatch.setattr(svc, "sec_press_release", lambda *a: ("Revenue 24468; omitted 98765", "SEC", "2026-10-21"))
     calls = []
     monkeypatch.setattr(svc, "summarise_earnings", lambda *a: calls.append("Cohere") or "COHERE 87654 and 98765")
-    monkeypatch.setattr(svc, "summarise_earnings_codex", lambda p: calls.append("Codex") or "CODEX 87654 and 98765")
+    monkeypatch.setattr(svc, "summarise_earnings_codex", lambda p, **kw: calls.append("Codex") or "CODEX 87654 and 98765")
     ctx = dict(prices_full=pd.DataFrame(columns=["date", "ticker", "price_close", "daily_return_pct"]),
                companies_full=pd.DataFrame({"ticker": ["META"], "company": ["Meta"], "region": ["US"]}),
                m_df=pd.DataFrame(), format_ticker=str)
@@ -279,7 +280,7 @@ def test_ui_models_persist_separate_notes_and_warn_on_unsent_numbers(local_codex
     assert any(kind == "caption" and "Codex (local)" in m and "Runtime:" in m for kind, m in ui.messages)
     assert any(kind == "warning" and "87654" in m and "98765" in m for kind, m in ui.messages)
     notes = [v for k, v in ui.session_state.items() if k.startswith("er_note::")]
-    assert len(notes) == 2 and {n["model"] for n in notes} == {svc.LLM_MODEL, "Codex (local)"}
+    assert len(notes) == 2 and {n["model"] for n in notes} == {svc.LLM_MODEL, "Codex (local): gpt-6.1-sol / high"}
     assert all(n["ungrounded"] == [87654., 98765.] and n["elapsed"] >= 0 for n in notes)
     ui.choices.clear()
     view.render(ctx)

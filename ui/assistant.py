@@ -10,6 +10,7 @@ import streamlit as st
 from services import assistant
 from services.assistant_tools import ToolBox
 from ui.sticky import sticky_radio
+from ui.codex_options import render_codex_options, codex_label
 
 _HISTORY_KEY = "assistant_history"
 _MAX_KEPT = 20
@@ -148,7 +149,10 @@ def render(ctx):
             options = assistant.models()
             default = "Codex (local)" if not os.environ.get("COHERE_API_KEY") and len(options) > 1 else "Cohere"
             model = sticky_radio("Model", options, default, key="assistant_model", horizontal=True)
+            model_name = model
             if model == "Codex (local)":
+                codex_model, effort = render_codex_options("assistant")
+                model_name = codex_label(codex_model, effort)
                 st.caption("local, ~1–2 min per question")
             hist = st.session_state.setdefault(_HISTORY_KEY, [])
             c1, c2 = st.columns([3, 1])
@@ -164,9 +168,9 @@ def render(ctx):
                         started = perf_counter()
                         res = assistant.ask(q, _toolbox(ctx), history=[(h["q"], h["res"]["text"]) for h in hist],
                                             tab=tab, ticker=ticker,
-                                            chat=assistant._codex_chat() if model == "Codex (local)" else None)
+                                            chat=assistant._codex_chat(codex_model, effort) if model == "Codex (local)" else None)
                 st.session_state["assistant_llm_calls"] = st.session_state.get("assistant_llm_calls", 0) + res["llm_calls"]
-                hist.append({"q": q, "res": res, "model": model, "elapsed": perf_counter() - started})
+                hist.append({"q": q, "res": res, "model": model_name, "elapsed": perf_counter() - started})
                 del hist[:-_MAX_KEPT]
             c1.caption(f"{st.session_state.get('assistant_llm_calls', 0)} LLM calls this session"
                        + (" · trial key: 20/min, 1,000/month" if model == "Cohere" else ""))
