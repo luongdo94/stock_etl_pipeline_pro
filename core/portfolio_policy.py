@@ -32,8 +32,8 @@ def load_policy(rules: Optional[dict] = None) -> dict:
 
 
 def _ccy(c) -> str:
-    c = str(c or "Unknown")
-    return "GBP" if c in ("GBp", "GBX", "GBx") else c.upper()
+    from core.currency import major_currency
+    return major_currency(c) or "UNKNOWN"               # as before for a missing code; spaces / ZAc handled (R7-07)
 
 
 def build_policy_meta(tickers, companies, prices, policy=None) -> dict:

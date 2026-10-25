@@ -12,8 +12,9 @@ from services.db import get_db_connection, snapshot_cached
 def fx_rate(source: str, target: str = "EUR"):
     """source → target rate, or None when it could not be obtained (review SIG-07: a failed lookup is not parity).
     GBp / GBX pence handled. Callers show the native amount and currency when None."""
-    _pence = source in ("GBp", "GBX", "GBx")
-    _src = "GBP" if _pence else str(source or "").upper()
+    from core.currency import is_minor, major_currency
+    _pence = is_minor(source)                          # GBp / ZAc / ILA: 1/100 of the major unit (R7-07)
+    _src = major_currency(source) or ""
     if not _src:
         return None
     if _src == target.upper():
@@ -37,8 +38,9 @@ def get_forex_rates(target="EUR", source="USD"):
     """Rate to convert `source` currency → `target`, or None when it could not be obtained (a failed lookup is not
     parity: callers show the native amount / N/A instead of an amount labelled with the wrong currency).
     GBp / GBX (UK pence = GBP / 100) is handled the same way on every path: GBp → GBP → target."""
-    _gbp_pence = source in ("GBp", "GBX", "GBx")
-    _src = "GBP" if _gbp_pence else str(source or "").upper()
+    from core.currency import is_minor, major_currency
+    _gbp_pence = is_minor(source)
+    _src = major_currency(source) or ""
     _scale = 0.01 if _gbp_pence else 1.0
     if not _src:
         return None

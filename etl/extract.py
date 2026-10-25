@@ -466,7 +466,7 @@ def _guess_currency(ticker: str) -> str:
 # ── FX to EUR (single implementation for every extractor) ─────────────────────
 # Minor currency units Yahoo uses for QUOTES (prices, targets). Company-level amounts
 # (revenue, cash flow, market cap) are always reported in the MAJOR unit.
-from core.currency import MINOR_UNITS as _MINOR_UNITS, major_currency  # noqa: E402  (single definition, F-28)
+from core.currency import MINOR_UNITS as _MINOR_UNITS, is_minor, major_currency  # noqa: E402  (single definition, F-28)
 _FX_CACHE: dict = {}   # major currency → EUR rate (None = unavailable this run)
 
 
@@ -511,7 +511,7 @@ def fx_to_eur(ccy: Optional[str]) -> Optional[float]:
         rate = _FX_CACHE.get(major)
         if rate is None:
             return None
-    return rate / 100.0 if str(ccy) in _MINOR_UNITS else rate
+    return rate / 100.0 if is_minor(ccy) else rate
 
 
 def _statement_currency(t_data: pd.DataFrame, ticker: str) -> str:
@@ -911,7 +911,7 @@ def extract_stock_prices(
                         logger.warning(f"  ⚠️ {ticker}: {int(_no_rate.sum())} early row(s) before the first {currency} "
                                        f"rate dropped (no future rate is back-filled)")
                         df = df[~_no_rate].copy()
-                    if currency in _MINOR_UNITS:
+                    if is_minor(currency):                              # " GBp " is pence too (K7-04)
                         scale_factor = 100.0  # minor unit (pence, cents, agorot) → major unit
                     for col in ["open", "high", "low", "close"]:
                         df[col] = (df[col] * df["fx_rate"]) / scale_factor
@@ -1126,7 +1126,7 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
         
         # Yahoo divides a dividend in the MAJOR unit (GBP 0.11) by a quote in the MINOR unit
         # (1404 GBp) for trailingAnnualDividendYield → 100x too small for LSE (Rolls-Royce showed 0.01%).
-        if tdy is not None and str(trading_currency) in _MINOR_UNITS:
+        if tdy is not None and is_minor(trading_currency):
             try: tdy = float(tdy) * 100
             except (TypeError, ValueError): tdy = None
         _tdy = _sanitize_yield(tdy)

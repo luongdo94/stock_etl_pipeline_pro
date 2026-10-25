@@ -951,7 +951,8 @@ def render(ctx):
                     meta = meta_row.iloc[0]
 
                     cur_price = latest_prices.get(t, 0.0)
-                    yield_pct = float(meta.get("Yield (%)", 0) or 0)
+                    yield_pct = pd.to_numeric(meta.get("Yield (%)"), errors="coerce")       # NaN = unknown (R7-03)
+                    yield_pct = float(yield_pct) if pd.notna(yield_pct) else 0.0
                     shares    = st.session_state.portfolio_shares.get(t, 0.0)
                     cost      = st.session_state.portfolio_cost.get(t, 0.0)
 

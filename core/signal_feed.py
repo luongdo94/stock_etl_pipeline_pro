@@ -70,7 +70,7 @@ def decision_changes(snaps: pd.DataFrame) -> dict:
         if old["decision"] == new["decision"]:
             continue
         i0, i1 = _inputs(old.get("inputs")), _inputs(new.get("inputs"))
-        v0, v1 = i0.get("valuation") or {}, i1.get("valuation") or {}
+        v0, v1 = (v if isinstance(v, dict) else {} for v in (i0.get("valuation"), i1.get("valuation")))   # NaN is truthy
         diffs = []
         if (old.get("rules_version") != new.get("rules_version")) or (old.get("score_version") != new.get("score_version")):
             diffs.append(("rules", "rules / score version changed"))

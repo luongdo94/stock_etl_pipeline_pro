@@ -380,18 +380,19 @@ def get_smart_recovery_targets(conn: duckdb.DuckDBPyConnection, all_tickers: dic
 # This is the authoritative version used by BOTH the Dashboard (app.py)
 # and the ETL email report (Airflow). Any changes here propagate everywhere.
 
-def clean_upside_pct(target_price, price, avg_5y_price=None) -> float:
+def clean_upside_pct(target_price, price, avg_5y_price=None, unknown: float = 0.0) -> float:
     """
     Analyst upside (%) used as a scoring input — one definition for the screener and the shell.
     A target more than 100% away from price is treated as stale (split, crash or FX mismatch)
-    when it is also >3x off the price or the ticker has no 5Y price history → 0. Clipped to ±100.
+    when it is also >3x off the price or the ticker has no 5Y price history → `unknown` (0 for the scoring input;
+    the screener passes NaN so a missing or rejected target is not shown as 0 % upside). Clipped to ±100.
     """
     t, p = safe_float_or_none(target_price), safe_float_or_none(price)
     if not t or not p or t <= 0 or p <= 0:
-        return 0.0
+        return unknown
     upside = (t / p - 1) * 100
     if abs(upside) > 100 and (safe_float_or_none(avg_5y_price) is None or abs(t / p) > 3):
-        return 0.0
+        return unknown
     return float(np.clip(upside, -100, 100))
 
 

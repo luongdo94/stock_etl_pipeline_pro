@@ -5,6 +5,18 @@ from typing import Optional
 MINOR_UNITS = {"GBp": "GBP", "GBX": "GBP", "GBx": "GBP", "ZAc": "ZAR", "ILA": "ILS"}
 
 
+def clean_code(ccy) -> Optional[str]:
+    """The provider's currency code without surrounding spaces; case kept (GBp is pence, GBP pounds)."""
+    if ccy is None:
+        return None
+    c = str(ccy).strip()
+    return None if c in ("", "nan", "None") else c
+
+
+def is_minor(ccy) -> bool:
+    return clean_code(ccy) in MINOR_UNITS
+
+
 def major_currency(ccy) -> Optional[str]:
     if ccy is None:
         return None

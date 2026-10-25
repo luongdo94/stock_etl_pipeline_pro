@@ -183,6 +183,10 @@ def build_snapshot(db_path: str = DB_PATH, track_db_path: str = TRACK_DB_PATH) -
     table = build_screener_table(companies, prices, quarterly, annual, hist_fcf, macro, estimates,
                                  track_record_ok=track_ok, _earnings_cal=earnings_cal,
                                  _sec_annual_history=frames[14] if len(frames) > 14 else None)
+    # R7-02: a company without prices (the screener's placeholder row) has no price to measure an outcome from — it
+    # is not a recorded decision and would read as a delisting in the Track Record coverage
+    table = table[pd.to_numeric(table["Price"], errors="coerce").notna()].reset_index(drop=True) \
+        if "Price" in table.columns else table.iloc[:0]
     if table.empty:
         return pd.DataFrame()
     as_of = pd.to_datetime(prices["date"]).max().date()

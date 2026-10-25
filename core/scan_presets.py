@@ -87,7 +87,7 @@ PRESETS = [
            f"Death cross (MA50 < MA200) that is either still falling (RSI < 50) or a weak business (Quality < {FAIR}). "
            "Avoid catching these too early.", "error"),
     Preset("⚠️ Earnings Deterioration (EPS QoQ, 2 qtrs < -10%)", "risk",
-           lambda d: (d["EPS Momentum"] == "Decelerating") & (d["Rev Momentum"] != "Accelerating"),
+           lambda d: (d["EPS Momentum"] == "Decelerating") & d["Rev Momentum"].isin(["Neutral", "Decelerating"]),
            "EPS fell more than 10% quarter-on-quarter for two consecutive quarters and revenue is not accelerating.", "error"),
     Preset("🎈 Overextended (RSI > 70 & Z-Score > +2)", "risk",
            lambda d: (d["RSI (14)"] > 70) & (d["Z-Score"] > 2.0),

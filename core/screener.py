@@ -2,6 +2,8 @@
 Pure (no Streamlit) so the ETL can snapshot exactly what the dashboard shows."""
 import pandas as pd
 
+from core.decision import NO_DATA as NO_DATA_STANCE
+
 from core.levels import get_tactical_metrics
 from core.rating import compute_institutional_rating, verdict
 from core.smart_money import get_volume_flow
@@ -70,20 +72,21 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
     # Uses QoQ (quarter-over-quarter) because "2 consecutive quarters" is inherently QoQ —
     # comparing Q3->Q4->Q1 in sequence, not the same quarter of the prior year (YoY).
     def _two_quarter_momentum(ticker, qoq_col, threshold=10.0):
-        """Returns 'Accelerating', 'Decelerating', or 'Neutral'.
+        """Returns 'Accelerating', 'Decelerating', 'Neutral' (both quarters known), or 'N/A' (not known).
         Uses QoQ growth rates for 2 most recent consecutive quarters.
         """
-        if _quarterly_fin is None or qoq_col not in _quarterly_fin.columns:
-            return 'Neutral'
+        if (_quarterly_fin is None or qoq_col not in _quarterly_fin.columns
+                or (getattr(_quarterly_fin, "attrs", {}) or {}).get("error")):
+            return 'N/A'                                   # quarterly data missing or unreadable (K7-02)
         t_q = _q_by.get(ticker, _quarterly_fin.iloc[:0]).sort_values('report_date', ascending=False)
         if len(t_q) < 2:
-            return 'Neutral'
+            return 'N/A'                                   # fewer than two quarters: unknown, not neutral
         # E3: the TWO MOST RECENT quarters, both with a QoQ figure. dropna() used to skip a gap and pair two
         # non-consecutive readings; QoQ is NULL unless the previous quarter is adjacent, so two non-null
         # latest values are three consecutive quarters.
         vals = t_q[qoq_col].head(2).tolist()
         if len(vals) < 2 or any(pd.isna(v) for v in vals):
-            return 'Neutral'
+            return 'N/A'
         if vals[0] > threshold and vals[1] > threshold:
             return 'Accelerating'
         if vals[0] < -threshold and vals[1] < -threshold:
@@ -122,19 +125,31 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
         if str(row.get('sector', '')).strip() in _non_equity_sectors: continue
         ticker_prices = _px_by.get(ticker, _prices_df.iloc[:0]).sort_values('date')
         _t_fcf, _t_ann = _fcf_by.get(ticker, _hist_fcf), _ann_by.get(ticker, _annual_fin)
-        if ticker_prices.empty or ticker not in _scores.index: continue
+        if ticker_prices.empty or ticker not in _scores.index:
+            # K7-01: kept as a row the engine cannot judge (its own NO_DATA stance, no figures), so "Needs data" and
+            # the universe count show it instead of the stock silently vanishing
+            screener_rows.append({"Ticker": ticker, "Company": row.get("company", ticker), "Sector": row.get("sector"),
+                                  "Region": row.get("region"), "Decision": NO_DATA_STANCE, "Action": "N/A",
+                                  "Verdict": "N/A", "Confidence": "LOW",
+                                  "Why": "no price history on file" if ticker_prices.empty else "not scored",
+                                  "Missing": ["price history"] if ticker_prices.empty else ["scores"],
+                                  "_beyond_model": False,
+                                  # R7-01: empty containers, not NaN (readers call dict() / .get() on them)
+                                  "Components": {}, "Flags": "", "_valuation": {}, "_metrics": {}, "_reasons": [],
+                                  "_warnings": [], "Conflicts": "", "EPS Momentum": "N/A", "Rev Momentum": "N/A"})
+            continue
         
         # RSI (Pre-calculated in transform.py)
         latest_rsi = ticker_prices["rsi"].iloc[-1] if not ticker_prices.empty else 50
         
         cur_p = ticker_prices["price_close"].iloc[-1]
-        upside = clean_upside_pct(row.get("target_mean_price"), cur_p, row.get("avg_5y_price"))
+        upside = clean_upside_pct(row.get("target_mean_price"), cur_p, row.get("avg_5y_price"), unknown=float("nan"))
         
         if len(ticker_prices) >= 2:
             prev_p = ticker_prices["price_close"].iloc[-2]
-            chg_1d = ((cur_p / prev_p) - 1) * 100 if prev_p > 0 else 0
+            chg_1d = ((cur_p / prev_p) - 1) * 100 if prev_p > 0 else float("nan")
         else:
-            chg_1d = 0
+            chg_1d = float("nan")                        # one close: no daily change is known
             
         mcap = row.get("market_cap", 0)
         mcap_b = (mcap / 1e9) if pd.notnull(mcap) and mcap > 0 else float("nan")      # unknown, not "€0.0B"
@@ -203,7 +218,7 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
         action_label = _rating["action_label"]
 
         # Additional metrics
-        div_yield = float(row.get('dividend_yield_pct', 0)) if pd.notnull(row.get('dividend_yield_pct')) else 0
+        div_yield = float(row.get('dividend_yield_pct')) if pd.notnull(row.get('dividend_yield_pct')) else float("nan")
         # Unknown stays NaN (blank in the table) — sentinels like 999 / 99 / 0 used to be filtered
         # and ranked as if they were real values (every stock without a forward P/E vanished from
         # the scanner because 999 > the "Max Forward P/E" slider default).
@@ -229,7 +244,7 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
         _np = row.get('net_payout_yield_pct')
         net_payout = float(_np) if pd.notnull(_np) else float("nan")                  # unknown, not a 0 % payout
         vol_30d = row.get('volatility_30d', 0) or 0
-        short_pct = (row.get('short_percent_of_float', 0) * 100) if pd.notnull(row.get('short_percent_of_float')) else 0
+        short_pct = (row.get('short_percent_of_float') * 100) if pd.notnull(row.get('short_percent_of_float')) else float("nan")
 
         # measured values behind the Quality sub-scores (shown next to them); insider net activity over 6 months
         _met = dict(_sc["metrics"]) if isinstance(_sc.get("metrics"), dict) else {}
@@ -314,8 +329,8 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
             "Short %": round(short_pct, 1),
             "Trend": latest_p.get('ma_signal', 'NEUTRAL'),
             "Region": row['region'],
-            "EPS Momentum": _eps_mom_lookup.get(ticker, 'Neutral'),
-            "Rev Momentum": _rev_mom_lookup.get(ticker, 'Neutral'),
+            "EPS Momentum": _eps_mom_lookup.get(ticker, 'N/A'),      # R7-09: not computed is unknown, not Neutral
+            "Rev Momentum": _rev_mom_lookup.get(ticker, 'N/A'),
         })
         
     return pd.DataFrame(screener_rows)

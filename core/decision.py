@@ -101,7 +101,8 @@ def round_trip_cost_pct(currency: Optional[str], rules: dict, fx_rate=None) -> f
     c = rules["costs"]
     cost = 2 * c["commission_pct"]
     fx = _finite(fx_rate)
-    cur = "GBP" if str(currency) in ("GBp", "GBX", "GBx") else str(currency or "").upper()
+    from core.currency import major_currency
+    cur = major_currency(currency) or ""                 # GBp / ZAc / ILA → major unit, spaces stripped (R7-07)
     foreign = (fx != 1 if fx is not None and fx > 0 and c["base_currency"].upper() == "EUR"
                else bool(cur) and cur != c["base_currency"].upper())
     if foreign:
