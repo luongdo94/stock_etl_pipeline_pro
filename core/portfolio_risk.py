@@ -82,9 +82,14 @@ def rebalance_policy(tickers, current_w, target_w, stances: dict, max_position_p
     Returns {weights, cash, blocked: {ticker: reason}, over_limit: {ticker: reason}, existing_breaches: [str]}."""
     cap = max(float(max_position_pct), 0.0) / 100
     cur = np.clip(np.nan_to_num(np.asarray(current_w, dtype=float)), 0.0, None)
-    tgt = np.clip(np.nan_to_num(np.asarray(target_w, dtype=float)), 0.0, None)
+    tgt = np.asarray(target_w, dtype=float)
+    unknown = ~np.isfinite(tgt)
+    tgt = np.clip(np.where(unknown, cur, tgt), 0.0, None)           # an unknown target is no trade, never a sale to 0
     w = np.minimum(tgt, cap)
     blocked, over = {}, {}
+    for i in np.flatnonzero(unknown):
+        blocked[tickers[i]] = ("target unknown — weight left unchanged" if w[i] >= cur[i] - 1e-12 else
+                               f"target unknown — reduced only to the {cap:.0%} max-position cap")
     for i, t in enumerate(tickers):
         stance = (stances or {}).get(t)
         if w[i] > cur[i] + 1e-12 and stance not in INCREASE_ELIGIBLE:
@@ -110,8 +115,12 @@ def rebalance_policy(tickers, current_w, target_w, stances: dict, max_position_p
             blocked[t] = (blocked[t] + "; " if t in blocked else "") + why
         existing = [describe(v) for v in pc["existing"]]
     total = float(w.sum())
-    if total > 1.0:                                   # cannot happen for a target summing to ≤ 1, kept as a guard
-        w = w / total
+    if total > 1.0:          # e.g. unknown targets kept at their weight beside a full target: trim the increases first
+        inc = np.clip(w - cur, 0.0, None)
+        if inc.sum() > 0:
+            w = w - inc * min(1.0, (total - 1.0) / inc.sum())
+        if float(w.sum()) > 1.0 + 1e-12:              # still over (holdings above 100 %): last-resort guard
+            w = w / float(w.sum())
     return {"weights": w, "cash": max(1.0 - float(w.sum()), 0.0), "blocked": blocked, "over_limit": over,
             "existing_breaches": existing}
 

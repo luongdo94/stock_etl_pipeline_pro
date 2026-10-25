@@ -40,10 +40,12 @@ def stress(prices, weights, nav, meta, companies, policy, rules):
         for t in weights:
             full_meta[t]["industry"] = ind.get(t)
     rows = scenario_losses(weights, full_meta, sens, load_scenarios(rules), policy["base_currency"],
-                           policy["unknown_beta"])
+                           policy["unknown_beta"], policy=policy)
     rows["loss_eur"] = rows["return"] * nav
     limit = policy["max_stress_loss_pct"] / 100
-    return rows, sens, full_meta, limit, rows.loc[rows["return"] < -limit, "scenario"].tolist()
+    complete = rows["not_covered"] <= 0 if "not_covered" in rows else pd.Series(True, index=rows.index)
+    # a partial scenario (rate sensitivity unknown for part of NAV) can neither confirm nor clear the budget
+    return rows, sens, full_meta, limit, rows.loc[complete & (rows["return"] < -limit), "scenario"].tolist()
 
 
 def target_drift(tickers, weights, targets, nav, prices, stances, rules, limits, portfolio_policy):
@@ -85,8 +87,12 @@ def portfolio_review(holdings, cash, prices, companies, policy, rules, *, return
     meta = build_policy_meta(tickers, mc, prices, policy)
     scenarios, _, _, limit, breached = stress(prices, w, nav, meta, companies, policy, rules)
     out["stress"] = {"limit_pct_nav": limit * 100, "breached": breached,
+                     "partial": (scenarios.loc[scenarios["not_covered"] > 0, "scenario"].tolist()
+                                 if "not_covered" in scenarios else []),
                      "scenarios": [{"name": r.scenario, "pct_nav": r["return"] * 100,
-                                    "eur": r.loss_eur, "largest_contributors": r.worst}
+                                    "eur": r.loss_eur, "largest_contributors": r.worst,
+                                    # NAV share left out of a rates shock for lack of a rate sensitivity (not zero)
+                                    "not_covered_pct_nav": r.not_covered * 100}
                                    for _, r in scenarios.iterrows()]}
     out["correlation"] = correlation(ret[tickers])[1]
     rc = risk_contribution(ret[tickers].cov() * 252, list(w.values()))

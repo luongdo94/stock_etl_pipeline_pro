@@ -26,7 +26,8 @@ def prices(n=252, rates=False):
     if rates:
         # One earlier yield level is needed for the first daily change, just as stored daily returns have a prior close.
         yield_dates = dates.insert(0, dates[0] - pd.offsets.BDay())
-        rows.append(pd.DataFrame(dict(date=yield_dates, ticker="^TNX", price_close=4 + np.sin(np.arange(n + 1)) / 10)))
+        rows.append(pd.DataFrame(dict(date=yield_dates, ticker="^TNX", price_close=4 + np.sin(np.arange(n + 1)) / 10,
+                                      fx_rate=1.0, price_scale=1.0)))       # a yield level needs its conversion rate
     return pd.concat(rows, ignore_index=True)
 
 

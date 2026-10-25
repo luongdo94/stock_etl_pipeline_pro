@@ -69,10 +69,11 @@ def test_shared_calculations_match_the_original_tab_formulas(sample):
     shared_ret, shared_bad = pr.review_returns(s["prices"], tickers)
     pd.testing.assert_frame_equal(ret, shared_ret)
     assert shared_bad == bad == [] and out["nav_eur"] == pytest.approx(nav)
-    meta = s["companies"].set_index("ticker").to_dict("index")
+    from core.portfolio_policy import build_policy_meta
+    meta = build_policy_meta(tickers, s["companies"], s["prices"], s["policy"])   # the policy's meta, as the tab uses
     sens = estimate_sensitivities(s["prices"], tickers)
     expected = scenario_losses(w, meta, sens, load_scenarios(s["rules"]), s["policy"]["base_currency"],
-                               s["policy"]["unknown_beta"])
+                               s["policy"]["unknown_beta"], policy=s["policy"])
     assert [r["pct_nav"] for r in out["stress"]["scenarios"]] == pytest.approx(expected["return"] * 100)
     assert [r["eur"] for r in out["stress"]["scenarios"]] == pytest.approx(expected["return"] * nav)
     assert [r["largest_contributors"] for r in out["stress"]["scenarios"]] == expected["worst"].tolist()

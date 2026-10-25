@@ -31,7 +31,7 @@ def _portfolio(monkeypatch, *, scenarios=None, targets=None):
     from core import portfolio_review as review          # the tab's stress now runs through the shared helper
     monkeypatch.setattr(review, "estimate_sensitivities", lambda *a: pd.DataFrame())
     monkeypatch.setattr(review, "load_scenarios", lambda *a: {})
-    monkeypatch.setattr(review, "scenario_losses", lambda *a: pd.DataFrame(scenarios or [
+    monkeypatch.setattr(review, "scenario_losses", lambda *a, **k: pd.DataFrame(scenarios or [
         dict(scenario="Minor", **{"return": -.05}, worst="AAPL")]))
     monkeypatch.setattr(view, "historical_replay", lambda *a: pd.DataFrame())
     monkeypatch.setattr(review, "rebalance_policy", lambda tickers, cur, *a, **k: dict(weights=cur, blocked={}))

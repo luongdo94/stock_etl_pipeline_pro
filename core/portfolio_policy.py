@@ -65,6 +65,19 @@ def build_policy_meta(tickers, companies, prices, policy=None) -> dict:
     return meta
 
 
+def _sector(m) -> str:
+    """One bucket for every missing sector (None, NaN, blank): NaN != NaN would otherwise drop it from its own group."""
+    s = (m or {}).get("sector")
+    return "Unknown" if s is None or (isinstance(s, float) and not np.isfinite(s)) or not str(s).strip() else str(s)
+
+
+def _finite_w(w) -> bool:
+    try:
+        return bool(np.isfinite(float(w)))
+    except (TypeError, ValueError):
+        return False
+
+
 def stress_loss_rate(beta, policy: dict) -> float:
     """Fraction of a position lost in the correlated crash scenario."""
     try:
@@ -80,7 +93,7 @@ def exposures(weights: dict, meta: dict, policy: dict) -> dict:
     sec, ccy, loss = {}, {}, 0.0
     for t, w in weights.items():
         m = meta.get(t, {}) or {}
-        sec[m.get("sector") or "Unknown"] = sec.get(m.get("sector") or "Unknown", 0.0) + w
+        sec[_sector(m)] = sec.get(_sector(m), 0.0) + w
         c = _ccy(m.get("currency"))
         ccy[c] = ccy.get(c, 0.0) + w
         loss += w * stress_loss_rate(m.get("beta"), policy)
@@ -90,8 +103,8 @@ def exposures(weights: dict, meta: dict, policy: dict) -> dict:
 def _groups(tickers, meta, policy):
     """[(kind, key, members, per-ticker coefficient, limit)] — each constraint is Σ coef_i · w_i ≤ limit."""
     out = []
-    for s in {(meta.get(t, {}) or {}).get("sector") or "Unknown" for t in tickers}:
-        mem = [t for t in tickers if ((meta.get(t, {}) or {}).get("sector") or "Unknown") == s]
+    for s in {_sector(meta.get(t)) for t in tickers}:
+        mem = [t for t in tickers if _sector(meta.get(t)) == s]
         out.append(("sector", s, mem, {t: 1.0 for t in mem}, policy["max_sector_pct"] / 100))
     currencies = set() if policy.get("max_currency_pct") is None else {_ccy((meta.get(t, {}) or {}).get("currency")) for t in tickers}
     for c in currencies - {policy["base_currency"]}:
@@ -104,9 +117,11 @@ def _groups(tickers, meta, policy):
 
 
 def check(weights: dict, meta: dict, policy: dict) -> list:
-    """Every breached budget: [{kind, key, value, limit}] (fractions of NAV)."""
-    tickers = [t for t, w in weights.items() if w > 0]
-    out = []
+    """Every breached budget: [{kind, key, value, limit}] (fractions of NAV). A weight that is not a number cannot be
+    checked: it is reported as an "unknown weight" entry instead of being left out."""
+    out = [{"kind": "unknown weight", "key": t, "value": float("nan"), "limit": float("nan")}
+           for t, w in weights.items() if not _finite_w(w)]
+    tickers = [t for t, w in weights.items() if _finite_w(w) and w > 0]
     for kind, key, mem, coef, limit in _groups(tickers, meta, policy):
         v = sum(coef[t] * weights[t] for t in mem)
         if v > limit + 1e-9:
@@ -115,6 +130,8 @@ def check(weights: dict, meta: dict, policy: dict) -> list:
 
 
 def describe(v: dict) -> str:
+    if v["kind"] == "unknown weight":
+        return f"unknown weight for {v['key']} — the budgets cannot be checked for it"
     return f"{v['kind']} {v['key']} {v['value']:.1%} > {v['limit']:.1%} of NAV"
 
 
@@ -125,7 +142,8 @@ def constrain_increases(tickers, current_w, proposed_w, meta: dict, policy: dict
     Returns {weights: np.ndarray, cuts: {ticker: reason}, existing: [violation]}."""
     tickers = list(tickers)
     cur = np.clip(np.nan_to_num(np.asarray(current_w, dtype=float)), 0.0, None)
-    w = np.clip(np.nan_to_num(np.asarray(proposed_w, dtype=float)), 0.0, None)
+    w = np.asarray(proposed_w, dtype=float)
+    w = np.clip(np.where(np.isfinite(w), w, cur), 0.0, None)      # an unknown proposal is no trade, never a sale to 0
     idx = {t: i for i, t in enumerate(tickers)}
     cuts = {}
     existing = check(dict(zip(tickers, np.minimum(cur, w))), meta, policy)   # breaches even without any increase
@@ -152,7 +170,12 @@ def constrain_increases(tickers, current_w, proposed_w, meta: dict, policy: dict
 
 def max_candidate_weight(current: dict, candidate: str, wanted: float, meta: dict, policy: dict) -> tuple:
     """Largest weight (≤ wanted, fraction of NAV) the candidate can be ADDED at — funded from cash, other holdings
-    unchanged — without breaching a portfolio budget; with the binding budget's description (None if none binds)."""
+    unchanged — without breaching a portfolio budget; with the binding budget's description (None if none binds).
+    Funded from cash means it cannot exceed the cash left: 1 − the holdings' weights."""
+    cash = max(0.0, 1.0 - sum(float(x) for x in current.values() if _finite_w(x)))
+    if wanted > cash + 1e-12:
+        got, why = max_candidate_weight(current, candidate, cash, meta, policy) if cash > 0 else (0.0, None)
+        return got, why or f"cash available {cash:.1%} of NAV"
     tickers = list(dict.fromkeys(list(current) + [candidate]))
     cur = [float(current.get(t, 0.0)) for t in tickers]
     prop = [float(current.get(t, 0.0)) + (wanted if t == candidate else 0.0) for t in tickers]

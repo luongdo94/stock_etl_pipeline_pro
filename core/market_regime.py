@@ -148,6 +148,9 @@ def _finite(v):
     return f if np.isfinite(f) else None
 
 
+SPY_UNKNOWN = "SPY trend unknown"
+
+
 def market_confidence(spy, breadth_pct, vix, dxy_5d_move, tnx_chg):
     """0-100 score: SPY trend 25 + SPY 5d momentum 10 + breadth 30 + VIX 10 + macro 10 (max 85).
 
@@ -156,9 +159,14 @@ def market_confidence(spy, breadth_pct, vix, dxy_5d_move, tnx_chg):
     """
     vix, dxy_5d_move, tnx_chg, breadth_pct = (_finite(v) for v in (vix, dxy_5d_move, tnx_chg, breadth_pct))
     score, reasons = 0, []
-    if not spy.empty:
-        last = spy.iloc[-1]
-        above50, above200 = last["price_close"] > last["ma_50"], last["price_close"] > last["ma_200"]
+    last = spy.iloc[-1] if not spy.empty else {}
+    px, ma50, ma200 = (_finite(last.get(k)) for k in ("price_close", "ma_50", "ma_200"))
+    if None in (px, ma50, ma200):
+        # no SPY history or no full MA window: unknown scores the middle of its range and is named (like VIX / breadth)
+        score += 12 + (5 if spy.empty else 0)
+        reasons.append(SPY_UNKNOWN)
+    if not spy.empty and None not in (px, ma50, ma200):
+        above50, above200 = px > ma50, px > ma200
         if above50 and above200:
             score += 25
         elif above50 or above200:
@@ -166,6 +174,7 @@ def market_confidence(spy, breadth_pct, vix, dxy_5d_move, tnx_chg):
             reasons.append("SPY below one MA")
         else:
             reasons.append("SPY below MA50 & MA200")
+    if not spy.empty:
         ret5 = None
         if len(spy) >= 6:
             ret5 = _finite((float(spy["price_close"].iloc[-1]) / float(spy["price_close"].iloc[-6]) - 1) * 100)
@@ -233,7 +242,7 @@ def regime_summary(regime: dict, score, reasons, *, breadth=None, vix=None, dxy_
     {"label", "score", "max_score", "reasons", "incomplete": [inputs that were unknown], "rates_usd_flag": bool}.
     `incomplete` names the inputs scored as unknown (market_confidence gives them the middle of their range)."""
     unknown = [name for name, v in (("VIX", vix), ("DXY", dxy_pct), ("10Y yield change", tnx_chg), ("Breadth", breadth))
-               if _finite(v) is None]
+               if _finite(v) is None] + (["SPY trend"] if SPY_UNKNOWN in (reasons or []) else [])
     return {"label": regime["regime"], "score": score, "max_score": MAX_SCORE, "reasons": list(reasons or []),
             "incomplete": unknown, "rates_usd_flag": regime.get("scoring_regime") == "INFLATION_SHOCK"}
 
@@ -247,8 +256,9 @@ def dxy_5d_move(prices_full, fallback_pct):
     if len(d) >= 2 and {"fx_rate", "price_scale"} <= set(d.columns):
         fx = pd.to_numeric(d["fx_rate"], errors="coerce")
         native = pd.to_numeric(d["price_close"], errors="coerce") * pd.to_numeric(d["price_scale"], errors="coerce").fillna(1.0) / fx
-        native = native.where(fx > 0).dropna()
-        if len(native) >= 2:
+        native = native.where(fx > 0)
+        # both ends of the 5-session window must be valid: dropping a bad endpoint would measure a shorter, older move
+        if len(native) == 6 and pd.notna(native.iloc[-1]) and pd.notna(native.iloc[0]):
             move = _finite((float(native.iloc[-1]) / float(native.iloc[0]) - 1) * 100)
             if move is not None:
                 return move

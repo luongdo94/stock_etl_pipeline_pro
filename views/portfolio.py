@@ -1404,7 +1404,8 @@ def render(ctx):
                         if st.button("APPLY REBALANCE", width="stretch", type="primary", disabled=(import_pending or _stale_proposal)) and not (import_pending or _stale_proposal):
                             # Re-check NOW against the current Decisions, cap and holdings — never trust the stored
                             # proposal alone (a stance or a rule may have changed since Generate) (R4-01)
-                            _target = np.nan_to_num(_pend_assets["Target Weight %"].to_numpy(dtype=float)) / 100 \
+                            # an unknown target stays unknown: the policy keeps that weight (never a sale to 0)
+                            _target = _pend_assets["Target Weight %"].to_numpy(dtype=float) / 100 \
                                 if "Target Weight %" in _pend_assets.columns else _opt_w_arr
                             _rules_now = load_decision_rules()
                             # current NAV, ADV, stops and rules → current sizing limits (R4-F02)
@@ -1665,17 +1666,26 @@ def _render_stress_and_ledger(ctx, tickers, weights, nav_eur, meta, port_beta, r
     render_header("alert-triangle", f"Stress Test — Scenarios and History (beta {port_beta:.2f})", level="#####")
     res, sens, full_meta, limit, breached = stress(prices_full, w, nav_eur, meta, ctx.get("companies_full"),
                                                    portfolio_policy["policy"], rules)
-    st.dataframe(res.assign(**{"return": res["return"] * 100})[["scenario", "return", "loss_eur", "worst"]],
+    _nc = res["not_covered"] if "not_covered" in res else pd.Series(0.0, index=res.index)
+    _cols = ["scenario", "return", "loss_eur", "worst"] + (["not_covered"] if (_nc > 0).any() else [])
+    st.dataframe(res.assign(**{"return": res["return"] * 100, "not_covered": _nc * 100})[_cols],
                  hide_index=True, width="stretch", column_config={
                      "scenario": st.column_config.TextColumn("Scenario"),
                      "return": st.column_config.NumberColumn("NAV change", format="%+.1f%%"),
                      "loss_eur": st.column_config.NumberColumn("€", format="€%+,.0f"),
-                     "worst": st.column_config.TextColumn("Largest contributors (share of NAV)")})
+                     "worst": st.column_config.TextColumn("Largest contributors (share of NAV)"),
+                     "not_covered": st.column_config.NumberColumn(
+                         "Not covered", format="%.1f%%",
+                         help="Share of NAV without a rate sensitivity: left out of the rate part of this scenario, "
+                              "so the change shown is partial (unknown, not zero).")})
     valid_res = res.dropna(subset=["return"]).copy()
     if len(valid_res) > 1:
         s_plot = valid_res.sort_values("return", ascending=True).copy()
         s_plot["ret_pct"] = s_plot["return"] * 100
-        bar_colors = ["#e74c3c" if r < -limit else "#0284C7" for r in s_plot["return"]]
+        _part = s_plot["not_covered"] > 0 if "not_covered" in s_plot else pd.Series(False, index=s_plot.index)
+        s_plot["scenario"] = [f"{n} (partial)" if p else n for n, p in zip(s_plot["scenario"], _part)]
+        bar_colors = ["#94a3b8" if p else "#e74c3c" if r < -limit else "#0284C7"
+                      for r, p in zip(s_plot["return"], _part)]
         fig_stress = go.Figure()
         fig_stress.add_trace(go.Bar(
             y=s_plot["scenario"],
@@ -1701,12 +1711,17 @@ def _render_stress_and_ledger(ctx, tickers, weights, nav_eur, meta, port_beta, r
     worst = float(res["return"].min()) if not res.empty else 0.0
     rate_known = int(sens["rate_beta"].notna().sum()) if not sens.empty else 0
     st.caption(f"Each holding moves by its own estimated market beta × the market move, its rate sensitivity × the "
-               f"yield move (estimated for {rate_known} of {len(tickers)} holdings from the US 10-year yield; unknown = no "
-               f"rate effect), the translation loss of a stronger {portfolio_policy['policy']['base_currency']} on "
-               f"foreign holdings, sector shocks and gaps. Cash does not move. Worst scenario {worst:+.1%} of NAV vs the "
+               f"yield move (estimated for {rate_known} of {len(tickers)} holdings from the US 10-year yield; a holding without "
+               f"one is left out of the rate part and shown as Not covered), the translation loss of a stronger {portfolio_policy['policy']['base_currency']} on "
+               f"foreign holdings, sector shocks and gaps. The policy scenario is the stress budget's own figure (same beta "
+               f"and parameters). Cash does not move. Worst scenario {worst:+.1%} of NAV vs the "
                f"policy limit of −{limit:.0%} (config/decision_rules.yaml → portfolio).")
     if breached:
         st.error(f"A scenario loses more than the {limit:.0%} stress budget — reduce the most exposed lines first.")
+    _partial = res.loc[_nc > 0, "scenario"].tolist()
+    if _partial:
+        st.warning(f"Partial (grey): {', '.join(_partial)} — up to {_nc.max():.0%} of NAV has no rate sensitivity, so "
+                   f"these figures leave out part of the rate move and cannot confirm or clear the stress budget.")
     if not sens.empty:
         with st.expander("Per-holding sensitivities used above"):
             sv = sens.assign(weight=sens["ticker"].map(w) * 100, rate_beta=sens["rate_beta"] * 100,
@@ -1720,7 +1735,7 @@ def _render_stress_and_ledger(ctx, tickers, weights, nav_eur, meta, port_beta, r
                              "n": st.column_config.NumberColumn("Days used")})
             st.caption("Estimated on up to 2 years of daily EUR returns against SPY and the change of the US 10-year "
                        "yield (one regression). Blank = not enough history; the scenario then uses the provider's beta "
-                       "(or the policy's unknown beta) and no rate effect.")
+                       "(or the policy's unknown beta) and the rate part of a scenario is left out for it (shown as Not covered).")
     replay_returns, replay_missing = (review_returns(prices_full, tickers) if not prices_full.empty
                                       else (pd.DataFrame(), list(tickers)))
     rep = historical_replay(replay_returns, w) if not replay_missing else pd.DataFrame()
