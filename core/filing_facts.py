@@ -14,7 +14,7 @@ import re
 from decimal import Decimal, InvalidOperation
 from typing import Optional
 
-VALIDATOR_VERSION = 4        # bump on any rule change: stored readings of other versions are re-validated / re-read
+VALIDATOR_VERSION = 5        # bump on any rule change: stored readings of other versions are re-validated / re-read
 KINDS = ("AMOUNT", "NONE", "IMMATERIAL", "NOT_FOUND")
 UNIT_SCALE = {"units": 1.0, "thousands": 1e3, "millions": 1e6, "billions": 1e9}
 _UNIT_EVIDENCE = {
@@ -35,12 +35,36 @@ FINANCING_ROW = re.compile(r"financ\w*\s+(?:cash\s+(?:out|in)?flows?|activities)
                            r"finance\s+lease|finance\s+lease\s+(?:obligations?|liabilit\w+)\s+(?:paid|payments?|repaid)",
                            re.I)
 NOT_PRINCIPAL = re.compile(r"operating\s+cash\s+flows?|\binterest\b|right[- ]of[- ]use|lease\s+cost|amortization", re.I)
+# K8-01: "principal" / "repayments" alone is any debt — the row itself must name finance leases, and a row that also
+# names other borrowings ("Repayments of long-term debt and finance lease obligations" — real ABBV) is not lease principal
+FINANCE_LEASE = re.compile(r"finance\s+leas", re.I)
+OTHER_DEBT = re.compile(r"\b(?:debt|borrowings?|notes?\s+payable|senior\s+notes?|convertible\s+notes?|"
+                        r"promissory\s+notes?|loans?|credit\s+facilit\w+|commercial\s+paper|bonds?|debentures?|"
+                        r"mortgages?)\b|operating\s+(?:and|&)\s+finance|finance\s+(?:and|&)\s+operating|"
+                        r"\band\s+other\b", re.I)
+# K8-02: a scale written right after the figure ("$1.2 billion") is the figure's own unit
+_ATTACHED = re.compile(r"(\d[\d,]*(?:\.\d+)?)\)?\s*(thousand|million|billion|bn)s?\b", re.I)
+_ATTACHED_UNIT = {"thousand": "thousands", "million": "millions", "billion": "billions", "bn": "billions"}
 _WHOLE_PERIOD = re.compile(r"during\s+(?:the\s+|fiscal\s+)?(?:years?|periods?|20\d\d)|for\s+(?:all\s+|any\s+|each\s+)?"
                            r"(?:of\s+)?the\s+(?:years?|periods?)|in\s+any\s+of\s+the\s+(?:years?|periods?)|"
                            r"throughout|at\s+any\s+time", re.I)
 _AT_A_DATE = re.compile(r"\bas\s+of\b|\bat\s+(?:the\s+)?(?:fiscal\s+)?(?:year|period)[- ]end|\bat\s+(?:december|"
                         r"january|february|march|april|may|june|july|august|september|october|november)\b|"
                         r"\bat\s+(?:the\s+)?end\s+of\b", re.I)
+
+
+def none_years(quote: str, fiscal_year_end: int, fye_month: int = 12) -> list:
+    """Fiscal years a "no finance leases during …" quote covers (K8-03): the years it names, within the filing's three
+    — or the filing's own year when it names none ("during the years presented"). A quote naming only an earlier year
+    ("during fiscal 2024" in the FY2025 10-K) says nothing about FY2025. For a January-March year end a named label is
+    ambiguous (the company may label the year by its start), so only an unnamed period is used."""
+    clauses = _absent_clauses(quote)
+    named = sorted({int(y) for c in clauses for y in _YEAR.findall(c)}, reverse=True)   # R8-02: that clause only
+    if not named:
+        return [fiscal_year_end]
+    if fye_month <= 3:
+        return []
+    return [y for y in named if fiscal_year_end - 2 <= y <= fiscal_year_end]
 
 
 def absent_all_period(quote: str) -> bool:
@@ -52,10 +76,13 @@ def absent_all_period(quote: str) -> bool:
                      r"\s+\d{1,2}\b", " ", q)               # "December 31, 2025" is a date, not an amount
     if any(not _YEAR.fullmatch(m.group(0)) and float(m.group(0).replace(",", "")) > 0 for m in _FIG.finditer(undated)):
         return False                                       # an amount in the quote contradicts "zero"
-    for clause in re.split(r"[;:]|(?<=[a-z0-9)])\.\s", q):
-        if _NO_FINANCE_LEASE.search(clause) and _WHOLE_PERIOD.search(clause) and not _AT_A_DATE.search(clause):
-            return True
-    return False
+    return bool(_absent_clauses(quote))
+
+
+def _absent_clauses(quote: str) -> list:
+    """The clauses of a quote that deny finance leases over a whole period (not at a date)."""
+    return [c for c in re.split(r"[;:]|(?<=[a-z0-9)])\.\s", norm(quote))
+            if _NO_FINANCE_LEASE.search(c) and _WHOLE_PERIOD.search(c) and not _AT_A_DATE.search(c)]
 
 
 _IMMATERIAL = re.compile(r"finance\s+leases?[^.]{0,160}?(?:not|im)\s*material|"
@@ -127,6 +154,14 @@ def unit_problem(unit: str, passage: str, context: list) -> Optional[str]:
         if u:
             return None if unit == u else f"unit '{unit}' contradicts the table heading ('in {u}')"
     return None if unit == "units" else f"unit '{unit}' not stated near the table"
+
+
+def attached_unit(quote: str, amount) -> Optional[str]:
+    """The scale written right after `amount` in the quote ('$1.2 billion' → 'billions'), None when there is none."""
+    for m in _ATTACHED.finditer(str(quote or "")):
+        if same_number(m.group(1), amount):
+            return _ATTACHED_UNIT[m.group(2).lower()]
+    return None
 
 
 def unit_evidenced(unit: str, passages: list) -> bool:
@@ -234,15 +269,29 @@ def year_evidenced(label: int, amount: float, quote: str, passage: str, before: 
     return (None, "sentence") if str(label) in q else (f"the quote does not name fiscal {label}", None)
 
 
-def assign_years(labels: list, fiscal_year_end: int, fye_month: int = 12) -> dict:
+def assign_years(labels: list, fiscal_year_end: int, fye_month: int = 12, newest_label: Optional[int] = None) -> dict:
     """{label: fiscal year of hist_fcf (the calendar year the period ends in)}. Column labels are taken literally,
     except for a fiscal year ending in January-March that the company labels by the year it started (a year ending
     31 January 2026 printed as 'fiscal 2025'): then every label moves up by one. Labels are never stretched to fit —
-    the pilot showed a lone '2023' value being mapped onto 2025 that way."""
+    the pilot showed a lone '2023' value being mapped onto 2025 that way.
+
+    Which convention a January-March filer uses is read from the FILING (K8-04): `newest_label` — the newest year its
+    column headings print — or a label equal to the period-end year, or a full three-year run of labels. The labels the
+    model chose are not evidence on their own (it may skip the newest column). Unproven → ValueError."""
     labels = sorted({int(x) for x in labels}, reverse=True)
     if not labels:
         return {}
-    shift = 1 if fye_month <= 3 and labels[0] == fiscal_year_end - 1 else 0
+    if fye_month > 3:
+        return {lab: lab for lab in labels}
+    if newest_label is not None:
+        newest = int(newest_label)
+    elif labels[0] == fiscal_year_end or (len(labels) >= 3 and labels[0] - labels[-1] == len(labels) - 1):
+        newest = labels[0]
+    else:
+        raise ValueError("the filing's fiscal-year labelling is not shown")
+    if newest not in (fiscal_year_end, fiscal_year_end - 1):
+        raise ValueError(f"the newest column ({newest}) is not the filing's year")
+    shift = 1 if newest == fiscal_year_end - 1 else 0
     return {lab: lab + shift for lab in labels}
 
 
@@ -277,8 +326,15 @@ def validate_lease_extraction(ext: dict, chunks: dict, *, fiscal_year_end: int, 
             out.update(accepted=True, kind="NONE_AT_PERIOD_END", quote=q, chunk_id=cid, values=[],
                        reason="absence stated at the period end, not for the year — not a reported zero")
             return out
-        out.update(accepted=True, quote=q, chunk_id=cid,
-                   values=[{"year": fiscal_year_end, "value_usd": 0.0, "quote": q, "chunk_id": cid}] if kind == "NONE" else [])
+        if kind == "NONE":
+            ys = none_years(q, fiscal_year_end, fye_month)
+            if not ys:
+                out["reason"] = "the absence is stated for no year the filing covers (or the year label is ambiguous)"
+                return out
+            out.update(accepted=True, quote=q, chunk_id=cid,
+                       values=[{"year": y, "value_usd": 0.0, "quote": q, "chunk_id": cid} for y in ys])
+            return out
+        out.update(accepted=True, quote=q, chunk_id=cid, values=[])
         return out
     # AMOUNT
     unit = str(ext.get("unit") or "").lower()
@@ -290,9 +346,27 @@ def validate_lease_extraction(ext: dict, chunks: dict, *, fiscal_year_end: int, 
         out["reason"] = "no values"
         return out
     try:
-        years = assign_years([v["fiscal_year"] for v in vals], fiscal_year_end, fye_month)
+        labels = [int(v["fiscal_year"]) for v in vals]
     except (KeyError, TypeError, ValueError):
         out["reason"] = "fiscal years missing or not numbers"
+        return out
+    newest_label = None
+    if fye_month <= 3:              # the filing's own newest column label (its headings), not the model's choice
+        # R8-01: only a table row's own heading counts (a sentence below a balance sheet "January 31, 2026 and 2025"
+        # says nothing about how its "fiscal 2025" is labelled), and never a heading of later years (maturities)
+        heads = []
+        for v in vals:
+            cid, q = v.get("chunk_id"), v.get("quote") or ""
+            if cid not in chunks or descriptor(q, v.get("amount") or 0)[1] < 2:
+                continue
+            ys = column_years(chunks[cid], q, (before or {}).get(cid, ""))
+            if ys and max(ys) <= fiscal_year_end:
+                heads += ys
+        newest_label = max(heads) if heads else (doc_columns[1] if doc_columns else None)
+    try:
+        years = assign_years(labels, fiscal_year_end, fye_month, newest_label)
+    except ValueError as e:
+        out["reason"] = str(e)
         return out
     # one fiscal year with two different amounts = two registrants' columns (combined 10-K) or two rows mixed up
     by_year = {}
@@ -320,10 +394,17 @@ def validate_lease_extraction(ext: dict, chunks: dict, *, fiscal_year_end: int, 
         if not FINANCING_ROW.search(desc) or NOT_PRINCIPAL.search(desc):
             problems.append(f"FY{v.get('fiscal_year')}: '{desc[:50]}' is not the financing (principal) line")
             continue
+        if not FINANCE_LEASE.search(desc) or OTHER_DEBT.search(desc):
+            problems.append(f"FY{v.get('fiscal_year')}: '{desc[:50]}' is not a finance-lease-only line")
+            continue
         if run > 3:
             problems.append(f"FY{v.get('fiscal_year')}: the row prints {run} columns (several registrants?)")
             continue
-        why = unit_problem(unit, chunks[cid], [(before or {}).get(cid, "")] + list((prior_chunks or {}).get(cid, [])))
+        own = attached_unit(q, amount)
+        if own:                     # "$1.2 billion": the figure's own word decides, not the filing's usual scale
+            why = None if unit == own else f"unit '{unit}' contradicts the figure ('{amount:g} {own}')"
+        else:
+            why = unit_problem(unit, chunks[cid], [(before or {}).get(cid, "")] + list((prior_chunks or {}).get(cid, [])))
         if why:
             problems.append(f"FY{v.get('fiscal_year')}: {why}")
             continue

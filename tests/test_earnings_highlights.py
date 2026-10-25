@@ -34,10 +34,13 @@ def _lines(h):
 
 def test_latest_quarter_with_eps_pair_growth_and_margins():
     fcf = pd.DataFrame({"ticker": "NFLX", "year": [2025, 2026], "quarter": [3, 3], "free_cash_flow": [2.0e9, 2.5e9]})
-    h = eh.latest_report("NFLX", _q(), fcf, _events())
+    h = eh.latest_report("NFLX", _q(), fcf, _events(), estimate_currency="USD")
     assert h["period"].startswith("Q3 2026") and h["reported"] == pd.Timestamp("2026-10-20 20:00", tz="UTC")
     l = _lines(h)
-    assert l["EPS"]["value"] == 0.87 and l["EPS"]["estimate"] == 0.82 and l["EPS"]["vs"] == "Beat" and l["EPS"]["unit"] == "USD"
+    # K8-10: EPS shown in EUR at the statement rate (same currency); Beat / Miss from the local pair
+    assert l["EPS"]["value"] == pytest.approx(0.87 * 0.9) and l["EPS"]["estimate"] == pytest.approx(0.82 * 0.9)
+    assert l["EPS"]["vs"] == "Beat" and l["EPS"]["unit"] == "EUR/share"
+    assert l["EPS"]["yoy_pct"] is None              # K8-08: no report a year earlier in the EPS series (not the 49 %)
     assert l["Revenue"]["yoy_pct"] == 15.0 and l["Revenue"]["estimate"] is None and "no consensus recorded" in l["Revenue"]["note"]
     assert l["Operating margin"]["value"] == pytest.approx(4.0 / 11.5 * 100)
     assert l["Operating margin"]["yoy_bps"] == pytest.approx((4.0 / 11.5 - 3.0 / 10.0) * 1e4)
@@ -47,12 +50,18 @@ def test_latest_quarter_with_eps_pair_growth_and_margins():
 def test_revenue_consensus_only_when_recorded_before_the_report_and_compared_in_the_same_currency():
     snaps = pd.DataFrame({"ticker": "NFLX", "as_of": pd.to_datetime(["2026-10-19", "2026-10-21"]),
                           "rev_est_0q_avg": [12.0e9, 99e9], "eps_est_0q_avg": [0.82, 0.9]})
-    h = eh.latest_report("NFLX", _q(), None, _events(), snaps)
+    h = eh.latest_report("NFLX", _q(), None, _events(), snaps, estimate_currency="USD")
     rev = _lines(h)["Revenue"]
     assert rev["estimate"] == pytest.approx(12.0e9 * 0.9)              # recorded after Q3 ended, before 20 Oct; EUR
     assert rev["vs"] == "Beat" and "recorded 2026-10-19" in rev["note"]
     early = snaps.assign(as_of=pd.to_datetime(["2026-09-15", "2026-10-21"]))   # before quarter end / after the report
-    assert _lines(eh.latest_report("NFLX", _q(), None, _events(), early))["Revenue"]["estimate"] is None
+    assert _lines(eh.latest_report("NFLX", _q(), None, _events(), early, estimate_currency="USD"))["Revenue"]["estimate"] is None
+    # K8-07: an estimate in another currency than the statement (or an unknown one) is not converted at its rate
+    for other in ("CNY", None):
+        h = eh.latest_report("NFLX", _q(), None, _events(), snaps, estimate_currency=other)
+        rev, eps = _lines(h)["Revenue"], _lines(h)["EPS"]
+        assert rev["estimate"] is None and rev["vs"] is None and "consensus not compared" in rev["note"]
+        assert eps["value"] is None and eps["vs"] == "Beat" and "not shown in EUR" in eps["note"]
 
 
 def test_unknown_stays_unknown():

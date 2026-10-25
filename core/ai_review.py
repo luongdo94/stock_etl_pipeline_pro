@@ -3,24 +3,22 @@
 A language model (ChatGPT via the Codex CLI, scripts/tools/daily_buy_review.py) writes a dated, structured opinion about
 each stock the Decision labels BUY CANDIDATE. The opinion is shown next to the Decision and never changes it: the
 computed Decision stays the only rating in the app, the review is a second pair of eyes with its own date and its own
-list of what to verify.
+list of what to verify. It gives NO label of its own (review K8-05: a "Skip / Avoid" label and an agrees / disagrees
+badge were a second rating beside the Decision) — only the case for and against, the data it doubts and what to check.
+Reviews stored with the old label still load; the label is dropped and never shown.
 """
 import json
 from pathlib import Path
 from typing import Optional
 
-LABELS = ("Worth deeper research", "Watch, wait for specific conditions", "Skip", "Avoid")
-CONFIDENCE = ("low", "medium", "high")
 DIR = Path(__file__).resolve().parent.parent / "warehouse" / "ai_reviews"
 
 SCHEMA = {
     "type": "object",
     "additionalProperties": False,
-    "required": ["label", "confidence", "business", "bull_case", "bear_case", "financial_health", "valuation",
+    "required": ["business", "bull_case", "bear_case", "financial_health", "valuation",
                  "upcoming_events", "data_disagreements", "label_would_change_if", "verify_yourself", "facts_as_of"],
     "properties": {
-        "label": {"type": "string", "enum": list(LABELS)},
-        "confidence": {"type": "string", "enum": list(CONFIDENCE)},
         "business": {"type": "string"},
         "bull_case": {"type": "array", "items": {"type": "string"}},
         "bear_case": {"type": "array", "items": {"type": "string"}},
@@ -52,11 +50,10 @@ How the screener works (so you do not need to ask for its formulas; judge whethe
 
 Use web search for current facts (latest results, guidance, debt, legal or regulatory news, next report date). Give the
 date of every figure. If you are not sure of something, say "unsure" - do not guess. No price targets, no promised
-returns, no position sizes.
+returns, no position sizes, and no rating or recommendation of your own (no buy / hold / skip / avoid): the screener's
+Decision is the only rating; your job is the evidence for and against it.
 
 Fill the JSON fields:
-- label: one of {labels}
-- confidence: low / medium / high
 - business: what it does and how it earns money, and whether the moat is durable (3-4 sentences)
 - bull_case: at most 3 points, each with the condition under which it holds
 - bear_case: main risks (business, debt and cash flow, regulation, competition, customer concentration, currency)
@@ -65,7 +62,7 @@ Fill the JSON fields:
 - upcoming_events: events in the next 90 days (results, litigation, regulation, dividends)
 - data_disagreements: where the screener numbers above look wrong or misleading (e.g. negative upside yet BUY, very
   high RSI, weak momentum)
-- label_would_change_if: 2-3 concrete conditions that would change your label
+- label_would_change_if: 2-3 concrete conditions that would tilt the balance between the bull and the bear case
 - verify_yourself: facts the user should check in official filings or the company's investor-relations page
 - facts_as_of: the date of the most recent fact you relied on (YYYY-MM-DD)
 """
@@ -123,14 +120,13 @@ def build_prompt(row: dict, today: str, language: str = "Vietnamese") -> str:
         sector=row.get("sector") or "n/a", region=row.get("region") or "n/a", quality=n(row.get("quality")),
         value=n(row.get("value")), momentum=n(row.get("momentum")), upside=n(row.get("upside_pct"), 1),
         rsi=n(row.get("rsi")), trend=row.get("trend") or "n/a", smart_money=row.get("smart_money") or "n/a",
-        labels=" | ".join(f'"{x}"' for x in LABELS), method=METHOD, dcf=dcf_line(row.get("inputs"), row.get("price_close")))
+        method=METHOD, dcf=dcf_line(row.get("inputs"), row.get("price_close")))
 
 
 def validate(obj) -> Optional[dict]:
-    """The review if it has the required shape and an allowed label, else None (a malformed answer is dropped, not shown)."""
+    """The review if it has the required shape, else None (a malformed answer is dropped, not shown). A label or
+    confidence the model (or an older stored review) adds is not kept (K8-05)."""
     if not isinstance(obj, dict):
-        return None
-    if obj.get("label") not in LABELS or obj.get("confidence") not in CONFIDENCE:
         return None
     for k in SCHEMA["required"]:
         if k not in obj:
@@ -160,14 +156,6 @@ def load_latest(ticker: str, directory=None) -> Optional[dict]:
             continue
         if item and validate(item.get("review")):
             return {"as_of": doc.get("as_of"), "generated_at": doc.get("generated_at"), "model": doc.get("model"),
-                    "decision": item.get("decision"), "review": item["review"], "language": item.get("language", "Vietnamese")}
+                    "decision": item.get("decision"), "review": validate(item["review"]), "language": item.get("language", "Vietnamese")}
     return None
 
-
-def agreement(decision: Optional[str], label: str) -> str:
-    """How the review's label sits against the computed Decision (for the badge); BUY CANDIDATE is the only input."""
-    if label == LABELS[0]:
-        return "agrees"
-    if label == LABELS[1]:
-        return "cautious"
-    return "disagrees"

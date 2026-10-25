@@ -130,7 +130,7 @@ def main(argv=None) -> int:
             if res["review"]:
                 doc.setdefault("reviews", {})[res["ticker"]] = {"decision": res["decision"],
                                                              "review": res["review"], "language": a.language}
-                print(f"  ok   {res['ticker']:8s} {res['review']['label']} ({res['review']['confidence']}) {res['seconds']}s")
+                print(f"  ok   {res['ticker']:8s} {res['seconds']}s")
             else:
                 failed += 1
                 print(f"  FAIL {res['ticker']:8s} {res['error']}")

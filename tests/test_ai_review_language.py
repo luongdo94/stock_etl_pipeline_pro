@@ -17,7 +17,7 @@ ROW = {"ticker": "ABC", "as_of_date": DAY, "decision": "BUY CANDIDATE"}
 def review():
     obj = {key: ["Original content"] if spec["type"] == "array" else "Original content"
            for key, spec in ar.SCHEMA["properties"].items()}
-    return {**obj, "label": "Skip", "confidence": "low", "facts_as_of": DAY}
+    return {**obj, "facts_as_of": DAY}                    # no label of its own (K8-05)
 
 
 @pytest.fixture
@@ -143,9 +143,9 @@ def test_review_one_passes_model_high_effort_and_language(monkeypatch, tmp_path,
 @pytest.mark.parametrize("language, headings, caption", [
     ("Vietnamese", ["Hoạt động kinh doanh", "Luận điểm tích cực", "Luận điểm tiêu cực / rủi ro",
                     "Sức khỏe tài chính", "Định giá", "90 ngày tới", "Những số liệu sàng lọc có thể gây hiểu nhầm",
-                    "Nhãn đánh giá sẽ thay đổi nếu", "Tự kiểm chứng"], "không làm thay đổi Decision"),
+                    "Điều có thể làm cán cân thay đổi", "Tự kiểm chứng"], "không làm thay đổi Decision"),
     ("English", ["Business", "Bull case", "Bear case / risks", "Financial health", "Valuation", "Next 90 days",
-                 "Where the screener numbers may mislead", "The label would change if", "Verify yourself"],
+                 "Where the screener numbers may mislead", "What would tilt the balance", "Verify yourself"],
      "does not change it"),
 ])
 def test_view_headings_and_caption(monkeypatch, language, headings, caption):
@@ -166,5 +166,5 @@ def test_view_headings_and_caption(monkeypatch, language, headings, caption):
         assert any(f"**{heading}**" in line for line in markdown)
     assert caption in captions[0]
     assert DAY in captions[0]
-    assert "Skip · confidence low" in expanders[0]
+    assert "Skip" not in expanders[0] and "confidence" not in expanders[0]     # K8-05: no label of its own
     assert all("Original content" in line for line in markdown if " — " in line or line.startswith("- "))

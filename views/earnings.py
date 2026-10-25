@@ -106,12 +106,21 @@ def _pending(events, cal_all, now, days) -> pd.DataFrame:
         else pd.DataFrame(columns=cols)
 
 
+def _fin_currency(ctx, ticker):
+    """The company's financial currency (that of its EPS and consensus), None when not stored."""
+    comp = ctx.get("companies_full")
+    if comp is None or comp.empty or "currency" not in comp.columns or "ticker" not in comp.columns:
+        return None
+    hit = comp.loc[comp["ticker"] == ticker, "currency"]
+    return hit.iloc[0] if not hit.empty and isinstance(hit.iloc[0], str) else None
+
+
 def _latest_report(ticker, events, ctx):
     """What the latest reported quarter showed: reported vs consensus (when recorded) and vs a year ago."""
     from core import earnings_highlights as eh
     from services.db import load_estimate_snapshots
     h = eh.latest_report(ticker, ctx.get("quarterly_fin"), ctx.get("hist_fcf_q_full"), events,
-                         load_estimate_snapshots(ctx.get("data_version")))
+                         load_estimate_snapshots(ctx.get("data_version")), estimate_currency=_fin_currency(ctx, ticker))
     st.markdown(f"**Latest reported quarter** · {h['period']}" if h else "**Latest reported quarter**")
     if not h:
         st.info("No quarterly statements are stored for this stock.")
@@ -123,13 +132,15 @@ def _latest_report(ticker, events, ctx):
             return "N/A" if v is None else f"{v:.1f}%"
         if line["unit"] == "EUR":
             return eh.fmt_amount(v)
+        if line["unit"] == "EUR/share":
+            return "N/A" if v is None else f"€{v:,.2f}"
         return "N/A" if v is None else f"{v:,.2f} {line['unit']}"
 
     def est(line):
         e = line.get("estimate")
         if e is None:
             return "—"
-        return eh.fmt_amount(e) if line["unit"] == "EUR" else f"{e:,.2f}"
+        return eh.fmt_amount(e) if line["unit"] == "EUR" else f"€{e:,.2f}" if line["unit"] == "EUR/share" else f"{e:,.2f}"
 
     def change(line):
         if line.get("yoy_bps") is not None:
@@ -337,7 +348,8 @@ def render(ctx):
             st.caption("Prices are in EUR; 'vs market' subtracts the median move of the stock's region over the same days. "
                        "EPS figures are in the reporting currency. Revenue estimates are not available historically, so only "
                        "the EPS surprise is shown. A blank 1-day move: the report has a date but no time, so the session it "
-                       "hit first is unknown (the 2-day move covers both). Hatched bars: the estimate was near zero, so the "
+                       "hit first is unknown (the 2-day move covers both). A blank move can also mean closes are missing around the report or "
+                       "inside the 20 sessions — that window is not measured rather than stretched. Hatched bars: the estimate was near zero, so the "
                        "surprise % is real but not comparable — counted as a beat / miss, left out of averages.")
 
         q = ctx.get("quarterly_fin", pd.DataFrame())
@@ -415,7 +427,7 @@ def render(ctx):
         try:
             from services.db import load_estimate_snapshots as _les
             _hl = _eh.facts_line(_eh.latest_report(t, ctx.get("quarterly_fin"), ctx.get("hist_fcf_q_full"), events,
-                                                   _les(ctx.get("data_version"))))
+                                                   _les(ctx.get("data_version")), estimate_currency=_fin_currency(ctx, t)))
         except Exception:
             _hl = None
         facts = "\n".join(filter(None, [_hl,

@@ -7,6 +7,10 @@ quarter ended and BEFORE it was reported: the provider's current-quarter (0q) es
 once a report is out, so in that window it can only be the quarter just reported. Any other snapshot leaves the
 comparison blank (its quarter is unverified). Growth uses the local-currency rates the mart computes, so a moving
 exchange rate is not reported as growth.
+The consensus and the EPS pair are in the company's FINANCIAL currency (Yahoo's financialCurrency); they are converted
+with the statement's EUR rate only when that currency is the statement's (K8-07 — 8 real tickers report statements in
+another currency), else they stay N/A for EUR. EPS is shown in EUR (K8-10); Beat / Miss uses the local pair, and the
+EPS change is against the report a year earlier from the same EPS series as the growth history (K8-08).
 Anything not stored is None — shown as N/A, never 0. Guidance, segments and management commentary are not in these
 tables and are not invented here.
 """
@@ -68,9 +72,28 @@ def _consensus_before(snaps: Optional[pd.DataFrame], ticker: str, report_ts, per
             "eps": _num(row.get("eps_est_0q_avg"))}
 
 
+def _eps_year_ago(events: pd.DataFrame, ticker: str, ts) -> Optional[float]:
+    """Reported EPS of the report about a year before `ts` (330-400 days) — the growth history's basis."""
+    if events is None or events.empty or ts is None:
+        return None
+    e = events[(events["ticker"] == ticker) & events["eps_actual"].notna()]
+    t = pd.to_datetime(e["earnings_ts"], utc=True).dt.tz_convert(None)
+    ts = pd.Timestamp(ts)
+    ts = ts.tz_convert(None) if ts.tzinfo is not None else ts
+    ago = e[(t >= ts - pd.Timedelta(days=400)) & (t <= ts - pd.Timedelta(days=330))]
+    return _num(ago.loc[pd.to_datetime(ago["earnings_ts"], utc=True).idxmax(), "eps_actual"]) if not ago.empty else None
+
+
+def _eps_yoy(eps, eps_ago) -> Optional[float]:
+    return (eps / eps_ago - 1) * 100 if eps is not None and eps_ago is not None and eps_ago > 0 else None
+
+
 def latest_report(ticker: str, quarterly: pd.DataFrame, fcf_q: Optional[pd.DataFrame] = None,
-                  events: Optional[pd.DataFrame] = None, snaps: Optional[pd.DataFrame] = None) -> Optional[dict]:
-    """{period, reported, currency, lines: [{label, value, unit, estimate, vs, yoy_pct, note}], sources} or None."""
+                  events: Optional[pd.DataFrame] = None, snaps: Optional[pd.DataFrame] = None,
+                  estimate_currency: Optional[str] = None) -> Optional[dict]:
+    """{period, reported, currency, lines: [{label, value, unit, estimate, vs, yoy_pct, note}], sources} or None.
+    estimate_currency — the company's financial currency (that of the consensus and the EPS pair); unknown → neither
+    is converted to EUR."""
     if quarterly is None or quarterly.empty or "ticker" not in quarterly.columns:
         return None
     q = quarterly[quarterly["ticker"] == ticker].sort_values("report_date")
@@ -89,16 +112,26 @@ def latest_report(ticker: str, quarterly: pd.DataFrame, fcf_q: Optional[pd.DataF
     rev, ni, oi = _num(r.get("revenue")), _num(r.get("net_income")), _num(r.get("operating_income"))
     lines = []
     # the consensus of THIS quarter (recorded between its end and its report), converted like the actuals
-    rev_est_eur = cons["revenue"] * fx if cons and cons["revenue"] is not None and fx else None
+    est_ccy = str(estimate_currency).strip() if isinstance(estimate_currency, str) and estimate_currency.strip() else None
+    same_ccy = est_ccy is not None and ccy is not None and est_ccy == ccy.strip()
+    ccy_note = ("" if same_ccy else f"estimate currency {est_ccy} is not the statement's {ccy}" if est_ccy and ccy
+                else "estimate currency unknown")
+    has_cons = bool(cons and cons["revenue"] is not None)
+    rev_est_eur = cons["revenue"] * fx if has_cons and fx and same_ccy else None
     lines.append({"label": "Revenue", "value": rev, "unit": "EUR", "estimate": rev_est_eur,
                   "vs": _vs(rev, rev_est_eur), "yoy_pct": _num(r.get("revenue_growth_yoy_pct")),
                   "note": (f"consensus recorded {cons['as_of']}, after the quarter ended" if rev_est_eur is not None
+                           else f"consensus not compared: {ccy_note or 'no EUR rate'}" if has_cons
                            else "no consensus recorded between quarter end and report (period unverified)")})
     eps_a = _num(ev["eps_actual"]) if ev is not None else None
     eps_e = _num(ev["eps_estimate"]) if ev is not None else None
-    lines.append({"label": "EPS", "value": eps_a, "unit": ccy or "reporting currency", "estimate": eps_e,
-                  "vs": _vs(eps_a, eps_e), "yoy_pct": _num(r.get("eps_growth_yoy_pct")),
-                  "note": "" if ev is not None else "no report event stored for this quarter"})
+    to_eur = fx if fx and same_ccy else None
+    eps_note = ("no report event stored for this quarter" if ev is None
+                else "" if to_eur else f"not shown in EUR: {ccy_note or 'no EUR rate'} (vs estimate uses the local pair)")
+    lines.append({"label": "EPS", "value": eps_a * to_eur if eps_a is not None and to_eur else None, "unit": "EUR/share",
+                  "estimate": eps_e * to_eur if eps_e is not None and to_eur else None,
+                  "vs": _vs(eps_a, eps_e), "yoy_pct": _eps_yoy(eps_a, _eps_year_ago(events, ticker, reported)),
+                  "note": eps_note})
     lines.append({"label": "Operating income", "value": oi, "unit": "EUR", "estimate": None, "vs": None,
                   "yoy_pct": _num(r.get("operating_income_growth_yoy_pct")), "note": ""})
     om, om_ya = _margin(oi, rev), (_margin(ya.get("operating_income"), ya.get("revenue")) if ya is not None else None)
@@ -135,6 +168,8 @@ def facts_line(h: Optional[dict]) -> Optional[str]:
             shown = f"{v:.1f}%"
         elif line["unit"] == "EUR":
             shown = fmt_amount(v)
+        elif line["unit"] == "EUR/share":
+            shown = f"€{v:,.2f}/share"
         else:
             shown = f"{v:.2f} {line['unit']}"
         parts.append(f"{line['label']} {shown}")
@@ -173,9 +208,8 @@ def growth_history(ticker: str, events: Optional[pd.DataFrame], quarterly: Optio
     rows = []
     for i in range(len(e)):
         ts, eps = e.loc[i, "_ts"], _num(e.loc[i, "eps_actual"])
-        ago = e[(e["_ts"] >= ts - pd.Timedelta(days=400)) & (e["_ts"] <= ts - pd.Timedelta(days=330))]
-        eps_ago = _num(ago.iloc[-1]["eps_actual"]) if not ago.empty else None
-        yoy = (eps / eps_ago - 1) * 100 if eps is not None and eps_ago is not None and eps_ago > 0 else None
+        eps_ago = _eps_year_ago(e, ticker, ts)
+        yoy = _eps_yoy(eps, eps_ago)
         end = rev = None
         if not q.empty:
             prior = q[(q["report_date"] < ts) & (q["report_date"] >= ts - pd.Timedelta(days=REPORT_WINDOW_DAYS))]

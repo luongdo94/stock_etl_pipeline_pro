@@ -11,7 +11,7 @@ LABELS = {
         "business": "Business", "bull_case": "Bull case", "bear_case": "Bear case / risks",
         "financial_health": "Financial health", "valuation": "Valuation", "upcoming_events": "Next 90 days",
         "data_disagreements": "Where the screener numbers may mislead",
-        "label_would_change_if": "The label would change if", "verify_yourself": "Verify yourself",
+        "label_would_change_if": "What would tilt the balance", "verify_yourself": "Verify yourself",
         "caption": "A language model's opinion on the {as_of} snapshot (written {generated_at}, facts as of {facts_as_of}). "
                    "It is NOT the Decision and does not change it; it can be wrong or out of date — "
                    "check the items under “Verify yourself” in official filings.",
@@ -20,7 +20,7 @@ LABELS = {
         "business": "Hoạt động kinh doanh", "bull_case": "Luận điểm tích cực", "bear_case": "Luận điểm tiêu cực / rủi ro",
         "financial_health": "Sức khỏe tài chính", "valuation": "Định giá", "upcoming_events": "90 ngày tới",
         "data_disagreements": "Những số liệu sàng lọc có thể gây hiểu nhầm",
-        "label_would_change_if": "Nhãn đánh giá sẽ thay đổi nếu", "verify_yourself": "Tự kiểm chứng",
+        "label_would_change_if": "Điều có thể làm cán cân thay đổi", "verify_yourself": "Tự kiểm chứng",
         "caption": "Ý kiến của mô hình ngôn ngữ về dữ liệu ngày {as_of} (viết lúc {generated_at}, thông tin đến {facts_as_of}). "
                    "Đây KHÔNG phải Decision và không làm thay đổi Decision; nội dung có thể sai hoặc lỗi thời — "
                    "hãy kiểm tra các mục “Tự kiểm chứng” trong hồ sơ công bố chính thức.",
@@ -39,9 +39,8 @@ def render(dd, ctx):
         return
     r = got["review"]
     labels = LABELS.get(got.get("language"), LABELS["Vietnamese"])
-    badge = {"agrees": "Agrees", "cautious": "Cautious", "disagrees": "Disagrees"}[ar.agreement(got["decision"], r["label"])]
-    with st.expander(f"{badge} · External AI review (ChatGPT): {r['label']} · confidence {r['confidence']} "
-                     f"· snapshot {got['as_of']}"):
+    # no label or agrees / disagrees badge (K8-05): the Decision is the only rating; this is evidence to check
+    with st.expander(f"External AI review (ChatGPT) — case for and against · snapshot {got['as_of']}"):
         st.caption(labels["caption"].format(as_of=got["as_of"], generated_at=str(got["generated_at"])[:16],
                                           facts_as_of=html.escape(r["facts_as_of"])))
         st.markdown(f"**{labels['business']}** — {r['business']}")

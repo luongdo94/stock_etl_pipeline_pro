@@ -230,6 +230,19 @@ def reaction_day(ts, sessions: pd.DatetimeIndex, tz: str) -> Optional[pd.Timesta
     return sessions[pos] if pos < len(sessions) else None
 
 
+# K8-09: the windows count stored closes, so a hole in the price history stretched "2 days" / "20 sessions" over weeks.
+# Weekdays without a close beyond these (exchange holidays: up to 3 in a row, e.g. Golden Week / Lunar New Year) make
+# the window not measured (NaN, `gap` True) instead of silently longer. A hole after the reaction day voids the 2-day
+# move only (the 1-day move does not span it).
+MAX_SKIPPED_SHORT = 5                # around the report: pre-report close → reaction day → the day after
+MAX_SKIPPED_DRIFT = 8                # over the 20-session drift (Taiwan's Lunar New Year closes up to 7 weekdays)
+
+
+def _skipped(a, z, steps: int) -> int:
+    """Weekdays between two closes beyond the `steps` sessions the window should span."""
+    return int(np.busday_count(pd.Timestamp(a).date(), pd.Timestamp(z).date())) - steps
+
+
 def region_benchmark(prices: pd.DataFrame, region_of: dict) -> dict:
     """{region: cumulative index Series by date}: the median daily return of the region's stocks, compounded."""
     p = prices[["date", "ticker", "daily_return_pct"]].dropna().copy()
@@ -249,7 +262,7 @@ def event_reactions(events: pd.DataFrame, close: pd.Series, tz: str, bench: Opti
 
     `close` is a price Series indexed by date; `bench` a cumulative index on (a superset of) the same dates."""
     cols = ["earnings_ts", "reaction_day", "eps_estimate", "eps_actual", "surprise_pct", "small_base", "time_known",
-            "ret_1d", "ret_2d", "drift_20d", "abn_2d", "abn_drift_20d"]
+            "ret_1d", "ret_2d", "drift_20d", "abn_2d", "abn_drift_20d", "gap"]
     if events is None or events.empty or close is None or close.dropna().empty:
         return pd.DataFrame(columns=cols)
     c = close.dropna().sort_index()
@@ -273,6 +286,19 @@ def event_reactions(events: pd.DataFrame, close: pd.Series, tz: str, bench: Opti
         known = time_known(e["earnings_ts"], tz)
         r1, r2 = (ret(i - 1, i) if known else np.nan), ret(i - 1, i + 1)
         drift = ret(i + 1, i + 1 + DRIFT_SESSIONS) if i + 1 + DRIFT_SESSIONS < len(c) else np.nan
+        # K8-09: closes missing around the report or inside the drift → that window is not measured
+        ann = pd.Timestamp(pd.Timestamp(e["earnings_ts"]).tz_convert(tz).date()) if pd.Timestamp(e["earnings_ts"]).tzinfo \
+            else pd.Timestamp(pd.Timestamp(e["earnings_ts"]).date())
+        gap_1d = _skipped(sessions[i - 1], rd, 1) > MAX_SKIPPED_SHORT or _skipped(ann, rd, 1) > MAX_SKIPPED_SHORT
+        gap_2d = gap_1d or (i + 1 < len(c) and _skipped(rd, sessions[i + 1], 1) > MAX_SKIPPED_SHORT)
+        drift_gap = (i + 1 + DRIFT_SESSIONS < len(c)
+                     and _skipped(sessions[i + 1], sessions[i + 1 + DRIFT_SESSIONS], DRIFT_SESSIONS) > MAX_SKIPPED_DRIFT)
+        if gap_1d:
+            r1 = np.nan
+        if gap_2d:
+            r2 = np.nan
+        if drift_gap:
+            drift = np.nan
         abn2 = abnd = np.nan
         if b is not None and b.notna().iloc[i - 1]:
             abn2 = r2 - ret(i - 1, i + 1, b) if not np.isnan(r2) else np.nan
@@ -281,7 +307,8 @@ def event_reactions(events: pd.DataFrame, close: pd.Series, tz: str, bench: Opti
                      "eps_actual": e.get("eps_actual"), "surprise_pct": e.get("surprise_pct"),
                      "small_base": small_base(e.get("eps_estimate"), e.get("surprise_pct")), "time_known": known,
                      "ret_1d": r1, "ret_2d": r2,
-                     "drift_20d": drift, "abn_2d": abn2, "abn_drift_20d": abnd, "_pre": pre})
+                     "drift_20d": drift, "abn_2d": abn2, "abn_drift_20d": abnd, "gap": bool(gap_2d or drift_gap),
+                     "_pre": pre})
     out = pd.DataFrame(rows)
     return out.drop(columns="_pre").sort_values("reaction_day", ascending=False).reset_index(drop=True) if len(out) \
         else pd.DataFrame(columns=cols)

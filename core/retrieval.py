@@ -71,11 +71,16 @@ def rrf(rankings: list, k: int = 60) -> dict:
 
 
 def point_in_time(passages: pd.DataFrame, as_of: Optional[date]) -> pd.DataFrame:
-    """Passages public on or before `as_of` (None = no filter; passages without a filing date are always kept)."""
-    if as_of is None or passages.empty or "filed" not in passages.columns:
+    """Passages public on or before `as_of` (None = no filter). With a date, a passage whose filing date is missing
+    or unreadable is left out (K8-06): it is not shown to have been public then, so it could be look-ahead."""
+    if as_of is None or passages.empty:
         return passages
-    filed = pd.to_datetime(passages["filed"], errors="coerce")
-    return passages[filed.isna() | (filed <= pd.Timestamp(as_of))]
+    if "filed" not in passages.columns:
+        return passages.head(0)
+    filed = pd.to_datetime(passages["filed"], utc=True, errors="coerce").dt.tz_convert(None).dt.normalize()
+    cut = pd.Timestamp(as_of)
+    cut = (cut.tz_convert(None) if cut.tzinfo is not None else cut).normalize()     # R8-05: tz-aware vs naive
+    return passages[filed.notna() & (filed <= cut)]
 
 
 def retrieve(passages: pd.DataFrame, query: str, k: int = 8, *, query_vec=None, as_of: Optional[date] = None,

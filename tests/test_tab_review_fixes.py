@@ -173,7 +173,8 @@ def test_a07_unverified_consensus_never_becomes_revenue_beat():
         assert lines[1]["vs"] == "Beat"
     # between quarter end (30 Sep) and report (20 Oct) the 0q consensus can only be that quarter's
     snaps = pd.DataFrame({"ticker": ["A"], "as_of": pd.to_datetime(["2026-10-19"]), "rev_est_0q_avg": [100.]})
-    assert latest_report("A", quarter(), events=events(), snaps=snaps)["lines"][0]["estimate"] is not None
+    assert latest_report("A", quarter(), events=events(), snaps=snaps,
+                         estimate_currency="USD")["lines"][0]["estimate"] is not None
 
 
 def earnings_view(monkeypatch, ev, q):
