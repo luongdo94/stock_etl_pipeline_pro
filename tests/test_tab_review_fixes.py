@@ -283,8 +283,9 @@ def test_b02_history_and_archive_read_failures_do_not_fallback(monkeypatch):
     v.render({"prices_full": pd.DataFrame()})
     assert any("could not be read" in s for s in ui.messages)
     assert not any("No score history" in s for s in ui.messages)
-    monkeypatch.setattr(v, "load_track_record", lambda: pd.DataFrame({
-        "as_of_date": [pd.Timestamp("2026-10-20")], "ticker": ["A"]}))
+    from tests.provenance import stamped
+    monkeypatch.setattr(v, "load_track_record", lambda: stamped(pd.DataFrame({
+        "as_of_date": [pd.Timestamp("2026-10-20")], "ticker": ["A"]})))
     monkeypatch.setattr(v, "_forward", lambda *a: pytest.fail("archive error silently fell back"))
     ui.messages.clear()
     v.render({"prices_full": pd.DataFrame()})

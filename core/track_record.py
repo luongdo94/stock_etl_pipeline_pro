@@ -130,11 +130,28 @@ def information_coefficient(fr: pd.DataFrame, h: int, score_col: str = "quality"
     if daily.empty:
         return {"ic": None, "t_stat": None, "n_days": 0, "n_independent": 0}
     t = newey_west_t(daily.to_numpy(), lag=max(h - 1, 1))
+    windows = independent_windows(fr[pd.to_datetime(fr["as_of_date"]).isin(daily.index)], h)
     # Independent periods: the smaller of the observation count / h and an explicit calendar-block count (each block
     # starts at least h trading days ≈ h·365/252 calendar days after the previous one), so gaps in the snapshot history
     # can never be counted as extra independent periods (R3-A).
+    n_ind = min(len(daily) // max(h, 1), calendar_blocks(daily.index, h))
     return {"ic": float(daily.mean()), "t_stat": t, "n_days": int(len(daily)),
-            "n_independent": int(min(len(daily) // max(h, 1), calendar_blocks(daily.index, h)))}
+            "n_independent": int(n_ind if windows is None else min(n_ind, windows))}
+
+
+def independent_windows(fr: pd.DataFrame, h: int):
+    """Non-overlapping entry -> exit holding windows actually observed (per signal date: earliest entry, latest exit).
+    Signal dates whose outcomes share one holding window are ONE observation (K4-05). None without the dates."""
+    ex = f"exit_date_{h}"
+    if fr is None or fr.empty or "entry_date" not in fr.columns or ex not in fr.columns:
+        return None
+    w = (fr.dropna(subset=["entry_date", ex]).groupby("as_of_date")
+         .agg(entry=("entry_date", "min"), exit=(ex, "max")).sort_values("entry"))
+    n, last_exit = 0, None
+    for r in w.itertuples():
+        if last_exit is None or pd.Timestamp(r.entry) >= last_exit:
+            n, last_exit = n + 1, pd.Timestamp(r.exit)
+    return n
 
 
 def calendar_blocks(dates, h: int) -> int:
@@ -285,14 +302,17 @@ def current_definitions(snapshots: pd.DataFrame) -> pd.DataFrame:
     Quality used to mean something else (valuation, momentum and analyst ratings were inside it);
     mixing those rows into one IC would measure nothing. A weight or threshold edit in scoring_rules.yaml without a
     SCORE_VERSION bump changes the score too, so rows stamped with another scoring-rules hash — or with none — are
-    excluded as well (R3-A). Tables without a score_version column (tests, very old files) are returned unchanged."""
-    if snapshots.empty or "score_version" not in snapshots.columns:
+    excluded as well (R3-A). A row without a score stamp or a rules stamp is not current (K4-08)."""
+    if snapshots.empty:
         return snapshots
+    if "score_version" not in snapshots.columns:     # K4-08: unknown definition, never the current one
+        return snapshots.iloc[0:0]
     from core.scoring import SCORE_VERSION
     out = snapshots[snapshots["score_version"] == SCORE_VERSION]
-    if "rules_version" in out.columns:
-        out = out[out["rules_version"].astype(str).str.startswith(scoring_definition() + "|")
-                  | (out["rules_version"].astype(str) == scoring_definition())]
+    if "rules_version" not in out.columns:          # K4-08: no rules stamp = unknown rules, never the current ones
+        return out.iloc[0:0]
+    out = out[out["rules_version"].astype(str).str.startswith(scoring_definition() + "|")
+              | (out["rules_version"].astype(str) == scoring_definition())]
     return out
 
 
@@ -319,6 +339,10 @@ def evidence_status(snapshots: pd.DataFrame, prices: pd.DataFrame, h: int = EVID
     ok = at least MIN_INDEPENDENT_PERIODS non-overlapping h-day periods, positive mean IC and a Newey-West
     t-stat > 2. With h = 252 this needs years of snapshots — that is the honest answer for a long-horizon score.
     """
+    if not snapshots.empty and "score_version" not in snapshots.columns:
+        # K4-08: rows without a score stamp cannot show which definition they measured — no evidence
+        return {"ok": False, "ic": None, "t_stat": None, "n_days": 0,
+                "label": "snapshots carry no score version — they cannot count as evidence."}
     legacy_days = history_days(snapshots) - history_days(current_definitions(snapshots))
     snapshots = current_definitions(snapshots)
     days = history_days(snapshots)
@@ -340,15 +364,21 @@ def evidence_status(snapshots: pd.DataFrame, prices: pd.DataFrame, h: int = EVID
         # a Quality score that only picks large low-beta stocks is a risk tilt, not evidence (core/factor_test.py).
         # Audit F06/F07: the same contract as the Track Record's evidence table — every control present on every day
         # used (no silent drop), enough independent controlled periods, AND the top quintile positive after costs.
-        from core.factor_test import fama_macbeth, factor_exposures, quintile_net_of_costs
+        from core.factor_test import fama_macbeth, factor_exposures, last_price_date, quintile_net_of_costs
         frx = forward_returns(factor_exposures(snapshots, prices), prices, horizons=(h,))
         fm = fama_macbeth(frx, h, "quality", require_controls=True)
         try:
             from core.decision import load_rules
-            bps = (load_rules().get("costs") or {}).get("one_way_bps_by_region")
-        except Exception:
-            bps = None
-        net = quintile_net_of_costs(frx, h, "quality", bps)
+            bps = (load_rules().get("costs") or {}).get("one_way_bps_by_region")   # absent: the documented defaults
+            if bps is not None and (not isinstance(bps, dict) or not all(
+                    isinstance(v, (int, float)) and not isinstance(v, bool) and np.isfinite(v) and v >= 0
+                    for v in bps.values())):
+                raise TypeError("costs.one_way_bps_by_region must map each region to a cost >= 0 in bps")
+        except Exception as e:
+            # K4-01: a cost configuration that cannot be read is not replaced by the defaults (it could flip net > 0)
+            return {"ok": False, "ic": ic["ic"], "t_stat": ic["t_stat"], "n_days": ic["n_days"],
+                    "label": f"Evidence not computable: the cost configuration could not be read ({type(e).__name__})."}
+        net = quintile_net_of_costs(frx, h, "quality", bps, data_end=last_price_date(prices))
     ok = bool(enough and (ic["ic"] or 0) > 0 and (ic["t_stat"] or 0) > 2
               and (fm["premium"] or 0) > 0 and (fm["t_stat"] or 0) > 2
               and (fm.get("n_independent") or 0) >= MIN_INDEPENDENT_PERIODS

@@ -167,6 +167,9 @@ def _data_health(conn, db_path: str) -> None:
 
 def _snapshot_history(conn, prices: pd.DataFrame, rng: np.random.Generator, days: int = 120) -> None:
     """Fake point-in-time score history (marts.score_snapshots) so the Track Record tab has data."""
+    from core import track_record as tr
+    from core.scoring import SCORE_VERSION
+    stamp = {"score_version": SCORE_VERSION, "rules_version": tr.scoring_definition() + "|synthetic"}   # as etl/snapshot
     eq = [t for t in UNIVERSE if t not in ("SPY", "^VIX")]
     dates = sorted(prices["date"].unique())[-days - 130:-130]   # leave room for 6-month outcomes
     px = prices.set_index(["date", "ticker"])["close"]
@@ -177,7 +180,7 @@ def _snapshot_history(conn, prices: pd.DataFrame, rng: np.random.Generator, days
             act = "FAVOURABLE" if qi >= 60 else ("NEUTRAL" if qi >= 40 else "WEAKENING")
             rows.append({"as_of_date": pd.Timestamp(d).date(), "ticker": t, "price_close": float(px[(d, t)]),
                          "quality": int(qi), "action": act, "upside_pct": 10.0, "smart_money": "NEUTRAL",
-                         "rsi": 50.0, "trend": "BULLISH", "sector": UNIVERSE[t][1]})
+                         "rsi": 50.0, "trend": "BULLISH", "sector": UNIVERSE[t][1], **stamp})
     conn.register("snap_hist", pd.DataFrame(rows))
     conn.execute("CREATE OR REPLACE TABLE marts.score_snapshots AS SELECT * FROM snap_hist")
 

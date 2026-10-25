@@ -24,7 +24,8 @@ from typing import Optional
 import numpy as np
 import pandas as pd
 
-from core.track_record import BENCHMARK, HORIZONS, SCORES, calendar_blocks, forward_returns, newey_west_t
+from core.track_record import (BENCHMARK, HORIZONS, SCORES, calendar_blocks, forward_returns, independent_windows,
+                                newey_west_t)
 
 FACTORS = {"beta": "Market beta", "size": "Size (log market cap)", "value": "Value (book / price)",
            "momentum": "Momentum (12-1 month)"}
@@ -182,14 +183,25 @@ def fama_macbeth(fr: pd.DataFrame, h: int, score_col: str = "quality", controls=
         return {"premium": None, "t_stat": None, "raw_premium": None, "raw_t": None, "controls": [], "n_days": 0,
                 "n_independent": 0, "days_skipped": skipped, "identified": False}
     lag = max(h - 1, 1)
+    n_ind = min(len(coefs) // max(h, 1), calendar_blocks(days, h))
+    windows = independent_windows(fr[pd.to_datetime(fr["as_of_date"]).isin(pd.to_datetime(days))], h)
     return {"premium": float(np.mean(coefs) * 100), "t_stat": newey_west_t(coefs, lag),
             "raw_premium": float(np.mean(raw) * 100), "raw_t": newey_west_t(raw, lag),
             "controls": [c for c in controls if c in used], "n_days": len(coefs),
-            "n_independent": int(min(len(coefs) // max(h, 1), calendar_blocks(days, h))),
+            "n_independent": int(n_ind if windows is None else min(n_ind, windows)),
             "days_skipped": skipped, "identified": bool(require_controls or used >= set(controls))}
 
 
-def quintile_net_of_costs(fr: pd.DataFrame, h: int, score_col: str = "quality", cost_bps: Optional[dict] = None) -> dict:
+def last_price_date(prices):
+    """The latest price date, or None when the frame has none (then the frame's latest exit is the fallback)."""
+    if prices is None or prices.empty or "date" not in prices.columns:
+        return None
+    d = pd.to_datetime(prices["date"]).max()
+    return None if pd.isna(d) else d
+
+
+def quintile_net_of_costs(fr: pd.DataFrame, h: int, score_col: str = "quality", cost_bps: Optional[dict] = None,
+                          data_end=None) -> dict:
     """Top-quintile portfolio held over non-overlapping h-day periods: {periods, gross_pct, net_pct, turnover, cost_pct}
     (means per period, excess over the equal-weight universe)."""
     cost_bps = {**DEFAULT_COST_BPS, **(cost_bps or {})}
@@ -201,6 +213,13 @@ def quintile_net_of_costs(fr: pd.DataFrame, h: int, score_col: str = "quality", 
     # the drifted weights to equal weights — buys at the bought name's regional cost, sells at the sold name's. (The
     # name-count version charged the incoming names' cost for the sells and an unchanged set nothing for drift.)
     rows, held, held_region, last_exit, unresolved, gap_sales = [], pd.Series(dtype=float), {}, None, 0, 0
+    # K4-02: one maturity rule with outcome_coverage — a name without an exit is overdue only once its horizon (plus a
+    # week of slack for holidays) has passed by the latest date the data reaches; before that it is pending, not missing
+    if data_end is not None:                          # the last price date (same rule as outcome_coverage)
+        data_end = pd.Timestamp(data_end)
+    else:                                             # fallback: the latest exit the frame reaches
+        data_end = pd.to_datetime(d[f"exit_date_{h}"]).max() if f"exit_date_{h}" in d.columns else pd.NaT
+    span = pd.Timedelta(days=int(np.ceil(h * 365 / 252)) + 7)
     bps_of = lambda reg: cost_bps.get(str(reg), cost_bps["OTHER"])            # noqa: E731
     for day, g in d.groupby("as_of_date", sort=True):
         if last_exit is not None and pd.to_datetime(g["entry_date"]).min() < last_exit:
@@ -213,11 +232,16 @@ def quintile_net_of_costs(fr: pd.DataFrame, h: int, score_col: str = "quality", 
         top = g[bins == 4]
         # The top is fixed from the scores before any outcome is known (T03): a holding without an outcome makes the
         # period unresolved — it supplies no drift weights and does not count — never a re-picked top.
-        if g[f"exit_date_{h}"].isna().all():
-            continue                                                    # not matured yet: no name has reached its exit
-        if top[col].isna().any() or top[f"exit_date_{h}"].isna().any():
-            unresolved += 1                                             # matured, a top outcome is missing (delisted…)
-            continue
+        miss = top[col].isna() | top[f"exit_date_{h}"].isna()
+        if miss.any():
+            # an exit on file with no outcome is missing; no exit yet is missing only once it is overdue
+            entry_m = pd.to_datetime(top.loc[miss, "entry_date"]) if "entry_date" in top.columns else None
+            overdue = top.loc[miss, f"exit_date_{h}"].notna()
+            if entry_m is not None and pd.notna(data_end):
+                overdue = overdue | (entry_m + span <= data_end)
+            if overdue.any():
+                unresolved += 1                                         # matured, a top outcome is missing (delisted…)
+            continue                                                    # otherwise pending: not counted yet
         entry = pd.to_datetime(top["entry_date"]).max() if "entry_date" in top.columns else None   # latest name
         liquidation = 0.0
         if (last_exit is not None and entry is not None and not held.empty
@@ -284,7 +308,7 @@ def evidence_table(snapshots: pd.DataFrame, prices: pd.DataFrame, horizons=HORIZ
         for h in horizons:
             fm = fama_macbeth(fr, h, s, require_controls=True)       # only fully controlled, identified days (F07)
             unadj = fama_macbeth(fr, h, s, controls=())
-            q = quintile_net_of_costs(fr, h, s, cost_bps)
+            q = quintile_net_of_costs(fr, h, s, cost_bps, data_end=last_price_date(prices))
             rows.append({"score": SCORES.get(s, s), "horizon": h, "premium_pct": fm["premium"], "t_stat": fm["t_stat"],
                          "raw_premium_pct": unadj["premium"], "raw_t": unadj["t_stat"], "controls": ", ".join(fm["controls"]),
                          "n_days": fm["n_days"], "n_independent": fm["n_independent"], "periods": q["periods"],

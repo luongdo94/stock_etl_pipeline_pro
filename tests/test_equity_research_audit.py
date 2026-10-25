@@ -5,6 +5,7 @@ from datetime import date, timedelta
 import numpy as np
 import pandas as pd
 import pytest
+from tests.provenance import stamped
 
 duckdb = pytest.importorskip("duckdb")
 
@@ -120,10 +121,10 @@ def test_f06_a_gross_signal_that_loses_after_costs_cannot_enable_buys(monkeypatc
     snaps = pd.DataFrame([(d, t, i) for d in days[:-260] for i, t in enumerate(tick)], columns=["as_of_date", "ticker", "quality"])
     monkeypatch.setattr(ft, "fama_macbeth", lambda *a, **k: {"premium": 1.0, "t_stat": 3.0, "n_independent": 6})
     monkeypatch.setattr(ft, "quintile_net_of_costs", lambda *a, **k: {"net_pct": -0.4, "periods": 6})
-    res = tr.evidence_status(snaps, px)
+    res = tr.evidence_status(stamped(snaps), px)
     assert res["ok"] is False and "after costs" in res["label"]
     monkeypatch.setattr(ft, "quintile_net_of_costs", lambda *a, **k: {"net_pct": 0.8, "periods": 6})
-    assert tr.evidence_status(snaps, px)["ok"] is True
+    assert tr.evidence_status(stamped(snaps), px)["ok"] is True
 
 
 # ── F01 ───────────────────────────────────────────────────────────────────────────────────────────────────────────

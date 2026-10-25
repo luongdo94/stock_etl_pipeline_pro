@@ -1842,9 +1842,18 @@ def _render_alert_center(ctx, _alert_rules):
 
 
 def _ledger_display(trades):
-    shown = trades.copy()
+    shown = _unknown_basis_blank(trades)
     shown["note"] = shown["note"].replace({raw: raw.split(" ", 1)[1] for raw in _STRATEGY_OPTIONS})
     return shown
+
+
+def _unknown_basis_blank(trades):
+    """The ledger with the placeholder price of a cleared cost basis blanked (the storage keeps 0: NOT NULL column)."""
+    from core.ledger import BASIS_UNKNOWN
+    out = trades.copy()
+    if "source" in out.columns and "price" in out.columns:
+        out["price"] = out["price"].where(out["source"] != BASIS_UNKNOWN)
+    return out
 
 
 def _render_trade_ledger():
@@ -1866,12 +1875,14 @@ def _render_trade_ledger():
         else:
             pnl = realized_pnl(trades)
             c1, c2, c3 = st.columns(3)
-            c1.metric("Realised P&L (net of fees)", f"€{pnl['realized_eur'].sum():,.2f}")
+            _unknown = pnl["realized_eur"].isna().any()       # a part has no basis: the total is unknown (K4-07)
+            c1.metric("Realised P&L (net of fees)", "N/A" if _unknown else f"€{pnl['realized_eur'].sum():,.2f}",
+                      f"recorded part €{pnl['realized_known_eur'].sum():,.2f}" if _unknown else None, delta_color="off")
             c2.metric("Fees paid", f"€{pnl['fees_eur'].sum():,.2f}")
             c3.metric("Trades", f"{len(trades)}", f"{trades['ticker'].nunique()} tickers", delta_color="off")
             if (pnl["unmatched_qty"] > 0).any():
                 st.caption("Some sells exceed the shares bought in the ledger (positions opened before the ledger "
-                           "existed); their P&L counts only the recorded part.")
+                           "existed), so the total is N/A; the recorded part is shown under it.")
             st.dataframe(_ledger_display(trades).sort_values("traded_at", ascending=False), hide_index=True, width="stretch")
-            st.download_button("Export ledger (CSV)", trades.to_csv(index=False).encode("utf-8"),
+            st.download_button("Export ledger (CSV)", _unknown_basis_blank(trades).to_csv(index=False).encode("utf-8"),
                                file_name="trade_ledger.csv", mime="text/csv")

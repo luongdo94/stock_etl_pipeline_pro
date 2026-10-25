@@ -87,7 +87,9 @@ def test_expensive_value_cannot_earn_a_rating_point():
 # ── Track record: only current definitions count ─────────────────────────────────────────────
 def _snaps(version, days=3):
     rows = [dict(as_of_date=date(2026, 1, 1 + d), ticker=f"T{i}", quality=50 + i, value=40 + i, momentum=30 + i,
-                 score_version=version, action="NEUTRAL") for d in range(days) for i in range(12)]
+                 score_version=version, action="NEUTRAL",
+                 rules_version=tr.scoring_definition() + "|t" if version else None)   # stamped as etl/snapshot.py does
+            for d in range(days) for i in range(12)]
     return pd.DataFrame(rows)
 
 
@@ -98,9 +100,9 @@ def test_legacy_snapshots_are_excluded_from_evidence():
     assert not ev["ok"] and "redefined" in ev["label"]
 
 
-def test_tables_without_a_version_column_are_left_alone():
+def test_tables_without_a_version_column_are_not_current():
     plain = _snaps("x").drop(columns="score_version")
-    assert tr.current_definitions(plain) is plain
+    assert tr.current_definitions(plain).empty          # K4-08: an unstamped row cannot show which definition it used
 
 
 def test_ic_can_be_computed_for_each_score():

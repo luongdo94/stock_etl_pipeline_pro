@@ -7,6 +7,7 @@ import pandas as pd
 # The "quality" rule reads TODAY's score on every past bar: a timing demonstration with lookahead, never evidence that
 # fundamentals predict returns (audit F31). The label says so wherever the result is shown or exported.
 STATIC_QUALITY = "Static Quality demo"
+ENGINE_VERSION = "2026-10-25"   # bump when the simulation's arithmetic changes: a stored run of another engine is stale
 
 
 # ── STRATEGY ENGINE ──────────────────────────────────────────────────────────
@@ -26,9 +27,10 @@ def run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct,
     raw_rets = bt_prices["daily_return_pct"].values.astype(float) / 100
     # A gap inside the history is unknown, not 0% (audit F31): it is still filled so the curve can be drawn, but the
     # result carries the count and the view refuses to treat such a run as a clean performance record
-    _first = int(np.argmax(~np.isnan(raw_rets))) if (~np.isnan(raw_rets)).any() else len(raw_rets)
-    missing_returns = int(np.isnan(raw_rets[_first + 1:]).sum()) if _first < len(raw_rets) else 0
-    returns_arr = np.nan_to_num(raw_rets)
+    # every return after the first bar is used (bar 0 has no prior close), so a NaN / inf anywhere after it — also at
+    # the start of the series — is a gap (K4-04); the curve is still drawn, but the performance figures become N/A
+    missing_returns = int((~np.isfinite(raw_rets[1:])).sum())
+    returns_arr = np.where(np.isfinite(raw_rets), raw_rets, 0.0)
     dates_arr   = bt_prices["date"].values
     
     # Fetch indicators
@@ -90,7 +92,8 @@ def run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct,
             if exit_signal and can_fill:
                 position[i] = 0; in_position = False; exited_today = True
                 # realised at the next close: a gap after a stop signal is paid, not assumed away
-                net_pnl = (fill_price - entry_price_val) / entry_price_val - 2 * tx_cost_pct
+                # same compounding as the equity curve: a fee on the value traded at each fill (K4-06)
+                net_pnl = (fill_price / entry_price_val) * (1 - tx_cost_pct) ** 2 - 1
                 trade_log.append({"Date": p_date, "Action": "🔴 SELL", "Reason": exit_reason, "Price": f"€{fill_price:.2f}",
                                   "PnL": f"{net_pnl*100:+.1f}%", "_pnl": net_pnl})
         
@@ -124,7 +127,8 @@ def run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct,
     held = np.roll(position, 1); held[0] = 0
     held_prev = np.roll(held, 1); held_prev[0] = 0
     fills = np.abs(np.diff(held, prepend=0.0))
-    strategy_returns = returns_arr * held_prev - fills * tx_cost_pct
+    # a fill pays its fee on the value traded at that close, after the day's move: (1 + r)(1 - c)
+    strategy_returns = (1 + returns_arr * held_prev) * (1 - fills * tx_cost_pct) - 1
     cum_strategy = (1 + strategy_returns).cumprod()
     equity_curve = cum_strategy * initial_capital
     
@@ -140,6 +144,8 @@ def run_backtest_simulation(bt_ticker, bt_prices, strategy_type, sl_pct, tp_pct,
     sharpe = float("nan") if (not np.any(held) or not np.isfinite(_vol) or _vol < 1e-12) else \
         ((strategy_returns - 0.04 / 252).mean() / _vol) * np.sqrt(252)
     max_dd = ((equity_curve - np.maximum.accumulate(equity_curve)) / np.maximum.accumulate(equity_curve)).min() * 100
+    if missing_returns:                       # a return the record does not have makes every figure unknown
+        total_return = bnh_return = sharpe = max_dd = float("nan")
     
     # Win rate: computed per completed trade (BUY→SELL pair) from trade_log
     completed_trades = [t["_pnl"] for t in trade_log if t["Action"] == "🔴 SELL"]

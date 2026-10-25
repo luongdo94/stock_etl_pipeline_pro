@@ -7,6 +7,7 @@ import pandas as pd
 import pytest
 
 from core import decision, scoring as sc, track_record as tr, valuation as v
+from tests.provenance import stamped
 
 RULES = sc.load_rules()
 
@@ -41,7 +42,7 @@ def test_evidence_needs_independent_periods():
     px = pd.DataFrame([(d, f"T{i}", 100.0 + i * k) for k, d in enumerate(pd.bdate_range("2025-01-01", periods=500))
                        for i in range(12)] + [(d, "SPY", 100.0) for d in pd.bdate_range("2025-01-01", periods=500)],
                       columns=["date", "ticker", "price_close"])
-    ev = tr.evidence_status(snaps, px, h=63)
+    ev = tr.evidence_status(stamped(snaps), px, h=63)
     assert ev["ok"] is False and "independent period" in ev["label"]      # 120 days = 1 independent 63-day period
 
 

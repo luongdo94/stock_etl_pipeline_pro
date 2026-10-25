@@ -86,9 +86,12 @@ def test_delisted_top_without_an_exit_date_is_unresolved_once_the_universe_matur
     rows = [{"as_of_date": pd.Timestamp("2026-01-01"), "ticker": f"T{i}", "quality": i, "region": "US",
              "fwd_1": np.nan if i == 19 else 0.0, "entry_date": pd.Timestamp("2026-01-02"),
              "exit_date_1": pd.NaT if i == 19 else pd.Timestamp("2026-01-05")} for i in range(20)]
-    assert ft.quintile_net_of_costs(pd.DataFrame(rows), 1)["unresolved_periods"] == 1
-    pending = pd.DataFrame(rows).assign(exit_date_1=pd.NaT, fwd_1=np.nan)            # nobody has reached the exit
-    assert ft.quintile_net_of_costs(pending, 1)["unresolved_periods"] == 0
+    # the data reaches 2026-01-05 only: T19's 1-day horizon plus a week's slack has not passed — pending (K4-02)
+    assert ft.quintile_net_of_costs(pd.DataFrame(rows), 1)["unresolved_periods"] == 0
+    later = [{"as_of_date": pd.Timestamp("2026-01-20"), "ticker": "X", "quality": 1, "region": "US", "fwd_1": 0.0,
+              "entry_date": pd.Timestamp("2026-01-21"), "exit_date_1": pd.Timestamp("2026-01-22")}]
+    # once the data reaches 2026-01-22, T19 without an exit is overdue: the period is unresolved
+    assert ft.quintile_net_of_costs(pd.DataFrame(rows + later), 1)["unresolved_periods"] == 1
 
 
 def test_beta_uses_the_same_days_for_covariance_and_variance():

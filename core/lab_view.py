@@ -29,8 +29,9 @@ def win_rate(r: dict) -> Optional[float]:
 
 
 def run_spec(ticker, sl, tp, capital, fee, version, demo: bool = False) -> dict:
+    from core.backtest import ENGINE_VERSION
     return {"ticker": ticker, "sl": int(sl), "tp": int(tp), "capital": float(capital), "fee": float(fee),
-            "snapshot": version, "demo": bool(demo)}
+            "snapshot": version, "demo": bool(demo), "engine": ENGINE_VERSION}
 
 
 def stale_reason(run: Optional[dict], spec: dict) -> Optional[str]:
@@ -46,6 +47,8 @@ def stale_reason(run: Optional[dict], spec: dict) -> Optional[str]:
         return "controls changed (" + ", ".join(changed) + ")"
     if old.get("snapshot") != spec.get("snapshot"):
         return "the data snapshot was refreshed"
+    if old.get("engine") != spec.get("engine"):
+        return "the backtest calculation was updated"
     return None
 
 
@@ -72,7 +75,7 @@ def comparison_rows(results: list) -> pd.DataFrame:
 
 def neutral_summary(results: list) -> str:
     """Descriptive, not a verdict: how many fair (no-lookahead) rules ended above buy & hold in this window."""
-    fair = [r for r in results if not r.get("lookahead")]
+    fair = [r for r in results if not r.get("lookahead") and not r.get("missing_returns")]   # complete runs only
     if not fair:
         return ""
     bnh = fair[0]["bnh_return"]

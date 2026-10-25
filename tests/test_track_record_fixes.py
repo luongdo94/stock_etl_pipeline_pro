@@ -9,6 +9,8 @@ import pytest
 
 from core import factor_test as ft, track_record as tr
 from etl import snapshot as snap
+from tests.provenance import stamped
+from core.scoring import SCORE_VERSION
 
 
 def prices(dates, levels, ticker="A"):
@@ -106,6 +108,7 @@ def panel(missing=0):
                           "quality": range(1, 21), "fwd_1": [0.] * 16 + [.1] * 4,
                           "decision": ["HOLD / WATCH"] * 16 + ["BUY CANDIDATE"] * 4,
                           "action": "BUY", "region": "US", "rules_version": snap.rules_version(),
+                          "score_version": SCORE_VERSION,                          # stamped as etl/snapshot does
                           "entry_date": pd.Timestamp("2026-01-02"), "exit_date_1": pd.Timestamp("2026-01-05")})
     if missing:
         frame.loc[frame.index[-missing:], "fwd_1"] = np.nan
@@ -220,7 +223,7 @@ def test_t08_primary_and_exploratory_require_enough_net_periods(monkeypatch, per
     monkeypatch.setattr(ft, "fama_macbeth", lambda *a, **kw: fm)
     monkeypatch.setattr(ft, "quintile_net_of_costs", lambda *a, **kw: q)
     expected = periods >= 6 and net is not None and np.isfinite(net) and net > 0
-    ev = tr.evidence_status(fr, pd.DataFrame(), h=1)
+    ev = tr.evidence_status(stamped(fr), pd.DataFrame(), h=1)
     assert ev["ok"] is bool(expected)
     assert f"{periods} resolved net periods (need 6)" in ev["label"]
     table = ft.evidence_table(fr, pd.DataFrame(), horizons=(1,), scores=["quality"])

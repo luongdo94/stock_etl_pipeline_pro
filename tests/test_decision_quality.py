@@ -9,6 +9,7 @@ import pytest
 
 from core import factor_test as ft
 from core import ledger, stress
+from tests.provenance import stamped
 
 RNG = np.random.default_rng(7)
 
@@ -91,9 +92,9 @@ def test_evidence_needs_the_factor_adjusted_premium_too(monkeypatch):
                          columns=["as_of_date", "ticker", "quality"])
     monkeypatch.setattr(ft, "fama_macbeth", lambda *a, **k: {"premium": 1.0, "t_stat": 3.0, "n_independent": 6})
     monkeypatch.setattr(ft, "quintile_net_of_costs", lambda *a, **k: {"net_pct": 0.5, "periods": 6})
-    assert tr.evidence_status(snaps, px)["ok"] is True                      # higher score → higher return, by design
+    assert tr.evidence_status(stamped(snaps), px)["ok"] is True                      # higher score → higher return, by design
     monkeypatch.setattr(ft, "fama_macbeth", lambda *a, **k: {"premium": 0.1, "t_stat": 0.5, "n_independent": 6})
-    res = tr.evidence_status(snaps, px)
+    res = tr.evidence_status(stamped(snaps), px)
     assert res["ok"] is False and "factor-adjusted premium" in res["label"]
 
 
@@ -145,7 +146,8 @@ def test_realized_pnl_uses_average_cost_and_fees():
     p = ledger.realized_pnl(rows).set_index("ticker")
     assert p.at["A", "realized_eur"] == pytest.approx(5 * (130 - 110) - 3.0)
     assert p.at["A", "open_qty"] == 15 and p.at["A", "avg_cost"] == pytest.approx(110)
-    assert p.at["B", "unmatched_qty"] == 3 and p.at["B", "realized_eur"] == 0
+    assert p.at["B", "unmatched_qty"] == 3 and pd.isna(p.at["B", "realized_eur"])      # unknown basis: N/A (K4-07)
+    assert p.at["B", "realized_known_eur"] == 0
 
 
 def test_trades_from_diff_books_every_size_change():
