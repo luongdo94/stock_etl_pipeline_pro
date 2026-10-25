@@ -29,6 +29,16 @@ def _age_days(d, today: date) -> Optional[int]:
         return None
 
 
+def _as_bool(v):
+    """True / False from a stored flag (bool, 0 / 1, 'true' / 'false', 'yes' / 'no'); None when it is not one."""
+    if isinstance(v, bool):
+        return v
+    if v is None or (isinstance(v, float) and v != v):
+        return None
+    s = str(v).strip().lower()
+    return True if s in ("true", "1", "1.0", "yes", "y", "t") else False if s in ("false", "0", "0.0", "no", "n", "f") else None
+
+
 def data_freshness(prices: Optional[pd.DataFrame], companies: Optional[pd.DataFrame] = None,
                    etl_audit: Optional[pd.DataFrame] = None, dq_warnings: Optional[pd.DataFrame] = None,
                    today: Optional[date] = None) -> dict:
@@ -44,13 +54,23 @@ def data_freshness(prices: Optional[pd.DataFrame], companies: Optional[pd.DataFr
     # prices: the newest close, and the share of stocks within STALE_DAYS of it
     if prices is not None and not prices.empty and {"date", "ticker"} <= set(prices.columns):
         stocks = prices[~prices["ticker"].isin(INDICES)]
-        last = pd.to_datetime(stocks.groupby("ticker")["date"].max())
-        newest = last.max()
-        behind = (newest - last).dt.days > STALE_DAYS
+        last = pd.to_datetime(stocks.groupby("ticker")["date"].max(), errors="coerce").dt.normalize()
+        future = last > pd.Timestamp(today)
+        newest = last[~future].max()
+        # undated or future-dated closes are not known to be current (K6-05): they count as behind, never as fresh
+        behind = ((newest - last).dt.days > STALE_DAYS) | last.isna() | future
+        if future.any():
+            levels.append("WARN")
+            notes.append(f"{int(future.sum())} stock(s) with a close dated after today")
         p = out["prices"]
-        p.update(as_of=newest.date(), age_days=_age_days(newest, today), tickers=int(len(last)),
-                 stale=int(behind.sum()), fresh_share=float(1 - behind.mean()) if len(last) else None)
-        if p["age_days"] is not None and p["age_days"] > PRICE_WARN_DAYS:
+        known_newest = pd.notna(newest)
+        p.update(as_of=newest.date() if known_newest else None, age_days=_age_days(newest, today) if known_newest else None,
+                 tickers=int(len(last)), stale=int(behind.sum()),
+                 fresh_share=float(1 - behind.mean()) if len(last) else None)
+        if not known_newest:                          # no close dated up to today: the price date is unknown
+            levels.append("UNKNOWN")
+            notes.append("no close dated up to today")
+        elif p["age_days"] is not None and p["age_days"] > PRICE_WARN_DAYS:
             levels.append("STALE")
             notes.append(f"newest close is {p['age_days']} days old ({p['as_of']})")
         elif p["stale"]:
@@ -70,8 +90,13 @@ def data_freshness(prices: Optional[pd.DataFrame], companies: Optional[pd.DataFr
         f = out["fundamentals"]
         f.update(companies=int(len(all_upd)), undated=int(all_upd.isna().sum()),
                  known_share=float(len(upd) / len(all_upd)) if len(all_upd) else None)
+        fut = upd.dt.normalize() > pd.Timestamp(today)
+        if fut.any():                                  # a refresh date in the future is not a recent refresh
+            levels.append("WARN")
+            notes.append(f"{int(fut.sum())} companies with a fundamentals refresh date after today")
+            upd = upd[~fut]
         if len(upd):
-            ages = (pd.Timestamp(today) - upd).dt.days
+            ages = (pd.Timestamp(today) - upd.dt.normalize()).dt.days     # calendar days, like the future check
             # the stale share counts undated companies as not known to be current (over all companies)
             f.update(median_age_days=int(ages.median()), oldest_age_days=int(ages.max()),
                      stale_share=float((ages > FUNDAMENTALS_WARN_DAYS).sum() / len(all_upd)))
@@ -123,10 +148,19 @@ def data_freshness(prices: Optional[pd.DataFrame], companies: Optional[pd.DataFr
 
     # data quality: one row per check per run; no rows = checks unavailable (UNKNOWN), not clean
     if dq_warnings is not None and not dq_warnings.empty and "violations" in dq_warnings.columns:
-        v = dq_warnings[dq_warnings["violations"] > 0]
-        crit = int(v["is_critical"].sum()) if "is_critical" in v.columns and not v.empty else 0
-        warn = len(v) - crit
-        out["dq"] = {"state": "CRIT" if crit else ("WARN" if warn else "CLEAN"), "critical": crit, "warnings": warn}
+        viol = pd.to_numeric(dq_warnings["violations"], errors="coerce")
+        raw_sev = dq_warnings["is_critical"] if "is_critical" in dq_warnings.columns else pd.Series(pd.NA, index=dq_warnings.index)
+        sev = raw_sev.map(_as_bool)                   # "False" / "0" are not True; anything unrecognised is unknown
+        v = dq_warnings[viol > 0]
+        crit = int((sev[viol > 0] == True).sum())     # noqa: E712 (an object Series with None)
+        # a count or a severity that is not on file is unknown (K6-06): never CLEAN, never quietly non-critical
+        unknown = int((viol.isna() | ((viol > 0) & sev.isna())).sum())
+        warn = len(v) - crit - int(((viol > 0) & sev.isna()).sum())
+        out["dq"] = {"state": "CRIT" if crit else ("UNKNOWN" if unknown else ("WARN" if warn else "CLEAN")),
+                     "critical": crit, "warnings": warn, "unknown": unknown}
+        if unknown:                                   # reported on its own, also beside a known critical (R6-09)
+            levels.append("UNKNOWN")
+            notes.append(f"{unknown} data-quality check(s) with an unknown result or severity")
         if crit:
             levels.append("WARN")
             notes.append(f"{crit} critical data-quality check(s) violated")

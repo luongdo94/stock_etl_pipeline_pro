@@ -47,7 +47,8 @@ def test_one_snapshot_day_has_no_changes():
 # ── personal items ──────────────────────────────────────────────────────────────────────────────────────────────
 def _latest():
     return pd.DataFrame({"price_close": [90.0, 50.0, 30.0, 20.0], "volume": [1e6] * 4, "rsi": [50.0] * 4,
-                         "daily_return_pct": [0.0] * 4}, index=pd.Index(["HELD", "HOLD2", "IDEA", "STALE"], name="ticker"))
+                         "daily_return_pct": [0.0] * 4, "date": pd.Timestamp("2026-10-16")},   # dated (K6-01)
+                        index=pd.Index(["HELD", "HOLD2", "IDEA", "STALE"], name="ticker"))
 
 
 def test_personal_items_are_most_urgent_first_and_never_market_noise():
@@ -419,7 +420,7 @@ def test_sigr08_a_trigger_on_a_stale_close_says_so_and_is_not_an_action():
     trig = next(i for i in items if i["kind"] == "THESIS INVALIDATED")
     assert trig["severity"] == "review" and "2026-10-09" in trig["message"] and trig["data_as_of"] == date(2026, 10, 9)
     assert any(i["kind"] == "STALE PRICE" and i["scope"] == "watchlist" for i in items)
-    fresh = feed.personal_items(decisions={}, latest=latest, holdings={}, watchlist=wl)
+    fresh = feed.personal_items(decisions={}, latest=latest, holdings={}, watchlist=wl, today=date(2026, 10, 10))
     assert next(i for i in fresh if i["kind"] == "THESIS INVALIDATED")["severity"] == "action"
 
 

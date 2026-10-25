@@ -24,7 +24,7 @@ _USER_TTL_S = 600                  # user data (portfolio, watchlist, rules): re
                                    # after the user saves any of them (services.user_store.forget_hub_cache)
 _RETRY_TTL_S = 60                  # a failed read is retried after a minute (a slow store must not stall every rerun)
 _SEV = {"action": ("#e74c3c", "ACT"), "review": ("#f39c12", "REVIEW"), "info": ("#95a5a6", "INFO")}
-_DIR = {"up": "#2ecc71", "down": "#e74c3c"}
+_DIR = {"up": "#2ecc71", "down": "#e74c3c", "data": "#95a5a6"}   # data: inputs lost / regained
 
 
 def _version(prices_full, reco_df=None) -> tuple:
@@ -228,9 +228,11 @@ def _decision_changes(hub):
                     f"{c['to']}</span> <span style='color:inherit;font-size:0.8rem;'>— {c['cause']}: {c['detail']}</span>",
                     unsafe_allow_html=True)
     if rule:
-        up = sum(c["direction"] == "up" for c in rule)
+        up, down = sum(c["direction"] == "up" for c in rule), sum(c["direction"] == "down" for c in rule)
+        _data = len(rule) - up - down
         with st.expander(f"Rules / score version changed, nothing else visible — {len(rule)} stance(s) re-rated "
-                         f"({up} up, {len(rule) - up} down). A methodology change, not news about the companies."):
+                         f"({up} up, {down} down" + (f", {_data} to / from NOT ENOUGH DATA" if _data else "")
+                         + "). A methodology change, not news about the companies."):
             st.dataframe(pd.DataFrame([{"Ticker": c["ticker"], "From": c["from"], "To": c["to"]} for c in rule]),
                          hide_index=True, width="stretch")
 

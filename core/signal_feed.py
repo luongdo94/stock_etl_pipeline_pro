@@ -102,8 +102,11 @@ def decision_changes(snaps: pd.DataFrame) -> dict:
         cause = ("unknown" if not kinds or (kinds == ["rules"] and not complete) else
                  "rules" if kinds == ["rules"] else "rules+data" if "rules" in kinds else kinds[0])
         up = STANCE_RANK.get(new["decision"], 3) < STANCE_RANK.get(old["decision"], 3)
+        # K6-07: losing (or regaining) the inputs is a change in what can be judged, not an up- or downgrade
+        data_change = "NOT ENOUGH DATA" in (new["decision"], old["decision"])
         out["changes"].append({"ticker": t, "from": old["decision"], "to": new["decision"],
-                               "direction": "up" if up else "down", "cause": cause, "causes": kinds,
+                               "direction": "data" if data_change else "up" if up else "down", "cause": cause,
+                               "causes": kinds,
                                "price_chg_pct": px,
                                "detail": "possible differences: " + "; ".join(d for _, d in diffs)
                                + ("; snapshot inputs incomplete" if not complete else "") if diffs
@@ -159,9 +162,16 @@ def personal_items(*, decisions: dict, latest: pd.DataFrame, holdings: Optional[
             return None if pd.isna(d) else pd.Timestamp(d).date()
         return None
 
+    from core.freshness import PRICE_WARN_DAYS
+    _today = today or date.today()
+
     def on_price(t, sev, msg):
-        """A trigger evaluated on a stale close says so and is at most "review" (review SIG-R08)."""
-        if t in stale:
+        """A trigger evaluated on a stale close says so and is at most "review" (review SIG-R08). Stale is measured
+        against TODAY as well (K6-01): when the whole warehouse stopped, every close is old though none is behind."""
+        d = bar_date(t)
+        if d is not None and d > _today:
+            return ("review" if sev == "action" else sev), f"[price dated {d}, after today — unverified] {msg}"
+        if t in stale or d is None or (_today - d).days > PRICE_WARN_DAYS:
             return ("review" if sev == "action" else sev), f"[price of {bar_date(t) or 'unknown date'} — stale] {msg}"
         return sev, msg
     items = []
@@ -192,6 +202,12 @@ def personal_items(*, decisions: dict, latest: pd.DataFrame, holdings: Optional[
         scope = "portfolio" if t in held else "watchlist"
         sev, msg = on_price(t, "review", a["message"])
         items.append(_item(t, "YOUR RULE", sev, msg, scope, decisions.get(t), "your alert rule", bar_date(t),
+                           key=str(r.get("id") or f"{r.get('metric')}|{r.get('condition')}|{r.get('threshold')}")))
+    for p in al.rule_problems(rules or [], latest):
+        t, r = p["ticker"], p.get("rule") or {}
+        items.append(_item(t or "—", "RULE NOT EVALUATED", "review", f"{t}: your rule could not be checked — "
+                           f"{p['reason']} (unknown, not 'no alert').", "portfolio" if t in held else "watchlist",
+                           decisions.get(t), "your alert rule",
                            key=str(r.get("id") or f"{r.get('metric')}|{r.get('condition')}|{r.get('threshold')}")))
     for scope, names in (("portfolio", held), ("watchlist", watched)):
         for a in al.earnings_soon(earnings_cal, names, today=today, days=earnings_days):

@@ -67,11 +67,12 @@ PRESETS = [
     Preset("⚡ Strong Breakout (Uptrend + Momentum ≥ 70, RSI 50-70)", "opportunity",
            lambda d: _up(d) & (d["vs MA200 (%)"] > 5) & d["RSI (14)"].between(50, 70) & (d["Momentum"] >= 70),
            "Uptrend, price more than 5% above MA200, top-30% Momentum score and RSI 50-70 (strong but not yet overbought)."),
-    Preset(f"💰 Quality Dividend (Yield > 2.5%, Quality ≥ {SOLID}, covered)", "opportunity",
+    Preset(f"💰 Quality Dividend (Yield > 2.5%, Quality ≥ {SOLID}, no cover flag)", "opportunity",
            lambda d: (d["Yield (%)"] > 2.5) & (d["Quality"] >= SOLID)
                      & ~_flags(d).str.contains("Dividend not covered") & ~(d["Debt/EBITDA"] >= 3),
-           f"Yield above 2.5%, Quality ≥ {SOLID}, the dividend is covered by free cash flow and net debt is below 3x EBITDA "
-           "(banks and insurers, which have no EBITDA, are kept). No trend requirement: this is an income screen."),
+           f"Yield above 2.5%, Quality ≥ {SOLID}, no 'dividend not covered by FCF' flag, and net debt below 3x EBITDA "
+           "where it is known. Unknown leverage (banks and insurers have no EBITDA; other names may lack the data) is kept, "
+           "not confirmed — check it. No trend requirement: this is an income screen."),
     # ── risk / warning ─────────────────────────────────────────────────────────────────────
     Preset(f"🪤 Value Trap Risk (Value ≥ 65 & Quality < {FAIR})", "risk",
            lambda d: (d["Value"] >= 65) & (d["Quality"] < FAIR),

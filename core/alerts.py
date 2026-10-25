@@ -22,14 +22,45 @@ def latest_snapshot(prices: pd.DataFrame) -> pd.DataFrame:
     return prices.sort_values("date").groupby("ticker").tail(1).set_index("ticker")
 
 
+def _rule_error(r: dict) -> Optional[str]:
+    """Why a stored rule cannot be evaluated at all (None when it is well-formed)."""
+    try:
+        thr = float(r.get("threshold"))
+    except (TypeError, ValueError):
+        return "the threshold is not a number"
+    if thr != thr or thr in (float("inf"), float("-inf")):
+        return "the threshold is not a finite number"
+    if r.get("condition") not in ("above", "below"):
+        return f"unknown condition {r.get('condition')!r}"
+    if METRICS.get(r.get("metric")) is None:
+        return f"unknown metric {r.get('metric')!r}"
+    return None
+
+
+def rule_problems(rules: Iterable[dict], latest: pd.DataFrame) -> list:
+    """Rules that could NOT be evaluated, with the reason (K6-04): not firing is not the same as not checked."""
+    out = []
+    for r in rules:
+        t, metric = r.get("ticker"), r.get("metric")
+        err = _rule_error(r)
+        if err:
+            out.append({"ticker": t, "rule": r, "reason": err})
+            continue
+        col = METRICS[metric]
+        if t not in latest.index:
+            out.append({"ticker": t, "rule": r, "reason": "no current data for this ticker"})
+        elif col not in latest.columns or pd.isna(latest.at[t, col]):
+            out.append({"ticker": t, "rule": r, "reason": f"{METRIC_LABELS[metric]} is unknown today"})
+    return out
+
+
 def evaluate_rules(rules: Iterable[dict], latest: pd.DataFrame) -> list:
     out = []
     for r in rules:
         t, metric, cond = r.get("ticker"), r.get("metric"), r.get("condition")
-        try:
-            thr = float(r.get("threshold"))
-        except (TypeError, ValueError):
+        if _rule_error(r):                            # reported by rule_problems
             continue
+        thr = float(r.get("threshold"))
         col = METRICS.get(metric)
         if t not in latest.index or col not in latest.columns:
             continue
@@ -81,7 +112,7 @@ def watchlist_triggers(watchlist: pd.DataFrame, latest: pd.DataFrame,
         if iv and price >= iv:
             out.append({"ticker": t, "kind": "AT INTRINSIC VALUE",
                         "message": f"{t} at {price:,.2f} ≥ base-case value {iv:,.2f} — remaining upside is gone."})
-        if entry and status == "Pending" and price <= entry:
+        if entry and status == "Pending" and price <= entry and not (inval and price <= inval):   # K6-02
             out.append({"ticker": t, "kind": "ENTRY ZONE",
                         "message": f"{t} at {price:,.2f} ≤ entry target {entry:,.2f} — consider executing the plan."})
     return out

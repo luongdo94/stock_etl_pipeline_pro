@@ -106,7 +106,7 @@ def test_s203_closed_ideas_leave_feed_badge_and_watchlist_earnings_inbox():
     assert {i["kind"] for i in items if i["ticker"] == "R"} == {"YOUR RULE"}
     assert {"EARNINGS SOON", "DECISION CHANGED", "STOP HIT", "STALE PRICE"} <= {
         i["kind"] for i in items if i["ticker"] == "H"}
-    assert feed.badge_count(items) == len(items) == 14
+    assert feed.badge_count(items) == len(items) == 13          # P: no ENTRY ZONE below its invalidation (K6-02)
     assert open_idea_tickers(wl) == ["P", "A"]
     # Exercise the inbox expression used by the Watchlist view, with a fixed calendar day.
     tree = ast.parse((ROOT / "views/watchlist.py").read_text(encoding="utf-8"))
