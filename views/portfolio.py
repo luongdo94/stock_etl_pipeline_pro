@@ -1877,7 +1877,9 @@ def _render_trade_ledger():
             c1, c2, c3 = st.columns(3)
             _unknown = pnl["realized_eur"].isna().any()       # a part has no basis: the total is unknown (K4-07)
             c1.metric("Realised P&L (net of fees)", "N/A" if _unknown else f"€{pnl['realized_eur'].sum():,.2f}",
-                      f"recorded part €{pnl['realized_known_eur'].sum():,.2f}" if _unknown else None, delta_color="off")
+                      f"recorded part €{pnl['realized_known_eur'].sum():,.2f}" if _unknown else None, delta_color="off",
+                      help="Average cost. A buy fee is part of the cost basis and counts when the shares are sold; a "
+                           "sell fee counts at the sale. Fees paid shows every fee.")
             c2.metric("Fees paid", f"€{pnl['fees_eur'].sum():,.2f}")
             c3.metric("Trades", f"{len(trades)}", f"{trades['ticker'].nunique()} tickers", delta_color="off")
             if (pnl["unmatched_qty"] > 0).any():

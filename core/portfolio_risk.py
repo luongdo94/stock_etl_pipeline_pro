@@ -145,9 +145,10 @@ def record_trade(shares: dict, costs: dict, cash_eur: float, ticker: str, side: 
         old = float(sh.get(ticker, 0.0))
         basis = co.get(ticker)
         if old > 0:
-            co[ticker] = (old * float(basis) + qty * price) / (old + qty) if pd.notna(basis) else float("nan")
+            co[ticker] = ((old * float(basis) + qty * price * (1 + cost_pct)) / (old + qty)   # buy fee in the basis
+                          if pd.notna(basis) else float("nan"))
         else:
-            co[ticker] = price
+            co[ticker] = price * (1 + cost_pct)
         sh[ticker] = old + qty
         if fund_from_cash:
             cash -= pay

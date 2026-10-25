@@ -153,3 +153,22 @@ def test_a_run_of_an_older_backtest_engine_is_stale():
     assert lab_view.stale_reason({"spec": spec}, spec) is None
     old = {k: v for k, v in spec.items() if k != "engine"}                            # stored before the engine stamp
     assert "calculation was updated" in lab_view.stale_reason({"spec": old}, spec)
+
+
+# ── owner's choice (b): a buy fee is part of the cost basis, realised only when the shares are sold ─────────────
+def test_a_buy_fee_is_not_realised_before_a_sale():
+    t0 = datetime(2026, 1, 1)
+    bought = ledger.realized_pnl([ledger.trade("A", "BUY", 10, 100, 10.0, when=t0)]).set_index("ticker")
+    assert bought.at["A", "realized_eur"] == 0.0 and bought.at["A", "avg_cost"] == pytest.approx(101.0)
+    assert bought.at["A", "fees_eur"] == pytest.approx(10.0)
+    sold = ledger.realized_pnl([ledger.trade("A", "BUY", 10, 100, 10.0, when=t0),
+                                ledger.trade("A", "SELL", 10, 110, 5.0, when=t0.replace(day=2))]).set_index("ticker")
+    assert sold.at["A", "realized_eur"] == pytest.approx(10 * (110 - 101) - 5.0)    # 85 = 100 gain - 10 - 5 fees
+
+
+def test_add_trade_puts_the_buy_fee_in_the_holding_basis():
+    from core.portfolio_risk import record_trade
+    res = record_trade({}, {}, 10_000.0, "A", "BUY", 10, 100.0, cost_pct=0.01)
+    assert res["costs"]["A"] == pytest.approx(101.0) and res["cash"] == pytest.approx(10_000 - 1010)
+    more = record_trade(res["shares"], res["costs"], res["cash"], "A", "BUY", 10, 120.0, cost_pct=0.01)
+    assert more["costs"]["A"] == pytest.approx((1010 + 1212) / 20)

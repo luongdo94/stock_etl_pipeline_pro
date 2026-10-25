@@ -144,8 +144,10 @@ def test_realized_pnl_uses_average_cost_and_fees():
             ledger.trade("A", "SELL", 5, 130, 1.0, when=t0.replace(day=3)),
             ledger.trade("B", "SELL", 3, 50, 0.0, when=t0.replace(day=4))]                # opened before the ledger
     p = ledger.realized_pnl(rows).set_index("ticker")
-    assert p.at["A", "realized_eur"] == pytest.approx(5 * (130 - 110) - 3.0)
-    assert p.at["A", "open_qty"] == 15 and p.at["A", "avg_cost"] == pytest.approx(110)
+    # owner's choice (b): the two buy fees are in the basis (2202 / 20 = 110.1), the sell fee is realised at the sale
+    assert p.at["A", "realized_eur"] == pytest.approx(5 * (130 - 110.1) - 1.0)
+    assert p.at["A", "open_qty"] == 15 and p.at["A", "avg_cost"] == pytest.approx(110.1)
+    assert p.at["A", "fees_eur"] == pytest.approx(3.0)                               # every fee paid is still shown
     assert p.at["B", "unmatched_qty"] == 3 and pd.isna(p.at["B", "realized_eur"])      # unknown basis: N/A (K4-07)
     assert p.at["B", "realized_known_eur"] == 0
 

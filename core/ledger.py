@@ -3,7 +3,8 @@ core/ledger.py — the portfolio's trade ledger (pure).
 
 Holdings only say where the portfolio IS; the ledger says how it got there: every buy, sell, rebalance and manual edit
 with its price, fees and the cash after it. That is what realised P&L, fees paid and "was this call followed?" need.
-Realised P&L uses the average-cost method (the same as the holdings' cost basis).
+Realised P&L uses the average-cost method (the same as the holdings' cost basis). A BUY's fee is part of the cost basis
+(owner, 2026-10-25): it becomes realised only when the shares are sold; a SELL's fee is realised at the sale.
 """
 from datetime import datetime
 from typing import Optional
@@ -66,7 +67,8 @@ def adjustments_from_edit(old_shares: dict, old_costs: dict, new_shares: dict, n
 
 
 def realized_pnl(trades) -> pd.DataFrame:
-    """[ticker, realized_eur, fees_eur, bought_qty, sold_qty, open_qty, avg_cost] — average-cost realised P&L, net of fees.
+    """[ticker, realized_eur, fees_eur, bought_qty, sold_qty, open_qty, avg_cost] — average-cost realised P&L, net of fees
+    (buy fees through the basis when sold, sell fees at the sale; fees_eur = every fee paid).
     A sell larger than the shares recorded in the ledger (positions opened before the ledger existed) is realised
     against the average cost known at that time; the unknown part is reported as `unmatched_qty`."""
     df = pd.DataFrame(list(trades) if not isinstance(trades, pd.DataFrame) else trades, columns=COLUMNS)
@@ -85,7 +87,7 @@ def realized_pnl(trades) -> pd.DataFrame:
                 cost = float("nan") if r.source == BASIS_UNKNOWN else qty * float(r.price)
                 continue
             if r.side == "BUY":
-                cost += float(r.qty) * float(r.price)
+                cost += float(r.qty) * float(r.price) + float(r.fees or 0.0)   # the buy fee is part of the basis
                 qty += float(r.qty)
                 bought += float(r.qty)
             else:
@@ -96,6 +98,7 @@ def realized_pnl(trades) -> pd.DataFrame:
                     unknown = True                       # this part of the P&L cannot be measured
                 elif matched > 0:
                     realized += matched * (float(r.price) - avg)
+                realized -= float(r.fees or 0.0)                # the sell fee is realised at the sale
                 unmatched += sell - matched
                 cost -= matched * avg
                 qty -= matched
@@ -104,8 +107,9 @@ def realized_pnl(trades) -> pd.DataFrame:
                 sold += sell
         # a sale beyond the recorded shares has an unknown basis: the ticker's realised P&L is unknown (K4-07); the
         # part the ledger can price stays visible as realized_known_eur
-        out.append({"ticker": t, "realized_eur": realized - fees if unmatched <= 1e-9 and not unknown else float("nan"),
-                    "realized_known_eur": realized - fees, "fees_eur": fees, "bought_qty": bought,
+        # buy fees are inside the basis and sell fees inside `realized`: neither is subtracted a second time
+        out.append({"ticker": t, "realized_eur": realized if unmatched <= 1e-9 and not unknown else float("nan"),
+                    "realized_known_eur": realized, "fees_eur": fees, "bought_qty": bought,
                     "sold_qty": sold, "open_qty": qty, "avg_cost": cost / qty if qty > 0 else None,
                     "unmatched_qty": unmatched})
     return pd.DataFrame(out)
