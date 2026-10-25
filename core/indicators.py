@@ -21,20 +21,30 @@ def wilder_rsi(close: pd.Series, period: int = RSI_PERIOD) -> pd.Series:
     c = pd.to_numeric(close, errors="coerce").to_numpy(dtype=float)
     out = np.full(len(c), np.nan)
     d = np.diff(c)
-    if len(d) < period or np.isnan(d[:period]).any():
+    if len(d) < period:
         return pd.Series(out, index=close.index)
     g, l_ = np.clip(d, 0, None), np.clip(-d, 0, None)
-    ag, al = g[:period].mean(), l_[:period].mean()
 
     def _rsi(a, b):
         if b == 0:
             return np.nan if a == 0 else 100.0      # flat stays NaN, pure uptrend = 100
         return 100 - 100 / (1 + a / b)
-    out[period] = _rsi(ag, al)
-    for i in range(period, len(d)):
-        gi, li = (0.0, 0.0) if np.isnan(d[i]) else (g[i], l_[i])
-        ag = (ag * (period - 1) + gi) / period
-        al = (al * (period - 1) + li) / period
+    # a missing change is unknown, not 0 (K5-03): the RSI is N/A there and is seeded again from the next `period`
+    # consecutive known changes (a gap in the seed no longer voids the whole series)
+    seeded, run, ag, al = False, 0, 0.0, 0.0
+    for i in range(len(d)):
+        if np.isnan(d[i]):
+            seeded, run = False, 0
+            continue
+        run += 1
+        if not seeded:
+            if run == period:
+                ag, al = g[i - period + 1:i + 1].mean(), l_[i - period + 1:i + 1].mean()
+                seeded = True
+                out[i + 1] = _rsi(ag, al)
+            continue
+        ag = (ag * (period - 1) + g[i]) / period
+        al = (al * (period - 1) + l_[i]) / period
         out[i + 1] = _rsi(ag, al)
     return pd.Series(out, index=close.index)
 

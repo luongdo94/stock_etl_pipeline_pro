@@ -1,4 +1,5 @@
 """Institutional rating engine (pure)."""
+import math
 
 # Quality tiers on the 0-100 Quality score (core/scoring.py) — the one definition used by the rating,
 # the deep dive, the alerts and the scanner. Scores are anchored on absolute standards (returns on
@@ -93,9 +94,15 @@ def compute_institutional_rating(
     #   to filter false signals and allow earlier entry. Requires fct_daily_returns to
     #   expose ema_20 and vol_vs_avg_20d columns from the transform layer.
     _ma_upper = ma_sig.upper() if ma_sig else ""
+    try:
+        _rsi_known = latest_rsi is not None and math.isfinite(float(latest_rsi))
+    except (TypeError, ValueError):
+        _rsi_known = False
     # Every pillar returns a label AND its colour from the same branch, so the UI can never show a
     # label that disagrees with the colour the action logic used.
-    if _ma_upper == "STRONG BULL" and latest_rsi < 70:
+    if not _rsi_known:
+        p_trend, p_trend_c = "N/A (RSI unknown)", "#95a5a6"   # unknown is not bearish evidence (K5-01)
+    elif _ma_upper == "STRONG BULL" and latest_rsi < 70:
         p_trend, p_trend_c = "STRONG BULLISH", "#00ffcc"   # Golden Cross + RSI not overbought
     elif _ma_upper in ("STRONG BULL", "BULLISH") and latest_rsi < 65:
         p_trend, p_trend_c = "BULLISH", "#2ecc71"          # Bullish trend, healthy RSI
@@ -130,14 +137,23 @@ def compute_institutional_rating(
     _peg_expensive_limit = 3.5  if _is_growth else 2.5
     _peg_cheap_limit     = 1.2  if _is_growth else 0.8
 
-    _val_expensive  = (pe_v > _pe_expensive_limit and pe_v > 0) or (peg_v > _peg_expensive_limit and peg_v > 0)
-    _val_cheap      = (upside > 15) and (peg_v < _peg_cheap_limit or pe_v < _pe_cheap_limit) and pe_v > 0
-    _val_premium_ok = (upside > 8) and (ai_score >= 60) and (peg_v < 2.8 or pe_v < (55 if _is_growth else 35))
+    def _pos(v):                         # a multiple counts only when it is a finite positive number (K5-02)
+        try:
+            return math.isfinite(float(v)) and float(v) > 0
+        except (TypeError, ValueError):
+            return False
+    pe_ok, peg_ok = _pos(pe_v), _pos(peg_v)
+    _val_expensive  = (pe_ok and pe_v > _pe_expensive_limit) or (peg_ok and peg_v > _peg_expensive_limit)
+    _val_cheap      = (upside > 15) and pe_ok and ((peg_ok and peg_v < _peg_cheap_limit) or pe_v < _pe_cheap_limit)
+    _val_premium_ok = (upside > 8) and (ai_score >= 60) and ((peg_ok and peg_v < 2.8)
+                                                             or (pe_ok and pe_v < (55 if _is_growth else 35)))
     _val_compounder = (upside > 5) and (ai_score >= 50) and (not _val_expensive)
     _val_fair       = (upside > 0) and (not _val_expensive)
 
     if p_val is not None:
         pass
+    elif not pe_ok and not peg_ok:
+        p_val, p_val_c = "N/A", "#95a5a6"                     # no Value score and no usable multiple
     elif _val_cheap:
         p_val, p_val_c = "UNDERVALUED", "#2ecc71"
     elif _val_premium_ok:
@@ -235,7 +251,7 @@ def compute_institutional_rating(
         action_label = L["unfavourable"]
     elif pts <= 2.0 and p_qual_c in ["#2ecc71", "#00ffcc"]:
         action_label = L["neutral"]
-    elif latest_rsi > 70 and pts <= 3.5:
+    elif _rsi_known and latest_rsi > 70 and pts <= 3.5:
         action_label = L["weakening"]
     else:
         action_label = L["neutral"]

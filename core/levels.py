@@ -39,7 +39,7 @@ def detect_swing_zones(ticker_prices: "pd.DataFrame", cur_p: float, lookback: in
     """
     df = ticker_prices.tail(lookback).copy()
     
-    if len(df) < base_window * 3:
+    if len(df) < max(base_window * 3, 14):         # the 14-session ATR below needs a full window (K5-06)
         # Insufficient data - fallback to simple method
         s1 = float(df["price_low"].min())
         r1 = float(df["price_high"].max())
@@ -255,11 +255,9 @@ def get_tactical_metrics(ticker_prices: "pd.DataFrame", cur_p: float, analyst_ta
     if "rsi" in ticker_prices.columns and ticker_prices["rsi"].notna().any():
         rsi_val = float(ticker_prices["rsi"].iloc[-1])
     else:
-        delta = ticker_prices["price_close"].diff()
-        gain  = delta.where(delta > 0, 0).rolling(14).mean()
-        loss  = (-delta.where(delta < 0, 0)).rolling(14).mean()
-        rsi_series = 100 - (100 / (1 + gain / loss.replace(0, 1e-9)))
-        rsi_val = float(rsi_series.iloc[-1]) if not rsi_series.empty else 50.0
+        from core.indicators import wilder_rsi           # the one RSI definition (K5-04): flat = N/A, never 0
+        rsi_series = wilder_rsi(ticker_prices["price_close"])
+        rsi_val = float(rsi_series.iloc[-1]) if not rsi_series.empty else float("nan")
 
     # ── Multi-timeframe ladder built ONLY from real zones ───────────────────────
     # Previously S2/S3/R2/R3 fell back to synthetic steps (R1×1.03, R2×1.05 …) that were drawn and

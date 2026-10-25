@@ -515,10 +515,12 @@ def _rotation_context(rotation, generation=None):
     if not flows.empty:
         show = flows[flows.sector != BENCHMARK].copy()
         display = {"Sector": show.sector, "Snapshot": show.as_of.dt.strftime("%Y-%m-%d")}
+        from services.market_data import stored_fx_rate
+        _usd_eur = stored_fx_rate("USD")                 # stored USD -> EUR rate; unknown -> N/A, never $ shown as EUR
         for period in ("1w", "1m"):
             label = period.upper()
-            display[f"{label} USD ($M)"] = show[f"flow_{period}_usd"].map(
-                lambda v: f"{v / 1e6:+.2f}" if pd.notna(v) else "N/A")
+            display[f"{label} EUR (€M)"] = show[f"flow_{period}_usd"].map(
+                lambda v: f"{v * _usd_eur / 1e6:+.2f}" if pd.notna(v) and _usd_eur else "N/A")
             display[f"{label} % AUM"] = show[f"flow_{period}_pct"].map(lambda v: f"{v:+.2f}%" if pd.notna(v) else "N/A")
             display[f"{label} note"] = show[f"flow_{period}_note"]
         st.dataframe(pd.DataFrame(display), hide_index=True, width="stretch")

@@ -89,6 +89,9 @@ def get_sm_spirit_unified_v2(df_raw: "pd.DataFrame", sector: str = "Unknown") ->
         return _unavailable("volume unavailable")
     if pd.to_numeric(df['price_close'], errors="coerce").gt(0).sum() < 30:
         return _unavailable("insufficient price history")
+    _nv = int(pd.to_numeric(df['volume'], errors="coerce").isna().sum())
+    if _nv:                                        # K5-05: a missing volume would read as 0 and bend OBV / MFI
+        return _unavailable(f"volume missing on {_nv} of the last {len(df)} sessions")
     df['price_close'] = df['price_close'].ffill().fillna(0)
     df['volume']      = df['volume'].fillna(0)
     df['price_high']  = df['price_high'].ffill().fillna(df['price_close'])

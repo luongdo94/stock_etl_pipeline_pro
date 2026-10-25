@@ -204,7 +204,7 @@ def test_market_pulse_displays_rotation_warning_or_empty_line(warehouse, monkeyp
         assert any("BROAD WEAKNESS" in w.value for w in at.warning) is fire
         assert any("No rotation warnings for this snapshot." == i.value for i in at.info) is (not fire)
         assert any("Context only — not used in the Decision." == c.value for c in at.caption)
-        table = next(d.value for d in at.dataframe if "1W USD ($M)" in d.value.columns)
+        table = next(d.value for d in at.dataframe if "1W EUR (€M)" in d.value.columns)   # EUR (K5-10)
         assert table.iloc[0]["1W % AUM"] == "+5.00%"
         assert any("history collected by this app since 2026-09-22" in c.value for c in at.caption)
     finally:

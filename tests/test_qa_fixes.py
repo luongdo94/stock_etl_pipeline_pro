@@ -123,7 +123,8 @@ def test_q06_recent_missing_volume_is_na_but_observed_zero_is_valid():
     result = get_volume_flow(frame.iloc[::-1])
     assert result["signal"] == "N/A" and result["reason"] == "volume unavailable (recent sessions)"
     pd.testing.assert_frame_equal(frame, before)
-    frame.loc[frame.index[-1], "volume"] = 0.
+    frame["volume"] = 1000.                                   # every volume observed (K5-05: a gap is N/A)
+    frame.loc[frame.index[-1], "volume"] = 0.                 # an observed 0 is a valid volume, not a gap
     assert get_volume_flow(frame)["signal"] == "NEUTRAL"
     assert frame.iloc[-1].volume == 0.
 

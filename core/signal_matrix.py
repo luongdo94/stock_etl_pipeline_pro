@@ -30,7 +30,8 @@ def action_description(action, rating, *, s1, price, rsi):
             return "Negative trend together with an expensive valuation: the context is working against the stock."
         return "Weak quality with little else in favour: the context is unfavourable."
     if action == "NEUTRAL" and rating["p_qual_c"] in GOOD:
-        return "Good business, but trend, price or reward/risk do not yet line up. Wait for a better set-up."
+        return ("Good business, but trend, price or reward/risk do not line up yet. The Decision Summary is the "
+                "recommendation; this is timing context.")
     if action == "WEAKENING":
         if rsi > 70:
             return f"Locally overbought (RSI {rsi:.1f}) with few pillars behind it: tactical risk is elevated."

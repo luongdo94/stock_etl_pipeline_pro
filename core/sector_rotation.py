@@ -23,18 +23,27 @@ def estimate_flows(snapshots):
         changed = h["shares_outstanding"].ne(last.shares_outstanding)
         streak_start = int(h.index[changed].max()) + 1 if changed.any() else 0
         since = h.iloc[min(streak_start, len(h) - 1)].as_of.date().isoformat()
-        for period, offset in (("1w", pd.Timedelta(days=7)), ("1m", pd.DateOffset(months=1))):
-            old = h[h.as_of <= last.as_of - offset]
+        for period, offset, slack in (("1w", pd.Timedelta(days=7), pd.Timedelta(days=3)),
+                                      ("1m", pd.DateOffset(months=1), pd.Timedelta(days=7))):
+            target = last.as_of - offset
+            old = h[h.as_of <= target]
             usd = pct = float("nan")
             note = f"flow history starts {start}"
-            if not old.empty:
+            if not old.empty and old.iloc[-1].as_of < target - slack:
+                # K5-08: the nearest snapshot is too old to be a 1W / 1M base — the change spans a longer period
+                note = f"no snapshot near {target:%Y-%m-%d} (nearest {old.iloc[-1].as_of:%Y-%m-%d})"
+            elif not old.empty:
                 base = old.iloc[-1]
                 note = ""
                 needed = [last.shares_outstanding, base.shares_outstanding, last.price_close, base.total_assets]
                 if all(pd.notna(v) and 0 < v < float("inf") for v in needed):
                     delta = last.shares_outstanding - base.shares_outstanding
+                    ratio = last.shares_outstanding / base.shares_outstanding
                     if delta == 0:
                         note = f"provider figure unchanged since {since}"
+                    elif ratio >= 1.5 or ratio <= 1 / 1.5:
+                        # K5-09: a 50 %+ jump in shares within the period looks like a split, not creations
+                        note = f"share count changed x{ratio:.2f} — a split cannot be ruled out"
                     else:
                         usd = delta * last.price_close
                         pct = usd / base.total_assets * 100
