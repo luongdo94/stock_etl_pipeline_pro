@@ -10,7 +10,7 @@ import streamlit as st
 
 from core.alerts import METRICS as ALERT_METRICS, earnings_soon, evaluate_rules, latest_snapshot
 from core.alerts import opening_stops, position_stop_triggers
-from core.decision import holding_action, is_fund
+from core.decision import flag, holding_action, is_fund
 from core.currency import MINOR_UNITS, major_currency
 from core.decision import load_rules as load_decision_rules
 from core.portfolio_policy import check as policy_check, describe as policy_describe, exposures as policy_exposures
@@ -521,7 +521,8 @@ def render(ctx):
                     "Company": meta.get("Company", t),
                     "Sector": meta.get("Sector", "N/A"),
                     # what the Decision means for a position you HOLD (P1/5): ADD / HOLD — no adds / TRIM / EXIT …
-                    "Action": _act if t in _funds else _act_emoji + holding_action(_act, held=True),
+                    "Action": _act if t in _funds else _act_emoji + holding_action(
+                        _act, held=True, beyond_model=flag(meta.get("_beyond_model"))),
                     "Stop (orig)": st.session_state.get("portfolio_stops", {}).get(t, float("nan")),
                     "Target (%)": st.session_state.get("portfolio_targets", {}).get(t, float("nan")),
                     "Region": meta.get("Region", "US"),
@@ -545,8 +546,11 @@ def render(ctx):
             _emoji = lambda d: ("🔵 " if "RESEARCH" in d else "🟢 " if "BUY" in d else "🔴 " if "AVOID" in d    # noqa: E731
                                 else "🟡 " if "HOLD" in d else "⚪ ")
             _pdf["Current Decision"] = [_cur.get(t, "NOT ENOUGH DATA") for t in _pdf["Ticker"]]
-            _pdf["Action"] = [d if d == "N/A — fund" else _emoji(d) + holding_action(d, held=True)
-                              for d in _pdf["Current Decision"]]
+            _beyond = (m_df.drop_duplicates("Ticker").set_index("Ticker")["_beyond_model"].to_dict()
+                       if "_beyond_model" in m_df.columns else {})
+            _pdf["Action"] = [d if d == "N/A — fund" else _emoji(d) + holding_action(
+                                  d, held=True, beyond_model=flag(_beyond.get(t)))
+                              for t, d in zip(_pdf["Ticker"], _pdf["Current Decision"])]
 
         # Refresh only derived context; keep the editor draft and its raw Action guard.
         _flow = m_df.set_index("Ticker")["Smart Money"].to_dict() if {"Ticker", "Smart Money"} <= set(m_df.columns) else {}
@@ -1094,7 +1098,7 @@ def render(ctx):
                     * **BUY CANDIDATE:** passes the current valuation, reward/risk, confidence, data, quality and liquidity gates, with no open conflict.
                     * **Evidence requirement: {'On' if _evidence_on else 'Off'}.**
                       {'Without validated Track Record evidence, an otherwise eligible stock is RESEARCH CANDIDATE with no size.' if _evidence_on else 'BUY can appear before validation. Evidence status is unchanged; confidence remains capped at MEDIUM without validation.'}
-                    * **HOLD / WATCH:** no sufficient margin of safety either way, a blocked gate or an open conflict, or the DCF is not informative.
+                    * **HOLD / WATCH:** no sufficient margin of safety either way, a blocked gate or an open conflict, or the DCF is not informative. When the price is above the bull case and outside the model's range, the action reads "HOLD — review": the DCF cannot support the price, so it is not a "keep" signal.
                     * **AVOID / TRIM:** price is above even the bull-case value (fresh data only), unless both Quality ≥ {_rules_for_copy['scores']['avoid_spared_quality']:g} and Momentum ≥ {_rules_for_copy['scores']['avoid_spared_momentum']:g}. Weak or unknown quality/momentum does not get this exemption.
                     * **NOT ENOUGH DATA:** no usable or informative valuation with the required inputs.
 

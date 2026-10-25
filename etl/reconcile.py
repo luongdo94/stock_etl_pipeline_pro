@@ -55,7 +55,8 @@ QUARTER_FORMS = ("10-Q", "10-Q/A")
 RECON_DDL = """
     CREATE TABLE IF NOT EXISTS raw.sec_annual_history (
         ticker VARCHAR, period_end DATE, item VARCHAR, value DOUBLE, currency VARCHAR, tag VARCHAR,
-        form VARCHAR, first_filed DATE, _loaded_at TIMESTAMP);
+        form VARCHAR, first_filed DATE, _loaded_at TIMESTAMP, value_filed DATE);
+    ALTER TABLE raw.sec_annual_history ADD COLUMN IF NOT EXISTS value_filed DATE;
     CREATE TABLE IF NOT EXISTS raw.source_reconciliation (
         ticker VARCHAR, check_name VARCHAR, period VARCHAR, ours DOUBLE, theirs DOUBLE, diff_pct DOUBLE,
         status VARCHAR, source VARCHAR, detail VARCHAR, checked_at TIMESTAMP);
@@ -239,8 +240,11 @@ def facts_annual(facts: dict, tags, currency: str = "USD") -> pd.DataFrame:
     return pd.DataFrame(columns=["period_end", "value", "first_filed", "form", "tag"])
 
 
+HISTORY_COLUMNS = ["period_end", "value", "first_filed", "form", "tag", "item", "currency", "value_filed"]
+
+
 def facts_annual_history(facts: dict, currency: str, additional_facts=()) -> pd.DataFrame:
-    """Per-period tag priority within each CIK, then latest filing across CIKs; at most 15 annual periods."""
+    """Latest value with its value_filed date, retaining first_filed; at most 15 annual periods."""
     tags = {"revenue": REVENUE_TAGS,
             "operating_cash_flow": ("NetCashProvidedByUsedInOperatingActivities",
                                     "NetCashProvidedByUsedInOperatingActivitiesContinuingOperations"),
@@ -262,12 +266,13 @@ def facts_annual_history(facts: dict, currency: str, additional_facts=()) -> pd.
                 frame["_filed"] = frame.period_end.dt.strftime("%Y-%m-%d").map(dates)
                 rows.extend(frame.assign(item=item, currency=currency).to_dict("records"))
     if not rows:
-        return pd.DataFrame(columns=["period_end", "value", "first_filed", "form", "tag", "item", "currency"])
+        return pd.DataFrame(columns=HISTORY_COLUMNS)
     df = pd.DataFrame(rows)
     df["first_filed"] = df.groupby(["item", "period_end"])["first_filed"].transform("min")
-    df = df.sort_values("_filed", kind="stable").drop_duplicates(["item", "period_end"], keep="last").drop(columns="_filed")
+    df = df.sort_values("_filed", kind="stable").drop_duplicates(["item", "period_end"], keep="last").rename(columns={"_filed": "value_filed"})
     periods = df["period_end"].drop_duplicates().sort_values().tail(15)
-    return df[df["period_end"].isin(periods)].sort_values("period_end", kind="stable").reset_index(drop=True)
+    return (df[df["period_end"].isin(periods)].sort_values("period_end", kind="stable")[HISTORY_COLUMNS]
+            .reset_index(drop=True))
 
 
 def facts_filings(facts: dict, tags=REVENUE_TAGS + NET_INCOME_TAGS) -> pd.DataFrame:
@@ -411,18 +416,22 @@ def reconcile_sec(conn, tickers, user_agent: str, tolerance_pct: float = 3.0, li
                            "diff_pct": None, "status": "NOT_COVERED", "source": "SEC EDGAR",
                            "detail": f"no comparable {ccy} annual revenue / net income in the XBRL facts",
                            "checked_at": pd.Timestamp.now()}]
-        extra_facts = []
+        extra_facts, history_failed = [], False
         for extra_cik in overrides.get(t.upper(), []):
             try:
                 r = get(SEC_FACTS.format(cik=extra_cik), headers={"User-Agent": user_agent}, timeout=30)
                 r.raise_for_status()
                 extra_facts.append(r.json())
             except Exception as e:
-                logger.warning("SEC history %s CIK %s: %s", t, extra_cik, e)
+                history_failed = True
+                logger.warning("SEC history %s CIK %s: %s; retaining previous history", t, extra_cik, e,
+                               extra={"event": "sec_history_retained", "ticker": t, "cik": extra_cik,
+                                      "reason": str(e)})
             finally:
                 time.sleep(pause)
-        history.append(facts_annual_history(facts, ccy, extra_facts).assign(ticker=t))
-        history_tickers.append(t)
+        if not history_failed:
+            history.append(facts_annual_history(facts, ccy, extra_facts).assign(ticker=t))
+            history_tickers.append(t)
         items = facts_cash_items(facts)
         if not items.empty:
             items.insert(0, "ticker", t)
@@ -437,8 +446,10 @@ def reconcile_sec(conn, tickers, user_agent: str, tolerance_pct: float = 3.0, li
         hdf["_loaded_at"] = pd.Timestamp.now()
         conn.register("history_tmp", hdf)
         conn.execute("DELETE FROM raw.sec_annual_history WHERE ticker = ANY(?)", [history_tickers])
-        conn.execute("""INSERT INTO raw.sec_annual_history SELECT ticker, period_end, item, value, currency,
-                        tag, form, first_filed, _loaded_at FROM history_tmp""")
+        conn.execute("""INSERT INTO raw.sec_annual_history
+                        (ticker, period_end, item, value, currency, tag, form, first_filed, _loaded_at, value_filed)
+                        SELECT ticker, period_end, item, value, currency, tag, form, first_filed, _loaded_at,
+                               value_filed FROM history_tmp""")
         conn.unregister("history_tmp")
     if cash_items:
         cdf = pd.concat(cash_items, ignore_index=True)

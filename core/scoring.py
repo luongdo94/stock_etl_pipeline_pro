@@ -251,6 +251,7 @@ def _momentum_features(prices: pd.DataFrame, rules: dict) -> pd.DataFrame:
         c = s.to_numpy(float)
         return c[-1 - m["skip_days"]] / c[-need] - 1 if len(c) >= need else np.nan
 
+    local = p["price_close"]
     eur = p.groupby("ticker")["price_close"].apply(ret)
     # Momentum is a statement about the STOCK, not the currency: when the EUR conversion of each close is known
     # (fx_rate, price_scale) the return is measured in the stock's own currency.
@@ -262,9 +263,19 @@ def _momentum_features(prices: pd.DataFrame, rules: dict) -> pd.DataFrame:
     if "volume" in p.columns:     # liquidity: median traded value of the last 60 sessions (EUR)
         traded = (p["price_close"] * p["volume"]).groupby(p["ticker"]).apply(lambda s: s.tail(60).median())
         out["adv_eur"] = traded
-    last = p.groupby("ticker").tail(1).set_index("ticker")
-    out["pct_from_ma200"] = _col(last, "pct_from_ma200")
-    out["ma_signal"] = last["ma_signal"].astype(str) if "ma_signal" in last.columns else np.nan
+    # Score trend uses the same price series as return rank; EUR display fields stay untouched. A ticker whose
+    # conversion is not fully known keeps its EUR series whole (never a mixed series), as the return does.
+    trend = p[["ticker"]].copy()
+    series = local.where(local.notna().groupby(p["ticker"]).transform("all"), p["price_close"])
+    ma20, ma50, ma200 = [series.groupby(p["ticker"]).transform(lambda s: s.rolling(n).mean())
+                         for n in (20, 50, 200)]
+    trend["pct_from_ma200"] = (series / ma200.where(ma200 > 0) - 1) * 100
+    trend["ma_signal"] = pd.Series(np.select(
+        [(ma50 > ma200) & (ma20 > ma50), (ma50 > ma200) & (ma20 <= ma50),
+         (ma50 < ma200) & (ma20 < ma50), (ma50 < ma200) & (ma20 >= ma50)],
+        ["STRONG BULL", "BULLISH", "STRONG BEAR", "BEARISH"], default="NEUTRAL"), index=p.index).where(ma200.notna())
+    last = trend.groupby("ticker").tail(1).set_index("ticker")
+    out[["pct_from_ma200", "ma_signal"]] = last[["pct_from_ma200", "ma_signal"]]
     return out
 
 
@@ -397,6 +408,7 @@ def build_features(companies: pd.DataFrame, annual_fin: pd.DataFrame = None, pri
     # P/E: it is an analyst forecast. Negative earnings = 0 (a fact, not a gap).
     trailing_ey = (100 / pe).where(pe > 0)
     normal_ey = (f["ni_median"] / mcap * 100).where(f["ni_median"] > 0)
+    normal_ey = normal_ey.mask(f["is_cyclical"] & f["ni_median"].le(0), 0.0)
     ey = pd.concat([trailing_ey, normal_ey], axis=1).mean(axis=1, skipna=True)
     ey = ey.where(~(f["is_cyclical"] & normal_ey.notna()), normal_ey)   # cyclicals: through-the-cycle only (F-22)
     ey = ey.where(~f["loss_making"], 0.0)                         # an economic loss earns nothing, whatever it earned before

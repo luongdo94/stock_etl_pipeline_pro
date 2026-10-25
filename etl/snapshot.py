@@ -75,11 +75,16 @@ def code_revision() -> str:
 
 
 def rules_version() -> str:
-    """Score definition + rule files the Decision used (stored with every snapshot row)."""
+    """Score definition, rule files and formula content fingerprints used by the Decision."""
     parts = [SCORE_VERSION]
     for name in ("scoring_rules.yaml", "decision_rules.yaml"):
         try:
             parts.append(hashlib.sha1((_CONFIG / name).read_bytes()).hexdigest()[:12])
+        except OSError:
+            parts.append("missing")
+    for name in ("valuation.py", "decision.py", "scoring.py"):
+        try:
+            parts.append(hashlib.sha1((_CONFIG.parent / "core" / name).read_bytes()).hexdigest()[:12])
         except OSError:
             parts.append("missing")
     return "|".join(parts)

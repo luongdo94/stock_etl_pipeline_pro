@@ -100,7 +100,8 @@ def test_full_refresh_carries_history(tmp_path):
     prod = str(tmp_path / "prod.duckdb")
     with duckdb.connect(prod) as c:
         rc.ensure_tables(c)
-        c.execute("INSERT INTO raw.sec_annual_history VALUES "
+        c.execute("INSERT INTO raw.sec_annual_history (ticker, period_end, item, value, currency, tag, form, "
+                  "first_filed, _loaded_at) VALUES "
                   "('QCOM', '2025-12-31', 'revenue', 100, 'USD', 'Revenues', '10-K', '2026-02-01', now())")
     with duckdb.connect() as shadow:
         rc.ensure_tables(shadow)
@@ -176,7 +177,7 @@ def test_ineligible_matches_old_path(n, sector):
 def test_late_filing_missing_sbc_and_currency_mismatch_exclude_whole_year():
     h = history(7)
     old = value(None)
-    for field, replacement in [("first_filed", "2027-01-01"), ("value", np.nan), ("currency", "EUR")]:
+    for field, replacement in [("value_filed", "2027-01-01"), ("value", np.nan), ("currency", "EUR")]:
         changed = h.copy()
         mask = (changed.item == "stock_based_comp") & (changed.period_end == changed.period_end.min())
         changed.loc[mask, field] = replacement
@@ -252,8 +253,9 @@ def test_sec_history_survives_local_parquet_cloud_path(tmp_path):
         rc.ensure_tables(c)
         h = history().assign(ticker="NVDA", _loaded_at=pd.Timestamp("2026-10-25"))
         c.register("history_rows", h)
-        c.execute("INSERT INTO raw.sec_annual_history SELECT ticker, period_end, item, value, currency, "
-                  "tag, form, first_filed, _loaded_at FROM history_rows")
+        c.execute("INSERT INTO raw.sec_annual_history (ticker, period_end, item, value, currency, tag, form, "
+                  "first_filed, _loaded_at, value_filed) SELECT ticker, period_end, item, value, currency, "
+                  "tag, form, first_filed, _loaded_at, value_filed FROM history_rows")
         local = read_warehouse(c)
     published = export_snapshot(db, tmp_path / "parquet")
     assert published["rows"]["raw.sec_annual_history"] == 40
@@ -305,10 +307,12 @@ def test_reporting_currency_and_preferred_tags_are_preserved():
 
 def test_filing_cutoff_is_inclusive():
     h = history(7)
-    h["first_filed"] = pd.Timestamp("2026-10-25")
+    h["value_filed"] = pd.Timestamp("2026-10-25")
     assert "7 years" in value(h)["fcf_source"]
-    h["first_filed"] = pd.Timestamp("2026-10-26")
+    h["value_filed"] = pd.Timestamp("2026-10-26")
     assert value(h)["fcf_source"] == value(None)["fcf_source"]
+    legacy = history(7).assign(value_filed=pd.NaT, first_filed=pd.Timestamp("2026-10-26"))   # no version date stored
+    assert value(legacy)["fcf_source"] == value(None)["fcf_source"]                            # falls back to first_filed
 
 
 @pytest.mark.parametrize("item,preferred,backup", [
@@ -361,7 +365,7 @@ def test_history_has_no_concat_futurewarning(kind):
         for e in gaap["PaymentsToAcquirePropertyPlantAndEquipment"]["units"]["USD"]:
             e["val"] = None
     frame = rc.facts_annual_history(data, "USD")
-    assert list(frame.columns) == ["period_end", "value", "first_filed", "form", "tag", "item", "currency"]
+    assert list(frame.columns) == rc.HISTORY_COLUMNS
     assert len(frame) == {"empty": 0, "sparse": 20, "null_value": 40}[kind]
     if kind == "null_value":
         assert frame.loc[frame.item == "capex", "value"].isna().all()
@@ -462,6 +466,9 @@ def test_cik_override_loads_history_only_and_uses_latest_filing(conn, monkeypatc
 def test_additional_cik_failure_does_not_stop_main_or_next_ticker(conn, monkeypatch, entrypoint, http_error, caplog):
     conn.execute("INSERT INTO raw.historical_financials VALUES ('XOM', '2025-12-31', 100, 10, 'USD', 1)")
     conn.execute("INSERT INTO marts.dim_companies VALUES ('XOM', 'Oil & Gas', '')")
+    conn.execute("INSERT INTO raw.sec_annual_history (ticker, period_end, item, value, currency, tag, form, "
+                 "first_filed, _loaded_at) VALUES ('XOM', '2020-12-31', 'revenue', 1, 'USD', 'Revenues', '10-K', "
+                 "'2021-02-01', now())")                           # history kept from an earlier, complete download
     calls, sleeps = [], []
     def fail():
         raise rc.requests.HTTPError("old CIK unavailable")
@@ -484,5 +491,5 @@ def test_additional_cik_failure_does_not_stop_main_or_next_ticker(conn, monkeypa
     assert calls == [rc.SEC_FACTS.format(cik=cik) for cik in [2115436, 34088, 1]]
     assert sleeps == [.12, .12, .12]
     assert conn.execute("SELECT ticker, count(*) FROM raw.sec_annual_history GROUP BY 1 ORDER BY 1").fetchall() == [
-        ("QCOM", 40), ("XOM", 40)]
+        ("QCOM", 40), ("XOM", 1)]                          # the next ticker is stored; XOM keeps its earlier history
     assert "SEC history XOM CIK 34088" in caplog.text

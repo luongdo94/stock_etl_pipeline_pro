@@ -179,6 +179,7 @@ class Decision:
     scenario_irr_pct: dict = field(default_factory=dict)   # {"bear": .., "base": .., "bull": ..} in %
     bear_case_loss_pct: Optional[float] = None       # loss to the bear-case value (fundamental downside), None if bear >= price
     conflicts: list = field(default_factory=list)    # cheap-but-deteriorating, earnings event… — re-underwrite (R3-E)
+    beyond_model: bool = False        # HOLD because the price is outside the range the DCF can represent (a review flag)
 
 
 def build_decision(*, price: float, base_value: Optional[float], bear_value: Optional[float],
@@ -189,6 +190,7 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
                    fundamentals_date: Optional[date] = None, next_earnings: Optional[date] = None,
                    track_record_ok: bool = False, quality_score: Optional[float] = None,
                    valuation_reliable: bool = True, valuation_note: Optional[str] = None,
+                   valuation_beyond_model: bool = False,
                    value_score: Optional[float] = None, risk_flags: str = "",
                    coverage_pct: Optional[float] = None, market_cap_eur: Optional[float] = None,
                    expected_value: Optional[float] = None, scenario_irr: Optional[dict] = None,
@@ -323,6 +325,9 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
         # Never BUY or AVOID on a DCF the model itself flags as uninformative
         stance = HOLD
         reasons.append(valuation_note)
+        if valuation_beyond_model:
+            reasons.append("Price is above the bull-case value and outside the model's range — the DCF cannot support "
+                           "the price. A review flag, not a 'keep' signal.")
     else:
         mos = base_value / price - 1
         reasons.append(f"Base-case value {base_value:,.2f} vs price {price:,.2f} → margin of safety {mos:+.0%}"
@@ -451,11 +456,17 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
                     rr, pos, thesis_stop if usable_value else None, reasons, notes, invalidation, warnings,
                     horizon_irr_pct=h_irr, expected_value_irr_pct=ev_irr, bear_case_loss_pct=bear_loss,
                     scenario_irr_pct={k: si[k] * 100 for k in ("bear", "base", "bull") if si.get(k) is not None},
-                    conflicts=conflicts)
+                    conflicts=conflicts,
+                    beyond_model=bool(valuation_beyond_model and not valuation_reliable and stance == HOLD))
+
+
+def flag(v) -> bool:
+    """A stored boolean column value (numpy bool, Python bool); None / NaN means not computed, which is False."""
+    return bool(v) if v is not None and not pd.isna(v) else False
 
 
 def holding_action(stance: str, held: bool, weight_pct: Optional[float] = None,
-                   limit_pct: Optional[float] = None) -> str:
+                   limit_pct: Optional[float] = None, beyond_model: bool = False) -> str:
     """The Decision read against what you OWN (roadmap P1/5): HOLD/WATCH and AVOID/TRIM used to mean the same thing
     for a holder and a non-holder. Still a triage label — it knows no tax lots or target weights."""
     w, lim = _finite(weight_pct), _finite(limit_pct)
@@ -466,6 +477,9 @@ def holding_action(stance: str, held: bool, weight_pct: Optional[float] = None,
     if stance == RESEARCH:
         return "HOLD — research only, no adds" if held else "RESEARCH — no order"
     if stance == HOLD:
+        if beyond_model:
+            return ("HOLD — review: price above bull, outside model range" if held
+                    else "WATCH — price above bull, outside model range")
         return "HOLD — keep, no adds" if held else "WATCH — not held"
     if stance == AVOID:
         return "TRIM / EXIT — review" if held else "AVOID — do not buy"
@@ -514,7 +528,8 @@ def decide(*, price: float, vin: dict, stop_loss: Optional[float], meta, scores:
         dividend_yield_pct=_finite(meta.get("dividend_yield_pct")), missing_metrics=tuple(sc.get("missing") or ()),
         price_date=price_date, fundamentals_date=fundamentals_as_of(meta), next_earnings=next_earnings,
         track_record_ok=track_record_ok, quality_score=sc.get("quality"), valuation_reliable=vin["reliable"],
-        valuation_note=vin["note"], value_score=sc.get("value"), risk_flags=sc.get("flags") or "",
+        valuation_note=vin["note"], valuation_beyond_model=bool(vin.get("beyond_model")),
+        value_score=sc.get("value"), risk_flags=sc.get("flags") or "",
         coverage_pct=sc.get("coverage"), market_cap_eur=_finite(meta.get("market_cap")),
         expected_value=vin.get("expected_value"), scenario_irr=vin.get("irr"),
         statement_date=statement, momentum_score=_finite(sc.get("momentum")),

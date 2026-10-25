@@ -187,7 +187,7 @@ def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, re
             for n in d.confidence_notes:
                 st.markdown(f"- {n}")
     if holdings_value is not None:
-        action = dec.holding_action(d.stance, _held, current_pct, suggested)
+        action = dec.holding_action(d.stance, _held, current_pct, suggested, beyond_model=d.beyond_model)
         if nav is not None and d.stance == dec.BUY and allowed <= 1e-12 and not _held:
             action = "WATCH — portfolio budget full"
         st.markdown(f"**For your portfolio:** {action}")

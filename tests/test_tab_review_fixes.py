@@ -53,7 +53,7 @@ def panel(monkeypatch, ui, loader):
     monkeypatch.setattr(dp, "_cached_evidence", lambda *a: {"ok": False, "label": "unproven"})
     d = NS(stance="BUY CANDIDATE", confidence="MEDIUM", horizon_irr_pct=None,
            bear_case_loss_pct=None, reward_risk=None, net_expected_return_pct=None, downside_pct=None,
-           scenario_irr_pct={}, expected_value_irr_pct=None, conflicts=[], warnings=[], reasons=[],
+           scenario_irr_pct={}, expected_value_irr_pct=None, conflicts=[], warnings=[], reasons=[], beyond_model=False,
            invalidation=[], confidence_notes=[], position={"size_pct": 10, "binding": "", "capped": False,
                                                          "stop_distance_pct": 10})
     return dp.render_decision_panel(ticker="A", meta={}, price=100, price_date=None, stop_loss=None,

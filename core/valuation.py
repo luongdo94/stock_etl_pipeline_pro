@@ -179,14 +179,19 @@ def anchor_growth(revenue_growth=None, earnings_growth=None, hist_fcf_cagr=None,
 
 
 def cycle_basis(meta, ticker, history, annual_fin, as_of=None):
-    """Complete SEC years known at valuation time; ratios require one reporting currency."""
+    """Complete SEC years known at valuation time; ratios require one reporting currency.
+
+    Legacy rows with NULL/missing value_filed have unknown version dates: use first_filed
+    only for those rows. This compatibility fallback cannot guarantee historical PIT.
+    """
     from core.scoring import in_sector_group
     if (not in_sector_group(meta.get("sector"), meta.get("industry"), "cyclical")
             or history is None or history.empty or annual_fin is None or annual_fin.empty):
         return None
     cutoff = pd.Timestamp(as_of if as_of is not None else date.today())
     h = history[history["ticker"] == ticker].copy()
-    h = h[pd.to_datetime(h["first_filed"], errors="coerce") <= cutoff]
+    filed = h["value_filed"].where(h["value_filed"].notna(), h["first_filed"]) if "value_filed" in h else h["first_filed"]
+    h = h[pd.to_datetime(filed, errors="coerce") <= cutoff]
     if h.empty:
         return None
     h["period_end"] = pd.to_datetime(h["period_end"], errors="coerce")
@@ -195,8 +200,12 @@ def cycle_basis(meta, ticker, history, annual_fin, as_of=None):
     items = ["revenue", "operating_cash_flow", "capex", "stock_based_comp"]
     wide = h.pivot_table(index=["period_end", "currency"], columns="item", values="value", aggfunc="last")
     wide = wide.reindex(columns=items).dropna().reset_index().sort_values("period_end")
-    wide = wide[wide.revenue > 0].assign(year=lambda d: d.period_end.dt.year).drop_duplicates("year", keep="last").tail(10)
+    wide = wide[wide.revenue > 0].assign(year=lambda d: d.period_end.dt.year).drop_duplicates("year", keep="last")
+    wide = wide[wide.year >= wide.year.max() - 9]
     if len(wide) < 7 or wide.currency.nunique() != 1:
+        logging.getLogger(__name__).debug("SEC cycle %s: insufficient complete years in calendar window", ticker,
+                                        extra={"reason": "cycle_window_coverage", "complete_years": len(wide),
+                                               "first_year": wide.year.min(), "last_year": wide.year.max()})
         return None
     latest = annual_fin[annual_fin["ticker"] == ticker].sort_values("year")
     if "available_date" in latest:
@@ -916,18 +925,26 @@ def uses_book_model(meta, hist_fcf=None, ticker=None) -> bool:
     return True
 
 
+def beyond_model_range(price, bull_value, implied_growth) -> bool:
+    """The price asks for more growth than the model can represent: it is above the bull case when no growth reproduces
+    it, or the implied starting growth exceeds GROWTH_CAP + 0.10. The DCF cannot then support (or refute) the price."""
+    if implied_growth is None:
+        return bull_value is not None and price > bull_value
+    return implied_growth > GROWTH_CAP + 0.10
+
+
 def dcf_reliability(sector, price, base_value, bull_value, implied_growth) -> tuple:
     """(reliable: bool, note: str|None). Unreliable DCFs must not drive BUY/AVOID."""
     if sector and str(sector).strip().lower() in DCF_NOT_APPLICABLE_SECTORS:
         return False, "Free-cash-flow DCF does not apply to banks/insurers — use P/B, ROE and relative valuation."
     if base_value is None:
         return False, "No positive free cash flow — DCF not possible."
-    if implied_growth is None and bull_value is not None and price > bull_value:
-        return False, ("The price implies more growth than the model can represent (above the bull case) — "
-                       "DCF is not informative here; judge on relative valuation and growth durability.")
-    if implied_growth is not None and implied_growth > GROWTH_CAP + 0.10:
+    if beyond_model_range(price, bull_value, implied_growth):
+        if implied_growth is None:
+            return False, ("The price implies more growth than the model can represent (above the bull case) — "
+                           "DCF is not informative here; judge on relative valuation and growth durability.")
         return False, (f"The price implies {implied_growth:+.0%} starting growth, beyond the model's "
-                       f"{GROWTH_CAP:.0%} cap — DCF is not informative here.")
+                       f"{GROWTH_CAP + 0.10:.0%} cap — DCF is not informative here.")
     if base_value / price - 1 > IMPLAUSIBLE_MARGIN:
         return False, ("Value is >2.5x the price — more likely a data problem (cash-flow definition, one-off, "
                        "currency) than a bargain. Verify the inputs before acting.")
@@ -1009,7 +1026,12 @@ def _valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, m
                   + _deduction_evidence_text(fcfe_deduction_status(hist_fcf, ticker, ctx=dctx))
                   if statement_fcf is not None else "Yahoo levered FCF")
     mcap = _finite(meta.get("market_cap"))
-    cap_date = pd.to_datetime(meta.get("info_updated_at"), errors="coerce")
+    stale = str(meta.get("stale_fields") or "").replace(",", ";").split(";")
+    cap_stamp = next((part.split("@", 1)[1].strip() for part in stale
+                      if "@" in part and part.split("@", 1)[0].strip() == "market_cap"), None)
+    cap_date = pd.to_datetime(cap_stamp, errors="coerce")
+    if pd.isna(cap_date):
+        cap_date = pd.to_datetime(meta.get("info_updated_at"), errors="coerce")
     if pd.isna(cap_date):
         cap_date = pd.to_datetime(meta.get("_extracted_at"), errors="coerce")
     share_price, shares_note = None, None
@@ -1045,6 +1067,8 @@ def _valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, m
     bull = scen["bull"].value_per_share if scen else None
     implied = reverse_dcf_growth(price, fcfe, shares, coe, tg) if valuable else None
     reliable, note = dcf_reliability(None, price, base, bull, implied)       # sector test already done by uses_book_model
+    # every later reliability check runs only while `reliable`, so this stays the note that is shown
+    beyond_model = base is not None and not reliable and beyond_model_range(price, bull, implied)
     _sect = f"{meta.get('sector') or ''} {meta.get('industry') or ''}".lower()
     if reliable and any(k in _sect for k in REIT_KEYWORDS):
         # CFO − capex leaves out property ACQUISITIONS (investing, funded by new equity / debt), so a REIT's "FCFE" is
@@ -1100,7 +1124,7 @@ def _valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, m
         **listing, "fcf_basis_year": int(basis_year) if basis_year is not None else None,
         "model": "dcf", "fcfe": fcfe, "fcf_source": fcf_source, "shares": shares, "refinancing": refi,
         "growth": growth, "growth_sources": sources, "reliable": reliable, "note": note,
-        "risk_free": rf, "cost_of_equity": coe, "terminal_growth": tg, "currency": ass["currency"],
+        "beyond_model": beyond_model, "risk_free": rf, "cost_of_equity": coe, "terminal_growth": tg, "currency": ass["currency"],
         "rate_source": ass["source"], "scenarios": scen,
         "base": base,
         "bear": scen["bear"].value_per_share if scen else None,

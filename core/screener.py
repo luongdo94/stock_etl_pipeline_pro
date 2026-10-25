@@ -260,6 +260,7 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
             "Conflicts": "; ".join(_dec.conflicts),
             # what the Decision says about itself — shown, never re-derived by a view: the first reason, then the lists
             "Why": str(_dec.reasons[0]) if _dec.reasons else "",
+            "_beyond_model": bool(_dec.beyond_model),
             "_reasons": [str(r) for r in _dec.reasons], "_warnings": [str(w) for w in _dec.warnings],
             "_confidence_notes": [str(n) for n in _dec.confidence_notes], "_invalidation": [str(i) for i in _dec.invalidation],
             "Value": value_score if value_score is not None else float("nan"),

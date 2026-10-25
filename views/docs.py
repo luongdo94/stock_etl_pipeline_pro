@@ -107,6 +107,9 @@ def render(ctx):
           unless Quality ≥ {rules.get('scores', {}).get('avoid_spared_quality', 70):.0f} AND Momentum ≥
           {rules.get('scores', {}).get('avoid_spared_momentum', 40):.0f}, both known: then **HOLD / WATCH**.
           Otherwise a weakness permits AVOID; the model alone is not a sell signal for a strong stock.
+        - When the price is above the bull case and outside the range the model can represent (implied growth above
+          the model's cap), the Decision stays **HOLD / WATCH** but is flagged: the holder's action reads "HOLD —
+          review", because the DCF cannot support the price. It is not a "keep" signal.
         - The model is reported as *not informative* — and cannot produce BUY/AVOID — when the price implies growth
           (or ROE) beyond its range, the value looks implausible, ROE is not above long-run growth, fewer than 3
           consecutive annual cash-flow statements exist, or stock comp, interest paid in financing or lease principal is

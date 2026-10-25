@@ -1118,7 +1118,9 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
         
         def _sanitize_yield(val):
             if val is None or (isinstance(val, float) and pd.isna(val)): return None
-            v = float(val)
+            try: v = float(val)
+            except (TypeError, ValueError): return None
+            if not np.isfinite(v): return None
             if v > 1.0: v = v / 100.0
             return v if 0.0 < v <= 0.25 else None
         
@@ -1129,18 +1131,21 @@ def extract_company_info(tickers: dict = TICKERS) -> pd.DataFrame:
             except (TypeError, ValueError): tdy = None
         _tdy = _sanitize_yield(tdy)
         _dy  = _sanitize_yield(dy)
-        # Store 0.0 for confirmed non-payers (yfinance returns None for stocks with no dividend).
-        # This distinguishes "confirmed zero" from "data missing due to fetch error".
-        # trailingAnnualDividendYield is present (even as 0.0) when yfinance has coverage.
-        _has_coverage = (tdy is not None) or (dy is not None)
+        # Only a finite, explicit source zero confirms a non-payer; invalid is unknown.
+        def _source_zero(val):
+            try: return np.isfinite(float(val)) and float(val) == 0.0
+            except (TypeError, ValueError): return False
         if _tdy is not None:
             record["dividend_yield"] = _tdy
         elif _dy is not None:
             record["dividend_yield"] = _dy
-        elif _has_coverage:
-            record["dividend_yield"] = 0.0   # Confirmed non-payer: yfinance responded with 0
+        elif _source_zero(tdy) or _source_zero(dy):
+            record["dividend_yield"] = 0.0
         else:
-            record["dividend_yield"] = None  # True data gap: yfinance had no coverage at all
+            record["dividend_yield"] = None
+            reason = "invalid_source_yield" if tdy is not None or dy is not None else "missing_source_yield"
+            logger.warning("Dividend yield %s: %s", ticker, reason,
+                           extra={"ticker": ticker, "field": "dividend_yield", "reason": reason})
         
         return record
 

@@ -16,7 +16,7 @@ from typing import Callable, Optional
 
 import pandas as pd
 
-from core.decision import is_fund
+from core.decision import flag as is_flag, is_fund
 
 # screener columns the assistant may read / filter / sort on (friendly name → column)
 FIELDS = {
@@ -183,6 +183,7 @@ class ToolBox:
                 "value_per_share_eur": {"bear": _num(vin.get("bear")), "base": _num(vin.get("base")),
                                         "bull": _num(vin.get("bull"))},
                 "valuation_model": vin.get("model"), "valuation_reliable": vin.get("reliable"),
+                "beyond_model": bool(d.beyond_model),
                 "valuation_note": vin.get("note"), "fcfe_deduction_status": vin.get("fcfe_deduction_status"),
                 "reasons": list(d.reasons), "conflicts": list(d.conflicts),
                 "confidence_notes": list(d.confidence_notes), "warnings": list(d.warnings),
@@ -304,6 +305,7 @@ class ToolBox:
             fund = t in funds or is_fund(r)
             stance, reasons, confidence = r.get("Decision"), r.get("_reasons"), r.get("Confidence")
             vin, mos = r.get("_valuation"), _num(r.get("MoS (%)"))
+            beyond = is_flag(r.get("_beyond_model"))
             if not fund and self.deep_decision is not None and (
                     not isinstance(reasons, (list, tuple)) or not isinstance(vin, dict)):
                 try:
@@ -311,7 +313,7 @@ class ToolBox:
                 except KeyError:                         # ticker absent from the loaded Decision context
                     pass
                 else:
-                    stance, reasons, confidence = d.stance, d.reasons, d.confidence
+                    stance, reasons, confidence, beyond = d.stance, d.reasons, d.confidence, d.beyond_model
                     base = _num(vin.get("base"))
                     mos = (base / px - 1) * 100 if base is not None and vin.get("reliable") else None
             vin = vin if isinstance(vin, dict) and not fund else {}
@@ -320,6 +322,7 @@ class ToolBox:
                          "decision": "N/A — fund" if fund else stance,
                          "decision_reasons": list(reasons[:3]) if not fund and isinstance(reasons, (list, tuple)) else None,
                          "confidence": None if fund else confidence,
+                         "beyond_model": None if fund else beyond,
                          "value_per_share_eur": {k: _num(vin.get(k)) for k in ("bear", "base", "bull")},
                          "margin_of_safety_pct": None if fund else mos,
                          "verdict": r.get("Verdict"), "sector": r.get("Sector")})
