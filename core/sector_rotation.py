@@ -26,24 +26,30 @@ def estimate_flows(snapshots):
         for period, offset, slack in (("1w", pd.Timedelta(days=7), pd.Timedelta(days=3)),
                                       ("1m", pd.DateOffset(months=1), pd.Timedelta(days=7))):
             target = last.as_of - offset
-            old = h[h.as_of <= target]
+            earlier = h[h.as_of < last.as_of]
+            near = earlier[(earlier.as_of - target).abs() <= slack]
             usd = pct = float("nan")
             note = f"flow history starts {start}"
-            if not old.empty and old.iloc[-1].as_of < target - slack:
-                # K5-08: the nearest snapshot is too old to be a 1W / 1M base — the change spans a longer period
-                note = f"no snapshot near {target:%Y-%m-%d} (nearest {old.iloc[-1].as_of:%Y-%m-%d})"
-            elif not old.empty:
-                base = old.iloc[-1]
+            if near.empty and not earlier.empty and earlier.as_of.min() <= target + slack:
+                # the snapshots around the target are missing: the change would span another period (K5-08)
+                closest = earlier.loc[(earlier.as_of - target).abs().idxmin()].as_of
+                note = f"no snapshot within {slack.days} days of {target:%Y-%m-%d} (nearest {closest:%Y-%m-%d})"
+            elif not near.empty:
+                base = near.loc[(near.as_of - target).abs().idxmin()]
                 note = ""
                 needed = [last.shares_outstanding, base.shares_outstanding, last.price_close, base.total_assets]
                 if all(pd.notna(v) and 0 < v < float("inf") for v in needed):
                     delta = last.shares_outstanding - base.shares_outstanding
                     ratio = last.shares_outstanding / base.shares_outstanding
+                    p_ratio = (last.price_close / base.price_close
+                               if pd.notna(base.price_close) and base.price_close > 0 else float("nan"))
+                    split_like = (abs(ratio - 1) >= 0.2 and pd.notna(p_ratio)
+                                  and abs(ratio * p_ratio - 1) < 0.1)   # e.g. 5:4 = 1.25 x 0.80; 2:1 = 2 x 0.5
                     if delta == 0:
                         note = f"provider figure unchanged since {since}"
-                    elif ratio >= 1.5 or ratio <= 1 / 1.5:
-                        # K5-09: a 50 %+ jump in shares within the period looks like a split, not creations
-                        note = f"share count changed x{ratio:.2f} — a split cannot be ruled out"
+                    elif split_like or pd.isna(p_ratio) and abs(ratio - 1) >= 0.5:
+                        # K5-09: shares moved by 20 %+ while the price moved the other way by as much — a split
+                        note = f"share count changed x{ratio:.2f} against price x{p_ratio:.2f} — a split cannot be ruled out"
                     else:
                         usd = delta * last.price_close
                         pct = usd / base.total_assets * 100

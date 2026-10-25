@@ -41,7 +41,15 @@ def test_wilder_rsi_is_unknown_at_a_gap_and_reseeds():
     seed_gap = pd.Series([100, np.nan, 101, 102, 103, 104], dtype=float)
     assert np.isfinite(indicators.wilder_rsi(seed_gap, period=2).iloc[-1])   # a gap in the seed no longer voids it
     contiguous = pd.Series(100 + np.sin(np.arange(40)), dtype=float)
-    assert indicators.wilder_rsi(contiguous).notna().sum() == 40 - 14       # unchanged for a complete series
+    new = indicators.wilder_rsi(contiguous)
+    d = np.diff(contiguous.to_numpy())                                   # the textbook Wilder recursion, by hand
+    g, l_ = np.clip(d, 0, None), np.clip(-d, 0, None)
+    ag, al, ref = g[:14].mean(), l_[:14].mean(), [np.nan] * 14
+    ref.append(100 - 100 / (1 + ag / al))
+    for i in range(14, len(d)):
+        ag, al = (ag * 13 + g[i]) / 14, (al * 13 + l_[i]) / 14
+        ref.append(100 - 100 / (1 + ag / al))
+    np.testing.assert_allclose(new.to_numpy(), np.array(ref), equal_nan=True)   # identical for a complete series
 
 
 def test_levels_fallback_rsi_is_wilder_and_flat_is_unknown():
@@ -95,7 +103,7 @@ def _snap(dates, shares, prices, aum):
 def test_a_far_base_snapshot_is_not_a_one_week_flow():
     row = sector_rotation.estimate_flows(_snap(["2026-10-01", "2026-10-25"], [100., 110.], [10., 10.],
                                                [1000., 1100.])).iloc[0]
-    assert pd.isna(row["flow_1w_usd"]) and "no snapshot near" in row["flow_1w_note"]
+    assert pd.isna(row["flow_1w_usd"]) and "no snapshot within" in row["flow_1w_note"]
     near = sector_rotation.estimate_flows(_snap(["2026-10-17", "2026-10-25"], [100., 110.], [10., 10.],
                                                 [1000., 1100.])).iloc[0]
     assert near["flow_1w_usd"] == pytest.approx(100.)                       # 8 days back: within the slack
@@ -105,3 +113,30 @@ def test_a_split_like_share_jump_is_not_a_flow():
     row = sector_rotation.estimate_flows(_snap(["2026-10-17", "2026-10-25"], [100., 200.], [100., 50.],
                                                [10000., 10000.])).iloc[0]
     assert pd.isna(row["flow_1w_usd"]) and "split" in row["flow_1w_note"]
+
+
+
+@pytest.mark.parametrize("n", [13, 14, 15])
+def test_swing_levels_at_the_atr_window_boundary(n):
+    df = pd.DataFrame({"date": pd.bdate_range("2026-01-01", periods=n), "price_close": 100 + np.sin(np.arange(n)),
+                       "price_high": 101 + np.sin(np.arange(n)), "price_low": 99 + np.sin(np.arange(n)), "volume": 1e6})
+    m = levels.get_tactical_metrics(df, float(df.price_close.iloc[-1]))
+    assert np.isfinite(m["stop_loss"]) and np.isfinite(m["tp1"])
+
+
+def test_the_nearest_snapshot_on_either_side_of_the_target_is_the_base():
+    after = sector_rotation.estimate_flows(_snap(["2026-10-01", "2026-10-19", "2026-10-25"], [90., 100., 110.],
+                                                 [10., 10., 10.], [900., 1000., 1100.])).iloc[0]
+    assert after["flow_1w_usd"] == pytest.approx(100.)              # 19/10 is 1 day after the 18/10 target (R5-08)
+    gap = sector_rotation.estimate_flows(_snap(["2026-10-01", "2026-10-25"], [100., 110.], [10., 10.],
+                                               [1000., 1100.])).iloc[0]
+    assert "nearest 2026-10-01" in gap["flow_1w_note"]
+
+
+def test_a_5_for_4_split_is_not_a_flow():
+    row = sector_rotation.estimate_flows(_snap(["2026-10-17", "2026-10-25"], [100., 125.], [100., 80.],
+                                               [10000., 10000.])).iloc[0]
+    assert pd.isna(row["flow_1w_usd"]) and "split" in row["flow_1w_note"]           # R5-09
+    real = sector_rotation.estimate_flows(_snap(["2026-10-17", "2026-10-25"], [100., 125.], [100., 101.],
+                                                [10000., 12625.])).iloc[0]
+    assert real["flow_1w_usd"] == pytest.approx(25 * 101.)                          # a real creation still counts

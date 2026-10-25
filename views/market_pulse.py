@@ -516,7 +516,8 @@ def _rotation_context(rotation, generation=None):
         show = flows[flows.sector != BENCHMARK].copy()
         display = {"Sector": show.sector, "Snapshot": show.as_of.dt.strftime("%Y-%m-%d")}
         from services.market_data import stored_fx_rate
-        _usd_eur = stored_fx_rate("USD")                 # stored USD -> EUR rate; unknown -> N/A, never $ shown as EUR
+        _fx = stored_fx_rate("USD", with_date=True)      # stored USD -> EUR rate; unknown -> N/A, never $ shown as EUR
+        _usd_eur, _fx_date = _fx if _fx else (None, None)
         for period in ("1w", "1m"):
             label = period.upper()
             display[f"{label} EUR (€M)"] = show[f"flow_{period}_usd"].map(
@@ -526,5 +527,9 @@ def _rotation_context(rotation, generation=None):
         st.dataframe(pd.DataFrame(display), hide_index=True, width="stretch")
     history_note = (f"history collected by this app since {min(flows.history_start)}." if not flows.empty
                     else "No ETF share snapshots collected yet; flows are N/A.")
+    _fx_note = ""
+    if not flows.empty:
+        _fx_note = (f" Amounts in EUR at the stored USD rate {_usd_eur:.4f} ({_fx_date or 'date unknown'}); % AUM is on "
+                    f"the USD figures." if _usd_eur else " No stored USD rate: EUR amounts are N/A.")
     st.caption("Estimated from changes in shares outstanding reported by Yahoo (creations / redemptions × price); "
-               + history_note)
+               + history_note + _fx_note)
