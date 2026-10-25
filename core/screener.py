@@ -7,7 +7,7 @@ from core.decision import NO_DATA as NO_DATA_STANCE
 from core.levels import get_tactical_metrics
 from core.rating import compute_institutional_rating, verdict
 from core.smart_money import get_volume_flow
-from core.decision import BUY, decide, load_rules, to_date, with_conflict
+from core.decision import BUY, RESEARCH, decide, load_rules, to_date, with_conflict
 from core.valuation import uses_book_model, valuation_inputs
 from core.scoring import score_universe
 from etl.utils import clean_upside_pct
@@ -136,7 +136,12 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
                                   "_beyond_model": False,
                                   # R7-01: empty containers, not NaN (readers call dict() / .get() on them)
                                   "Components": {}, "Flags": "", "_valuation": {}, "_metrics": {}, "_reasons": [],
-                                  "_warnings": [], "Conflicts": "", "EPS Momentum": "N/A", "Rev Momentum": "N/A"})
+                                  "_warnings": [], "Conflicts": "", "EPS Momentum": "N/A", "Rev Momentum": "N/A",
+                                  # the columns the app and the snapshot read, so a table of placeholders only is complete
+                                  "Price": float("nan"), "Quality": float("nan"), "Value": float("nan"),
+                                  "Momentum": float("nan"), "Revisions": float("nan"), "Upside (%)": float("nan"),
+                                  "RSI (14)": float("nan"), "MCap (B)": float("nan"), "Smart Money": "N/A",
+                                  "Trend": "N/A"})
             continue
         
         # RSI (Pre-calculated in transform.py)
@@ -210,7 +215,7 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
                 decision_stance = stance,
             )
         _rating = _signal(_dec.stance)
-        if _rating["clamped"] and _dec.stance == BUY:
+        if _rating["clamped"] and _dec.stance in (BUY, RESEARCH):
             # BUY vs an UNFAVOURABLE set-up: a review state, not a relabelled signal (R3-E)
             _dec = with_conflict(_dec, f"timing context is {_rating['raw_label']} (trend / value against "
                                        f"the valuation case)")

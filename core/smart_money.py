@@ -23,8 +23,17 @@ def get_volume_flow(df_raw: "pd.DataFrame", sector: str = "Unknown") -> dict:
     if not (np.isfinite(basis) & basis.gt(0)).all().all():
         return _unavailable("listing-currency basis unknown")
     cols = [c for c in ("price_open", "price_high", "price_low", "price_close") if c in df]
-    # Remove floating-point conversion dust so flat listing prices stay flat.
-    df[cols] = df[cols].mul(basis["price_scale"], axis=0).div(basis["fx_rate"], axis=0).round(10)
+    # The warehouse stores each EUR close rounded to 4 decimals, so the listing price recovered from it is off by up to
+    # 5e-5 · scale / fx (0.00006 for USD, 0.08 for KRW) and a flat session would read as a tiny rise or fall — all of that
+    # day's volume added to or taken from OBV / MFI (A5-05). A price within that noise of the previous session's is the
+    # same price (no grid: a flat price that sits near a grid boundary must not split into two).
+    tol = (1e-4 * basis["price_scale"] / basis["fx_rate"]).to_numpy(dtype=float)
+    for c in cols:
+        local = df[c].astype(float).mul(basis["price_scale"]).div(basis["fx_rate"]).to_numpy()
+        for i in range(1, len(local)):
+            if abs(local[i] - local[i - 1]) <= max(tol[i], tol[i - 1]):
+                local[i] = local[i - 1]
+        df[c] = local
     return get_sm_spirit_unified_v2(df, sector)
 
 

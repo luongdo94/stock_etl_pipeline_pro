@@ -32,8 +32,9 @@ MAX_PLAUSIBLE_YIELD = 20.0  # a stored level above this does not fit the declare
 
 
 def _ccy(c) -> str:
-    c = str(c or "")
-    return "GBP" if c in ("GBp", "GBX", "GBx") else c.upper()
+    """Major currency code, '' when unknown (spaces, pence / cents handled by the one definition in core.currency)."""
+    from core.currency import major_currency
+    return major_currency(c) or ""
 
 
 def _local_level(df: pd.DataFrame) -> pd.Series:
@@ -109,18 +110,24 @@ def scenario_losses(weights: dict, meta: dict, sens: pd.DataFrame, scenarios=Non
                 beta = float(m.get("beta")) if m.get("beta") is not None and np.isfinite(float(m.get("beta"))) else unknown_beta
             gamma = s["rate_beta"].get(t, np.nan) if "rate_beta" in s else np.nan
             move = beta * sc.get("market", 0.0) + sc.get("gap", 0.0)
+            unmeasured = False                                        # a holding counts once, however many shocks miss
             if sc.get("rates_bp"):
                 if np.isfinite(gamma):
                     move += gamma * sc["rates_bp"] / 100
                 else:
-                    not_covered += w
-            if sc.get("fx_base_pct") and _ccy(m.get("currency")) not in ("", _ccy(base_currency)):
-                move += 1 / (1 + sc["fx_base_pct"] / 100) - 1         # a stronger base currency shrinks foreign holdings
+                    unmeasured = True
+            if sc.get("fx_base_pct"):
+                ccy = _ccy(m.get("currency"))
+                if not ccy:
+                    unmeasured = True                                 # unknown currency: the FX shock is not measured
+                elif ccy != _ccy(base_currency):
+                    move += 1 / (1 + sc["fx_base_pct"] / 100) - 1     # a stronger base currency shrinks foreign holdings
             sector = str(m.get("sector") or "").lower() + " " + str(m.get("industry") or "").lower()
             for key, shock in (sc.get("sectors") or {}).items():
                 if key.lower() in sector:
                     move += shock
                     break
+            not_covered += w if unmeasured else 0.0
             contrib[t] = w * max(move, -1.0)
         total = float(sum(contrib.values()))
         worst = sorted(contrib.items(), key=lambda kv: kv[1])[:3]

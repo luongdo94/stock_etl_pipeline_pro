@@ -7,7 +7,7 @@ from core import scan_presets as sp
 
 def row(**kw):
     base = {"Ticker": "X", "Quality": 50.0, "Value": 50.0, "Momentum": 50.0, "Revisions": 50.0, "Trend": "NEUTRAL",
-            "RSI (14)": 50.0, "Z-Score": 0.0, "vs MA200 (%)": 0.0, "PEG": np.nan, "Yield (%)": 0.0, "Debt/EBITDA": 1.0,
+            "RSI (14)": 50.0, "Z-Score": 0.0, "vs MA200 (%)": 0.0, "PEG": np.nan, "Yield (%)": 0.0, "Debt/EBITDA": 1.0, "Net Debt/EBITDA": 1.0,
             "Flags": "", "EPS Momentum": "Neutral", "Rev Momentum": "Neutral"}
     base.update(kw)
     return base
@@ -47,8 +47,8 @@ def test_garp_needs_a_positive_peg_below_one_and_solid_quality():
 def test_dividend_requires_cover_and_keeps_unknown_leverage():
     assert hits(label("💰"), row(**{"Yield (%)": 4, "Quality": 65}),
                 row(**{"Yield (%)": 4, "Quality": 65, "Flags": "Dividend not covered by FCF"}),
-                row(**{"Yield (%)": 4, "Quality": 65, "Debt/EBITDA": 4.0}),
-                row(**{"Yield (%)": 4, "Quality": 65, "Debt/EBITDA": np.nan}),       # bank: no EBITDA
+                row(**{"Yield (%)": 4, "Quality": 65, "Net Debt/EBITDA": 4.0}),         # NET debt, as the caption says
+                row(**{"Yield (%)": 4, "Quality": 65, "Net Debt/EBITDA": np.nan}),      # bank: no EBITDA
                 row(**{"Yield (%)": 2, "Quality": 65})) == ["T0", "T3"]
 
 

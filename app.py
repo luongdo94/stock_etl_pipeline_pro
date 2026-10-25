@@ -27,7 +27,7 @@ except ImportError:
 from services import auth
 from core import market_regime as mr
 from etl.utils import clean_upside_pct
-from services.db import DB_PATH, data_version, load_snapshot, track_record_ok
+from services.db import DB_PATH, MACRO_SERIES, data_version, load_snapshot, track_record_ok
 from services.market_data import stored_macro
 from services.screener import get_master_screener_data
 from ui import header, sidebar
@@ -88,7 +88,7 @@ m_df = get_master_screener_data(companies_full, prices_full, quarterly_fin, annu
                                 estimates_rows=len(forward_estimates_full), track_record_ok=_track_ok,
                                 _earnings_cal=earnings_cal, _sec_annual_history=sec_annual_history)
 
-all_tickers = sorted(prices_full["ticker"].unique().tolist())
+all_tickers = sorted(t for t in prices_full["ticker"].unique().tolist() if t not in MACRO_SERIES)   # not pickable
 ticker_to_name = dict(zip(companies_full["ticker"], companies_full["company"]))
 
 

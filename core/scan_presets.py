@@ -4,12 +4,14 @@ Kept deliberately short: each preset answers a distinct question. Presets that o
 almost entirely, returned (nearly) nothing on the real universe, or rested only on the volume-flow
 heuristic were removed; RSI / Z-Score / Volume Flow remain available as Custom Refinement sliders.
 """
+import re
 from dataclasses import dataclass
 from typing import Callable
 
 import pandas as pd
 
 from core.rating import QUALITY_TIERS
+from core.scoring import FLAG_LABELS
 
 ELITE, SOLID, FAIR = (t[0] for t in QUALITY_TIERS)      # Quality tier cut-offs (core/rating.py)
 UPTREND = {"STRONG BULL", "BULLISH"}       # golden cross (MA50 > MA200)
@@ -37,6 +39,13 @@ def _down(d):
 
 def _flags(d):
     return d["Flags"].fillna("")
+
+
+# the flags that subtract Quality points (config/scoring_rules.yaml quality.penalties) — the others (illiquid, micro-cap,
+# ROIC estimated, peak margin …) are information, not a red flag (A6-05)
+_PENALISED = "|".join(re.escape(FLAG_LABELS[k]) for k in (
+    "loss_making", "gaap_loss_cash_positive", "debt_without_ebitda", "net_debt_ebitda_high", "net_debt_ebitda_critical",
+    "dividend_uncovered", "negative_equity"))
 
 
 PRESETS = [
@@ -69,7 +78,8 @@ PRESETS = [
            "Uptrend, price more than 5% above MA200, top-30% Momentum score and RSI 50-70 (strong but not yet overbought)."),
     Preset(f"💰 Quality Dividend (Yield > 2.5%, Quality ≥ {SOLID}, no cover flag)", "opportunity",
            lambda d: (d["Yield (%)"] > 2.5) & (d["Quality"] >= SOLID)
-                     & ~_flags(d).str.contains("Dividend not covered") & ~(d["Debt/EBITDA"] >= 3),
+                     & ~_flags(d).str.contains("Dividend not covered") & ~_flags(d).str.contains("Debt with no positive")
+                     & ~(d["Net Debt/EBITDA"] >= 3),
            f"Yield above 2.5%, Quality ≥ {SOLID}, no 'dividend not covered by FCF' flag, and net debt below 3x EBITDA "
            "where it is known. Unknown leverage (banks and insurers have no EBITDA; other names may lack the data) is kept, "
            "not confirmed — check it. No trend requirement: this is an income screen."),
@@ -79,9 +89,10 @@ PRESETS = [
            f"Looks cheap (Value ≥ 65) but Quality < {FAIR}. Cheap and weak is the classic value trap — "
            "the Decision will not call these a BUY.", "error"),
     Preset("🚩 Red Flags (any quality penalty)", "risk",
-           lambda d: _flags(d) != "",
-           "Loss-making, debt without EBITDA, high net debt/EBITDA, dividend not covered by FCF, negative book equity. "
-           "See the Flags column.", "error"),
+           lambda d: _flags(d).str.contains(_PENALISED),
+           "Loss-making, debt without EBITDA, high net debt/EBITDA, dividend not covered by FCF, negative book equity "
+           "(the flags that cost Quality points). Illiquid, micro-cap and estimated-ROIC notes are in the Flags column "
+           "but are not red flags.", "error"),
     Preset(f"📉 Downtrend (MA50 < MA200 and RSI < 50 or Quality < {FAIR})", "risk",
            lambda d: _down(d) & ((d["RSI (14)"] < 50) | (d["Quality"] < FAIR)),
            f"Death cross (MA50 < MA200) that is either still falling (RSI < 50) or a weak business (Quality < {FAIR}). "

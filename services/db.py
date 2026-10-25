@@ -520,6 +520,39 @@ def load_data():
     return load_snapshot(version)[0]
 
 
+# A1-01: the 10-year yield and the dollar index have no volume, so the marts drop them (volume > 0) — yet the stress
+# test's rate sensitivity and the regime's 5-day dollar move are measured on them. They are appended to the price frame
+# from the stored raw closes (EUR-converted like every close, with fx_rate / price_scale to recover the native level) and
+# kept out of the ticker pickers (MACRO_SERIES).
+MACRO_SERIES = ("^TNX", "DX-Y.NYB")
+
+
+def _macro_series_prices(conn) -> pd.DataFrame:
+    """Daily closes of MACRO_SERIES from raw.stock_prices in the shape of the price frame (empty when not stored)."""
+    names = ", ".join(f"'{t}'" for t in MACRO_SERIES)
+    last_error = None
+    for close_col, order in (("close", "ORDER BY _extracted_at DESC"), ("price_close", "ORDER BY _extracted_at DESC"),
+                             ("close", ""), ("price_close", "")):
+        try:
+            df = conn.execute(f"""
+                SELECT date, ticker, {close_col} AS price_close, volume, fx_rate, price_scale
+                FROM raw.stock_prices
+                WHERE ticker IN ({names}) AND {close_col} > 0 AND date >= CURRENT_DATE - INTERVAL 3 YEAR
+                QUALIFY ROW_NUMBER() OVER (PARTITION BY date, ticker {order}) = 1
+                ORDER BY ticker, date""").df()
+        except duckdb.Error as e:
+            last_error = e
+            continue
+        if not df.empty:
+            df["date"] = pd.to_datetime(df["date"])
+            df["daily_return_pct"] = df.groupby("ticker")["price_close"].pct_change() * 100
+        return df
+    if last_error is not None and not isinstance(last_error, duckdb.CatalogException):
+        # a table that is not there is "no macro series stored"; any other failure is an error, and is said so
+        logger.warning("macro series (^TNX, DX-Y.NYB) could not be read from raw.stock_prices: %s", last_error)
+    return pd.DataFrame()
+
+
 def read_warehouse(conn):
     """All dashboard frames from an open DuckDB connection (no Streamlit) — shared with the ETL
     snapshot job so the stored daily scores are exactly what the dashboard showed."""
@@ -550,6 +583,11 @@ def read_warehouse(conn):
         FROM marts.dim_companies d
         LEFT JOIN raw.company_info r USING (ticker)
     """).df()
+    macro_px = _macro_series_prices(conn)
+    if not macro_px.empty:                                  # per series: one already in the marts is not doubled
+        macro_px = macro_px[~macro_px["ticker"].isin(prices_f.loc[prices_f["ticker"].isin(MACRO_SERIES), "ticker"].unique())]
+        if not macro_px.empty:
+            prices_f = pd.concat([prices_f, macro_px.reindex(columns=prices_f.columns)], ignore_index=True)
     # Ensure industry column exists even on older warehouses
     if "industry" not in companies_f.columns:
         companies_f["industry"] = None

@@ -170,7 +170,7 @@ def build(ctx, deep_ticker):
     # The Decision's reward/risk feeds the Signal (same inputs as the Decision Summary; the track-record and
     # data-gap notes of that panel do not change it)
     # Same Decision as the panel and the scanner (core.decision.decide); the Signal below reads its stance.
-    from core.decision import BUY, decide, load_rules, with_conflict
+    from core.decision import BUY, RESEARCH, decide, load_rules, with_conflict
     _d = decide(price=float(cur_p), vin=vin, stop_loss=tm["stop_loss"], meta=meta,
                 scores=scores,                      # true quality (None = unknown → no BUY)
                 price_date=pd.to_datetime(df_now["date"].iloc[-1]).date(), next_earnings=next_er,
@@ -189,7 +189,7 @@ def build(ctx, deep_ticker):
             decision_stance=stance)
     rating = _signal(_d.stance)
     signal_conflict = None
-    if rating["clamped"] and _d.stance == BUY:          # same conflict rule as the scanner (R3-E)
+    if rating["clamped"] and _d.stance in (BUY, RESEARCH):          # same conflict rule as the scanner (R3-E)
         signal_conflict = (f"timing context is {rating['raw_label']} (trend / value against "
                            f"the valuation case)")
         _d = with_conflict(_d, signal_conflict)

@@ -41,6 +41,8 @@ def fit_volatility(returns: pd.Series, horizon: int) -> dict:
     r = r[np.isfinite(r)]
     if len(r) < 2:
         raise ValueError("fewer than two finite returns: the volatility is unknown")
+    if r.nunique() < 2 or not float(r.std()) > 1e-12:     # a price that never moved (suspended, stale): not "no risk"
+        raise ValueError("the returns do not vary: the volatility is unknown")
     long_run = float(r.std())
     current = float(r.tail(14).std()) if len(r) >= 14 else long_run
     attempts = (("GJR-GARCH(1,1,1) · Student-t", dict(p=1, o=1, q=1, dist="t")),
@@ -195,6 +197,7 @@ def coverage_backtest(close: pd.Series, horizon: int, windows: int = 8, n_sims: 
 
     A calibrated 80% range contains the outcome about 80% of the time and misses each side about 10% of the time."""
     c = pd.Series(close).astype(float).reset_index(drop=True)
+    c = c.where(np.isfinite(c) & (c > 0))                 # 0, below or infinite is a bad print, not a -100 % return
     rets = c.pct_change(fill_method=None)
     rows, skipped = [], 0
     for k in range(windows, 0, -1):
@@ -202,7 +205,7 @@ def coverage_backtest(close: pd.Series, horizon: int, windows: int = 8, n_sims: 
         if origin < 250:
             continue
         start, actual = float(c.iloc[origin]), float(c.iloc[origin + horizon])
-        if not (np.isfinite(start) and start > 0 and np.isfinite(actual)):
+        if not (np.isfinite(start) and start > 0 and np.isfinite(actual) and actual > 0):
             skipped += 1                                  # origin or outcome price unknown: the window is not judged
             continue
         try:
@@ -231,9 +234,18 @@ MIN_CALIBRATION_WINDOWS = 30
 
 
 def calibration_verdict(cov: dict, tolerance: float = 0.15) -> str:
-    """Plain-language reading of a coverage backtest (expected: ~80% inside, ~10% on each side, ~10% beyond P5/P95)."""
+    """Plain-language reading of a coverage backtest (expected: ~80% inside, ~10% on each side, ~10% beyond P5/P95).
+    Windows that could not be judged (unusable prices or a failed fit) are always named."""
+    text = _verdict(cov, tolerance)
+    skipped = int((cov or {}).get("skipped") or 0)
+    return text if not skipped or not (cov or {}).get("n") else f"{text} ({skipped} further window(s) could not be judged.)"
+
+
+def _verdict(cov: dict, tolerance: float = 0.15) -> str:
     if not cov or not cov.get("n"):
-        return "Not enough history for a calibration check."
+        skipped = int((cov or {}).get("skipped") or 0)
+        return ("Not enough history for a calibration check." if not skipped else
+                f"No calibration window could be judged ({skipped} skipped: unusable prices or a failed fit).")
     inside, n = cov["inside80"], int(cov["n"])
     if n < MIN_CALIBRATION_WINDOWS:
         return (f"Only {n} windows — too few to judge calibration (need ≥ {MIN_CALIBRATION_WINDOWS}). "
@@ -255,6 +267,13 @@ def calibration_verdict(cov: dict, tolerance: float = 0.15) -> str:
             if c_ - h_ > 0.10:
                 tails += (f" Tail warning: {p:.0%} of outcomes fell {edge} (95% CI from {c_ - h_:.0%}, above the 10% "
                           f"expected) — the {side} is under-stated.")
+    if cov.get("outside90") is not None:                  # the 90% interval (P5-P95) is the basis of VaR 95 % / ES
+        p = float(cov["outside90"])
+        c_ = (p + z * z / (2 * n)) / (1 + z * z / n)
+        h_ = z * np.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / (1 + z * z / n)
+        if c_ - h_ > 0.10:
+            tails += (f" Tail warning: {p:.0%} of outcomes fell outside the 90% range (95% CI from {c_ - h_:.0%}, above "
+                      "the 10% expected) — the extreme tails, behind VaR 95% and ES, are under-stated.")
     if lo <= 0.8 <= hi:
         return f"Consistent with an 80% range overall: {base}{tails} Past fit only — regimes change."
     if hi < 0.8:

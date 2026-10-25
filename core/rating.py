@@ -33,6 +33,7 @@ def verdict(decision, signal_label) -> str:
 
 
 DECISION_AVOID, DECISION_BUY = "AVOID / TRIM", "BUY CANDIDATE"      # stances of core.decision.Decision
+DECISION_RESEARCH = "RESEARCH CANDIDATE"      # passes every BUY gate but the validated evidence: the same candidate (A5-02)
 
 
 def value_tier(score):
@@ -262,7 +263,7 @@ def compute_institutional_rating(
     clamped, raw_label = False, action_label
     if decision_stance == DECISION_AVOID and action_label in (L["strong"], L["favourable"]):
         action_label, clamped = L["neutral"], True
-    elif decision_stance == DECISION_BUY and action_label == L["unfavourable"]:
+    elif decision_stance in (DECISION_BUY, DECISION_RESEARCH) and action_label == L["unfavourable"]:
         action_label, clamped = L["neutral"], True
     action_color = SIGNAL_COLOURS[action_label]
 

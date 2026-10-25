@@ -1426,12 +1426,16 @@ def render(ctx):
                             new_shares_dict = _res["shares"]
                             _old_cost = st.session_state.get("portfolio_cost", {})
                             new_cost_dict = {}
+                            _buy_fee = float(_rules_now["costs"]["commission_pct"]) / 100
                             for t in current_tickers:            # weighted-average cost: bought shares at today's price
                                 o_sh, n_sh = float(_cur_shares.get(t, 0.0)), float(new_shares_dict.get(t, 0.0))
                                 o_c = _old_cost.get(t)
                                 o_c = float(o_c) if pd.notna(o_c) else np.nan
-                                new_cost_dict[t] = ((o_sh * o_c + (n_sh - o_sh) * latest_prices[t]) / n_sh
-                                                    if n_sh > o_sh and n_sh > 0 else o_c)
+                                # the buy fee is part of the basis, as in record_trade and the ledger (owner's choice b)
+                                bought_at = latest_prices[t] * (1 + _buy_fee)
+                                new_cost_dict[t] = ((bought_at if o_sh <= 1e-9 else
+                                                     (o_sh * o_c + (n_sh - o_sh) * bought_at) / n_sh)
+                                                    if n_sh > o_sh and n_sh > 0 else o_c)       # a new position: no old basis needed
                             # Persist FIRST; only a confirmed save changes the session (a failed or unknown save keeps
                             # the proposal and the old holdings — the session must never look synced when it is not)
                             _new_stops = opening_stops(st.session_state.get("portfolio_stops", {}), new_shares_dict,

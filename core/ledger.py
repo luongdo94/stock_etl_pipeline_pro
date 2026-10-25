@@ -6,6 +6,7 @@ with its price, fees and the cash after it. That is what realised P&L, fees paid
 Realised P&L uses the average-cost method (the same as the holdings' cost basis). A BUY's fee is part of the cost basis
 (owner, 2026-10-25): it becomes realised only when the shares are sold; a SELL's fee is realised at the sale.
 """
+import math
 from datetime import datetime
 from typing import Optional
 
@@ -19,10 +20,22 @@ SIDES = ("BUY", "SELL", "ADJUST")   # ADJUST: position set by hand (opening bala
                                     # price = unit cost basis after; no cash, no realised P&L (audit F20)
 
 
+def _fin(x) -> float:
+    """A finite float, else NaN (None, text and inf are not figures)."""
+    try:
+        v = float(x)
+    except (TypeError, ValueError):
+        return float("nan")
+    return v if math.isfinite(v) else float("nan")
+
+
 def trade(ticker: str, side: str, qty: float, price: float, fees: float = 0.0, cash_after: Optional[float] = None,
           source: str = "manual", note: str = "", when: Optional[datetime] = None) -> dict:
     if side not in SIDES:
         raise ValueError(f"side must be one of {SIDES}")
+    # an unknown quantity, price or fee is never booked (A4-04): NaN would pass `<= 0` and poison every total after it
+    if math.isnan(_fin(qty)) or math.isnan(_fin(price)) or math.isnan(_fin(fees)) or _fin(fees) < 0:
+        raise ValueError("a trade needs a finite quantity, price and a non-negative fee")
     if side != "ADJUST" and (float(qty) <= 0 or float(price) <= 0):
         raise ValueError("a trade needs a positive quantity and price")
     return {"traded_at": (when or datetime.now()).isoformat(timespec="seconds"), "ticker": str(ticker), "side": side,
@@ -36,9 +49,9 @@ def trades_from_diff(old_shares: dict, new_shares: dict, prices: dict, cost_pct:
     Rows without a known positive price are skipped (nothing can be booked at an unknown price)."""
     rows = []
     for t in sorted(set(old_shares) | set(new_shares)):
-        d = float(new_shares.get(t, 0.0) or 0.0) - float(old_shares.get(t, 0.0) or 0.0)
-        px = float(prices.get(t) or 0.0)
-        if abs(d) < 1e-9 or px <= 0:
+        d = _fin(new_shares.get(t, 0.0)) - _fin(old_shares.get(t, 0.0))
+        px = _fin(prices.get(t))
+        if not math.isfinite(d) or abs(d) < 1e-9 or not px > 0:      # unknown size or price: nothing to book (A4-04)
             continue
         rows.append(trade(t, "BUY" if d > 0 else "SELL", abs(d), px, abs(d) * px * cost_pct, cash_after, source, note,
                           when))
@@ -52,13 +65,18 @@ def adjustments_from_edit(old_shares: dict, old_costs: dict, new_shares: dict, n
     trade: it books no price, no fee and no realised P&L, but the ledger's basis follows the holdings (audit F20)."""
     rows = []
     for t in sorted(set(old_shares) | set(new_shares)):
-        o_q, n_q = float(old_shares.get(t, 0.0) or 0.0), float(new_shares.get(t, 0.0) or 0.0)
+        o_q, n_q = _fin(old_shares.get(t, 0.0)), _fin(new_shares.get(t, 0.0))
+        if math.isnan(n_q):
+            continue                               # an unknown share count cannot be booked
+        o_q = 0.0 if math.isnan(o_q) else o_q
         if t in new_shares and pd.isna(new_costs.get(t)):
             if t in old_shares and pd.notna(old_costs.get(t)):         # a known basis was cleared: say so
                 rows.append(trade(t, "ADJUST", max(n_q, 0.0), 0.0, 0.0, cash_after, BASIS_UNKNOWN,
                                   note or "cost basis cleared", when))
-            continue                               # cannot invent an ADJUST basis for an unknown cost
-        o_c, n_c = float(old_costs.get(t, 0.0) or 0.0), float(new_costs.get(t, 0.0) or 0.0)
+            continue                               # cannot invent an ADJUST basis for an unknown cost; the quantity gap
+                                                   # is flagged by history_incomplete and a later sale is unmatched (NaN)
+        o_c, n_c = _fin(old_costs.get(t, 0.0)), _fin(new_costs.get(t, 0.0))
+        o_c = 0.0 if math.isnan(o_c) else o_c
         if abs(n_q - o_q) < 1e-9 and abs(n_c - o_c) < 1e-9:
             continue
         r = trade(t, "ADJUST", max(n_q, 0.0), max(n_c, 0.0), 0.0, cash_after, "edit", note, when)
@@ -79,15 +97,28 @@ def realized_pnl(trades) -> pd.DataFrame:
     out = []
     for t, g in df.groupby("ticker", sort=True):
         qty = cost = realized = fees = bought = sold = unmatched = 0.0
-        unknown = False                                  # a sale against an unknown basis was booked
+        unknown = fee_unknown = False                    # a sale against an unknown basis / an impossible fee was booked
         for r in g.itertuples():
-            fees += float(r.fees or 0.0)
+            try:
+                raw_fee = float(r.fees)
+            except (TypeError, ValueError):
+                raw_fee = float("nan")
+            if math.isinf(raw_fee):                     # an impossible fee is unknown, not zero
+                fee, fee_unknown = 0.0, True
+            else:
+                fee = 0.0 if math.isnan(raw_fee) else raw_fee   # a stored fee is NOT NULL; a stray NaN must not void totals
+            fees += fee
             if r.side == "ADJUST":                      # position set by hand: new quantity and basis, no P&L
                 qty = float(r.qty)
-                cost = float("nan") if r.source == BASIS_UNKNOWN else qty * float(r.price)
+                if qty <= 1e-9:                         # closed by hand: no basis (known or not) carries into a re-buy
+                    qty, cost = 0.0, 0.0
+                else:
+                    cost = float("nan") if r.source == BASIS_UNKNOWN else qty * float(r.price)
                 continue
             if r.side == "BUY":
-                cost += float(r.qty) * float(r.price) + float(r.fees or 0.0)   # the buy fee is part of the basis
+                if qty <= 1e-9:
+                    cost = 0.0                          # a new position starts from nothing (an unknown old basis is gone)
+                cost += float(r.qty) * float(r.price) + fee   # the buy fee is part of the basis
                 qty += float(r.qty)
                 bought += float(r.qty)
             else:
@@ -98,7 +129,7 @@ def realized_pnl(trades) -> pd.DataFrame:
                     unknown = True                       # this part of the P&L cannot be measured
                 elif matched > 0:
                     realized += matched * (float(r.price) - avg)
-                realized -= float(r.fees or 0.0)                # the sell fee is realised at the sale
+                realized -= fee                                  # the sell fee is realised at the sale
                 unmatched += sell - matched
                 cost -= matched * avg
                 qty -= matched
@@ -108,8 +139,9 @@ def realized_pnl(trades) -> pd.DataFrame:
         # a sale beyond the recorded shares has an unknown basis: the ticker's realised P&L is unknown (K4-07); the
         # part the ledger can price stays visible as realized_known_eur
         # buy fees are inside the basis and sell fees inside `realized`: neither is subtracted a second time
-        out.append({"ticker": t, "realized_eur": realized if unmatched <= 1e-9 and not unknown else float("nan"),
-                    "realized_known_eur": realized, "fees_eur": fees, "bought_qty": bought,
+        out.append({"ticker": t,
+                    "realized_eur": realized if unmatched <= 1e-9 and not unknown and not fee_unknown else float("nan"),
+                    "realized_known_eur": realized, "fees_eur": float("nan") if fee_unknown else fees, "bought_qty": bought,
                     "sold_qty": sold, "open_qty": qty, "avg_cost": cost / qty if qty > 0 else None,
                     "unmatched_qty": unmatched})
     return pd.DataFrame(out)

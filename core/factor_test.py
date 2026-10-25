@@ -235,9 +235,14 @@ def quintile_net_of_costs(fr: pd.DataFrame, h: int, score_col: str = "quality", 
         miss = top[col].isna() | top[f"exit_date_{h}"].isna()
         if miss.any():
             # an exit on file with no outcome is missing; no exit yet is missing only once it is overdue
-            entry_m = pd.to_datetime(top.loc[miss, "entry_date"]) if "entry_date" in top.columns else None
+            # no entry price at all: dated from the day after the information was KNOWN (as outcome_coverage does)
+            known = (pd.to_datetime(top.loc[miss, "known_date"]) if "known_date" in top.columns
+                     else pd.Series(pd.Timestamp(day), index=top.index[miss])).fillna(pd.Timestamp(day))
+            day_next = known + pd.Timedelta(days=1)
+            entry_m = (pd.to_datetime(top.loc[miss, "entry_date"]).fillna(day_next) if "entry_date" in top.columns
+                       else day_next)
             overdue = top.loc[miss, f"exit_date_{h}"].notna()
-            if entry_m is not None and pd.notna(data_end):
+            if pd.notna(data_end):
                 overdue = overdue | (entry_m + span <= data_end)
             if overdue.any():
                 unresolved += 1                                         # matured, a top outcome is missing (delisted…)

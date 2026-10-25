@@ -116,8 +116,15 @@ def hot_alerts(prices_full, reco_df, movers_df):
 
 
 def breadth_series(prices_full):
-    """% of stocks closing above their MA50, per date."""
-    b = prices_full[~prices_full["ticker"].isin(BREADTH_EXCLUDE) & prices_full["ma_50"].notna()]
+    """% of stocks closing above their MA50, per date. Each stock against its own average in ITS currency (A1-02: in
+    EUR a moving exchange rate would count as the stock rising or falling); an older frame without the FX columns uses
+    the stored ma_50."""
+    b = prices_full[~prices_full["ticker"].isin(BREADTH_EXCLUDE)]
+    if {"fx_rate", "price_scale"} <= set(b.columns):
+        b = b[["date", "ticker", "price_close", "fx_rate", "price_scale"]].sort_values(["ticker", "date"])
+        b = b.assign(price_close=local_close(b))
+        b["ma_50"] = b.groupby("ticker")["price_close"].transform(lambda s: s.rolling(50, min_periods=50).mean())
+    b = b[b["ma_50"].notna() & b["price_close"].notna()]
     ts = (b[b["price_close"] > b["ma_50"]].groupby("date")["ticker"].count()
           / b.groupby("date")["ticker"].count() * 100).fillna(0).reset_index()
     ts.columns = ["date", "breadth_pct"]
@@ -149,6 +156,31 @@ def _finite(v):
 
 
 SPY_UNKNOWN = "SPY trend unknown"
+SPY_MOMENTUM_UNKNOWN = "SPY 5d return unknown"      # fewer than 6 closes: scored in the middle, and said so (A1-03)
+
+
+def local_close(df: pd.DataFrame) -> pd.Series:
+    """Each close back in the currency the stock trades in (the warehouse stores close × the day's FX rate; native =
+    close × price_scale ÷ fx_rate). NaN where the rate is missing or not positive: an unknown basis is not guessed.
+    A frame without the two columns (an older snapshot) keeps its stored close as is."""
+    close = pd.to_numeric(df["price_close"], errors="coerce")
+    if not {"fx_rate", "price_scale"} <= set(df.columns):
+        return close
+    fx = pd.to_numeric(df["fx_rate"], errors="coerce")
+    return (close * pd.to_numeric(df["price_scale"], errors="coerce").fillna(1.0) / fx).where(fx > 0)
+
+
+def _spy_in_usd(spy: pd.DataFrame) -> pd.DataFrame:
+    """SPY with price_close / ma_50 / ma_200 recomputed from its USD closes (A1-02): in EUR a falling dollar pushes the
+    index below its averages while SPY itself still rises. Without the FX columns the stored values are used."""
+    if spy is None or spy.empty or not {"fx_rate", "price_scale"} <= set(spy.columns):
+        return spy
+    d = spy.sort_values("date").copy() if "date" in spy.columns else spy.copy()
+    px = local_close(d)
+    d["price_close"] = px
+    d["ma_50"] = px.rolling(50, min_periods=50).mean()
+    d["ma_200"] = px.rolling(200, min_periods=200).mean()
+    return d
 
 
 def market_confidence(spy, breadth_pct, vix, dxy_5d_move, tnx_chg):
@@ -158,6 +190,7 @@ def market_confidence(spy, breadth_pct, vix, dxy_5d_move, tnx_chg):
     range and is named in the reasons — a transparent imputation, not evidence that the market is neutral.
     """
     vix, dxy_5d_move, tnx_chg, breadth_pct = (_finite(v) for v in (vix, dxy_5d_move, tnx_chg, breadth_pct))
+    spy = _spy_in_usd(spy)
     score, reasons = 0, []
     last = spy.iloc[-1] if not spy.empty else {}
     px, ma50, ma200 = (_finite(last.get(k)) for k in ("price_close", "ma_50", "ma_200"))
@@ -184,6 +217,7 @@ def market_confidence(spy, breadth_pct, vix, dxy_5d_move, tnx_chg):
                 reasons.append(f"SPY 5d return {ret5:+.1f}%")
         else:
             score += 5
+            reasons.append(SPY_MOMENTUM_UNKNOWN)
     # Gradient (no cliff at 50%): 25% = panic (0), 50% = neutral (15), 75%+ = healthy (30)
     if breadth_pct is None:
         score += 15
@@ -221,7 +255,9 @@ def market_confidence(spy, breadth_pct, vix, dxy_5d_move, tnx_chg):
         score += 5
         reasons.append("Mild Macro Friction")
     else:
-        reasons.append(f"Macro Headwind (DXY 5d:{dxy_5d_move:+.1f}%)")
+        # name what actually exceeded its threshold: a rising 10Y yield is not a dollar move (A1-03)
+        why = ([f"DXY 5d:{dxy_5d_move:+.1f}%"] if dxy_5d_move >= 1.5 else []) +               ([f"10Y {tnx_chg:+.2f}"] if tnx_chg >= 0.12 else [])
+        reasons.append(f"Macro Headwind ({', '.join(why)})")
     return score, reasons
 
 
@@ -242,7 +278,7 @@ def regime_summary(regime: dict, score, reasons, *, breadth=None, vix=None, dxy_
     {"label", "score", "max_score", "reasons", "incomplete": [inputs that were unknown], "rates_usd_flag": bool}.
     `incomplete` names the inputs scored as unknown (market_confidence gives them the middle of their range)."""
     unknown = [name for name, v in (("VIX", vix), ("DXY", dxy_pct), ("10Y yield change", tnx_chg), ("Breadth", breadth))
-               if _finite(v) is None] + (["SPY trend"] if SPY_UNKNOWN in (reasons or []) else [])
+               if _finite(v) is None] + (["SPY trend"] if SPY_UNKNOWN in (reasons or []) else [])               + (["SPY 5-day return"] if SPY_MOMENTUM_UNKNOWN in (reasons or []) else [])
     return {"label": regime["regime"], "score": score, "max_score": MAX_SCORE, "reasons": list(reasons or []),
             "incomplete": unknown, "rates_usd_flag": regime.get("scoring_regime") == "INFLATION_SHOCK"}
 
