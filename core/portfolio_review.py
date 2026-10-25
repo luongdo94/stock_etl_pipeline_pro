@@ -4,7 +4,7 @@ import pandas as pd
 
 from core.factor_test import portfolio_tilts
 from core.portfolio_policy import build_policy_meta
-from core.portfolio_risk import complete_returns, rebalance_limits, rebalance_policy
+from core.portfolio_risk import apply_rebalance, complete_returns, rebalance_limits, rebalance_policy
 from core.stress import estimate_sensitivities, load_scenarios, scenario_losses
 
 
@@ -27,8 +27,10 @@ def risk_contribution(covariance, weights):
     weights = np.asarray(weights, dtype=float)
     vol = float(np.sqrt(np.dot(weights.T, np.dot(covariance, weights))))
     contrib = weights * (np.dot(covariance, weights) / (vol if vol > 0 else 1))
-    with np.errstate(divide="ignore", invalid="ignore"):
-        return contrib / np.sum(np.abs(contrib)) * 100
+    total = float(np.sum(contrib))
+    if not np.isfinite(total) or abs(total) < 1e-15:
+        return np.full(len(weights), np.nan)            # no portfolio risk: shares are unknown, not 0 %
+    return contrib / total * 100
 
 
 def stress(prices, weights, nav, meta, companies, policy, rules):
@@ -55,12 +57,18 @@ def target_drift(tickers, weights, targets, nav, prices, stances, rules, limits,
     pol = rebalance_policy(tickers, cur, tgt, stances, float(rules["risk"]["max_position_pct"]),
                            limits=limits, portfolio=portfolio_policy)
     rows = []
+    px_of = {t: float(prices.get(t) or 0.0) for t in tickers}
+    held = {t: cur[i] * nav / px_of[t] for i, t in enumerate(tickers) if px_of[t] > 0}
+    sim = None
+    if all(px_of[t] > 0 for t in tickers):            # the trade Apply would make: weights of the post-cost NAV
+        sim = apply_rebalance(tickers, held, px_of, max(nav * (1 - float(cur.sum())), 0.0), pol["weights"],
+                              cost_pct=float((rules.get("costs") or {}).get("commission_pct", 0.0)) / 100)
     for i, t in enumerate(tickers):
-        px = float(prices.get(t) or 0.0)
+        px = px_of[t]
         rows.append({"Ticker": t, "Weight %": cur[i] * 100, "Target %": targets.get(t, float("nan")),
                      "Drift pp": cur[i] * 100 - targets[t] if t in targets else float("nan"),
                      "Allowed %": pol["weights"][i] * 100,
-                     "Trade (shares)": (pol["weights"][i] - cur[i]) * nav / px if px > 0 else float("nan"),
+                     "Trade (shares)": sim["shares"][t] - held[t] if sim is not None else float("nan"),
                      "Why limited": pol["blocked"].get(t, "")})
     return rows
 

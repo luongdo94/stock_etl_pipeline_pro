@@ -157,7 +157,7 @@ def record_trade(shares: dict, costs: dict, cash_eur: float, ticker: str, side: 
         return {"shares": sh, "costs": co, "cash": cash,
                 "error": f"You only own {owned:.4g} shares of {ticker}; cannot sell {qty:.4g}."}
     rest = owned - qty
-    if rest <= 1e-4:
+    if rest <= 1e-9:                                  # same tolerance as the oversell check: only rounding dust goes
         sh.pop(ticker, None)
         co.pop(ticker, None)
     else:

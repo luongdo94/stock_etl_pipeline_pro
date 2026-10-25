@@ -1183,8 +1183,9 @@ def render(ctx):
                 return floor, _opt_cap, np.full(n_assets, _invest / n_assets)
 
             def _checked(result, fallback):
-                w = result.x if result.success else fallback
-                w = np.clip(w, 0.0, _opt_cap)                 # solver tolerance must not breach the cap
+                if not result.success:                        # never present the starting point as the optimum
+                    raise RuntimeError(f"the optimiser did not converge ({result.message})")
+                w = np.clip(result.x, 0.0, _opt_cap)          # solver tolerance must not breach the cap
                 return w * min(1.0, _invest / w.sum()) if w.sum() > 0 else fallback
 
             def _run_max_sharpe(hist_rets, cov_matrix, n_assets, min_w):
@@ -1256,14 +1257,17 @@ def render(ctx):
                         break
                 return w
 
-            def _rebalance_table(tickers, cur_w, target_w, pol, last_px, nav):
-                """Proposal rows after the policy: the optimiser's raw target is kept for re-checking at Apply."""
+            def _rebalance_table(tickers, cur_w, target_w, pol, last_px, nav, cash, cost_pct):
+                """Proposal rows after the policy: the optimiser's raw target is kept for re-checking at Apply. Shares
+                come from the same simulation Apply runs (weights of the post-cost NAV), so preview and Apply agree."""
                 rows = []
+                _sim = apply_rebalance(tickers, st.session_state.portfolio_shares, last_px, cash, pol["weights"],
+                                       cost_pct=cost_pct)
                 for idx, ticker in enumerate(tickers):
                     price   = last_px.get(ticker, 1)
                     rec_w   = pol["weights"][idx]
                     curr_s  = st.session_state.portfolio_shares.get(ticker, 0)
-                    rec_s   = (rec_w * nav) / price
+                    rec_s   = _sim["shares"][ticker]
                     delta_s = rec_s - curr_s
                     action  = "HOLD"
                     if delta_s >  0.1: action = "BUY"
@@ -1312,7 +1316,8 @@ def render(ctx):
                             _pol = rebalance_policy(current_tickers, weights, opt_weights, _stances, _max_pos_pct,
                                                     limits=_sizing_limits(nav_eur), portfolio=_portfolio_policy)
                             st.session_state.pending_optimization = _rebalance_table(
-                                current_tickers, weights, opt_weights, _pol, latest_prices, nav_eur)
+                                current_tickers, weights, opt_weights, _pol, latest_prices, nav_eur, _cash_eur,
+                                float(load_decision_rules()["costs"]["commission_pct"]) / 100)
                             st.session_state.pending_opt_strategy = sel_strategy_label
                             st.session_state["_pending_opt_spec"] = dict(_review_spec, strategy=sel_strategy_label, min_weight=min_weight_pct,
                                                                       range_start=t_start, range_end=t_end)
@@ -1460,7 +1465,7 @@ def render(ctx):
                 st.markdown("---")
 
             # ── 5. ADVANCED ANALYTICS (Efficient Frontier & Risk) ──────────
-            if _section == "Rebalance" and len(current_tickers) > 1 and st.button(
+            if _section == "Rebalance" and len(current_tickers) > 1 and not _ineligible and st.button(
                     "Build efficient frontier — Runs ~2,000 simulations on this server", key="pf_frontier"):
                 render_header("activity", "Markowitz Efficient Frontier — Strategy Tactical Map")
 
@@ -1488,47 +1493,24 @@ def render(ctx):
 
                 # ── Compute & plot The Big 5 strategies ───────────────────────
                 _default_min_w = max(0.02, 1.0 / (n_assets * 5))  # sensible floor for EF display
-                _big5 = []
-                try:
-                    _big5 = [
-                        {
-                            "name":   "Min Volatility",
-                            "color":  "#3498db",
-                            "symbol": "diamond",
-                            "w":      _run_min_vol(cov_matrix, n_assets, _default_min_w),
-                            "desc":   "Lowest trailing variance",
-                        },
-                        {
-                            "name":   "Max Sharpe",
-                            "color":  "#2ecc71",
-                            "symbol": "square",
-                            "w":      _run_max_sharpe(hist_rets, cov_matrix, n_assets, _default_min_w),
-                            "desc":   "Mean-variance, shrunk trailing means",
-                        },
-                        {
-                            "name":   "Max Return",
-                            "color":  "#e67e22",
-                            "symbol": "triangle-up",
-                            "w":      _run_max_return(hist_rets, n_assets, _default_min_w),
-                            "desc":   "Highest trailing return up to the cap",
-                        },
-                        {
-                            "name":   "Risk Parity",
-                            "color":  "#9b59b6",
-                            "symbol": "cross",
-                            "w":      _run_risk_parity(cov_matrix, n_assets, _default_min_w),
-                            "desc":   "Equal trailing risk contribution",
-                        },
-                        {
-                            "name":   "Equal Weight",
-                            "color":  "#bdc3c7",
-                            "symbol": "circle",
-                            "w":      _run_equal_weight(n_assets),
-                            "desc":   "1/N, no estimated inputs",
-                        },
-                    ]
-                except Exception:
-                    pass  # skip if optimizer fails (e.g. single asset)
+                _big5, _failed = [], []
+                for _name, _color, _symbol, _run, _desc in (
+                        ("Min Volatility", "#3498db", "diamond",
+                         lambda: _run_min_vol(cov_matrix, n_assets, _default_min_w), "Lowest trailing variance"),
+                        ("Max Sharpe", "#2ecc71", "square",
+                         lambda: _run_max_sharpe(hist_rets, cov_matrix, n_assets, _default_min_w),
+                         "Mean-variance, shrunk trailing means"),
+                        ("Max Return", "#e67e22", "triangle-up",
+                         lambda: _run_max_return(hist_rets, n_assets, _default_min_w), "Highest trailing return up to the cap"),
+                        ("Risk Parity", "#9b59b6", "cross",
+                         lambda: _run_risk_parity(cov_matrix, n_assets, _default_min_w), "Equal trailing risk contribution"),
+                        ("Equal Weight", "#bdc3c7", "circle", lambda: _run_equal_weight(n_assets), "1/N, no estimated inputs")):
+                    try:
+                        _big5.append({"name": _name, "color": _color, "symbol": _symbol, "w": _run(), "desc": _desc})
+                    except Exception:                 # e.g. the solver did not converge: no marker, named below
+                        _failed.append(_name)
+                if _failed:
+                    st.caption(f"Not shown (the optimiser did not converge): {', '.join(_failed)}.")
 
                 for strat in _big5:
                     w_s = strat["w"]

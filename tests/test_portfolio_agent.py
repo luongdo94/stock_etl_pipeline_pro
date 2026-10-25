@@ -92,7 +92,7 @@ def test_shared_calculations_match_the_original_tab_formulas(sample):
     cov = ret.cov() * 252
     vol = np.sqrt(weights.T @ cov @ weights)
     contrib = weights * (np.dot(cov, weights) / (vol if vol > 0 else 1))
-    assert [r["pct"] for r in out["risk_contribution"]] == pytest.approx(contrib / np.abs(contrib).sum() * 100)
+    assert [r["pct"] for r in out["risk_contribution"]] == pytest.approx(contrib / contrib.sum() * 100)
     pd.testing.assert_frame_equal(pd.DataFrame(out["factor_tilts"]), portfolio_tilts(w, s["companies"], s["prices"]))
     limits = rebalance_limits(tickers, nav, s["adv"], s["stop_distances"], s["rules"])
     targets = np.array([s["targets"].get(t, w[t] * 100) / 100 for t in tickers])

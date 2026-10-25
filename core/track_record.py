@@ -353,6 +353,7 @@ def evidence_status(snapshots: pd.DataFrame, prices: pd.DataFrame, h: int = EVID
               and (fm["premium"] or 0) > 0 and (fm["t_stat"] or 0) > 2
               and (fm.get("n_independent") or 0) >= MIN_INDEPENDENT_PERIODS
               and (net["net_pct"] or 0) > 0 and net.get("periods", 0) >= MIN_INDEPENDENT_PERIODS
+              and not net.get("unresolved_periods")          # a matured top period without its outcome blocks it
               and (cover["share"] is None or cover["share"] <= MAX_CENSORED_SHARE))
     if not enough:
         label = (f"{days} snapshot day(s); {ic['n_days']} usable for a {h}-day test = {n_ind} independent period(s) "

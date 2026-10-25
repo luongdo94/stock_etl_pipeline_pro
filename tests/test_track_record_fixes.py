@@ -363,7 +363,9 @@ def test_t03_unresolved_period_does_not_supply_drift_or_replace_top():
     missing = panel(1)
     later = panel().assign(as_of_date=pd.Timestamp("2026-02-01"), entry_date=pd.Timestamp("2026-02-02"),
                            exit_date_1=pd.Timestamp("2026-02-03"))
-    assert ft.quintile_net_of_costs(pd.concat([missing, later]), 1) == pytest.approx(ft.quintile_net_of_costs(later, 1))
+    both, alone = ft.quintile_net_of_costs(pd.concat([missing, later]), 1), ft.quintile_net_of_costs(later, 1)
+    assert both.pop("unresolved_periods") == 1 and alone.pop("unresolved_periods") == 0   # counted, not hidden (K2-04)
+    assert both == pytest.approx(alone)
     # A name outside the top without an outcome does not void the period: the benchmark is the resolved universe
     # (19 names: 4 × 10% / 19), the top stays the one fixed from the scores.
     incomplete_universe = panel()

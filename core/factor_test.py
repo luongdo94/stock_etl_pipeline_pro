@@ -33,6 +33,9 @@ MIN_COVERAGE = 0.6              # a control is used on a day only when this shar
 DEFAULT_COST_BPS = {"US": 10, "EU": 15, "JP": 15, "CN": 25, "TW": 25, "KR": 25, "VN": 40, "OTHER": 30}
 
 
+MAX_STALE_SESSIONS = 5   # a price older than this is unknown for a momentum endpoint
+
+
 def _ns(s):
     return pd.to_datetime(s).astype("datetime64[ns]")
 
@@ -46,16 +49,21 @@ def factor_exposures(snapshots: pd.DataFrame, prices: pd.DataFrame, benchmark: s
     snap["as_of_date"] = _ns(snap["as_of_date"])
     px = prices[["date", "ticker", "price_close"]].dropna().copy()
     px["date"] = _ns(px["date"])
-    wide = px.pivot_table(index="date", columns="ticker", values="price_close", aggfunc="last").sort_index().ffill()
-    rets = wide.pct_change(fill_method=None)
+    raw = px.pivot_table(index="date", columns="ticker", values="price_close", aggfunc="last").sort_index()
+    # beta from OBSERVED returns only: a forward-filled stale price would be a run of 0 % returns and a beta near 0;
+    # the momentum endpoints may carry a level across a holiday, never beyond MAX_STALE_SESSIONS
+    rets = raw.pct_change(fill_method=None)
+    wide = raw.ffill(limit=MAX_STALE_SESSIONS)
     dates = pd.DatetimeIndex(sorted(snap["as_of_date"].unique()))
     pos = wide.index.searchsorted(dates, side="right") - 1          # last session ≤ snapshot date
     ok = pos >= 0
     out = []
     if benchmark in rets.columns:
         b = rets[benchmark]
-        beta = rets.rolling(beta_window, min_periods=beta_window // 2).cov(b).div(
-            b.rolling(beta_window, min_periods=beta_window // 2).var(), axis=0)
+        bm = rets.notna().where(rets.notna()).mul(b, axis=0)        # the benchmark on each name's observed days only
+        mp = beta_window // 2
+        beta = (rets.rolling(beta_window, min_periods=mp).cov(bm)
+                .div(bm.rolling(beta_window, min_periods=mp).var()))
     else:
         beta = pd.DataFrame(np.nan, index=rets.index, columns=rets.columns)
     for d, p, valid in zip(dates, pos, ok):
@@ -137,12 +145,18 @@ def fama_macbeth(fr: pd.DataFrame, h: int, score_col: str = "quality", controls=
             col = ctrl_cols[c]
             if col in g.columns and g[col].notna().mean() >= MIN_COVERAGE:
                 v = _winsor(g[col])
-                g[f"_{c}"] = v.fillna(v.mean())                          # missing = cross-sectional mean
+                # exploratory: missing = cross-sectional mean; strict: only names whose control is observed
+                g[f"_{c}"] = v if require_controls else v.fillna(v.mean())
                 x_cols.append(f"_{c}")
                 used.add(c)
         if require_controls and len(x_cols) - 1 < len(controls):
             skipped += 1
             continue
+        if require_controls:                    # a mean-filled control would let a risk premium pass as alpha
+            g = g.dropna(subset=x_cols)
+            if len(g) < MIN_NAMES or g["_score"].nunique() < 3:
+                skipped += 1
+                continue
         # region-neutral FIRST, then standardise: the score is measured within its region (a score that only says
         # "European" has no within-region spread left and gets no credit for Europe's market move)
         dm = _region_demean(g[[ret_col] + x_cols].astype(float).assign(region=g.get("region")), [ret_col] + x_cols)
@@ -182,7 +196,7 @@ def quintile_net_of_costs(fr: pd.DataFrame, h: int, score_col: str = "quality", 
     # Audit F17: costs follow WEIGHTS. The holdings drift with their returns over the period; each rebalance trades from
     # the drifted weights to equal weights — buys at the bought name's regional cost, sells at the sold name's. (The
     # name-count version charged the incoming names' cost for the sells and an unchanged set nothing for drift.)
-    rows, held, held_region, last_exit = [], pd.Series(dtype=float), {}, None
+    rows, held, held_region, last_exit, unresolved = [], pd.Series(dtype=float), {}, None, 0
     bps_of = lambda reg: cost_bps.get(str(reg), cost_bps["OTHER"])            # noqa: E731
     for day, g in d.groupby("as_of_date", sort=True):
         if last_exit is not None and pd.to_datetime(g["entry_date"]).min() < last_exit:
@@ -195,7 +209,10 @@ def quintile_net_of_costs(fr: pd.DataFrame, h: int, score_col: str = "quality", 
         top = g[bins == 4]
         # The top is fixed from the scores before any outcome is known (T03): a holding without an outcome makes the
         # period unresolved — it supplies no drift weights and does not count — never a re-picked top.
+        if g[f"exit_date_{h}"].isna().all():
+            continue                                                    # not matured yet: no name has reached its exit
         if top[col].isna().any() or top[f"exit_date_{h}"].isna().any():
+            unresolved += 1                                             # matured, a top outcome is missing (delisted…)
             continue
         last_exit = pd.to_datetime(top[f"exit_date_{h}"]).max()
         reg = top.set_index("ticker")["region"].to_dict() if "region" in top.columns else {}
@@ -213,12 +230,15 @@ def quintile_net_of_costs(fr: pd.DataFrame, h: int, score_col: str = "quality", 
         held = grown / grown.sum() if grown.sum() > 0 else target                # weights at the next rebalance
         held_region = {**held_region, **reg}
     if not rows:
-        return {"periods": 0, "gross_pct": None, "net_pct": None, "turnover": None, "cost_pct": None}
+        return {"periods": 0, "gross_pct": None, "net_pct": None, "turnover": None, "cost_pct": None,
+                "unresolved_periods": unresolved}
     r = pd.DataFrame(rows).dropna(subset=["net"])
     if r.empty:
-        return {"periods": 0, "gross_pct": None, "net_pct": None, "turnover": None, "cost_pct": None}
+        return {"periods": 0, "gross_pct": None, "net_pct": None, "turnover": None, "cost_pct": None,
+                "unresolved_periods": unresolved}
     return {"periods": len(r), "gross_pct": float(r["gross"].mean() * 100), "net_pct": float(r["net"].mean() * 100),
-            "turnover": float(r["turnover"].mean()), "cost_pct": float(r["cost"].mean() * 100)}
+            "turnover": float(r["turnover"].mean()), "cost_pct": float(r["cost"].mean() * 100),
+            "unresolved_periods": unresolved}
 
 
 def p_value(t) -> Optional[float]:
@@ -258,6 +278,7 @@ def evidence_table(snapshots: pd.DataFrame, prices: pd.DataFrame, horizons=HORIZ
                          "raw_premium_pct": unadj["premium"], "raw_t": unadj["t_stat"], "controls": ", ".join(fm["controls"]),
                          "n_days": fm["n_days"], "n_independent": fm["n_independent"], "periods": q["periods"],
                          "top_gross_pct": q["gross_pct"], "top_net_pct": q["net_pct"], "turnover": q["turnover"],
+                         "unresolved_periods": q.get("unresolved_periods", 0),
                          "p": p_value(fm["t_stat"]) if fm["premium"] is not None else None})
     t = pd.DataFrame(rows)
     for c in ("premium_pct", "t_stat", "raw_premium_pct", "raw_t", "top_gross_pct", "top_net_pct", "turnover", "p"):
@@ -265,5 +286,5 @@ def evidence_table(snapshots: pd.DataFrame, prices: pd.DataFrame, horizons=HORIZ
     t["p_holm"] = pd.to_numeric(t.index.map(holm(t["p"].where(t["p"].notna(), None).to_dict())), errors="coerce")
     t["significant"] = ((t["premium_pct"].fillna(0) > 0) & (t["p_holm"].fillna(1) < alpha)
                         & (t["n_independent"] >= min_independent) & (t["periods"] >= min_independent)
-                        & (t["top_net_pct"].fillna(-1) > 0))
+                        & (t["top_net_pct"].fillna(-1) > 0) & (t["unresolved_periods"].fillna(0) == 0))
     return t
