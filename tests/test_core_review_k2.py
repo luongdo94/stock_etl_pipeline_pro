@@ -105,3 +105,28 @@ def test_beta_uses_the_same_days_for_covariance_and_variance():
     # A's return is 2x SPY's on every day A has a return (a gap and the session after it have none); with both
     # moments on those days the beta is exactly 2 — a variance over SPY's full calendar would shift it
     assert beta == pytest.approx(2.0, rel=1e-9)
+
+
+# ── K2-05 (owner chose c): continuous across a contiguous handover, sold and re-bought after a gap ──────────────
+def _two_periods(second_entry):
+    rows = []
+    for d, (as_of, entry, exit_) in enumerate([("2026-01-01", "2026-01-02", "2026-01-05"),
+                                               ("2026-01-02", second_entry, "2026-03-02")]):
+        for i in range(20):
+            top_ret = 0.10 if i == 19 else 0.0                     # drift inside the top in the first period
+            rows.append({"as_of_date": pd.Timestamp(as_of), "ticker": f"T{i}", "quality": i, "region": "US",
+                         "fwd_1": top_ret if d == 0 else 0.0, "entry_date": pd.Timestamp(entry),
+                         "exit_date_1": pd.Timestamp(exit_)})
+    return pd.DataFrame(rows)
+
+
+def test_gap_longer_than_five_sessions_sells_and_rebuys():
+    contiguous = ft.quintile_net_of_costs(_two_periods("2026-01-05"), 1)
+    gap = ft.quintile_net_of_costs(_two_periods("2026-01-20"), 1)            # 11 business days after the exit
+    assert contiguous["periods"] == gap["periods"] == 2
+    assert contiguous["gap_sales"] == 0 and gap["gap_sales"] == 1
+    # contiguous: period 2 trades only the drift; after the gap it sells 100 % and buys 100 % at 10 bps each
+    assert gap["cost_pct"] > contiguous["cost_pct"]
+    assert gap["cost_pct"] == pytest.approx((0.10 + 0.20) / 2)               # mean of 10 bps and 20 bps, in %
+    short = ft.quintile_net_of_costs(_two_periods("2026-01-12"), 1)          # 5 business days: still contiguous
+    assert short["gap_sales"] == 0

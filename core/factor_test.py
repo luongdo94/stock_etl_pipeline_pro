@@ -34,6 +34,9 @@ DEFAULT_COST_BPS = {"US": 10, "EU": 15, "JP": 15, "CN": 25, "TW": 25, "KR": 25, 
 
 
 MAX_STALE_SESSIONS = 5   # a price older than this is unknown for a momentum endpoint
+# K2-05 (owner, 2026-10-25): a gap of more than this many sessions between a period's exit and the next entry means the
+# holdings in between are unknown, so the portfolio is treated as sold at the exit and bought again (costs both ways)
+MAX_GAP_SESSIONS = 5
 
 
 def _ns(s):
@@ -196,7 +199,7 @@ def quintile_net_of_costs(fr: pd.DataFrame, h: int, score_col: str = "quality", 
     # Audit F17: costs follow WEIGHTS. The holdings drift with their returns over the period; each rebalance trades from
     # the drifted weights to equal weights — buys at the bought name's regional cost, sells at the sold name's. (The
     # name-count version charged the incoming names' cost for the sells and an unchanged set nothing for drift.)
-    rows, held, held_region, last_exit, unresolved = [], pd.Series(dtype=float), {}, None, 0
+    rows, held, held_region, last_exit, unresolved, gap_sales = [], pd.Series(dtype=float), {}, None, 0, 0
     bps_of = lambda reg: cost_bps.get(str(reg), cost_bps["OTHER"])            # noqa: E731
     for day, g in d.groupby("as_of_date", sort=True):
         if last_exit is not None and pd.to_datetime(g["entry_date"]).min() < last_exit:
@@ -214,6 +217,13 @@ def quintile_net_of_costs(fr: pd.DataFrame, h: int, score_col: str = "quality", 
         if top[col].isna().any() or top[f"exit_date_{h}"].isna().any():
             unresolved += 1                                             # matured, a top outcome is missing (delisted…)
             continue
+        entry = pd.to_datetime(top["entry_date"]).min() if "entry_date" in top.columns else None
+        liquidation = 0.0
+        if (last_exit is not None and entry is not None and not held.empty
+                and np.busday_count(last_exit.date(), entry.date()) > MAX_GAP_SESSIONS):
+            # continuous only across a contiguous handover: after a gap the drift is unknown, so sell all at the exit
+            liquidation = sum(w * bps_of(held_region.get(t, "OTHER")) for t, w in held.items() if w) / 1e4
+            held, gap_sales = pd.Series(dtype=float), gap_sales + 1
         last_exit = pd.to_datetime(top[f"exit_date_{h}"]).max()
         reg = top.set_index("ticker")["region"].to_dict() if "region" in top.columns else {}
         target = pd.Series(1.0 / len(top), index=top["ticker"])
@@ -221,8 +231,8 @@ def quintile_net_of_costs(fr: pd.DataFrame, h: int, score_col: str = "quality", 
         new = target.reindex(prev.index).fillna(0.0)
         delta = new - prev
         buys, sells = delta.clip(lower=0), (-delta).clip(lower=0)
-        cost = (sum(w * bps_of(reg.get(t, "OTHER")) for t, w in buys.items() if w)
-                + sum(w * bps_of(held_region.get(t, reg.get(t, "OTHER"))) for t, w in sells.items() if w)) / 1e4
+        cost = liquidation + (sum(w * bps_of(reg.get(t, "OTHER")) for t, w in buys.items() if w)
+                              + sum(w * bps_of(held_region.get(t, reg.get(t, "OTHER"))) for t, w in sells.items() if w)) / 1e4
         # benchmark: the equal-weight universe names whose outcome is known (one stale name must not void the period)
         gross = float(top[col].mean() - g[col].mean())
         rows.append({"date": day, "gross": gross, "net": gross - cost, "turnover": float(buys.sum()), "cost": cost})
@@ -231,14 +241,14 @@ def quintile_net_of_costs(fr: pd.DataFrame, h: int, score_col: str = "quality", 
         held_region = {**held_region, **reg}
     if not rows:
         return {"periods": 0, "gross_pct": None, "net_pct": None, "turnover": None, "cost_pct": None,
-                "unresolved_periods": unresolved}
+                "unresolved_periods": unresolved, "gap_sales": gap_sales}
     r = pd.DataFrame(rows).dropna(subset=["net"])
     if r.empty:
         return {"periods": 0, "gross_pct": None, "net_pct": None, "turnover": None, "cost_pct": None,
-                "unresolved_periods": unresolved}
+                "unresolved_periods": unresolved, "gap_sales": gap_sales}
     return {"periods": len(r), "gross_pct": float(r["gross"].mean() * 100), "net_pct": float(r["net"].mean() * 100),
             "turnover": float(r["turnover"].mean()), "cost_pct": float(r["cost"].mean() * 100),
-            "unresolved_periods": unresolved}
+            "unresolved_periods": unresolved, "gap_sales": gap_sales}
 
 
 def p_value(t) -> Optional[float]:
