@@ -34,8 +34,9 @@ DEFAULT_COST_BPS = {"US": 10, "EU": 15, "JP": 15, "CN": 25, "TW": 25, "KR": 25, 
 
 
 MAX_STALE_SESSIONS = 5   # a price older than this is unknown for a momentum endpoint
-# K2-05 (owner, 2026-10-25): a gap of more than this many sessions between a period's exit and the next entry means the
-# holdings in between are unknown, so the portfolio is treated as sold at the exit and bought again (costs both ways)
+# K2-05 (owner, 2026-10-25): a gap of more than this many business days (Mon-Fri, market holidays not removed) between
+# a period's exit and ANY top name's entry in the next period means the holdings in between are unknown, so the portfolio
+# is treated as sold at the exit and bought again (costs both ways)
 MAX_GAP_SESSIONS = 5
 
 
@@ -217,7 +218,7 @@ def quintile_net_of_costs(fr: pd.DataFrame, h: int, score_col: str = "quality", 
         if top[col].isna().any() or top[f"exit_date_{h}"].isna().any():
             unresolved += 1                                             # matured, a top outcome is missing (delisted…)
             continue
-        entry = pd.to_datetime(top["entry_date"]).min() if "entry_date" in top.columns else None
+        entry = pd.to_datetime(top["entry_date"]).max() if "entry_date" in top.columns else None   # latest name
         liquidation = 0.0
         if (last_exit is not None and entry is not None and not held.empty
                 and np.busday_count(last_exit.date(), entry.date()) > MAX_GAP_SESSIONS):

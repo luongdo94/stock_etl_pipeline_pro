@@ -20,7 +20,10 @@ import pandas as pd
 
 TRADING_DAYS = 252
 MIN_OBS_GARCH = 150
-NU_MIN = 2.05            # Student-t degrees of freedom below this have (near-)infinite variance; floored, and disclosed
+NU_MIN = 2.10            # Student-t degrees of freedom are floored here (variance explodes as nu -> 2); the ONE floor the
+                         # simulation uses, disclosed with the fitted value
+SIGMA_CAP_X = 4.0        # a forecast volatility is capped at this multiple of the long-run level (disclosed when it binds)
+VAR_CAP_X = 10.0         # a path's evolving volatility is capped at this multiple of the long-run level (disclosed)
 MAX_LOSS_PER_DAY = 0.95  # numerical guard on a day's loss (prices stay positive); its drift is removed exactly (R4-03)
 
 
@@ -34,8 +37,11 @@ def fit_volatility(returns: pd.Series, horizon: int) -> dict:
     (α + γ/2 + β ≥ 1).
     Returns dict(sigma=array, nu=float|None, model=str, garch=dict|None). `garch` holds the decimal-unit recursion
     parameters so simulate_paths can evolve the variance along each path (R3-C)."""
-    r = pd.Series(returns).dropna().astype(float)
-    long_run = float(r.std()) if len(r) > 1 else 0.01
+    r = pd.Series(returns).astype(float)
+    r = r[np.isfinite(r)]
+    if len(r) < 2:
+        raise ValueError("fewer than two finite returns: the volatility is unknown")
+    long_run = float(r.std())
     current = float(r.tail(14).std()) if len(r) >= 14 else long_run
     attempts = (("GJR-GARCH(1,1,1) · Student-t", dict(p=1, o=1, q=1, dist="t")),
                 ("GARCH(1,1) · normal", dict(p=1, o=0, q=1, dist="normal")))
@@ -54,18 +60,21 @@ def fit_volatility(returns: pd.Series, horizon: int) -> dict:
             if not np.isfinite(sigma).all() or (sigma <= 0).any():
                 continue
             nu = float(p["nu"]) if "nu" in p.index else None
-            if nu is not None and nu <= NU_MIN:
-                label += f" (ν = {nu:.2f} ≤ {NU_MIN}: infinite-variance tails, simulated with ν = {NU_MIN})"
+            if nu is not None and nu < NU_MIN:
+                label += f" (ν fitted {nu:.2f}, simulated with the floor ν = {NU_MIN:.2f}: extremely fat tails)"
             garch = {"omega": float(p.get("omega", 0.0)) / 1e4, "alpha": alpha, "gamma": gamma, "beta": beta,
                      "long_run": long_run}
-            return {"sigma": np.clip(sigma, long_run * 0.3, long_run * 4.0), "nu": nu, "model": label, "garch": garch}
+            capped = float((sigma > long_run * SIGMA_CAP_X).mean())          # K3-05: the cap is part of the model
+            return {"sigma": np.clip(sigma, long_run * 0.3, long_run * SIGMA_CAP_X), "nu": nu, "model": label,
+                    "garch": garch, "sigma_capped_share": capped}
         except Exception:
             continue
     s, out = current, []
     for _ in range(horizon):
         s = s + 0.1 * (long_run - s)
         out.append(s)
-    return {"sigma": np.array(out), "nu": None, "model": "mean-reverting volatility (GARCH fit failed)", "garch": None}
+    return {"sigma": np.array(out), "nu": None, "model": "mean-reverting volatility (GARCH fit failed)", "garch": None,
+            "sigma_capped_share": 0.0}
 
 
 def garch_sigma_path(returns: pd.Series, horizon: int) -> np.ndarray:
@@ -112,12 +121,15 @@ def simulate_paths(last_price: float, sigma_path: np.ndarray, n_sims: int, nu: O
     rng = np.random.default_rng(seed)
     s = np.asarray(sigma_path, dtype=float)
     h = len(s)
-    nu_eff = None if nu is None else max(float(nu), NU_MIN + 0.05)
+    if not np.isfinite(last_price) or last_price <= 0:
+        raise ValueError("the starting price must be a positive number")
+    nu_eff = None if nu is None else max(float(nu), NU_MIN)
     if nu_eff is not None:
         z = rng.standard_t(nu_eff, size=(h, n_sims)) * np.sqrt((nu_eff - 2.0) / nu_eff)
     else:
         z = rng.standard_normal((h, n_sims))
     floored = np.zeros((h, n_sims), dtype=bool)
+    var_capped = np.zeros((h, n_sims), dtype=bool)
     corr = np.empty((h, n_sims))
 
     def _apply(sig, zt, t):
@@ -129,12 +141,15 @@ def simulate_paths(last_price: float, sigma_path: np.ndarray, n_sims: int, nu: O
 
     ret = np.empty((h, n_sims))
     if garch:
-        cap = (10.0 * float(garch.get("long_run") or s.max())) ** 2          # numerical guard, far above any crisis
+        cap = (VAR_CAP_X * float(garch.get("long_run") or s.max())) ** 2     # a model limit, reported when it binds
         var = np.full(n_sims, float(s[0]) ** 2)
+        capped_now = np.zeros(n_sims, dtype=bool)
         for t in range(h):
+            var_capped[t] = capped_now                 # the variance that drives today's price was capped
             ret[t] = _apply(np.sqrt(var), z[t], t)
-            var = np.minimum(garch["omega"] + (garch["alpha"] + garch["gamma"] * (ret[t] < 0)) * ret[t] ** 2
-                             + garch["beta"] * var, cap)
+            nxt = garch["omega"] + (garch["alpha"] + garch["gamma"] * (ret[t] < 0)) * ret[t] ** 2 + garch["beta"] * var
+            capped_now = nxt > cap
+            var = np.minimum(nxt, cap)
     else:
         for t in range(h):
             ret[t] = _apply(np.full(n_sims, s[t]), z[t], t)
@@ -145,7 +160,8 @@ def simulate_paths(last_price: float, sigma_path: np.ndarray, n_sims: int, nu: O
     return paths, {"floor_hit_share_days": float(floored.mean()),
                    "floor_hit_share_paths": float(floored.any(axis=0).mean()),
                    "mean_drift_correction": float(corr.mean()), "max_drift_correction": float(corr.max()),
-                   "floor": MAX_LOSS_PER_DAY}
+                   "floor": MAX_LOSS_PER_DAY, "var_cap_share_days": float(var_capped.mean()),
+                   "nu_effective": nu_eff}
 
 
 def simulate_gbm(last_price: float, sigma_path: np.ndarray, n_sims: int, mu_log_daily: float = 0.0,
@@ -156,9 +172,11 @@ def simulate_gbm(last_price: float, sigma_path: np.ndarray, n_sims: int, mu_log_
 def risk_metrics(paths: np.ndarray, last_price: float) -> dict:
     """Quantiles of the final price plus horizon tail risk: VaR / expected shortfall at 95% (as positive loss fractions)
     and the probability of a loss / gain beyond 10% at the horizon. Path-based too (R3-C): the probability that the price
-    TOUCHES −10% at any point (a stop at −10% would trigger even if the path recovers) and the 5th percentile of the
-    worst interim loss. No gap / halt / bankruptcy mass beyond what the shocks produce."""
-    paths = np.asarray(paths)
+    is at −10% or lower at a simulated DAILY CLOSE (intraday lows are not simulated, so a stop can trigger more often)
+    and the 5th percentile of the worst interim close. Broken paths raise an error: unknown, never a 0 % probability. No gap / halt / bankruptcy mass beyond what the shocks produce."""
+    paths = np.asarray(paths, dtype=float)
+    if not np.isfinite(last_price) or last_price <= 0 or not np.isfinite(paths).all() or (paths <= 0).any():
+        raise ValueError("the simulated paths are not finite prices: the risk figures are unknown")
     final = paths[-1]
     ret = final / last_price - 1
     worst = paths.min(axis=0) / last_price - 1
@@ -177,25 +195,35 @@ def coverage_backtest(close: pd.Series, horizon: int, windows: int = 8, n_sims: 
 
     A calibrated 80% range contains the outcome about 80% of the time and misses each side about 10% of the time."""
     c = pd.Series(close).astype(float).reset_index(drop=True)
-    rets = c.pct_change()
-    rows = []
+    rets = c.pct_change(fill_method=None)
+    rows, skipped = [], 0
     for k in range(windows, 0, -1):
         origin = len(c) - 1 - k * horizon
         if origin < 250:
             continue
-        fit = fit_volatility(rets.iloc[1:origin + 1], horizon)
-        paths = simulate_paths(float(c.iloc[origin]), fit["sigma"], n_sims, nu=fit["nu"], seed=seed + k,
-                               garch=fit.get("garch"))
+        start, actual = float(c.iloc[origin]), float(c.iloc[origin + horizon])
+        if not (np.isfinite(start) and start > 0 and np.isfinite(actual)):
+            skipped += 1                                  # origin or outcome price unknown: the window is not judged
+            continue
+        try:
+            fit = fit_volatility(rets.iloc[1:origin + 1], horizon)
+            paths = simulate_paths(start, fit["sigma"], n_sims, nu=fit["nu"], seed=seed + k, garch=fit.get("garch"))
+        except ValueError:
+            skipped += 1
+            continue
         lo, hi = np.percentile(paths[-1], [10, 90])
         lo5, hi5 = np.percentile(paths[-1], [5, 95])
-        actual = float(c.iloc[origin + horizon])
+        if not np.isfinite([lo, hi, lo5, hi5]).all():
+            skipped += 1
+            continue
         rows.append({"origin": int(origin), "actual": actual, "p10": float(lo), "p90": float(hi),
                      "inside80": bool(lo <= actual <= hi), "below_p10": bool(actual < lo), "above_p90": bool(actual > hi),
                      "outside90": bool(actual < lo5 or actual > hi5)})
     n = len(rows)
     if not n:
-        return {"n": 0, "inside80": None, "below_p10": None, "above_p90": None, "outside90": None, "windows": []}
-    return {"n": n, "windows": rows, **{k: float(np.mean([r[k] for r in rows]))
+        return {"n": 0, "inside80": None, "below_p10": None, "above_p90": None, "outside90": None, "windows": [],
+                "skipped": skipped}
+    return {"n": n, "windows": rows, "skipped": skipped, **{k: float(np.mean([r[k] for r in rows]))
                                         for k in ("inside80", "below_p10", "above_p90", "outside90")}}
 
 
@@ -218,11 +246,20 @@ def calibration_verdict(cov: dict, tolerance: float = 0.15) -> str:
     if "below_p10" in cov and "above_p90" in cov:
         sides = f" Breaches: {cov['below_p10']:.0%} below P10, {cov['above_p90']:.0%} above P90 (≈10% each expected)."
     base = f"{inside:.0%} inside the 80% range over {n} windows (95% CI {lo:.0%}–{hi:.0%}).{sides}"
+    tails = ""
+    for side, key, edge in (("downside", "below_p10", "below P10"), ("upside", "above_p90", "above P90")):
+        if cov.get(key) is not None:
+            p = float(cov[key])
+            c_ = (p + z * z / (2 * n)) / (1 + z * z / n)
+            h_ = z * np.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / (1 + z * z / n)
+            if c_ - h_ > 0.10:
+                tails += (f" Tail warning: {p:.0%} of outcomes fell {edge} (95% CI from {c_ - h_:.0%}, above the 10% "
+                          f"expected) — the {side} is under-stated.")
     if lo <= 0.8 <= hi:
-        return f"Consistent with an 80% range: {base} Past fit only — regimes change."
+        return f"Consistent with an 80% range overall: {base}{tails} Past fit only — regimes change."
     if hi < 0.8:
-        return f"Too narrow: {base} Treat the range as optimistic."
-    return f"Too wide: {base} It overstates the risk."
+        return f"Too narrow (too few outcomes inside): {base}{tails} Treat the range as optimistic."
+    return f"Too wide (too many outcomes inside): {base}{tails} It overstates the risk."
 
 
 # ── helper kept for the research script ──────────────────────────────────────────────────────

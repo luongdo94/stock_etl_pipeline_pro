@@ -60,9 +60,10 @@ def render(dd, ctx):
             "snapshot": ctx.get("data_version")}
     if run and ticker:
         df = prices_full[prices_full["ticker"] == ticker].sort_values("date")
-        if len(df) < 150:
+        _usable = int(np.isfinite(pd.to_numeric(df["daily_return_pct"], errors="coerce")).sum()) if not df.empty else 0
+        if _usable < 150:
             st.session_state.pop(run_key, None)
-            st.warning(f"Only {len(df)} days of history for {ticker}; at least 150 are needed.")
+            st.warning(f"Only {_usable} usable daily returns for {ticker} ({len(df)} price rows); at least 150 are needed.")
             return
         closes = df["price_close"].astype(float).reset_index(drop=True)
         last = float(closes.iloc[-1])
@@ -103,16 +104,28 @@ def render(dd, ctx):
 
     realised = float(returns.tail(21).std())
     avg_sigma = float(np.sqrt(np.mean(sigma ** 2)))
-    tail = "fat-tailed (Student-t, ν = %.1f)" % fit["nu"] if fit["nu"] else "normal shocks"
+    _nu_sim = sim_diag.get("nu_effective")
+    tail = ((f"fat-tailed (Student-t, ν fitted {fit['nu']:.2f}"
+             + (f", simulated {_nu_sim:.2f})" if _nu_sim is not None and abs(_nu_sim - fit["nu"]) > 1e-9 else ")"))
+            if fit["nu"] else "normal shocks")
     _path = ("variance re-evolved along each path (a crash raises that path's later volatility)" if fit.get("garch")
              else "one deterministic volatility path for all simulations")
     st.caption(f"Model: {fit['model']} · {tail} · {_path} · fitted on the last {min(len(returns), 500)} daily returns · "
                f"zero drift (expected price = today's).")
-    st.caption(f"Path risk: P(touches −10% at any point) {m['prob_touch_loss10']:.0%} · 5% worst interim loss "
-               f"−{m['worst_interim_p5'] * 100:.1f}%. A stop at −10% triggers on the first figure, not on the horizon loss; "
-               f"gaps, halts and default are not modelled beyond the fitted shocks.")
-    st.caption(f"Loss floor (numerical guard, not a default model): a day's loss is limited to "
-               f"−{sim_diag['floor']:.0%}; it bound on {sim_diag['floor_hit_share_days']:.4%} of simulated days "
+    st.caption(f"Path risk: P(a daily close at −10% or lower) {m['prob_touch_loss10']:.0%} · 5% worst interim close "
+               f"−{m['worst_interim_p5'] * 100:.1f}%. Intraday lows are not simulated, so a −10% stop can trigger more "
+               f"often than this; gaps, halts and default are not modelled beyond the fitted shocks.")
+    _caps = []
+    if fit.get("sigma_capped_share"):
+        _caps.append(f"the forecast volatility was capped at {rr.SIGMA_CAP_X:g}× its long-run level on "
+                     f"{fit['sigma_capped_share']:.0%} of the days")
+    if sim_diag.get("var_cap_share_days"):
+        _caps.append(f"a path's volatility hit its {rr.VAR_CAP_X:g}× cap on {sim_diag['var_cap_share_days']:.2%} of "
+                     f"simulated days")
+    if _caps:
+        st.caption("Model limits that bound here (they lower the extreme tail): " + "; ".join(_caps) + ".")
+    st.caption(f"Loss floor (numerical guard, not a default model): a day's shock is floored at "
+               f"−{sim_diag['floor']:.0%} before the drift correction; it bound on {sim_diag['floor_hit_share_days']:.4%} of simulated days "
                f"({sim_diag['floor_hit_share_paths']:.2%} of paths). Its drift is removed exactly (mean correction "
                f"{sim_diag['mean_drift_correction']:.2e} a day), so the expected price stays today's price.")
 
@@ -162,7 +175,8 @@ def render(dd, ctx):
                  f"realised price fell inside the P10–P90 range **{cov['inside80']:.0%}** of the time (expected 80%), below P10 "
                  f"{cov['below_p10']:.0%} and above P90 {cov['above_p90']:.0%} (expected 10% each); outside the 90% interval "
                  f"{cov['outside90']:.0%} (expected 10%).")
-        st.caption("A handful of windows is a noisy test; it can reveal a badly calibrated range, not prove a perfect one.")
+        st.caption("A handful of windows is a noisy test; it can reveal a badly calibrated range, not prove a perfect one."
+                   + (f" {cov['skipped']} window(s) left out: an origin or outcome price was unknown." if cov.get("skipped") else ""))
     elif check:
         st.info(rr.calibration_verdict(cov))
     else:

@@ -117,7 +117,7 @@ def test_floored_multiplier_has_exactly_unit_mean(sigma, nu):
     # R4-03: E[max(e, -F)] > 0 for a zero-mean shock e; the closed-form correction must give E[M] = 1 by integration
     from scipy import integrate, stats
     F = rr.MAX_LOSS_PER_DAY
-    nu_eff = None if nu is None else max(nu, rr.NU_MIN + 0.05)          # the floor simulate_paths applies to nu
+    nu_eff = None if nu is None else max(nu, rr.NU_MIN)                 # the one floor simulate_paths applies to nu
     if nu_eff is None:
         pdf, scale = stats.norm.pdf, sigma
     else:

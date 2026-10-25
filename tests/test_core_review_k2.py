@@ -130,3 +130,12 @@ def test_gap_longer_than_five_sessions_sells_and_rebuys():
     assert gap["cost_pct"] == pytest.approx((0.10 + 0.20) / 2)               # mean of 10 bps and 20 bps, in %
     short = ft.quintile_net_of_costs(_two_periods("2026-01-12"), 1)          # 5 business days: still contiguous
     assert short["gap_sales"] == 0
+
+
+
+def test_one_late_entry_in_the_top_is_a_gap():
+    frame = _two_periods("2026-01-06")                                        # 1 business day after the exit
+    late = (frame["as_of_date"] == pd.Timestamp("2026-01-02")) & (frame["ticker"] == "T19")
+    frame.loc[late, "entry_date"] = pd.Timestamp("2026-01-20")                # one top name enters 11 days later
+    assert ft.quintile_net_of_costs(frame, 1)["gap_sales"] == 1
+    assert ft.quintile_net_of_costs(_two_periods("2026-01-06"), 1)["gap_sales"] == 0
