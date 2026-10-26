@@ -52,7 +52,7 @@ def style_opportunity_df(df):
         elif "FAVOURABLE" in val_str and "UN" not in val_str: return 'color: #27ae60; font-weight: bold'
         elif "BUY" in val_str: return 'color: #27ae60; font-weight: bold'
         elif "UNFAVOURABLE" in val_str or "SELL" in val_str or "AVOID" in val_str: return 'color: #e74c3c; font-weight: bold'
-        elif "NOT ENOUGH" in val_str: return 'color:inherit'
+        elif "NOT ENOUGH" in val_str or val_str in ("N/A", "NAN", "NONE", ""): return 'color:inherit'
         elif "REDUCE" in val_str or "WEAKENING" in val_str: return 'color: #e67e22; font-weight: bold'
         return 'color: #f1c40f'  # HOLD
 
@@ -133,7 +133,8 @@ def style_opportunity_df(df):
     def on(*cols):
         return [c for c in cols if c in df.columns]
 
-    styler = df.style.map(highlight_action, subset=on("Verdict", "Action")) \
+    # "Action" is the Signal: context, so only the Decision (Verdict) is coloured like a rating
+    styler = df.style.map(highlight_action, subset=on("Verdict")) \
                      .map(highlight_smart_money, subset=on("Smart Money")) \
                      .map(color_pos_neg, subset=on("vs MA200 (%)")) \
                      .map(color_zscore, subset=on("Z-Score")) \
@@ -307,7 +308,12 @@ def _selected_panel(shown, ctx):
     with c3:
         st.markdown("**Data**")
         issue = r.get("Data issue")
-        st.markdown(f"- {issue}" if issue else "- no data issue flagged")
+        if issue:
+            st.markdown(f"- {issue}")
+        elif "Data issue" in r.index or "_valuation" in r.index:
+            st.markdown("- no data issue flagged")
+        else:
+            st.markdown("- not checked in this view — open the stock for its data checks")
         if isinstance(r.get("Peer group"), str) and r["Peer group"]:
             st.markdown(f"- Scores ranked against **{r['Peer group']}**")
         for x in sv.as_list(r.get("_confidence_notes"))[:3]:

@@ -176,7 +176,8 @@ def render(ctx):
                        + (" · trial key: 20/min, 1,000/month" if model == "Cohere" else ""))
             with box:
                 if not hist:
-                    t = st.session_state.get("active_ticker") or "AAPL"
+                    t = ((st.session_state.get("deep_ticker_selector") if _tab_name() == "Stock Analysis" else None)
+                         or st.session_state.get("active_ticker") or "AAPL")
                     st.caption("Try: " + " · ".join(s.format(t=t) for s in _SUGGEST.get(_tab_name(), _SUGGEST["_"])))
                 for turn in hist:
                     _render_turn(turn)

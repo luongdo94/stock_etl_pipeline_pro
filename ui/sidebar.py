@@ -150,8 +150,14 @@ def render_macro_panel(macro, fred=None, live=None):
         st.markdown("".join(f"<div class='sb-macro-row'><span class='sb-macro-label'>{k}</span><b>{v}</b></div>"
                             for k, v in rows), unsafe_allow_html=True)
         if live:
-            st.caption(f"Live from Yahoo / FRED, fetched {live['at']:%d %b %H:%M} — display only. The Decision and the "
-                       "regime read the stored closes.")
+            from_yahoo = [k for k, v in (live.get("macro") or {}).items() if (v or {}).get("source") == "Yahoo (live)"]
+            if from_yahoo and live.get("fred"):
+                st.caption(f"Live from Yahoo / FRED, fetched {live['at']:%d %b %H:%M} — display only. The Decision and the "
+                           "regime read the stored closes.")
+            else:
+                st.warning("Live fetch incomplete: " + ("Yahoo did not answer (stored closes shown). " if not from_yahoo else "")
+                           + ("FRED did not answer (economy figures are N/A)." if not live.get("fred") else "")
+                           + f" Tried {live['at']:%d %b %H:%M}. The Decision and the regime read the stored closes.")
         else:
             src = (macro or {}).get("US10Y", {}).get("source") or "unavailable"
             st.caption(f"Rates: {src} (the 10Y also prices the DCF). The 3M bill and the economy (CPI, unemployment, Fed "

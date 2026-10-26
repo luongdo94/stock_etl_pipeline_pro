@@ -16,7 +16,7 @@ def render():
         
         tv_presets = {
             "💎 Value + Pullback (Custom)": {
-                "description": "Undervalued stocks (P/E < 15, P/B < 1.5) of large, profitable companies (ROE > 10%). Currently experiencing short-term oversold conditions (RSI < 40) but remaining above long-term support (MA200). Ideal for buy-the-dip setups.",
+                "description": "Undervalued stocks (P/E < 15, P/B < 1.5) of large, profitable companies (ROE > 10%). Currently experiencing short-term oversold conditions (RSI < 40) but remaining above long-term support (MA200).",
                 "filter": [
                     {"left": "price_earnings_ttm", "operation": "in_range", "right": [0, 15]},
                     {"left": "price_book_fq", "operation": "less", "right": 1.5},
@@ -39,7 +39,7 @@ def render():
                 "sort": {"sortBy": "price_earnings_growth_ttm", "sortOrder": "asc"}
             },
             "⚡ Breakout Scanner": {
-                "description": "High momentum super-stocks: Golden Cross confirmed (MA50 > MA200), price trading above MA50, RSI in the strength zone (50-75), accompanied by breakout volume.",
+                "description": "Momentum screen: Golden Cross confirmed (MA50 > MA200), price trading above MA50, RSI in the strength zone (50-75), accompanied by breakout volume.",
                 "filter": [
                     {"left": "SMA50", "operation": "greater", "right": "SMA200"},
                     {"left": "RSI", "operation": "in_range", "right": [50, 75]},
@@ -50,7 +50,7 @@ def render():
                 "sort": {"sortBy": "RSI", "sortOrder": "desc"}
             },
             "🛡️ Quality Compounders": {
-                "description": "Cash-printing machines with massive competitive moats: Gross Margin > 40%, ROIC > 15%, strong Free Cash Flow generation, and strict debt control. Perfect for long-term compounding.",
+                "description": "Quality screen: Gross Margin > 40%, ROIC > 15%, strong Free Cash Flow generation, and strict debt control.",
                 "filter": [
                     {"left": "gross_margin", "operation": "greater", "right": 40},
                     {"left": "return_on_invested_capital", "operation": "greater", "right": 15},
@@ -94,7 +94,8 @@ def render():
                     "options": {"lang": "en"},
                     "markets": [selected_tv_market],
                     "symbols": {"query": {"types": []}, "tickers": []},
-                    "columns": ["name", "description", "sector", "close", "price_earnings_ttm", "price_book_fq", "RSI", "market_cap_basic", "return_on_equity", "total_revenue_yoy_growth_ttm", "earnings_per_share_diluted_yoy_growth_ttm"],
+                    "columns": ["name", "description", "sector", "close", "price_earnings_ttm", "price_book_fq", "RSI", "market_cap_basic", "return_on_equity", "total_revenue_yoy_growth_ttm", "earnings_per_share_diluted_yoy_growth_ttm",
+                                "currency", "fundamental_currency_code"],
                     "sort": tv_presets[selected_tv_preset]["sort"],
                     "range": [0, 20]
                 }
@@ -105,31 +106,35 @@ def render():
                     if not isinstance(data, dict) or "data" not in data:
                         raise ValueError("unexpected response (no 'data' field)")
                     results = []
-                    market_currency_map = {
-                        "america": "USD", "vietnam": "VND", "uk": "GBP", "germany": "EUR",
-                        "france": "EUR", "japan": "JPY", "hongkong": "HKD", "china": "CNY",
-                        "australia": "AUD", "canada": "CAD", "india": "INR", "brazil": "BRL",
-                        "taiwan": "TWD", "korea": "KRW"
-                    }
-                    local_currency = market_currency_map.get(selected_tv_market.lower(), "USD")
-                    local_to_eur = get_forex_rates("EUR", local_currency)      # None = unknown: no EUR amounts, not parity
-                    
+                    # TradingView says which currency each row is in (a "uk" screen also lists USD-quoted lines, and
+                    # pence are GBX): use that, never the market's presumed currency. None = unknown: no EUR amount.
+                    rates = {}
+
+                    def to_eur(code):
+                        if code not in rates:
+                            rates[code] = get_forex_rates("EUR", code) if code else None
+                        return rates[code]
+
                     for d in (data.get('data') or []):
                         f = d['d']
-                        price_local = f[3]
-                        price_eur = price_local * local_to_eur if price_local is not None and local_to_eur else None
-                        mcap_local = f[7]
-                        mcap_eur = (mcap_local * local_to_eur) / 1e9 if mcap_local is not None and local_to_eur else None
-                        
+                        price_ccy = f[11] if len(f) > 11 else None
+                        mcap_ccy = f[12] if len(f) > 12 else None
+                        price_local, mcap_local = f[3], f[7]
+                        p_rate, m_rate = to_eur(price_ccy), to_eur(mcap_ccy)
+                        price_eur = price_local * p_rate if price_local is not None and p_rate else None
+                        mcap_eur = (mcap_local * m_rate) / 1e9 if mcap_local is not None and m_rate else None
+
                         results.append({
                             "Symbol": d['s'].split(':')[-1],
                             "Company": f[1],
                             "Sector": f[2] if f[2] else "N/A",
-                            "Price (€)": f"€{price_eur:.2f}" if price_eur is not None else "N/A",
+                            "Price (€)": (f"€{price_eur:.2f}" if price_eur is not None else
+                                          (f"{price_local:,.2f} {price_ccy} (no EUR rate)" if price_local is not None and price_ccy else "N/A")),
                             "P/E": round(f[4], 1) if f[4] is not None else "N/A",
                             "P/B": round(f[5], 1) if f[5] is not None else "N/A",
                             "RSI (14)": round(f[6], 1) if f[6] is not None else "N/A",
-                            "Market Cap (€)": f"€{mcap_eur:.1f}B" if mcap_eur is not None else "N/A",
+                            "Market Cap (€)": (f"€{mcap_eur:.1f}B" if mcap_eur is not None else
+                                               (f"{mcap_local / 1e9:,.1f}B {mcap_ccy} (no EUR rate)" if mcap_local is not None and mcap_ccy else "N/A")),
                             "ROE (%)": f"{round(f[8], 1)}%" if f[8] is not None else "N/A",
                             "Rev Growth YoY (%)": f"{round(f[9], 1)}%" if f[9] is not None else "N/A",
                             "EPS Growth YoY (%)": f"{round(f[10], 1)}%" if f[10] is not None else "N/A"

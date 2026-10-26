@@ -187,7 +187,8 @@ def _needs_review(items, hub):
         return
     for it in items:
         colour, tag = _SEV[it["severity"]]
-        who = "" if it["ticker"] == "—" else f"<b>{_e(it['ticker'])}</b> · "
+        who = ("" if it["ticker"] == "—" or str(it["message"]).startswith(str(it["ticker"]))
+               else f"<b>{_e(it['ticker'])}</b> · ")
         st.markdown(f"<div style='border-left:4px solid {colour};padding:4px 8px;margin-bottom:6px;'>"
                     f"<span style='color:{colour};font-weight:700;font-size:0.75rem;'>{tag} · {_e(it['kind'])}</span>"
                     f" <span style='color:inherit;font-size:0.72rem;'>({_e(it['scope'])})</span> {_chip(it['decision'])}<br>"
@@ -281,7 +282,7 @@ def _earnings_panel(earnings_cal, companies_full, dec):
     rates = {c: stored_fx_rate(str(c)) for c in up["currency"].fillna("USD").unique()}      # one lookup per currency
     st.caption("Consensus estimates use snapshot FX for EUR; otherwise the reporting currency is kept.")
     for _, r in up.iterrows():
-        ccy = str(r["currency"] or "USD")
+        ccy = str(r["currency"]) if pd.notna(r["currency"]) and str(r["currency"]).strip() else "currency unknown"
         fx = rates.get(ccy)
 
         def money(v, scale=1.0, unit=""):

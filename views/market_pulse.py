@@ -5,6 +5,8 @@ inputs that were unknown; the SPY trend and the breadth follow the sidebar range
 TradingView widgets load only when switched on. The optional Codex macro brief offers portfolio context on request;
 it never changes a stock's Decision.
 """
+import html
+
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
@@ -174,7 +176,8 @@ def _your_review():
         return
     tag = {"action": "ACT", "review": "REVIEW", "info": "INFO"}
     lines = "".join(f"<li><b>{tag.get(i['severity'], i['severity'].upper())}</b> · "
-                    f"{'' if i['ticker'] == '—' else i['ticker'] + ' · '}{i['message']}</li>" for i in prev["top"])
+                    f"{'' if i['ticker'] == '—' or str(i['message']).startswith(str(i['ticker'])) else html.escape(str(i['ticker'])) + ' · '}"
+                    f"{html.escape(str(i['message']))}</li>" for i in prev["top"])
     more = f" — {prev['total'] - len(prev['top'])} more in SIGNAL" if prev["total"] > len(prev["top"]) else ""
     st.markdown(f"<div style='font-size:0.82rem; margin:2px 0 6px 0;'><b>For you:</b> {prev['n']} item(s) need review"
                 f"{more}<ul style='margin:2px 0 0 16px; padding:0;'>{lines}</ul></div>", unsafe_allow_html=True)

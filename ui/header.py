@@ -37,10 +37,12 @@ def render_title_bar(model: dict):
     for w in model["warnings"]:
         st.markdown(f"<div style='margin:4px 2px; color:#e74c3c; font-size:0.85rem; font-weight:700;'>Warning: {esc(w)}</div>",
                     unsafe_allow_html=True)
+    if model["notes"]:
+        st.caption(model["notes"][0])                      # the limits of the data, always in view (U1-08)
     with st.expander("Data details"):
         for label, text in model["details"]:
             st.markdown(f"**{label}:** " + _md(text))
-        for note in model["notes"]:
+        for note in model["notes"][1:]:
             st.caption(note)
         c1, c2 = st.columns(2)
         c1.button("Open Market Pulse", key="hdr_go_pulse", on_click=_go, args=("🌐 Market Pulse",), width="stretch")

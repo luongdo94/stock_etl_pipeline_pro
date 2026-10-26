@@ -140,7 +140,7 @@ def render_sector_health_matrix(m_df: pd.DataFrame):
         <b>Matrix Methodology:</b><br>
         • <b>Vertical Axis (Z-Score):</b> Measures price momentum relative to historical standard deviations. > 0 is strong.<br>
         • <b>Horizontal Axis (PEG):</b> Measures valuation relative to growth. Lower is cheaper. Pivot set at median PEG ({peg_pivot:.2f}).<br>
-        • <b>Software Stocks:</b> Currently identifyable in the bottom-left quadrant (Low PEG but Negative Z-Score) — capturing high-conviction "oversold" opportunities.
+        • <b>Left out:</b> stocks whose PEG is zero, negative or unknown (negative earnings or growth makes PEG meaningless) are not in the matrix or the sector averages. The quadrants describe where sectors sit; they are not a rating — only the Decision rates a stock.
     </div>
     """, unsafe_allow_html=True)
 
@@ -152,6 +152,8 @@ def render_metric_row(label, value, delta=None, suffix="", is_pct=False, color_i
     if delta is not None:
         try:
             d_val = float(delta)
+            if not math.isfinite(d_val):
+                raise ValueError("unknown change")
             color = ("#e74c3c" if d_val >= 0 else "#2ecc71") if color_invert else ("#2ecc71" if d_val >= 0 else "#e74c3c")
             sign  = "+" if d_val >= 0 else ""
             d_text = f"{sign}{d_val:.1f}%" if is_pct else f"{sign}{d_val:.2f}{suffix}"
