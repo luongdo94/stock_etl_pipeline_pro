@@ -47,6 +47,15 @@ def test_buy_candidate_is_never_unfavourable():
     r = rate(**weak, decision_stance=DECISION_BUY)
     assert r["action_label"] == "NEUTRAL" and r["clamped"]
 
+    # A5-02: both candidate stances clamp the observable label; HOLD retains its negative signal.
+    for stance, clamped in [("BUY CANDIDATE", True), ("RESEARCH CANDIDATE", True), ("HOLD / WATCH", False)]:
+        from core import rating
+        r = rating.compute_institutional_rating(
+            ai_score=40, ma_sig="BEARISH", latest_rsi=50, upside=-10, pe_v=40, peg_v=3, sector="Software", w52_pos=50, rr=1.0,
+            sm_status="NEUTRAL", sm_strength=0, sm_layer="none", value_score=20, decision_stance=stance)
+        assert r["clamped"] is clamped
+        assert r["action_label"] == ("NEUTRAL" if clamped else "UNFAVOURABLE")
+
 
 def test_hold_and_no_data_leave_the_signal_alone():
     for stance in ("HOLD / WATCH", "NOT ENOUGH DATA"):

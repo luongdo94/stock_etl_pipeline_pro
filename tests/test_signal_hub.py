@@ -1,4 +1,5 @@
 """SIGNAL hub (docs/audits/SIGNAL_HUB_REVIEW.md, phases 1 and 2): feeds, market observations, lazy panels, isolation."""
+from core import alerts
 import json
 import os
 import sys
@@ -253,7 +254,6 @@ def test_a_rules_re_rating_is_info_unless_a_holding_is_downgraded():
     assert sev == {"UP": "info", "DOWN": "review"} and feed.badge_count(items) == 1
 
 
-
 # ── Codex review of dd75138 (SIG-R01 … SIG-R09) ─────────────────────────────────────────────────────────────────
 class _State(dict):
     __getattr__ = dict.get
@@ -433,3 +433,78 @@ def test_sigr09_the_chip_is_todays_decision_and_a_held_avoid_is_never_hidden():
     dc = next(i for i in items if i["kind"] == "DECISION CHANGED")
     assert dc["decision"] == "AVOID / TRIM" and "today's Decision: AVOID / TRIM" in dc["message"]
     assert any(i["kind"] == "HELD · AVOID" for i in items) and feed.badge_count(items) == 1
+
+
+# K6-01, K6-02, K6-04, K6-07: urgency, invalidation, rule failures and data changes.
+def _alert_close(day, price=90.0, rsi=50.0):
+    return pd.DataFrame({"date": [pd.Timestamp(day)], "price_close": [price], "volume": [1e6], "rsi": [rsi],
+                         "daily_return_pct": [0.0]}, index=pd.Index(["A"], name="ticker"))
+
+
+# K6-01, K6-02, K6-04, K6-07: urgency, invalidation, rule failures and data changes.
+def test_entry_zone_is_not_offered_below_the_invalidation():
+    wl = pd.DataFrame({"Ticker": ["A"], "Status": ["PENDING"], "Entry Target": [100.0], "Invalidation Level": [90.0],
+                       "Take Profit": [None]})
+    kinds = {a["kind"] for a in alerts.watchlist_triggers(wl, _alert_close("2026-10-24", price=80.0))}
+    assert "THESIS INVALIDATED" in kinds and "ENTRY ZONE" not in kinds
+    kinds = {a["kind"] for a in alerts.watchlist_triggers(wl, _alert_close("2026-10-24", price=95.0))}
+    assert kinds == {"ENTRY ZONE"}
+
+
+# K6-01, K6-02, K6-04, K6-07: urgency, invalidation, rule failures and data changes.
+def test_a_rule_that_cannot_be_checked_is_an_item():
+    rules = [{"id": 1, "ticker": "A", "metric": "RSI", "condition": "below", "threshold": 30},
+             {"id": 2, "ticker": "ZZZ", "metric": "Price", "condition": "below", "threshold": 10},
+             {"id": 3, "ticker": "A", "metric": "Price", "condition": "below", "threshold": "ten"}]
+    probs = alerts.rule_problems(rules, _alert_close("2026-10-24", rsi=np.nan))
+    assert [p["rule"]["id"] for p in probs] == [1, 2, 3]
+    items = feed.personal_items(decisions={}, latest=_alert_close("2026-10-24", rsi=np.nan), holdings={"A": {"shares": 1}},
+                                rules=rules, today=date(2026, 10, 25))
+    assert sum(i["kind"] == "RULE NOT EVALUATED" for i in items) == 3
+    assert alerts.rule_problems(rules[:1], _alert_close("2026-10-24")) == []             # a checked rule is not a problem
+
+    # K6-04: malformed thresholds and conditions never emit a trigger.
+    for rule in ({"threshold": float("nan"), "condition": "below"},
+                 {"threshold": 10, "condition": "sideways"}):
+        r = {"id": 9, "ticker": "A", "metric": "Price", **rule}
+        assert alerts.evaluate_rules([r], _alert_close("2026-10-24")) == []
+        assert len(alerts.rule_problems([r], _alert_close("2026-10-24"))) == 1
+
+
+# K6-01, K6-02, K6-04, K6-07: urgency, invalidation, rule failures and data changes.
+@pytest.mark.parametrize("before, after", [("AVOID / TRIM", "NOT ENOUGH DATA"), ("NOT ENOUGH DATA", "BUY CANDIDATE")])
+def test_avoid_to_not_enough_data_is_a_data_change(before, after):
+    """K6-07: losing and regaining inputs are data changes, not rating upgrades."""
+    def snap(day, decision):
+        return {"as_of_date": pd.Timestamp(day), "ticker": "A", "decision": decision, "price_close": 10.0,
+                "rules_version": "r", "score_version": "v", "inputs": "{}"}
+    out = feed.decision_changes(pd.DataFrame([snap("2026-10-23", before), snap("2026-10-24", after)]))
+    assert out["changes"][0]["direction"] == "data"
+
+
+# K6-01, K6-02, K6-04, K6-07: urgency, invalidation, rule failures and data changes.
+@pytest.mark.parametrize("days, sev, reason", [
+    (4, "action", None), (5, "review", None),
+    (24, "review", "stale"), (1, "action", None), (-2, "review", "after today"),
+])
+def test_the_price_age_boundary(days, sev, reason):
+    """K6-01: four/five-day boundary, weeks-old closes, and future closes control urgency and wording."""
+    items = feed.personal_items(decisions={}, latest=_alert_close(date(2026, 10, 25) - pd.Timedelta(days=days)),
+                                holdings={"A": {"shares": 10}}, stops={"A": 100.0}, stale=set(), today=date(2026, 10, 25))
+    hit = next(i for i in items if i["kind"] == "STOP HIT")
+    assert hit["severity"] == sev
+    if reason:
+        assert reason in hit["message"]
+
+
+# R7: unknown stored valuation cannot invent a change cause.
+def test_a_nan_valuation_in_stored_inputs_does_not_break_the_feed():
+    from core import signal_feed as feed
+    def snap(day, decision, inputs):
+        return {"as_of_date": pd.Timestamp(day), "ticker": "A", "decision": decision, "price_close": 10.0,
+                "rules_version": "r", "score_version": "v", "inputs": inputs}
+    out = feed.decision_changes(pd.DataFrame([snap("2026-10-23", "NOT ENOUGH DATA", '{"valuation": NaN}'),
+                                              snap("2026-10-24", "AVOID / TRIM", '{"valuation": {}}')]))
+    (change,) = out["changes"]
+    assert (change["ticker"], change["from"], change["to"]) == ("A", "NOT ENOUGH DATA", "AVOID / TRIM")
+    assert change["direction"] == "data" and "valuation" not in change["causes"]      # no invented valuation difference

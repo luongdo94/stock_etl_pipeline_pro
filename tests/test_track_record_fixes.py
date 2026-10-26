@@ -1,4 +1,6 @@
 """Offline regressions T01-T12; real DuckDB files are confined to tmp_path."""
+import yaml
+from tests.evidence_fixtures import evidence_frames as _evidence_fixture
 from itertools import permutations
 from pathlib import Path
 
@@ -375,3 +377,48 @@ def test_t03_unresolved_period_does_not_supply_drift_or_replace_top():
     incomplete_universe.loc[0, "fwd_1"] = np.nan
     result = ft.quintile_net_of_costs(incomplete_universe, 1)
     assert result["periods"] == 1 and result["gross_pct"] == pytest.approx((0.1 - 0.4 / 19) * 100)
+
+
+# K4-01, K4-05, K4-08: computable costs, independent windows and stamped provenance.
+@pytest.mark.parametrize("broken", [yaml.YAMLError("bad yaml"), {"costs": {"one_way_bps_by_region": "ten"}},
+                                    {"costs": {"one_way_bps_by_region": {"US": "ten"}}},
+                                    {"costs": {"one_way_bps_by_region": {"US": -5}}}])
+def test_unreadable_cost_configuration_is_not_replaced_by_defaults(monkeypatch, broken):
+    from core import decision
+    snaps, px = _evidence_fixture()
+    monkeypatch.setattr(ft, "fama_macbeth", lambda *a, **k: {"premium": 1.0, "t_stat": 3.0, "n_independent": 6})
+    monkeypatch.setattr(ft, "quintile_net_of_costs", lambda *a, **k: {"net_pct": 0.5, "periods": 6})
+    assert tr.evidence_status(snaps, px)["ok"] is True
+    if isinstance(broken, Exception):
+        monkeypatch.setattr(decision, "load_rules", lambda *a, **k: (_ for _ in ()).throw(broken))
+    else:
+        monkeypatch.setattr(decision, "load_rules", lambda *a, **k: broken)
+    res = tr.evidence_status(snaps, px)
+    assert res["ok"] is False and "not computable" in res["label"]
+    assert tr.evidence_headline(res) == "Not computable"                         # the headline shows it (R4-02)
+
+
+# K4-01, K4-05, K4-08: computable costs, independent windows and stamped provenance.
+def test_snapshots_without_provenance_are_not_evidence():
+    snaps, px = _evidence_fixture()
+    res = tr.evidence_status(snaps.drop(columns=["score_version", "rules_version"]), px)
+    assert res["ok"] is False and "no score version" in res["label"]
+    assert tr.current_definitions(snaps.drop(columns=["rules_version"])).empty      # no rules stamp: not current
+
+
+# K4-01, K4-05, K4-08: computable costs, independent windows and stamped provenance.
+def test_signal_dates_in_one_holding_window_count_once():
+    rng = np.random.default_rng(5)
+    days = pd.bdate_range("2026-01-01", periods=126)
+    rows = [{"as_of_date": d, "ticker": f"T{i}", "quality": i, "region": "US" if i % 2 else "EU",
+             "xs_21": 0.01 * i + rng.normal(0, 0.05),
+             "entry_date": pd.Timestamp("2026-07-01"), "exit_date_21": pd.Timestamp("2026-07-30")}
+            for d in days for i in range(40)]                                       # 40 names: above the cross-section minimum
+    fr = pd.DataFrame(rows)
+    assert tr.independent_windows(fr, 21) == 1
+    assert tr.information_coefficient(fr, 21)["n_independent"] == 1                # was 6 from the snapshot dates
+    for c in ("ctl_beta", "ctl_size", "ctl_value", "ctl_momentum"):
+        fr[c] = rng.normal(size=len(fr))                                           # controls that vary
+    fr["fwd_21"] = fr["xs_21"]
+    fm = ft.fama_macbeth(fr, 21, "quality", require_controls=True)
+    assert fm["n_days"] == 126 and fm["n_independent"] == 1                        # it computed — and counted ONE window

@@ -151,6 +151,15 @@ def test_realized_pnl_uses_average_cost_and_fees():
     assert p.at["B", "unmatched_qty"] == 3 and pd.isna(p.at["B", "realized_eur"])      # unknown basis: N/A (K4-07)
     assert p.at["B", "realized_known_eur"] == 0
 
+    # K4-03, K4-07: buy fees remain unrealised until a sale.
+    t0 = datetime(2026, 1, 1)
+    bought = ledger.realized_pnl([ledger.trade("A", "BUY", 10, 100, 10.0, when=t0)]).set_index("ticker")
+    assert bought.at["A", "realized_eur"] == 0.0 and bought.at["A", "avg_cost"] == pytest.approx(101.0)
+    assert bought.at["A", "fees_eur"] == pytest.approx(10.0)
+    sold = ledger.realized_pnl([ledger.trade("A", "BUY", 10, 100, 10.0, when=t0),
+                                ledger.trade("A", "SELL", 10, 110, 5.0, when=t0.replace(day=2))]).set_index("ticker")
+    assert sold.at["A", "realized_eur"] == pytest.approx(10 * (110 - 101) - 5.0)    # 85 = 100 gain - 10 - 5 fees
+
 
 def test_trades_from_diff_books_every_size_change():
     rows = ledger.trades_from_diff({"A": 10, "B": 5}, {"A": 12, "C": 1, "D": 3}, {"A": 10, "B": 20, "C": 5}, 0.001,

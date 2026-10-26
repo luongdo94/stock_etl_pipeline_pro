@@ -1,4 +1,6 @@
 """Portfolio agent review: synthetic prices, saved-book readers and fake model replies only."""
+from core.portfolio_review import risk_contribution, target_drift
+from core.portfolio_risk import apply_rebalance
 import copy
 import inspect
 import json
@@ -318,3 +320,24 @@ def test_codex_only_review_is_available_and_uses_the_selected_language(review_ui
     assert call.call_args.args[0] == assistant.PORTFOLIO_REVIEW_QUESTION.format(language="Vietnamese")
     assert callable(call.call_args.kwargs["chat"])
     assert any("Codex (local)" in c.value for c in at.caption)
+
+
+# K2-06, K2-07: signed risk contributions and post-cost target trades.
+def test_risk_contribution_sums_to_one_hundred_with_a_hedge():
+    rc = risk_contribution(np.array([[0.04, -0.015], [-0.015, 0.01]]), [0.5, 0.5])
+    assert rc == pytest.approx([125.0, -25.0]) and rc.sum() == pytest.approx(100.0)
+    assert np.isnan(risk_contribution(np.zeros((2, 2)), [0.5, 0.5])).all()          # no risk: unknown, not 0 %
+
+
+# K2-06, K2-07: signed risk contributions and post-cost target trades.
+def test_target_table_trades_match_apply_rebalance():
+    rules = {"risk": {"max_position_pct": 30.0}, "costs": {"commission_pct": 0.1}}
+    stances = {"A": "BUY CANDIDATE", "B": "BUY CANDIDATE"}
+    rows = target_drift(["A", "B"], [0.10, 0.0], {"A": 10.0, "B": 10.0}, 10_000., {"A": 100., "B": 100.},
+                        stances, rules, None, None)
+    sim = apply_rebalance(["A", "B"], {"A": 10.0, "B": 0.0}, {"A": 100., "B": 100.}, 9_000., [0.10, 0.10],
+                          cost_pct=0.001)
+    trades = {r["Ticker"]: r["Trade (shares)"] for r in rows}
+    assert trades["A"] == pytest.approx(sim["shares"]["A"] - 10.0)                   # a small sale, as Apply makes
+    assert trades["B"] == pytest.approx(sim["shares"]["B"])
+    assert sim["shares"]["A"] < 10.0

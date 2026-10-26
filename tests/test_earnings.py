@@ -656,3 +656,33 @@ def test_r07_a_date_only_event_lasts_to_the_real_midnight_on_daylight_saving_day
     ev = pd.DataFrame({"ticker": [ticker], "earnings_ts": [pd.Timestamp(day, tz=tz).tz_convert("UTC")],
                        "eps_estimate": [1.0], "eps_actual": [np.nan], "surprise_pct": [np.nan]})
     assert bool(er.upcoming_mask(ev, pd.Timestamp(now, tz="UTC")).iloc[0]) is expected
+
+
+@pytest.mark.parametrize("gap_position", ["initial", "after-reaction", "late-reaction"])
+def test_a_reaction_window_over_missing_closes_is_not_measured(gap_position):
+    """K8-09, R8-08: gap position separately controls the one/two-day reaction and the drift."""
+    if gap_position == "initial":
+        days = pd.to_datetime(["2026-05-01", "2026-05-15", "2026-05-18"] + list(pd.bdate_range("2026-05-19", periods=30)))
+        event_day = "2026-05-04 12:00"
+    elif gap_position == "after-reaction":
+        days = pd.DatetimeIndex(list(pd.bdate_range("2026-04-27", "2026-05-05")) + list(pd.bdate_range("2026-05-18", periods=30)))
+        event_day = "2026-05-05 12:00"
+    else:
+        days = pd.DatetimeIndex(list(pd.bdate_range("2026-04-27", "2026-05-01")) + list(pd.bdate_range("2026-05-18", periods=40)))
+        event_day = "2026-05-04 12:00"
+    close = pd.Series(np.linspace(100, 130, len(days)), index=days)
+    ev = pd.DataFrame({"ticker": "A", "earnings_ts": pd.to_datetime([event_day], utc=True),
+                       "eps_actual": [1.0], "eps_estimate": [0.9], "surprise_pct": [0.1]})
+    r = er.event_reactions(ev, close, "America/New_York")
+    assert bool(r.loc[0, "gap"]) and np.isnan(r.loc[0, "ret_2d"])
+    if gap_position == "after-reaction":
+        assert np.isfinite(r.loc[0, "ret_1d"])
+    else:
+        assert np.isnan(r.loc[0, "ret_1d"])
+    assert np.isnan(r.loc[0, "drift_20d"])
+    if gap_position == "after-reaction":
+        assert np.isnan(r.loc[0, "abn_drift_20d"])
+    if gap_position == "initial":
+        full = pd.Series(np.linspace(100, 130, 40), index=pd.bdate_range("2026-04-27", periods=40))
+        ok = er.event_reactions(ev, full, "America/New_York")
+        assert not bool(ok.loc[0, "gap"]) and np.isfinite(ok.loc[0, "ret_2d"]) and np.isfinite(ok.loc[0, "drift_20d"])

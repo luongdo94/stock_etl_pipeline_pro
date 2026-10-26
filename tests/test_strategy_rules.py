@@ -1,4 +1,5 @@
 """Synthetic Strategy Lab rules: strict thresholds and next-close fills, never market performance."""
+from core import lab_view
 import numpy as np
 import pandas as pd
 import pytest
@@ -153,3 +154,44 @@ def test_buy_and_hold_starts_at_first_close_ignoring_first_row_return(first_retu
     pd.testing.assert_series_equal(bars["daily_return_pct"].iloc[:1], pd.Series(
         [first_return], name="daily_return_pct",
     ))
+
+
+# K4-04, K4-06: missing returns and consistent fees.
+def _prices(n=60, jump_at=31):
+    p = pd.DataFrame({"date": pd.bdate_range("2025-01-01", periods=n), "price_close": 100.0, "daily_return_pct": 0.0,
+                      "ma_20": 99.0, "ma_50": 100.0, "rsi": 50.0})
+    p.loc[10:29, "ma_20"] = 101.0                                     # golden cross on bar 10, death cross on bar 30
+    p.loc[jump_at:, "price_close"] = 110.0
+    p.loc[jump_at, "daily_return_pct"] = 10.0
+    return p
+
+
+# K4-04, K4-06: missing returns and consistent fees.
+@pytest.mark.parametrize("jump_at", [31, 25])                          # the rise on the sale day / while held
+def test_fees_compound_the_same_way_in_the_curve_and_the_trade_log(jump_at):
+    r = run_backtest_simulation("X", _prices(jump_at=jump_at), "Trend Following", .5, .5, .01, 10000,
+                                pd.DataFrame({"ticker": ["X"], "score": [80]}))
+    expected = 1.1 * 0.99 ** 2
+    assert r["equity_curve"][-1] == pytest.approx(10000 * expected)
+    sells = [t["_pnl"] for t in r["trade_log"] if t["Action"].endswith("SELL")]
+    assert sells == [pytest.approx(expected - 1)]
+
+
+@pytest.mark.parametrize("bad, bars, ignore_bar_zero", [
+    pytest.param(np.nan, [1, 2, 3], False, id="opening-gap"),
+    pytest.param(np.nan, [1], True, id="nan-after-unused-bar-zero"),
+    pytest.param(np.inf, [1], True, id="positive-inf"),
+    pytest.param(-np.inf, [1], True, id="negative-inf"),
+])
+def test_missing_returns_make_the_performance_figures_unknown(bad, bars, ignore_bar_zero):
+    """K4-04, R4-04: every used non-finite return voids all metrics and the displayed summary."""
+    p = _prices()
+    if ignore_bar_zero:
+        p.loc[0, "daily_return_pct"] = np.nan
+    p.loc[bars, "daily_return_pct"] = bad
+    r = run_backtest_simulation("X", p, "Trend Following", .5, .5, .0, 10000, pd.DataFrame({"ticker": ["X"], "score": [80]}))
+    assert r["missing_returns"] == len(bars)
+    assert all(np.isnan(r[k]) for k in ("total_return", "bnh_return", "sharpe", "max_dd"))
+    assert lab_view.neutral_summary([r]) == ""
+    row = lab_view.comparison_rows([r]).iloc[0]
+    assert row["Return %"] is None or pd.isna(row["Return %"])

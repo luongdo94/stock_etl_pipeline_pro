@@ -1,6 +1,7 @@
 """
 Test suite for support/resistance calculation using Swing High/Low + Volume method.
 """
+from core import indicators, levels
 import pytest
 import pandas as pd
 import numpy as np
@@ -215,3 +216,28 @@ class TestTacticalMetrics:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# K5-03, K5-06: fallback RSI and the short-history ATR boundary.
+def test_levels_fallback_rsi_is_wilder_and_flat_is_unknown():
+    n = 16
+    df = pd.DataFrame({"date": pd.bdate_range("2026-01-01", periods=n), "price_close": [100.] + [114.] * (n - 1),
+                       "price_high": [101.] + [115.] * (n - 1), "price_low": [99.] + [113.] * (n - 1), "volume": 1e6})
+    m = levels.get_tactical_metrics(df, 114.0)                     # no rsi column: the fallback path
+    assert m["rsi"] == pytest.approx(100.0)                         # Wilder; the SMA fallback gave 0
+    assert np.isnan(indicators.wilder_rsi(pd.Series([10.0] * 20)).iloc[-1])
+
+
+# K5-03, K5-06: fallback RSI and the short-history ATR boundary.
+@pytest.mark.parametrize("n, flat", [(12, True), (13, False), (14, False), (15, False)])
+def test_swing_levels_at_the_atr_window_boundary(n, flat):
+    """K5-06: short history and the ATR boundary keep finite, correctly ordered stops and targets."""
+    close = np.full(n, 100.0) if flat else 100 + np.sin(np.arange(n))
+    df = pd.DataFrame({"date": pd.bdate_range("2026-01-01", periods=n), "price_close": close,
+                       "price_high": close + 1, "price_low": close - 1, "volume": 1e6})
+    price = float(df.price_close.iloc[-1])
+    m = levels.get_tactical_metrics(df, price)
+    assert np.isfinite(m["stop_loss"]) and np.isfinite(m["tp1"])
+    assert m["stop_loss"] < price < m["tp1"]
+    if flat:
+        assert m["stop_loss"] == pytest.approx(93.12) and m["tp1"] == pytest.approx(107.12)

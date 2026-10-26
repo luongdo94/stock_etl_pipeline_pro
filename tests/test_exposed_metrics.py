@@ -1,5 +1,6 @@
 """Metrics that were computed but not shown (2026-10-16): measured Quality inputs, insider activity, DCF model risk,
 analyst detail, per-ticker data confidence, history jumps, per-holding sensitivities and portfolio factor tilts."""
+from etl.utils import clean_upside_pct
 import os
 
 import numpy as np
@@ -136,3 +137,49 @@ def test_earnings_blackout_leaves_the_conflicts_column():
     from views.scanner import _clean_conflicts
     assert _clean_conflicts("Earnings in 5 day(s) (21 Oct) — no new position into the release.; Price momentum 4/100")         == "Price momentum 4/100"
     assert _clean_conflicts(None) == ""
+
+
+# K7-03, R7-01, R7-09: unknown upside and safe placeholder data.
+def test_upside_unknown_can_be_nan():
+    assert clean_upside_pct(None, 100) == 0.0                                 # scoring input: unchanged
+    assert np.isnan(clean_upside_pct(None, 100, unknown=float("nan")))        # screener: unknown
+    assert np.isnan(clean_upside_pct(500, 100, None, unknown=float("nan")))   # rejected as stale
+    assert clean_upside_pct(120, 100, unknown=float("nan")) == pytest.approx(20.0)
+
+
+# K7-03, R7-01, R7-09: unknown upside and safe placeholder data.
+def test_a_company_without_prices_is_a_safe_placeholder_row(warehouse):
+    import duckdb
+    from core.screener import build_screener_table
+    from services.db import read_warehouse
+    # Share the module's synthetic warehouse read-only; every reader returns fresh frames.
+    with duckdb.connect(warehouse, read_only=True) as conn:
+        frames = read_warehouse(conn)
+    comp = frames[1]
+    extra = comp.iloc[[0]].assign(ticker="NOPX")
+    t = build_screener_table(pd.concat([comp, extra], ignore_index=True), frames[0], frames[4], frames[3], frames[7])
+    row = t.set_index("Ticker").loc["NOPX"]
+    assert row["Decision"] == "NOT ENOUGH DATA" and pd.isna(row["Price"])
+    assert row["Components"] == {} and row["_valuation"] == {} and row["Flags"] == ""        # R7-01
+    assert row["Rev Momentum"] == "N/A"                                                     # R7-09
+
+
+# R7-01, R7-09: placeholder schema and executable presets.
+def test_a_table_of_placeholders_has_every_column_of_a_real_row_and_the_presets_run(warehouse):
+    from core import scan_presets
+    from core.screener import build_screener_table
+    from services.db import read_warehouse
+    # Share the module's synthetic warehouse read-only; every reader returns fresh frames.
+    with duckdb.connect(warehouse, read_only=True) as conn:
+        frames = read_warehouse(conn)
+    real = build_screener_table(frames[1], frames[0], frames[4], frames[3], frames[7])
+    empty = build_screener_table(frames[1], frames[0].iloc[:0], frames[4], frames[3], frames[7])
+    assert set(real.columns) <= set(empty.columns), sorted(set(real.columns) - set(empty.columns))
+    for preset in scan_presets.PRESETS:
+        preset.rule(empty)                                                 # no KeyError on a table with no figures
+
+    # A7-01: placeholders retain Decision and every column consumed by the app.
+    assert len(empty) and (empty["Decision"] == "NOT ENOUGH DATA").all()
+    for col in ("Price", "Quality", "Value", "Momentum", "Revisions", "Upside (%)", "Smart Money", "RSI (14)", "Trend",
+                "MCap (B)", "Components", "_valuation", "Flags", "Missing"):
+        assert col in empty.columns, col

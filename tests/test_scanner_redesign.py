@@ -1,5 +1,6 @@
 """Stock Scanner redesign (SCANNER_REDESIGN_IDEAS): views, counts, search, sort and export are pure; unknown is not 0; the
 Decision explains itself; liquidity reads the raw ADV; state survives; a row opens in Stock Analysis."""
+import re
 import io
 import os
 import sys
@@ -263,3 +264,21 @@ def test_analysis_opens_the_chosen_stock_even_when_its_selector_already_exists(w
     assert not at.exception, [e.value for e in at.exception]
     assert at.selectbox(key="deep_ticker_selector").value == "MSFT"
     assert any("MSFT" in m.value for m in at.markdown)
+
+
+# U2-02: only Decision receives rating colours in the rendered HTML.
+def test_only_the_decision_column_is_coloured_like_a_rating():
+    from views.scanner import style_opportunity_df
+    df = pd.DataFrame({"Verdict": ["BUY CANDIDATE", "N/A"], "Action": ["STRONG SETUP", "UNFAVOURABLE"],
+                       "Smart Money": ["N/A", "N/A"], "vs MA200 (%)": [1.0, -1.0], "Z-Score": [0.0, 0.0],
+                       "RSI (14)": [50.0, 50.0]})
+    html = style_opportunity_df(df).to_html()                                            # what the browser is given
+    cols = list(df.columns)
+    coloured = {}                                                                         # (row, column name) -> css colour
+    for row, col, body in re.findall(r"#T_\w+_row(\d+)_col(\d+) \{([^}]*)\}", html):
+        m = re.search(r"color:\s*([^;\n]+)", body)
+        if m:
+            coloured[(int(row), cols[int(col)])] = m.group(1).strip()
+    assert coloured.get((0, "Verdict"), "inherit") != "inherit"                           # the Decision is coloured
+    assert not any(c == "Action" for (_, c) in coloured)                                  # U2-02: the Signal is not
+    assert coloured.get((1, "Verdict")) == "inherit"                                      # N/A is not HOLD-yellow

@@ -1,4 +1,5 @@
 """Volume Flow contract: listing prices, context-only decisions, and honest availability."""
+from tests.price_fixtures import flat_listing_frame as _flat_frame
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
@@ -51,14 +52,21 @@ def test_all_ohlc_are_restored_before_engine_and_volume_is_unchanged(monkeypatch
     pd.testing.assert_frame_equal(captured[0][local.columns], local)
 
 
-@pytest.mark.parametrize("column", ["fx_rate", "price_scale"])
-@pytest.mark.parametrize("bad", ["absent", None, 0, -1, np.inf])
+@pytest.mark.parametrize("column, bad", [
+    (column, bad) for column in ("fx_rate", "price_scale") for bad in ("absent", None, 0, -1, np.inf)
+] + [("fx_rate", "nullable-gap")])
 def test_unknown_listing_basis_is_na(column, bad):
-    _, eur = _prices()
-    if bad == "absent":
-        eur = eur.drop(columns=column)
+    """K5-05, A5-05: listing basis must be known throughout the window, including nullable interior gaps."""
+    if bad == "nullable-gap":
+        eur = _flat_frame(n=40)
+        eur["fx_rate"] = pd.array(eur["fx_rate"], dtype="Float64")
+        eur.loc[eur.index[10], "fx_rate"] = pd.NA
     else:
-        eur.loc[eur.index[-1], column] = bad
+        _, eur = _prices()
+        if bad == "absent":
+            eur = eur.drop(columns=column)
+        else:
+            eur.loc[eur.index[-1], column] = bad
     result = get_volume_flow(eur)
     assert result["signal"] == "N/A" and result["reason"] == "listing-currency basis unknown"
 
@@ -74,6 +82,15 @@ def test_k1_missing_history_or_volume_is_na_with_reason(case):
     assert engine(local)["signal"] == "NEUTRAL"
     local.loc[0, "volume"] = 0  # one zero-volume bar does not mean unavailable
     assert engine(local)["signal"] == "NEUTRAL"
+
+    # K5-05: spaced missing volumes inside the window must also void flow.
+    if case == "missing_volume":
+        ok = get_volume_flow(_flow_prices(), sector="Industrials")
+        assert ok["signal"] != "N/A", ok
+        gap = _flow_prices()
+        gap.loc[[40, 45, 50], "volume"] = np.nan
+        out = get_volume_flow(gap, sector="Industrials")
+        assert out["signal"] == "N/A" and "volume missing" in out["reason"]
 
 
 @pytest.mark.parametrize("signal", ["ACCUMULATION", "DISTRIBUTION", "NEUTRAL", "N/A"])
@@ -260,3 +277,61 @@ def test_sm04_portfolio_refreshes_flow_without_rebuilding_or_saving_draft(monkey
             assert state.portfolio_df is grid  # the Action/raw guard did not rebuild the editor
             assert grid.loc[0, ["Shares", "Cost Basis (€)", "Target (%)"]].tolist() == [7.0, 80.0, 12.0]
     assert not writes
+
+
+def _flow_prices(n=60):
+    rng = np.random.default_rng(0)
+    px = 100 + np.cumsum(rng.normal(0, 1, n))
+    return pd.DataFrame({"date": pd.bdate_range("2026-01-01", periods=n), "price_close": px,
+                         "volume": rng.integers(500_000, 2_000_000, n).astype(float), "price_high": px + 1,
+                         "price_low": px - 1, "fx_rate": 1.0, "price_scale": 1.0})
+
+
+# A5-05: real-engine results and unchanged input across rounding, float32 and copy-on-write.
+def _volume_flow_through_the_real_engine(df, monkeypatch):
+    """Run get_volume_flow with the real engine, recording the frame it hands over; the caller's frame must stay as it was."""
+    from core import smart_money
+    before = df.copy(deep=True)
+    real, seen = smart_money.get_sm_spirit_unified_v2, {}
+
+    def spy(d, sector):
+        seen["df"] = d.copy()
+        return real(d, sector)
+    monkeypatch.setattr(smart_money, "get_sm_spirit_unified_v2", spy)
+    out = smart_money.get_volume_flow(df, "Tech")
+    pd.testing.assert_frame_equal(df, before)                                    # input not modified
+    assert seen["df"]["price_close"].nunique() == 1                              # the flat price stays one price
+    assert out["signal"] not in ("ACCUMULATION", "DISTRIBUTION")                 # ... so no flow is read into it
+    return out
+
+
+# A5-05: real-engine results and unchanged input across rounding, float32 and copy-on-write.
+@pytest.mark.parametrize("local,fx_base,scale", [(100.0, 0.9, 1.0), (40_000.0, 0.00066, 1.0), (3_000.0, 0.0058, 1.0),
+                                                 (3_000.05, 0.0058, 1.0), (1_500.0, 1.17, 100.0)])   # USD, KRW, JPY, JPY off-grid, GBp
+def test_volume_flow_sees_a_flat_price_as_flat(monkeypatch, local, fx_base, scale):
+    rng = np.random.default_rng(0)
+    fx = (fx_base * (1 + rng.normal(0, 0.003, 40))).astype("float32").astype(float)    # a moving rate
+    eur = np.round(local / scale * fx, 4)                                               # the warehouse's stored close
+    df = pd.DataFrame({"date": pd.bdate_range(end="2026-10-23", periods=40), "price_open": eur, "price_high": eur,
+                       "price_low": eur, "price_close": eur, "volume": 1e6, "fx_rate": fx, "price_scale": scale})
+    _volume_flow_through_the_real_engine(df, monkeypatch)
+
+
+# A5-05: real-engine results and unchanged input across rounding, float32 and copy-on-write.
+def test_volume_flow_works_on_the_apps_float32_copy_on_write_frames(monkeypatch):
+    """The app hands over float32 frames (optimize_dataframe_memory) under copy-on-write: arrays taken from them are
+    read-only — the first version assigned into one and crashed the whole Scanner."""
+    from etl.performance_utils import optimize_dataframe_memory
+    with pd.option_context("mode.copy_on_write", True):
+        df = optimize_dataframe_memory(_flat_frame(n=60, local=100.0, seed=3))
+        assert str(df["price_close"].dtype) == "float32"
+        _volume_flow_through_the_real_engine(df, monkeypatch)
+
+
+# A5-05: real-engine results and unchanged input across rounding, float32 and copy-on-write.
+def test_a_flat_price_stays_flat_after_the_apps_float32_downcast(monkeypatch):
+    from etl.performance_utils import optimize_dataframe_memory
+    for seed in range(5):
+        df = optimize_dataframe_memory(_flat_frame(seed=seed))
+        assert str(df["price_close"].dtype) == "float32"
+        _volume_flow_through_the_real_engine(df, monkeypatch)

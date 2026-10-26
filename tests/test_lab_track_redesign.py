@@ -45,6 +45,13 @@ def test_run_identity_marks_stale_results():
     assert "snapshot" in lv.stale_reason(run, lv.run_spec("AAA", 8, 25, 10000, 0.1, "v2"))
     assert lv.stale_reason(None, spec) is None
 
+    # K4-09: results saved before the engine stamp are stale.
+    from core import lab_view
+    spec = lab_view.run_spec("X", 10, 20, 10000, 0.1, "v1")
+    assert lab_view.stale_reason({"spec": spec}, spec) is None
+    old = {k: v for k, v in spec.items() if k != "engine"}                            # stored before the engine stamp
+    assert "calculation was updated" in lab_view.stale_reason({"spec": old}, spec)
+
 
 def test_validate_refuses_short_or_returnless_history():
     assert lv.validate(pd.DataFrame()) is not None

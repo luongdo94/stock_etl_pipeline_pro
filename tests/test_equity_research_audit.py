@@ -85,7 +85,7 @@ def test_f17_costs_follow_the_traded_weights_and_both_regions():
     q = quintile_net_of_costs(frame, 21, cost_bps={"US": 10, "VN": 40})
     # period 1: buy 100% VN (40bp); period 2: sell 100% VN (40) + buy 100% US (10) = 50bp; period 3: the same US names,
     # but each exit is 19 sessions before the next entry (> MAX_GAP_SESSIONS, K2-05): sold at the exit (10) and bought
-    # again (10) = 20bp. A contiguous handover would trade nothing (tests/test_core_review_k2.py).
+    # again (10) = 20bp. A contiguous handover would trade nothing (tests/test_factor_test.py).
     assert q["periods"] == 3 and q["cost_pct"] == pytest.approx((0.40 + 0.50 + 0.20) / 3) and q["gap_sales"] == 2
 
 

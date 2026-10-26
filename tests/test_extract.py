@@ -508,3 +508,10 @@ class TestStatementSignatureAndErrorPayloads:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
+
+
+# K7-04: spaced minor units use the major-currency FX cache.
+def test_fx_to_eur_scales_a_spaced_minor_unit(monkeypatch):
+    from etl import extract
+    monkeypatch.setitem(extract._FX_CACHE, "GBP", 1.17)
+    assert extract.fx_to_eur(" GBp ") == pytest.approx(0.0117) and extract.fx_to_eur("GBP") == pytest.approx(1.17)

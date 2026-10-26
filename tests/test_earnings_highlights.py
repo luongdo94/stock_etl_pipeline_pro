@@ -1,5 +1,6 @@
 """Latest-quarter highlights on the Earnings tab: stored figures only, consensus only when recorded before the report,
 unknown is N/A, growth in the statement currency; and the daily consensus snapshot."""
+from core import earnings_highlights as eh
 import os
 import sys
 from datetime import date
@@ -141,3 +142,23 @@ def test_full_refresh_keeps_the_consensus_history(tmp_path):
     assert es.carry_forward(fresh, prod) == 1
     assert fresh.execute("SELECT as_of, eps_est_0q_avg FROM raw.estimate_snapshots ORDER BY as_of").fetchall() ==         [(date(2026, 10, 14), 1.0), (date(2026, 10, 21), 2.0)]
     assert es.carry_forward(duckdb.connect(str(tmp_path / "other.duckdb")), str(tmp_path / "missing.duckdb")) == 0
+
+
+# K8-07, K8-08, K8-10: one event EPS basis, year-over-year growth and EUR display.
+def _event_quarters():
+    return pd.DataFrame({"ticker": "A", "report_date": pd.to_datetime(["2025-09-30", "2026-09-30"]), "revenue": [1e8, 1e8],
+                         "eps_growth_yoy_pct": [None, 100.0], "src_currency": "JPY", "fx_to_eur": 0.006})
+
+
+# K8-07, K8-08, K8-10: one event EPS basis, year-over-year growth and EUR display.
+def _ev():
+    return pd.DataFrame({"ticker": "A", "earnings_ts": pd.to_datetime(["2025-10-20 06:00", "2026-10-20 06:00"], utc=True),
+                         "eps_actual": [2.0, 2.2], "eps_estimate": [2.0, 2.0], "surprise_pct": [0.0, 0.1]})
+
+
+# K8-07, K8-08, K8-10: one event EPS basis, year-over-year growth and EUR display.
+def test_eps_line_uses_the_event_series_and_shows_eur():
+    l = {x["label"]: x for x in eh.latest_report("A", _event_quarters(), None, _ev(), estimate_currency="JPY")["lines"]}
+    assert l["EPS"]["yoy_pct"] == pytest.approx(10.0)                       # 2.0 → 2.2, as the growth history
+    assert l["EPS"]["value"] == pytest.approx(2.2 * 0.006) and l["EPS"]["unit"] == "EUR/share"
+    assert "€0.01/share" in eh.facts_line(eh.latest_report("A", _event_quarters(), None, _ev(), estimate_currency="JPY"))

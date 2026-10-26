@@ -192,3 +192,25 @@ def test_stored_fx_preserves_scalar_api_and_returns_latest_positive_rate_date(mo
         assert market_data.stored_fx_rate("EUR") == 1.0
         assert market_data.stored_fx_rate("JPY", with_date=True) is None
         assert market_data.stored_fx_rate("XYZ", with_date=True) is None
+
+    # A7-04: stored ZAc, padded major codes, and unknown FX preserve the scalar API.
+    from services import market_data as md
+    monkeypatch.setattr(md, "_stored_fx", lambda ccy, generation=None: (0.05, "2026-10-23") if ccy == "ZAR" else None)
+    fn = getattr(md.stored_fx_rate, "__wrapped__", md.stored_fx_rate)
+    assert fn("ZAc") == pytest.approx(0.0005) and fn(" ZAR ") == pytest.approx(0.05) and fn("XXX") is None
+
+
+# A7-04: stored minor-unit aliases resolve to their major currency.
+def test_stored_fx_finds_a_rate_stored_under_the_minor_unit(monkeypatch):
+    import contextlib
+    from services import market_data as md
+    con = duckdb.connect(":memory:")
+    con.execute("CREATE SCHEMA raw")
+    con.execute("CREATE TABLE raw.stock_prices (date DATE, currency VARCHAR, fx_rate DOUBLE)")
+    con.execute("INSERT INTO raw.stock_prices VALUES ('2026-10-23', ' ZAc ', 0.05), ('2026-10-23', 'ILA', 0.25), "
+                "('2026-10-22', 'GBX', 1.17)")
+    monkeypatch.setattr(md, "get_db_connection", lambda read_only=True: contextlib.nullcontext(con))
+    assert md._stored_fx("ZAR")[0] == pytest.approx(0.05)
+    assert md._stored_fx("ILS")[0] == pytest.approx(0.25)
+    assert md._stored_fx("GBP")[0] == pytest.approx(1.17)
+    assert md._stored_fx("USD") is None

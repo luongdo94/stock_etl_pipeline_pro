@@ -51,6 +51,19 @@ def test_dividend_requires_cover_and_keeps_unknown_leverage():
                 row(**{"Yield (%)": 4, "Quality": 65, "Net Debt/EBITDA": np.nan}),      # bank: no EBITDA
                 row(**{"Yield (%)": 2, "Quality": 65})) == ["T0", "T3"]
 
+    # K6-03: screen wording states its actual cover and leverage checks.
+    from core import scan_presets
+    p = next(x for x in scan_presets.PRESETS if x.label.startswith("💰"))
+    assert "covered)" not in p.label and "no cover flag" in p.label
+    assert "where it is known" in p.note and "not confirmed" in p.note
+
+    # A6-05: net debt, unknown leverage, and debt without EBITDA.
+    from core import scan_presets as sp
+    p = next(x for x in sp.PRESETS if x.label.startswith("💰"))
+    d = pd.DataFrame({"Yield (%)": [3.0] * 4, "Quality": [80] * 4, "Flags": ["", "", "", "Debt with no positive EBITDA"],
+                      "Net Debt/EBITDA": [1.0, 4.0, float("nan"), float("nan")], "Debt/EBITDA": [6.0, 1.0, 9.0, 9.0]})
+    assert p.rule(d).tolist() == [True, False, True, False]            # net cash-rich name kept; no-EBITDA debt is not
+
 
 def test_strong_breakout_is_narrower_than_any_uptrend():
     base = {"Trend": "BULLISH", "vs MA200 (%)": 10, "RSI (14)": 60}
@@ -68,6 +81,12 @@ def test_earnings_deterioration_no_longer_requires_revenue_to_fall_too():
                 row(**{"EPS Momentum": "Decelerating", "Rev Momentum": "Decelerating"}),
                 row(**{"EPS Momentum": "Decelerating", "Rev Momentum": "Accelerating"})) == ["T0", "T1"]
 
+    # K7-02: unknown revenue is not evidence against acceleration.
+    from core import scan_presets
+    p = next(x for x in scan_presets.PRESETS if x.label.startswith("⚠️ Earnings Deterioration"))
+    d = pd.DataFrame({"EPS Momentum": ["Decelerating"] * 3, "Rev Momentum": ["N/A", "Neutral", "Accelerating"]})
+    assert p.rule(d).tolist() == [False, True, False]
+
 
 def test_overextended_needs_both_rsi_and_z_score():
     assert hits(label("🎈"), row(**{"RSI (14)": 75, "Z-Score": 2.5}), row(**{"RSI (14)": 75, "Z-Score": 1.0}),
@@ -77,6 +96,14 @@ def test_overextended_needs_both_rsi_and_z_score():
 def test_value_trap_and_red_flags():
     assert hits(label("🪤"), row(Value=70, Quality=40), row(Value=70, Quality=60), row(Value=np.nan, Quality=10)) == ["T0"]
     assert hits(label("🚩"), row(Flags="Loss-making"), row(Flags=np.nan), row()) == ["T0"]
+
+    # A6-03: only penalising red flags qualify.
+    from core import scan_presets as sp
+    p = next(x for x in sp.PRESETS if x.label.startswith("🚩"))
+    d = pd.DataFrame({"Flags": ["", None, "ROIC estimated (tax rate or cash not reported)", "Illiquid (median daily turnover under EUR 1M)",
+                                "Loss-making", "Net margin far above its own history (cyclical peak?); Negative book equity"]})
+    assert p.rule(d).tolist() == [False, False, False, False, True, True]
+
 
 def test_scanner_table_has_a_slim_fixed_default_and_unique_columns():
     from views import scanner

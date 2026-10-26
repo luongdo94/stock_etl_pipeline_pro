@@ -350,3 +350,149 @@ def test_the_decision_rules_reference_matches_the_configured_thresholds():
     missing = {k: v for k, v in expect.items() if v not in doc}
     assert not missing, f"core/decision_reference.py is out of date: {missing}"
     assert ("true" if r["evidence"]["require_validated_evidence_for_buy"] else "false") in doc.split("currently")[1][:12]
+
+_HEAD = "(in millions)\nYear Ended December 31, 2025 2024 2023\n"
+
+
+# K8-01 through K8-06, R8-01 through R8-05: supported filing readings, years, units and public dates.
+def _lease_reading(quote, amount=30, year=2025, unit="millions"):
+    return {"kind": "AMOUNT", "unit": unit, "values": [{"fiscal_year": year, "amount": amount, "quote": quote, "chunk_id": "c"}]}
+
+
+# K8-01 through K8-06, R8-01 through R8-05: supported filing readings, years, units and public dates.
+def test_a_unit_attached_to_the_figure_wins_over_the_filing_default():
+    q = "In fiscal 2025, principal payments on finance leases were $1.2 billion."
+    chunks = {"c": q}
+    ctx = {"c": ["in millions"]}
+    wrong = ff.validate_lease_extraction(_lease_reading(q, 1.2, unit="millions"), chunks, fiscal_year_end=2025, prior_chunks=ctx)
+    assert not wrong["accepted"] and "contradicts the figure" in wrong["reason"]
+    right = ff.validate_lease_extraction(_lease_reading(q, 1.2, unit="billions"), chunks, fiscal_year_end=2025,
+                                         prior_chunks=ctx, total_debt_usd=1e10)
+    assert right["accepted"] and right["values"][0]["value_usd"] == pytest.approx(1.2e9)
+
+
+# K8-01 through K8-06, R8-01 through R8-05: supported filing readings, years, units and public dates.
+@pytest.mark.parametrize("quote, accepted, years, sort_years", [
+    ("The Company did not have any finance leases during fiscal 2024.", True, [2024], False),
+    ("The Company did not have any finance leases during the years presented.", True, [2025], False),
+    ("The Company did not have any finance leases during fiscal 2021.", False, None, False),
+    ("As of December 31, 2025, the Company had no debt; the Company did not have any finance leases during 2024", True, [2024], False),
+    ("The Company issued notes in 2025 and did not have any finance leases during 2024", True, [2024], False),
+    ("The Company had no finance leases during the years ended December 31, 2024 and 2023", True, [2023, 2024], True),
+])
+def test_a_zero_only_for_the_years_the_quote_covers(quote, accepted, years, sort_years):
+    """K8-03, R8-02: zero belongs to its clause, including semicolons, 'and' and lists of years."""
+    r = ff.validate_lease_extraction({"kind": "NONE", "quote": quote, "chunk_id": "c"}, {"c": quote}, fiscal_year_end=2025)
+    assert bool(r["accepted"]) is accepted
+    if years is not None:
+        got = [v["year"] for v in r["values"]]
+        assert (sorted(got) if sort_years else got) == years
+
+
+# K8-01 through K8-06, R8-01 through R8-05: supported filing readings, years, units and public dates.
+@pytest.mark.parametrize("heading, amount, debt", [
+    ("(in millions)\nFiscal year ended January 31, 2026 2025 2024\n", 30, None),
+    ("Maturities 2027 2028 2029\n(in millions)\nFiscal year ended January 31, 2026 2025 2024\n", 30, None),
+    ("(in millions)\nJanuary 31, 2025 2024 2023\n", 90, 1e10),
+])
+def test_a_partial_reading_does_not_shift_the_years(heading, amount, debt):
+    """K8-04, R8-01: maturity schedules and older full-date headings cannot shift a partial reading."""
+    row = "Principal payments on finance leases 90 30 20"
+    kwargs = {} if debt is None else {"total_debt_usd": debt}
+    r = ff.validate_lease_extraction(_lease_reading(row, amount, 2025), {"c": heading + row}, fiscal_year_end=2026, fye_month=1, **kwargs)
+    assert r["accepted"] and r["values"][0]["year"] == 2025
+    with pytest.raises(ValueError):
+        ff.assign_years([2025], 2026, fye_month=1)
+    assert ff.assign_years([2025], 2026, fye_month=1, newest_label=2025) == {2025: 2026}
+
+
+# K8-01 through K8-06, R8-01 through R8-05: supported filing readings, years, units and public dates.
+def test_point_in_time_drops_unknown_filing_dates():
+    p = pd.DataFrame({"text": ["a", "b", "c"], "filed": [date(2025, 1, 1), None, "not a date"]})
+    assert rt.point_in_time(p, date(2025, 12, 31))["text"].tolist() == ["a"]
+    assert rt.point_in_time(p.drop(columns="filed"), date(2025, 12, 31)).empty
+    assert len(rt.point_in_time(p, None)) == 3
+
+
+# K8-01 through K8-06, R8-01 through R8-05: supported filing readings, years, units and public dates.
+def test_a_unit_after_a_bracketed_figure():
+    q = "In fiscal 2025, principal payments on finance leases were $(1.2) billion."
+    assert ff.attached_unit(q, 1.2) == "billions"                                           # R8-04
+    ok = ff.validate_lease_extraction(_lease_reading(q, 1.2, unit="billions"), {"c": q}, fiscal_year_end=2025, total_debt_usd=1e10)
+    assert ok["accepted"] and ok["values"][0]["value_usd"] == pytest.approx(1.2e9) and ok["values"][0]["year"] == 2025
+    wrong = ff.validate_lease_extraction(_lease_reading(q, 1.2, unit="millions"), {"c": q}, fiscal_year_end=2025, total_debt_usd=1e10)
+    assert not wrong["accepted"] and "contradicts the figure" in wrong["reason"]
+
+
+# K8-01 through K8-06, R8-01 through R8-05: supported filing readings, years, units and public dates.
+def test_the_same_number_with_two_scales_is_ambiguous():
+    q = "Principal payments on finance leases were $1.2 billion in 2025 and $1.2 million in 2024."
+    assert ff.attached_unit(q, 1.2) == ff.AMBIGUOUS_UNIT
+    r = ff.validate_lease_extraction(_lease_reading(q, 1.2, unit="billions"), {"c": q}, fiscal_year_end=2025, total_debt_usd=1e10)
+    assert not r["accepted"] and "different scales" in r["reason"]
+
+
+# K8-01 through K8-06, R8-01 through R8-05: supported filing readings, years, units and public dates.
+def test_each_value_is_relabelled_by_its_own_heading():
+    dated = "Principal payments on finance leases 90 30 20"
+    undated = "Repayments of finance lease obligations 7 6 5"
+    chunks = {"d": "(in millions)\nJanuary 31, 2025 2024 2023\n" + dated,
+              "u": "(in millions)\nFiscal 2025 2024 2023\n" + undated}
+    ext = {"kind": "AMOUNT", "unit": "millions", "values": [
+        {"fiscal_year": 2024, "amount": 30, "quote": dated, "chunk_id": "d"},
+        {"fiscal_year": 2025, "amount": 7, "quote": undated, "chunk_id": "u"}]}
+    r = ff.validate_lease_extraction(ext, chunks, fiscal_year_end=2026, fye_month=1, total_debt_usd=1e10)
+    years = {v["value_usd"] / 1e6: v["year"] for v in r["values"]}
+    assert years == {30.0: 2024, 7.0: 2026}      # the dated table is literal, the start-year labels move up one
+
+
+# K8-01 through K8-06, R8-01 through R8-05: supported filing readings, years, units and public dates.
+def test_a_heading_split_over_two_lines_is_still_dated():
+    row = "Principal payments on finance leases 90 30 20"
+    split = "(in millions)\nYears ended January 31,\n2025 2024 2023\n" + row
+    assert ff.heading_has_dates(split, row)
+    assert not ff.heading_has_dates("(in millions)\nFiscal 2025 2024 2023\n" + row, row)
+    # through the validator: the printed years are period-end years (2025 stays 2025); fiscal labels move up one (-> 2026)
+    dated = ff.validate_lease_extraction(_lease_reading(row, 90, 2025), {"c": split}, fiscal_year_end=2026, fye_month=1,
+                                         total_debt_usd=1e10)
+    assert dated["accepted"] and dated["values"][0]["year"] == 2025
+    labelled = ff.validate_lease_extraction(
+        _lease_reading(row, 90, 2025), {"c": "(in millions)\nFiscal 2025 2024 2023\n" + row}, fiscal_year_end=2026, fye_month=1,
+        total_debt_usd=1e10)
+    assert labelled["accepted"] and labelled["values"][0]["year"] == 2026
+
+
+# K8-01 through K8-06, R8-01 through R8-05: supported filing readings, years, units and public dates.
+@pytest.mark.parametrize("frame, cutoff, expected", [
+    (pd.DataFrame({"text": ["a", "b"], "filed": pd.to_datetime(["2025-01-01", "2026-01-01"], utc=True)}), pd.Timestamp("2025-06-30", tz="UTC"), ["a"]),
+    (pd.DataFrame({"text": ["a", "b"], "filed": pd.to_datetime(["2025-01-01", "2026-01-01"], utc=True)}), date(2025, 6, 30), ["a"]),
+    (pd.DataFrame({"text": ["a"], "filed": pd.to_datetime(["2025-01-01 00:00:00+09:00"])}), date(2024, 12, 31), []),
+    (pd.DataFrame({"text": ["a"], "filed": pd.to_datetime(["2025-01-01 00:00:00+09:00"])}), date(2025, 1, 1), ["a"]),
+    (pd.DataFrame({"text": ["tokyo", "ny", "late"], "filed": ["2025-01-01 00:00:00+09:00", "2025-01-01 23:00:00-05:00", "2025-01-02 08:00:00+00:00"]}), date(2025, 1, 1), ["tokyo", "ny"]),
+])
+def test_point_in_time_with_mixed_utc_offsets(frame, cutoff, expected):
+    """K8-06, R8-05: preserve Timestamp/date cutoffs, printed calendar days and the pre-publication boundary."""
+    assert rt.point_in_time(frame, cutoff)["text"].tolist() == expected
+
+
+# K8-01 through K8-06, R8-01 through R8-05: supported filing readings, years, units and public dates.
+@pytest.mark.parametrize("row, accepted, reason, debt, heading", [
+    ("Repayments of long-term debt 30 20 10", False, "finance-lease-only", 1e9, True),
+    ("Repayments of long-term debt and finance lease obligations 30 20 10", False, "finance-lease-only", 1e9, True),
+    ("Principal payments on borrowings 30 20 10", False, "finance-lease-only", 1e9, True),
+    ("Principal payments on finance leases 30 20 10", True, None, None, True),
+    ("Payments on operating and finance leases 30 20 10", False, None, None, True),
+    ("Payments of finance leases and other obligations 30 20 10", False, None, None, True),
+    ("As discussed in the notes to the financial statements, principal payments on finance leases in 2025 were $30 million", True, None, 1e9, False),
+    ("Principal payments on finance leases and operating leases 30 20 10", False, "finance-lease-only", 1e9, True),
+    ("Payments on finance leases and operating lease liabilities 30 20 10", False, None, 1e9, True),
+    ("Principal payments on operating and finance leases 30 20 10", False, "finance-lease-only", 1e9, True),
+    ("Principal payments on finance and operating leases 30 20 10", False, "finance-lease-only", 1e9, True),
+])
+def test_a_debt_row_is_not_lease_principal(row, accepted, reason, debt, heading):
+    """K8-01, R8-03: debt/combined lease rows fail; finance-only rows, including notes prose, pass."""
+    kwargs = {} if debt is None else {"total_debt_usd": debt}
+    r = ff.validate_lease_extraction(_lease_reading(row), {"c": (_HEAD if heading else "") + row}, fiscal_year_end=2025, **kwargs)
+    assert bool(r["accepted"]) is accepted, r["reason"]
+    if reason:
+        assert reason in r["reason"]

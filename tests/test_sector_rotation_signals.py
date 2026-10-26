@@ -1,4 +1,5 @@
 """Offline ETF share history, flow estimates and Market Pulse-only rotation context."""
+from core import sector_rotation
 from datetime import date
 import os
 import sys
@@ -253,3 +254,39 @@ def test_derived_shares_are_named_in_the_flow_note():
                           "price_close": [108.0, 109.0], "shares_source": "aum/nav"})
     f = estimate_flows(snaps).iloc[0]
     assert f["flow_1w_usd"] == pytest.approx(2e6 * 109.0) and "total assets / NAV" in f["flow_1w_note"]
+
+
+# K5-08, K5-09, R5-08, R5-09: nearby base snapshots, splits and real creations.
+def _snap(dates, shares, prices, aum):
+    return pd.DataFrame({"ticker": "XLK", "as_of": pd.to_datetime(dates), "shares_outstanding": shares,
+                         "price_close": prices, "total_assets": aum, "shares_source": "yahoo"})
+
+
+# K5-08, K5-09, R5-08, R5-09: nearby base snapshots, splits and real creations.
+def test_the_nearest_snapshot_on_either_side_of_the_target_is_the_base():
+    after = sector_rotation.estimate_flows(_snap(["2026-10-01", "2026-10-19", "2026-10-25"], [90., 100., 110.],
+                                                 [10., 10., 10.], [900., 1000., 1100.])).iloc[0]
+    assert after["flow_1w_usd"] == pytest.approx(100.)              # 19/10 is 1 day after the 18/10 target (R5-08)
+    gap = sector_rotation.estimate_flows(_snap(["2026-10-01", "2026-10-25"], [100., 110.], [10., 10.],
+                                               [1000., 1100.])).iloc[0]
+    assert "nearest 2026-10-01" in gap["flow_1w_note"]
+
+    # K5-08, R5-08: keep the distant-base NaN, nearest date, and eight-day control.
+    row = sector_rotation.estimate_flows(_snap(["2026-10-01", "2026-10-25"], [100., 110.], [10., 10.],
+                                               [1000., 1100.])).iloc[0]
+    assert pd.isna(row["flow_1w_usd"]) and "no snapshot within" in row["flow_1w_note"]
+    near = sector_rotation.estimate_flows(_snap(["2026-10-17", "2026-10-25"], [100., 110.], [10., 10.],
+                                                [1000., 1100.])).iloc[0]
+    assert near["flow_1w_usd"] == pytest.approx(100.)                       # 8 days back: within the slack
+
+
+# K5-08, K5-09, R5-08, R5-09: nearby base snapshots, splits and real creations.
+@pytest.mark.parametrize("shares, prices", [([100., 125.], [100., 80.]), ([100., 200.], [100., 50.])])
+def test_a_5_for_4_split_is_not_a_flow(shares, prices):
+    """K5-09, R5-09: 5-for-4 and 2-for-1 splits are unknown flows; real creation survives."""
+    row = sector_rotation.estimate_flows(_snap(["2026-10-17", "2026-10-25"], shares, prices,
+                                               [10000., 10000.])).iloc[0]
+    assert pd.isna(row["flow_1w_usd"]) and "split" in row["flow_1w_note"]           # R5-09
+    real = sector_rotation.estimate_flows(_snap(["2026-10-17", "2026-10-25"], [100., 125.], [100., 101.],
+                                                [10000., 12625.])).iloc[0]
+    assert real["flow_1w_usd"] == pytest.approx(25 * 101.)                          # a real creation still counts

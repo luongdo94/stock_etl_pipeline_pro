@@ -1,4 +1,5 @@
 """Daily external review of BUY CANDIDATEs: prompt, validation, newest-file lookup and the Overview section."""
+from core import ai_review as ar
 import json
 import os
 import sys
@@ -79,3 +80,11 @@ def test_prompt_explains_the_method_and_carries_the_stored_dcf():
     assert "base value 5.70 EUR vs price 3.13 EUR (+82%)" in p and "growth assumption 12.4%" in p
     assert "cost of equity 6.6%" in p and "Blume-adjusted beta" in p and "5 stocks" in p
     assert ar.dcf_line("not json") == "not available" and ar.dcf_line(None) == "not available"
+
+
+# K8-05: stored legacy reviews cannot restore rating wording.
+def test_a_stored_review_of_the_old_schema_loses_its_rating_wording():
+    base = {k: ([] if v["type"] == "array" else "x") for k, v in ar.SCHEMA["properties"].items()}
+    old = {**base, "label": "Avoid", "confidence": "high", "label_would_change_if": ["Move to Skip or Avoid if ..."]}
+    assert ar.validate(old)["label_would_change_if"] == []
+    assert ar.validate({**base, "label_would_change_if": ["tilts if margins fall"]})["label_would_change_if"] == ["tilts if margins fall"]

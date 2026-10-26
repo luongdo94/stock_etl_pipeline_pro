@@ -1,9 +1,11 @@
 """Sidebar (SIDEBAR_REFACTOR_REVIEW steps 2-3): data freshness, "Check for new data", macro unknown ≠ 0, page controls."""
+from core import freshness
 import os
 import sys
 import time
 from datetime import date, datetime, timedelta
 
+import numpy as np
 import pandas as pd
 import pytest
 
@@ -130,8 +132,6 @@ def test_the_chart_range_is_shown_only_where_it_matters(warehouse, tab, has_rang
     sidebar_labels = [s.label for s in at.sidebar.selectbox]
     assert "Chart range" not in sidebar_labels
     assert any("Check for new data" in b.label for b in at.sidebar.button)
-
-
 
 
 @pytest.mark.smoke
@@ -318,3 +318,47 @@ def warehouse(tmp_path_factory):
     sys.path.insert(0, os.path.dirname(__file__))
     import test_app_smoke
     yield from test_app_smoke.warehouse.__wrapped__(tmp_path_factory)
+
+
+# K6-05, K6-06: dated freshness, explicit severity and unknown results.
+def test_undated_and_future_closes_are_not_fresh():
+    prices = pd.DataFrame({"ticker": ["A", "B", "C"], "date": pd.to_datetime(["2026-10-24", None, "2026-10-26"])})
+    out = freshness.data_freshness(prices, None, None, None, today=date(2026, 10, 25))
+    assert out["prices"]["stale"] == 2 and out["prices"]["fresh_share"] == pytest.approx(1 / 3)
+    assert any("after today" in n for n in out["notes"])
+
+    # K6-05: all-future dates leave as_of and age unknown.
+    prices = pd.DataFrame({"ticker": ["A"], "date": pd.to_datetime(["2026-10-27"])})
+    out = freshness.data_freshness(prices, None, None, None, today=date(2026, 10, 25))
+    assert out["prices"]["as_of"] is None and out["prices"]["age_days"] is None
+
+
+# K6-05, K6-06: dated freshness, explicit severity and unknown results.
+def test_an_unknown_data_quality_result_is_not_clean():
+    dq = pd.DataFrame({"check_name": ["a", "b"], "violations": [np.nan, 0], "is_critical": [False, False]})
+    assert freshness.data_freshness(None, None, None, dq, today=date(2026, 10, 25))["dq"]["state"] == "UNKNOWN"
+    dq2 = pd.DataFrame({"check_name": ["a"], "violations": [3], "is_critical": [None]})
+    assert freshness.data_freshness(None, None, None, dq2, today=date(2026, 10, 25))["dq"]["state"] == "UNKNOWN"
+    ok = pd.DataFrame({"check_name": ["a"], "violations": [0], "is_critical": [True]})
+    assert freshness.data_freshness(None, None, None, ok, today=date(2026, 10, 25))["dq"]["state"] == "CLEAN"
+
+    # K6-06: unknown results remain visible beside CRIT.
+    dq = pd.DataFrame({"check_name": ["a", "b"], "violations": [3, np.nan], "is_critical": [True, False]})
+    out = freshness.data_freshness(None, None, None, dq, today=date(2026, 10, 25))
+    assert out["dq"]["state"] == "CRIT" and any("unknown result" in n for n in out["notes"])
+
+
+# K6-05, K6-06: dated freshness, explicit severity and unknown results.
+def test_todays_refresh_with_a_time_is_not_in_the_future():
+    comp = pd.DataFrame({"ticker": ["A"], "info_updated_at": [pd.Timestamp("2026-10-25 10:00")]})
+    out = freshness.data_freshness(None, comp, None, None, today=date(2026, 10, 25))
+    assert not any("after today" in n for n in out["notes"]) and out["fundamentals"]["median_age_days"] == 0
+    fut = pd.DataFrame({"ticker": ["A"], "info_updated_at": [pd.Timestamp("2026-10-27")]})
+    assert any("after today" in n for n in freshness.data_freshness(None, fut, None, None, today=date(2026, 10, 25))["notes"])
+
+
+# K6-05, K6-06: dated freshness, explicit severity and unknown results.
+@pytest.mark.parametrize("flag,state", [("False", "WARN"), ("0", "WARN"), ("true", "CRIT"), ("maybe", "UNKNOWN")])
+def test_string_severity_is_parsed_explicitly(flag, state):
+    dq = pd.DataFrame({"check_name": ["a"], "violations": [3], "is_critical": [flag]})
+    assert freshness.data_freshness(None, None, None, dq, today=date(2026, 10, 25))["dq"]["state"] == state
