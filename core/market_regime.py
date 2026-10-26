@@ -122,10 +122,17 @@ def breadth_series(prices_full):
     b = prices_full[~prices_full["ticker"].isin(BREADTH_EXCLUDE)]
     if {"fx_rate", "price_scale"} <= set(b.columns):
         b = b[["date", "ticker", "price_close", "fx_rate", "price_scale"]].sort_values(["ticker", "date"])
+        # the EUR close is stored rounded to 4 decimals (and often as float32): a stock whose price did not move must not
+        # read as above its average by that noise (T3-05)
+        noise = (1e-4 * _f64(b["price_scale"]).fillna(1.0) / _f64(b["fx_rate"])).fillna(0.0)
         b = b.assign(price_close=local_close(b))
+        noise = noise + 5e-7 * b["price_close"].abs().fillna(0.0)
         b["ma_50"] = b.groupby("ticker")["price_close"].transform(lambda s: s.rolling(50, min_periods=50).mean())
+        b["_noise"] = noise
+    else:
+        b = b.assign(_noise=0.0)
     b = b[b["ma_50"].notna() & b["price_close"].notna()]
-    ts = (b[b["price_close"] > b["ma_50"]].groupby("date")["ticker"].count()
+    ts = (b[b["price_close"] > b["ma_50"] + b["_noise"]].groupby("date")["ticker"].count()
           / b.groupby("date")["ticker"].count() * 100).fillna(0).reset_index()
     ts.columns = ["date", "breadth_pct"]
     return ts
@@ -163,11 +170,17 @@ def local_close(df: pd.DataFrame) -> pd.Series:
     """Each close back in the currency the stock trades in (the warehouse stores close × the day's FX rate; native =
     close × price_scale ÷ fx_rate). NaN where the rate is missing or not positive: an unknown basis is not guessed.
     A frame without the two columns (an older snapshot) keeps its stored close as is."""
-    close = pd.to_numeric(df["price_close"], errors="coerce")
+    close = _f64(df["price_close"])
     if not {"fx_rate", "price_scale"} <= set(df.columns):
         return close
-    fx = pd.to_numeric(df["fx_rate"], errors="coerce")
-    return (close * pd.to_numeric(df["price_scale"], errors="coerce").fillna(1.0) / fx).where(fx > 0)
+    fx = _f64(df["fx_rate"])
+    return (close * _f64(df["price_scale"]).fillna(1.0) / fx).where(fx > 0)
+
+
+def _f64(s: pd.Series) -> pd.Series:
+    """A plain float64 Series: nullable (Int64 / Float32 / string with pd.NA) and float32 columns become NaN-aware float64."""
+    return pd.Series(pd.to_numeric(s, errors="coerce").astype("Float64").to_numpy(dtype=float, na_value=np.nan),
+                     index=s.index)
 
 
 def _spy_in_usd(spy: pd.DataFrame) -> pd.DataFrame:
@@ -210,7 +223,8 @@ def market_confidence(spy, breadth_pct, vix, dxy_5d_move, tnx_chg):
     if not spy.empty:
         ret5 = None
         if len(spy) >= 6:
-            ret5 = _finite((float(spy["price_close"].iloc[-1]) / float(spy["price_close"].iloc[-6]) - 1) * 100)
+            p1, p0 = _finite(spy["price_close"].iloc[-1]), _finite(spy["price_close"].iloc[-6])
+            ret5 = _finite((p1 / p0 - 1) * 100) if p1 is not None and p0 else None
         if ret5 is not None:
             score += int(round(float(np.interp(ret5, [-3, -1, 0, 1.5, 3], [0, 2, 5, 8, 10]))))
             if ret5 < -1:

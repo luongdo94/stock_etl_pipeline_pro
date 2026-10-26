@@ -1885,7 +1885,7 @@ def _render_trade_ledger():
                       f"recorded part €{pnl['realized_known_eur'].sum():,.2f}" if _unknown else None, delta_color="off",
                       help="Average cost. A buy fee is part of the cost basis and counts when the shares are sold; a "
                            "sell fee counts at the sale. Fees paid shows every fee.")
-            c2.metric("Fees paid", f"€{pnl['fees_eur'].sum():,.2f}")
+            c2.metric("Fees paid", "N/A" if pnl["fees_eur"].isna().any() else f"€{pnl['fees_eur'].sum():,.2f}")
             c3.metric("Trades", f"{len(trades)}", f"{trades['ticker'].nunique()} tickers", delta_color="off")
             if (pnl["unmatched_qty"] > 0).any():
                 st.caption("Some sells exceed the shares bought in the ledger (positions opened before the ledger "

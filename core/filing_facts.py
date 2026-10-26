@@ -14,7 +14,7 @@ import re
 from decimal import Decimal, InvalidOperation
 from typing import Optional
 
-VALIDATOR_VERSION = 7        # bump on any rule change: stored readings of other versions are re-validated / re-read
+VALIDATOR_VERSION = 8        # bump on any rule change: stored readings of other versions are re-validated / re-read
 KINDS = ("AMOUNT", "NONE", "IMMATERIAL", "NOT_FOUND")
 UNIT_SCALE = {"units": 1.0, "thousands": 1e3, "millions": 1e6, "billions": 1e9}
 _UNIT_EVIDENCE = {
@@ -40,7 +40,8 @@ NOT_PRINCIPAL = re.compile(r"operating\s+cash\s+flows?|\binterest\b|right[- ]of[
 FINANCE_LEASE = re.compile(r"finance\s+leas", re.I)
 OTHER_DEBT = re.compile(r"\b(?:debt|borrowings?|notes?\s+payable|senior\s+notes?|convertible\s+notes?|"
                         r"promissory\s+notes?|loans?|credit\s+facilit\w+|commercial\s+paper|bonds?|debentures?|"
-                        r"mortgages?)\b|operating\s+leas|\band\s+other\b", re.I)
+                        r"mortgages?)\b|operating\s+leas|operating\s*(?:and|&|/)\s*finance|"
+                        r"finance\s*(?:and|&|/)\s*operating|\band\s+other\b", re.I)
 # K8-02: a scale written right after the figure ("$1.2 billion") is the figure's own unit
 _ATTACHED = re.compile(r"(\d[\d,]*(?:\.\d+)?)\)?\s*(thousand|million|billion|bn)s?\b", re.I)
 _ATTACHED_UNIT = {"thousand": "thousands", "million": "millions", "billion": "billions", "bn": "billions"}
@@ -80,7 +81,9 @@ def absent_all_period(quote: str) -> bool:
 
 def _absent_clauses(quote: str) -> list:
     """The clauses of a quote that deny finance leases over a whole period (not at a date)."""
-    return [c for c in re.split(r"[;:,]|\b(?:and|but|while|whereas)\b|(?<=[a-z0-9)])\.\s", norm(quote))
+    return [c for c in re.split(r"[;:]|,(?!\s*(?:19|20)\d\d)|\b(?:and|but|while|whereas)\b"
+                                r"(?!\s+(?:in\s+|during\s+|for\s+)?(?:fiscal\s+)?(?:19|20)\d\d)|(?<=[a-z0-9)])\.\s",
+                                norm(quote))
             if _NO_FINANCE_LEASE.search(c) and _WHOLE_PERIOD.search(c) and not _AT_A_DATE.search(c)]
 
 
@@ -227,10 +230,9 @@ def heading_has_dates(passage: str, quote: str, before: str = "") -> bool:
             break
     for k in range(row_i, -1, -1):
         ys = _YEAR.findall(lines[k])
-        if len(ys) >= 2 and len(set(ys)) == len(ys):
-            return bool(re.search(_MONTHS + r"\s+\d{1,2}", norm(lines[k])))
-        if len(ys) == 1 and len(lines[k]) <= 40:
-            return bool(re.search(_MONTHS + r"\s+\d{1,2}", norm(lines[k])))
+        if (len(ys) >= 2 and len(set(ys)) == len(ys)) or (len(ys) == 1 and len(lines[k]) <= 40):
+            block = " ".join(lines[max(k - 1, 0):k + 1])             # the heading line and the one above it
+            return bool(re.search(_MONTHS + r"\s+\d{1,2}", norm(block)))
     return False
 
 
@@ -379,24 +381,25 @@ def validate_lease_extraction(ext: dict, chunks: dict, *, fiscal_year_end: int, 
     except (KeyError, TypeError, ValueError):
         out["reason"] = "fiscal years missing or not numbers"
         return out
-    newest_label = None
+    newest_label, dated_idx = None, set()
     if fye_month <= 3:              # the filing's own newest column label (its headings), not the model's choice
         # R8-01: only a table row's own heading counts (a sentence below a balance sheet "January 31, 2026 and 2025"
         # says nothing about how its "fiscal 2025" is labelled), and never a heading of later years (maturities)
-        heads, dated = [], False
-        for v in vals:
+        heads = []
+        for i, v in enumerate(vals):
             cid, q = v.get("chunk_id"), v.get("quote") or ""
             if cid not in chunks or descriptor(q, v.get("amount") or 0)[1] < 2:
                 continue
             ys = column_years(chunks[cid], q, (before or {}).get(cid, ""))
             if ys and max(ys) <= fiscal_year_end:
-                heads += ys
-                dated = dated or heading_has_dates(chunks[cid], q, (before or {}).get(cid, ""))
+                if heading_has_dates(chunks[cid], q, (before or {}).get(cid, "")):
+                    dated_idx.add(i)    # "January 31, 2026 / 2025": the printed year IS the period-end year — literal
+                else:
+                    heads += ys
         newest_label = max(heads) if heads else (doc_columns[1] if doc_columns else None)
-        if dated:                   # "January 31, 2026 / 2025": the printed year IS the period-end year — no relabelling
-            fye_month, newest_label = 12, None
     try:
-        years = assign_years(labels, fiscal_year_end, fye_month, newest_label)
+        undated = [lab for i, lab in enumerate(labels) if i not in dated_idx]
+        years = assign_years(undated, fiscal_year_end, fye_month, newest_label) if undated else {}
     except ValueError as e:
         out["reason"] = str(e)
         return out
@@ -408,11 +411,11 @@ def validate_lease_extraction(ext: dict, chunks: dict, *, fiscal_year_end: int, 
         out["reason"] = "the same fiscal year has different amounts (several registrants or rows)"
         return out
     accepted, problems = [], []
-    for v in vals:
+    for idx, v in enumerate(vals):
         cid, q = v.get("chunk_id"), v.get("quote")
         try:
             amount = abs(float(v.get("amount")))
-            year = years[int(v["fiscal_year"])]
+            year = int(v["fiscal_year"]) if idx in dated_idx else years[int(v["fiscal_year"])]
         except (TypeError, ValueError, KeyError):
             problems.append("amount not a number")
             continue

@@ -115,12 +115,13 @@ def test_the_ledger_refuses_unknown_figures():
     assert rows == []                       # unknown price (A) / unknown quantity (B): nothing to book
 
 
-def test_a_stray_nan_fee_does_not_void_the_totals():
+def test_a_fee_that_is_not_a_number_makes_the_pnl_unknown():
     from core import ledger
-    t = [dict(zip(ledger.COLUMNS, ["2026-10-01T10:00:00", "A", "BUY", 10.0, 10.0, float("nan"), None, "manual", ""])),
-         dict(zip(ledger.COLUMNS, ["2026-10-02T10:00:00", "A", "SELL", 10.0, 12.0, 1.0, None, "manual", ""]))]
-    out = ledger.realized_pnl(t).iloc[0]
-    assert out["fees_eur"] == pytest.approx(1.0) and out["realized_eur"] == pytest.approx(19.0)
+    for bad in (float("nan"), None, "", float("inf")):
+        t = [dict(zip(ledger.COLUMNS, ["2026-10-01T10:00:00", "A", "BUY", 10.0, 10.0, bad, None, "manual", ""])),
+             dict(zip(ledger.COLUMNS, ["2026-10-02T10:00:00", "A", "SELL", 10.0, 12.0, 1.0, None, "manual", ""]))]
+        out = ledger.realized_pnl(t).iloc[0]
+        assert pd.isna(out["realized_eur"]) and pd.isna(out["fees_eur"]), bad          # never read as a fee of 0
 
 
 def test_a_position_closed_by_hand_does_not_poison_the_next_buy():
@@ -321,8 +322,7 @@ def test_volume_flow_works_on_the_apps_float32_copy_on_write_frames(monkeypatch)
     """The app hands over float32 frames (optimize_dataframe_memory) under copy-on-write: arrays taken from them are
     read-only — the first version assigned into one and crashed the whole Scanner."""
     from core import smart_money
-    pd.set_option("mode.copy_on_write", True)
-    try:
+    with pd.option_context("mode.copy_on_write", True):
         rng = np.random.default_rng(3)
         fx = (0.9 * (1 + rng.normal(0, 0.003, 40))).astype("float32")
         eur = np.round(100.0 * fx.astype(float), 4).astype("float32")
@@ -335,5 +335,83 @@ def test_volume_flow_works_on_the_apps_float32_copy_on_write_frames(monkeypatch)
         monkeypatch.setattr(smart_money, "get_sm_spirit_unified_v2", lambda d, s: seen.update(df=d) or {})
         smart_money.get_volume_flow(df, "Tech")
         assert seen["df"]["price_close"].nunique() == 1
-    finally:
-        pd.set_option("mode.copy_on_write", False)
+
+
+# ── Codex round 3 ────────────────────────────────────────────────────────────────────────────────────────────────────
+def _flat_frame(n=126, local=10_000.0, seed=9, dtype="float64", scale=1.0):
+    rng = np.random.default_rng(seed)
+    fx = 0.9 * (1 + rng.normal(0, 0.004, n))
+    eur = np.round(local / scale * fx, 4)
+    df = pd.DataFrame({"date": pd.bdate_range(end="2026-10-23", periods=n), "price_open": eur, "price_high": eur,
+                       "price_low": eur, "price_close": eur, "volume": 1e6, "fx_rate": fx, "price_scale": scale})
+    return df.astype({c: dtype for c in df.columns if c != "date"})
+
+
+def test_a_flat_price_stays_flat_after_the_apps_float32_downcast(monkeypatch):
+    from core import smart_money
+    from etl.performance_utils import optimize_dataframe_memory
+    seen = {}
+    monkeypatch.setattr(smart_money, "get_sm_spirit_unified_v2", lambda d, s: seen.update(df=d) or {})
+    for seed in range(5):
+        df = optimize_dataframe_memory(_flat_frame(seed=seed))
+        assert str(df["price_close"].dtype) == "float32"
+        smart_money.get_volume_flow(df, "Tech")
+        assert seen["df"]["price_close"].nunique() == 1, seed
+
+
+def test_a_missing_rate_in_a_nullable_column_is_unknown_not_a_signal():
+    from core import smart_money
+    df = _flat_frame(n=40)
+    df["fx_rate"] = pd.array(df["fx_rate"], dtype="Float64")
+    df.loc[df.index[10], "fx_rate"] = pd.NA
+    assert smart_money.get_volume_flow(df, "Tech")["signal"] == "N/A"
+
+
+def test_the_regime_survives_nullable_fx_and_ignores_noise_in_breadth():
+    from core import market_regime as mr
+    df = _flat_frame(n=80, local=100.0, seed=2, dtype="float32")
+    df["ticker"] = "AAA"
+    assert mr.breadth_series(df).iloc[-1]["breadth_pct"] == 0.0               # a price that never moved is not above its MA
+    spy = _spy_frame(np.linspace(700, 760, 40), np.full(40, 0.9))
+    spy["fx_rate"] = pd.array(spy["fx_rate"], dtype="Float64")
+    spy.loc[spy.index[-1], "fx_rate"] = pd.NA
+    score, reasons = mr.market_confidence(spy, 60.0, 15.0, 0.1, 0.0)           # no TypeError; the 5-day return is unknown
+    assert mr.SPY_MOMENTUM_UNKNOWN in reasons
+
+
+def test_stored_fx_finds_a_rate_stored_under_the_minor_unit(monkeypatch):
+    import contextlib
+    from services import market_data as md
+    con = duckdb.connect(":memory:")
+    con.execute("CREATE SCHEMA raw")
+    con.execute("CREATE TABLE raw.stock_prices (date DATE, currency VARCHAR, fx_rate DOUBLE)")
+    con.execute("INSERT INTO raw.stock_prices VALUES ('2026-10-23', ' ZAc ', 0.05), ('2026-10-23', 'ILA', 0.25), "
+                "('2026-10-22', 'GBX', 1.17)")
+    monkeypatch.setattr(md, "get_db_connection", lambda read_only=True: contextlib.nullcontext(con))
+    assert md._stored_fx("ZAR")[0] == pytest.approx(0.05)
+    assert md._stored_fx("ILS")[0] == pytest.approx(0.25)
+    assert md._stored_fx("GBP")[0] == pytest.approx(1.17)
+    assert md._stored_fx("USD") is None
+
+
+def test_an_unknown_currency_object_is_not_a_foreign_currency():
+    from core.currency import major_currency
+    assert major_currency(pd.NA) is None and major_currency(pd.NaT) is None and major_currency(float("nan")) is None
+
+
+def test_read_warehouse_appends_only_the_missing_macro_series(tmp_path):
+    from services.db import read_warehouse
+    from tests.synthetic_warehouse import build
+    db = build(str(tmp_path / "dw.duckdb"))
+    with duckdb.connect(db) as c:
+        have = [r[0] for r in c.execute("DESCRIBE raw.stock_prices").fetchall()]
+        for t, base in (("^TNX", 4.3), ("DX-Y.NYB", 100.0)):
+            for i, d in enumerate(pd.bdate_range(end=pd.Timestamp.today().normalize() - pd.Timedelta(days=1), periods=20)):
+                cols = {"date": d.date(), "ticker": t, "close": base + i * 0.01, "volume": 0, "fx_rate": 0.9, "price_scale": 1.0}
+                use = {k: v for k, v in cols.items() if k in have}
+                c.execute(f"INSERT INTO raw.stock_prices ({', '.join(use)}) VALUES ({', '.join('?' for _ in use)})", list(use.values()))
+    with duckdb.connect(db, read_only=True) as c:
+        prices = read_warehouse(c)[0]
+    macro = prices[prices["ticker"].isin(["^TNX", "DX-Y.NYB"])]
+    assert set(macro["ticker"]) == {"^TNX", "DX-Y.NYB"} and macro.groupby("ticker").size().min() >= 15
+    assert not macro.duplicated(["ticker", "date"]).any()                         # nothing doubled

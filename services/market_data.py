@@ -261,10 +261,14 @@ def stored_fx_rate(source="USD", generation=None, *, with_date=False):
 
 
 def _stored_fx(ccy, generation=None):
+    from core.currency import MINOR_UNITS
+    # the ETL may store the minor unit (ZAc, ILA, GBX) as well as the major one: their fx_rate is the major unit's
+    names = [ccy] + [k.upper() for k, v in MINOR_UNITS.items() if v == ccy]
     with get_db_connection(read_only=True) as conn:
         try:
-            row = conn.execute("SELECT fx_rate, date FROM raw.stock_prices WHERE upper(trim(currency)) = ? AND fx_rate > 0 "
-                               "ORDER BY date DESC LIMIT 1", [ccy]).fetchone()
+            marks = ", ".join("?" for _ in names)
+            row = conn.execute(f"SELECT fx_rate, date FROM raw.stock_prices WHERE upper(trim(currency)) IN ({marks}) "
+                               "AND fx_rate > 0 ORDER BY date DESC LIMIT 1", names).fetchone()
         except Exception:
             return None
     return (_finite(row[0]), row[1]) if row and _finite(row[0]) is not None else None

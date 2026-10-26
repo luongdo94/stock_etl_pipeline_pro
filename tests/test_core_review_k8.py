@@ -166,6 +166,7 @@ def test_a_hole_after_the_reaction_day_keeps_the_one_day_move():
                        "eps_actual": [1.0], "eps_estimate": [0.9], "surprise_pct": [0.1]})
     r = er.event_reactions(ev, close, "America/New_York")
     assert np.isfinite(r.loc[0, "ret_1d"]) and np.isnan(r.loc[0, "ret_2d"]) and bool(r.loc[0, "gap"])   # R8-08
+    assert np.isnan(r.loc[0, "drift_20d"]) and np.isnan(r.loc[0, "abn_drift_20d"])                    # the drift starts late too
 
 
 # ── Codex review of the K8 fixes ────────────────────────────────────────────────────────────────────────────────────
@@ -216,3 +217,44 @@ def test_a_stored_review_of_the_old_schema_loses_its_rating_wording():
     old = {**base, "label": "Avoid", "confidence": "high", "label_would_change_if": ["Move to Skip or Avoid if ..."]}
     assert ar.validate(old)["label_would_change_if"] == []
     assert ar.validate({**base, "label_would_change_if": ["tilts if margins fall"]})["label_would_change_if"] == ["tilts if margins fall"]
+
+
+# ── Codex round 3 ────────────────────────────────────────────────────────────────────────────────────────────────────
+def test_the_zero_keeps_a_list_of_years_in_one_clause():
+    q = "The Company had no finance leases during the years ended December 31, 2024 and 2023"
+    r = ff.validate_lease_extraction({"kind": "NONE", "quote": q, "chunk_id": "c"}, {"c": q}, fiscal_year_end=2025)
+    assert r["accepted"] and sorted(v["year"] for v in r["values"]) == [2023, 2024]     # not a default zero for 2025
+
+
+@pytest.mark.parametrize("row", ["Principal payments on operating and finance leases 30 20 10",
+                                 "Principal payments on finance and operating leases 30 20 10",
+                                 "Principal payments on finance leases and operating leases 30 20 10"])
+def test_operating_and_finance_wording_is_a_sum(row):
+    r = ff.validate_lease_extraction(_amount(row), {"c": _HEAD + row}, fiscal_year_end=2025, total_debt_usd=1e9)
+    assert not r["accepted"] and "finance-lease-only" in r["reason"]
+
+
+def test_each_value_is_relabelled_by_its_own_heading():
+    dated = "Principal payments on finance leases 90 30 20"
+    undated = "Repayments of finance lease obligations 7 6 5"
+    chunks = {"d": "(in millions)\nJanuary 31, 2025 2024 2023\n" + dated,
+              "u": "(in millions)\nFiscal 2025 2024 2023\n" + undated}
+    ext = {"kind": "AMOUNT", "unit": "millions", "values": [
+        {"fiscal_year": 2024, "amount": 30, "quote": dated, "chunk_id": "d"},
+        {"fiscal_year": 2025, "amount": 7, "quote": undated, "chunk_id": "u"}]}
+    r = ff.validate_lease_extraction(ext, chunks, fiscal_year_end=2026, fye_month=1, total_debt_usd=1e10)
+    years = {v["value_usd"] / 1e6: v["year"] for v in r["values"]}
+    assert years == {30.0: 2024, 7.0: 2026}      # the dated table is literal, the start-year labels move up one
+
+
+def test_a_heading_split_over_two_lines_is_still_dated():
+    row = "Principal payments on finance leases 90 30 20"
+    assert ff.heading_has_dates("(in millions)\nYears ended January 31,\n2025 2024 2023\n" + row, row)
+    assert not ff.heading_has_dates("(in millions)\nFiscal 2025 2024 2023\n" + row, row)
+
+
+def test_point_in_time_with_mixed_utc_offsets():
+    p = pd.DataFrame({"text": ["tokyo", "ny", "late"],
+                      "filed": ["2025-01-01 00:00:00+09:00", "2025-01-01 23:00:00-05:00", "2025-01-02 08:00:00+00:00"]})
+    got = rt.point_in_time(p, date(2025, 1, 1))["text"].tolist()
+    assert got == ["tokyo", "ny"]                                           # by the day as printed, not shifted by UTC

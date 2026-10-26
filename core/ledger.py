@@ -103,10 +103,10 @@ def realized_pnl(trades) -> pd.DataFrame:
                 raw_fee = float(r.fees)
             except (TypeError, ValueError):
                 raw_fee = float("nan")
-            if math.isinf(raw_fee):                     # an impossible fee is unknown, not zero
+            if not math.isfinite(raw_fee):              # a fee that is not a number is unknown, never zero (T3-03)
                 fee, fee_unknown = 0.0, True
             else:
-                fee = 0.0 if math.isnan(raw_fee) else raw_fee   # a stored fee is NOT NULL; a stray NaN must not void totals
+                fee = raw_fee
             fees += fee
             if r.side == "ADJUST":                      # position set by hand: new quantity and basis, no P&L
                 qty = float(r.qty)

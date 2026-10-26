@@ -10,7 +10,7 @@ def clean_code(ccy) -> Optional[str]:
     if ccy is None:
         return None
     c = str(ccy).strip()
-    return None if c in ("", "nan", "None") else c
+    return None if c in ("", "nan", "None", "<NA>", "NaT") else c
 
 
 def is_minor(ccy) -> bool:
@@ -21,6 +21,6 @@ def major_currency(ccy) -> Optional[str]:
     if ccy is None:
         return None
     c = str(ccy).strip()
-    if c in ("", "nan", "None"):
+    if c in ("", "nan", "None", "<NA>", "NaT"):
         return None
     return MINOR_UNITS.get(c, c.upper())

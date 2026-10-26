@@ -78,6 +78,11 @@ def point_in_time(passages: pd.DataFrame, as_of: Optional[date]) -> pd.DataFrame
     if "filed" not in passages.columns:
         return passages.head(0)
     filed = pd.to_datetime(passages["filed"], errors="coerce")
+    if not pd.api.types.is_datetime64_any_dtype(filed):     # mixed offsets (+09:00, -05:00): read each value on its own
+        def _day(v):
+            t = pd.to_datetime(v, errors="coerce")
+            return pd.NaT if pd.isna(t) else pd.Timestamp(year=t.year, month=t.month, day=t.day)
+        filed = pd.to_datetime(pd.Series([_day(v) for v in passages["filed"]], index=passages.index))
     if getattr(filed.dt, "tz", None) is not None:
         filed = filed.dt.tz_localize(None)                  # keep the wall-clock day: 2025-01-01 00:00+09:00 is 1 Jan
     filed = filed.dt.normalize()
