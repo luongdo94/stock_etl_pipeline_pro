@@ -85,6 +85,7 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
     _rules = load_rules()
     _track_record_ok = bool(track_record_ok)
     _hist_fcf = _hist_fcf if _hist_fcf is not None else pd.DataFrame()
+    _quarterly_error = (getattr(_quarterly_fin, "attrs", {}) or {}).get("error")
     # Quality / Value / Momentum for the whole universe at once (percentiles need the peer group)
     _scores = score_universe(_companies_df, _annual_fin, _prices_df, hist_fcf=_hist_fcf, estimates=_estimates)
     # Exclude non-investable instruments: indices & volatility measures
@@ -279,6 +280,11 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
             roic_pct, _nde = None, None
             _met = {**_met, "fcf_conversion": None, "net_debt_ebitda": None, "roic_pct": None, "fcf_yield_pct": None}
 
+        _warnings = [str(w) for w in _dec.warnings]
+        if _quarterly_error:
+            _warnings.insert(0, f"quarterly statements could not be read ({_quarterly_error}) — "
+                                "EPS / revenue momentum is unknown, not neutral")
+
         screener_rows.append({
             "Ticker": ticker,
             "Company": row['company'],
@@ -294,7 +300,7 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
             # what the Decision says about itself — shown, never re-derived by a view: the first reason, then the lists
             "Why": str(_dec.reasons[0]) if _dec.reasons else "",
             "_beyond_model": bool(_dec.beyond_model),
-            "_reasons": [str(r) for r in _dec.reasons], "_warnings": [str(w) for w in _dec.warnings],
+            "_reasons": [str(r) for r in _dec.reasons], "_warnings": _warnings,
             "_confidence_notes": [str(n) for n in _dec.confidence_notes], "_invalidation": [str(i) for i in _dec.invalidation],
             "Value": value_score if value_score is not None else float("nan"),
             "Momentum": momentum,
