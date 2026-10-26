@@ -315,3 +315,25 @@ def test_stored_fx_for_minor_units_and_padded_codes(monkeypatch):
 def test_more_tradingview_symbols(yahoo, tv):
     from core.symbols import get_tv_symbol
     assert get_tv_symbol(yahoo) == tv
+
+
+def test_volume_flow_works_on_the_apps_float32_copy_on_write_frames(monkeypatch):
+    """The app hands over float32 frames (optimize_dataframe_memory) under copy-on-write: arrays taken from them are
+    read-only — the first version assigned into one and crashed the whole Scanner."""
+    from core import smart_money
+    pd.set_option("mode.copy_on_write", True)
+    try:
+        rng = np.random.default_rng(3)
+        fx = (0.9 * (1 + rng.normal(0, 0.003, 40))).astype("float32")
+        eur = np.round(100.0 * fx.astype(float), 4).astype("float32")
+        df = pd.DataFrame({"date": pd.bdate_range(end="2026-10-23", periods=40), "price_open": eur, "price_high": eur,
+                           "price_low": eur, "price_close": eur, "volume": np.float32(1e6), "fx_rate": fx,
+                           "price_scale": np.float32(1.0)})
+        for c in ("price_open", "price_high", "price_low", "price_close", "fx_rate", "price_scale"):
+            df[c] = df[c].astype("float32")
+        seen = {}
+        monkeypatch.setattr(smart_money, "get_sm_spirit_unified_v2", lambda d, s: seen.update(df=d) or {})
+        smart_money.get_volume_flow(df, "Tech")
+        assert seen["df"]["price_close"].nunique() == 1
+    finally:
+        pd.set_option("mode.copy_on_write", False)
