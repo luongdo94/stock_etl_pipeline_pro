@@ -166,3 +166,53 @@ def test_a_hole_after_the_reaction_day_keeps_the_one_day_move():
                        "eps_actual": [1.0], "eps_estimate": [0.9], "surprise_pct": [0.1]})
     r = er.event_reactions(ev, close, "America/New_York")
     assert np.isfinite(r.loc[0, "ret_1d"]) and np.isnan(r.loc[0, "ret_2d"]) and bool(r.loc[0, "gap"])   # R8-08
+
+
+# ── Codex review of the K8 fixes ────────────────────────────────────────────────────────────────────────────────────
+def test_the_same_number_with_two_scales_is_ambiguous():
+    q = "Principal payments on finance leases were $1.2 billion in 2025 and $1.2 million in 2024."
+    assert ff.attached_unit(q, 1.2) == ff.AMBIGUOUS_UNIT
+    r = ff.validate_lease_extraction(_amount(q, 1.2, unit="billions"), {"c": q}, fiscal_year_end=2025, total_debt_usd=1e10)
+    assert not r["accepted"] and "different scales" in r["reason"]
+
+
+def test_a_late_reaction_day_voids_the_drift_too():
+    days = list(pd.bdate_range("2026-04-27", "2026-05-01")) + list(pd.bdate_range("2026-05-18", periods=40))
+    close = pd.Series(np.linspace(100, 130, len(days)), index=pd.DatetimeIndex(days))
+    ev = pd.DataFrame({"ticker": "A", "earnings_ts": pd.to_datetime(["2026-05-04 12:00"], utc=True),
+                       "eps_actual": [1.0], "eps_estimate": [0.9], "surprise_pct": [0.1]})
+    r = er.event_reactions(ev, close, "America/New_York")
+    assert bool(r.loc[0, "gap"]) and np.isnan(r.loc[0, "drift_20d"]) and np.isnan(r.loc[0, "ret_2d"])
+
+
+# ── Codex review, second pass ───────────────────────────────────────────────────────────────────────────────────────
+def test_the_zero_does_not_inherit_the_year_of_another_clause():
+    q = "The Company issued notes in 2025 and did not have any finance leases during 2024"
+    r = ff.validate_lease_extraction({"kind": "NONE", "quote": q, "chunk_id": "c"}, {"c": q}, fiscal_year_end=2025)
+    assert r["accepted"] and [v["year"] for v in r["values"]] == [2024]
+
+
+def test_a_heading_with_full_dates_is_not_relabelled():
+    row = "Principal payments on finance leases 90 30 20"
+    chunks = {"c": "(in millions)\nJanuary 31, 2025 2024 2023\n" + row}      # an older table inside the FY2026 filing
+    r = ff.validate_lease_extraction(_amount(row, 90, 2025), chunks, fiscal_year_end=2026, fye_month=1, total_debt_usd=1e10)
+    assert r["accepted"] and r["values"][0]["year"] == 2025                  # the printed period-end year, not 2026
+
+
+@pytest.mark.parametrize("row", ["Principal payments on finance leases and operating leases 30 20 10",
+                                 "Payments on finance leases and operating lease liabilities 30 20 10"])
+def test_a_row_naming_finance_and_operating_leases_is_a_sum(row):
+    r = ff.validate_lease_extraction(_amount(row), {"c": _HEAD + row}, fiscal_year_end=2025, total_debt_usd=1e9)
+    assert not r["accepted"]
+
+
+def test_point_in_time_keeps_the_calendar_day_across_time_zones():
+    p = pd.DataFrame({"text": ["a"], "filed": pd.to_datetime(["2025-01-01 00:00:00+09:00"])})
+    assert rt.point_in_time(p, date(2024, 12, 31)).empty and len(rt.point_in_time(p, date(2025, 1, 1))) == 1
+
+
+def test_a_stored_review_of_the_old_schema_loses_its_rating_wording():
+    base = {k: ([] if v["type"] == "array" else "x") for k, v in ar.SCHEMA["properties"].items()}
+    old = {**base, "label": "Avoid", "confidence": "high", "label_would_change_if": ["Move to Skip or Avoid if ..."]}
+    assert ar.validate(old)["label_would_change_if"] == []
+    assert ar.validate({**base, "label_would_change_if": ["tilts if margins fall"]})["label_would_change_if"] == ["tilts if margins fall"]

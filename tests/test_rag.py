@@ -146,7 +146,10 @@ def test_no_finance_leases_is_a_zero_and_immaterial_only_a_note():
 
 def test_fiscal_labels_are_aligned_to_the_filing_year():
     # a year ending in January 2026 that the company calls 'fiscal 2025' → the period-end year
-    assert ff.assign_years([2025, 2024, 2023], 2026, fye_month=1) == {2025: 2026, 2024: 2025, 2023: 2024}
+    # a January year end labelled by the year it started: the newest column heading (2025) proves the convention
+    assert ff.assign_years([2025, 2024, 2023], 2026, fye_month=1, newest_label=2025) == {2025: 2026, 2024: 2025, 2023: 2024}
+    with pytest.raises(ValueError):                         # without that evidence the model's own years prove nothing
+        ff.assign_years([2025, 2024, 2023], 2026, fye_month=1)
     assert ff.assign_years([2025, 2024], 2025) == {2025: 2025, 2024: 2024}
     # pilot (FRT): a lone older column is NOT stretched onto the filing's own year
     assert ff.assign_years([2023], 2025) == {2023: 2023}

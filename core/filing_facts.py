@@ -14,7 +14,7 @@ import re
 from decimal import Decimal, InvalidOperation
 from typing import Optional
 
-VALIDATOR_VERSION = 5        # bump on any rule change: stored readings of other versions are re-validated / re-read
+VALIDATOR_VERSION = 7        # bump on any rule change: stored readings of other versions are re-validated / re-read
 KINDS = ("AMOUNT", "NONE", "IMMATERIAL", "NOT_FOUND")
 UNIT_SCALE = {"units": 1.0, "thousands": 1e3, "millions": 1e6, "billions": 1e9}
 _UNIT_EVIDENCE = {
@@ -40,8 +40,7 @@ NOT_PRINCIPAL = re.compile(r"operating\s+cash\s+flows?|\binterest\b|right[- ]of[
 FINANCE_LEASE = re.compile(r"finance\s+leas", re.I)
 OTHER_DEBT = re.compile(r"\b(?:debt|borrowings?|notes?\s+payable|senior\s+notes?|convertible\s+notes?|"
                         r"promissory\s+notes?|loans?|credit\s+facilit\w+|commercial\s+paper|bonds?|debentures?|"
-                        r"mortgages?)\b|operating\s+(?:and|&)\s+finance|finance\s+(?:and|&)\s+operating|"
-                        r"\band\s+other\b", re.I)
+                        r"mortgages?)\b|operating\s+leas|\band\s+other\b", re.I)
 # K8-02: a scale written right after the figure ("$1.2 billion") is the figure's own unit
 _ATTACHED = re.compile(r"(\d[\d,]*(?:\.\d+)?)\)?\s*(thousand|million|billion|bn)s?\b", re.I)
 _ATTACHED_UNIT = {"thousand": "thousands", "million": "millions", "billion": "billions", "bn": "billions"}
@@ -81,7 +80,7 @@ def absent_all_period(quote: str) -> bool:
 
 def _absent_clauses(quote: str) -> list:
     """The clauses of a quote that deny finance leases over a whole period (not at a date)."""
-    return [c for c in re.split(r"[;:]|(?<=[a-z0-9)])\.\s", norm(quote))
+    return [c for c in re.split(r"[;:,]|\b(?:and|but|while|whereas)\b|(?<=[a-z0-9)])\.\s", norm(quote))
             if _NO_FINANCE_LEASE.search(c) and _WHOLE_PERIOD.search(c) and not _AT_A_DATE.search(c)]
 
 
@@ -156,12 +155,16 @@ def unit_problem(unit: str, passage: str, context: list) -> Optional[str]:
     return None if unit == "units" else f"unit '{unit}' not stated near the table"
 
 
+AMBIGUOUS_UNIT = "ambiguous"
+
+
 def attached_unit(quote: str, amount) -> Optional[str]:
-    """The scale written right after `amount` in the quote ('$1.2 billion' → 'billions'), None when there is none."""
-    for m in _ATTACHED.finditer(str(quote or "")):
-        if same_number(m.group(1), amount):
-            return _ATTACHED_UNIT[m.group(2).lower()]
-    return None
+    """The scale written right after `amount` in the quote ('$1.2 billion' → 'billions'), None when there is none,
+    AMBIGUOUS_UNIT when the same number is written with different scales ("1.2 billion in 2025 and 1.2 million in
+    2024") — which year gets which cannot be told, so the figure is not used."""
+    units = {_ATTACHED_UNIT[m.group(2).lower()] for m in _ATTACHED.finditer(str(quote or ""))
+             if same_number(m.group(1), amount)}
+    return None if not units else (next(iter(units)) if len(units) == 1 else AMBIGUOUS_UNIT)
 
 
 def unit_evidenced(unit: str, passages: list) -> bool:
@@ -203,6 +206,32 @@ def column_years(passage: str, quote: str, before: str = "") -> list:
             if len(run) >= 2 and len(set(run)) == len(run) and _monotonic(run):
                 return run
     return []
+
+
+_MONTHS = r"(?:january|february|march|april|may|june|july|august|september|october|november|december)"
+
+
+def heading_has_dates(passage: str, quote: str, before: str = "") -> bool:
+    """True when the year heading above the quoted row prints full dates ("January 31, 2025 2024 2023"): the years
+    are then period-end years as printed, not the company's own fiscal labels."""
+    text = (str(before) + "\n" if before else "") + str(passage or "")
+    pos = norm(text).find(norm(quote)[:40])
+    if pos < 0:
+        return False
+    lines = text.split("\n")
+    acc, row_i = 0, len(lines) - 1
+    for i, line in enumerate(lines):
+        acc += len(norm(line)) + 1
+        if acc > pos:
+            row_i = i
+            break
+    for k in range(row_i, -1, -1):
+        ys = _YEAR.findall(lines[k])
+        if len(ys) >= 2 and len(set(ys)) == len(ys):
+            return bool(re.search(_MONTHS + r"\s+\d{1,2}", norm(lines[k])))
+        if len(ys) == 1 and len(lines[k]) <= 40:
+            return bool(re.search(_MONTHS + r"\s+\d{1,2}", norm(lines[k])))
+    return False
 
 
 def _monotonic(ys: list) -> bool:
@@ -276,8 +305,8 @@ def assign_years(labels: list, fiscal_year_end: int, fye_month: int = 12, newest
     the pilot showed a lone '2023' value being mapped onto 2025 that way.
 
     Which convention a January-March filer uses is read from the FILING (K8-04): `newest_label` — the newest year its
-    column headings print — or a label equal to the period-end year, or a full three-year run of labels. The labels the
-    model chose are not evidence on their own (it may skip the newest column). Unproven → ValueError."""
+    column headings print — or a label equal to the period-end year. The labels the model chose are not evidence on
+    their own (it may skip the newest column, or quote old years only). Unproven → ValueError."""
     labels = sorted({int(x) for x in labels}, reverse=True)
     if not labels:
         return {}
@@ -285,7 +314,7 @@ def assign_years(labels: list, fiscal_year_end: int, fye_month: int = 12, newest
         return {lab: lab for lab in labels}
     if newest_label is not None:
         newest = int(newest_label)
-    elif labels[0] == fiscal_year_end or (len(labels) >= 3 and labels[0] - labels[-1] == len(labels) - 1):
+    elif labels[0] == fiscal_year_end:
         newest = labels[0]
     else:
         raise ValueError("the filing's fiscal-year labelling is not shown")
@@ -354,7 +383,7 @@ def validate_lease_extraction(ext: dict, chunks: dict, *, fiscal_year_end: int, 
     if fye_month <= 3:              # the filing's own newest column label (its headings), not the model's choice
         # R8-01: only a table row's own heading counts (a sentence below a balance sheet "January 31, 2026 and 2025"
         # says nothing about how its "fiscal 2025" is labelled), and never a heading of later years (maturities)
-        heads = []
+        heads, dated = [], False
         for v in vals:
             cid, q = v.get("chunk_id"), v.get("quote") or ""
             if cid not in chunks or descriptor(q, v.get("amount") or 0)[1] < 2:
@@ -362,7 +391,10 @@ def validate_lease_extraction(ext: dict, chunks: dict, *, fiscal_year_end: int, 
             ys = column_years(chunks[cid], q, (before or {}).get(cid, ""))
             if ys and max(ys) <= fiscal_year_end:
                 heads += ys
+                dated = dated or heading_has_dates(chunks[cid], q, (before or {}).get(cid, ""))
         newest_label = max(heads) if heads else (doc_columns[1] if doc_columns else None)
+        if dated:                   # "January 31, 2026 / 2025": the printed year IS the period-end year — no relabelling
+            fye_month, newest_label = 12, None
     try:
         years = assign_years(labels, fiscal_year_end, fye_month, newest_label)
     except ValueError as e:
@@ -401,7 +433,9 @@ def validate_lease_extraction(ext: dict, chunks: dict, *, fiscal_year_end: int, 
             problems.append(f"FY{v.get('fiscal_year')}: the row prints {run} columns (several registrants?)")
             continue
         own = attached_unit(q, amount)
-        if own:                     # "$1.2 billion": the figure's own word decides, not the filing's usual scale
+        if own == AMBIGUOUS_UNIT:
+            why = f"{amount:g} is written with different scales in the same quote"
+        elif own:                   # "$1.2 billion": the figure's own word decides, not the filing's usual scale
             why = None if unit == own else f"unit '{unit}' contradicts the figure ('{amount:g} {own}')"
         else:
             why = unit_problem(unit, chunks[cid], [(before or {}).get(cid, "")] + list((prior_chunks or {}).get(cid, [])))

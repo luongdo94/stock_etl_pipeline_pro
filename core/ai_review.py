@@ -136,7 +136,10 @@ def validate(obj) -> Optional[dict]:
             return None
         if spec["type"] == "string" and not isinstance(obj[k], str):
             return None
-    return {k: obj[k] for k in SCHEMA["required"]}
+    out = {k: obj[k] for k in SCHEMA["required"]}
+    if "label" in obj:                       # a review of the old schema: that list says when ITS label would change
+        out["label_would_change_if"] = []
+    return out
 
 
 def path_for(as_of: str, directory=None) -> Path:

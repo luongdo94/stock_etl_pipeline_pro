@@ -13,6 +13,32 @@ from core.scoring import score_universe
 from etl.utils import clean_upside_pct
 
 
+# The numeric columns of a real screener row. A company the engine cannot judge keeps ALL of them (NaN = unknown), so a
+# table made only of such rows still has every column the presets, the app and the snapshot read (G4-01); a test compares
+# this list with the columns a real row produces.
+_NUMERIC_COLUMNS = (
+    "MoS (%)", "Quality", "Value", "Momentum", "Revisions", "_adv_eur", "_stop_distance_pct", "_thesis_stop", "ADV (EUR M)",
+    "Coverage (%)", "_quality_raw", "Upside (%)", "1D Chg (%)", "Price", "MCap (B)", "RSI (14)", "Z-Score", "vs MA200 (%)",
+    "Yield (%)", "Net Payout (%)", "FCF Margin (%)", "ROE (%)", "P/E (Fwd)", "EV/EBITDA", "PEG", "Debt/EBITDA", "ROIC (%)",
+    "Net Debt/EBITDA", "FCF Conversion (x)", "Insider 6M (%)", "FCF Yield (%)", "Implied Growth (%)", "Growth Gap (pp)",
+    "Exp. Return (%/yr)", "Next ER (days)", "Vol 30D (%)", "Short %")
+
+
+def placeholder_row(ticker, row, *, no_prices: bool) -> dict:
+    """A company without prices or scores: its own NO_DATA stance, every figure unknown, empty containers (not NaN: readers
+    call dict() / .get() on them), and the reason (K7-01)."""
+    out = {c: float("nan") for c in _NUMERIC_COLUMNS}
+    out.update({
+        "Ticker": ticker, "Company": row.get("company", ticker), "Sector": row.get("sector"), "Region": row.get("region"),
+        "Peer group": "N/A", "Decision": NO_DATA_STANCE, "Confidence": "LOW", "Action": "N/A", "Verdict": "N/A",
+        "Conflicts": "", "Why": "no price history on file" if no_prices else "not scored",
+        "_beyond_model": False, "_reasons": [], "_warnings": [], "_confidence_notes": [], "_invalidation": [],
+        "Flags": "", "Missing": ["price history"] if no_prices else ["scores"], "Components": {}, "_valuation": {},
+        "Smart Money": "N/A", "_metrics": {}, "_insider": {}, "Trend": "N/A", "EPS Momentum": "N/A",
+        "Rev Momentum": "N/A"})
+    return out
+
+
 def insider_activity(row) -> dict:
     """Insider buying / selling over 6 months from the provider's net share purchase activity:
     {status: NET BUY / NET SELL / NET FLAT / NO TRADES / PARTIAL DATA / NO DATA, net_pct (% of insider holdings),
@@ -128,20 +154,7 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
         if ticker_prices.empty or ticker not in _scores.index:
             # K7-01: kept as a row the engine cannot judge (its own NO_DATA stance, no figures), so "Needs data" and
             # the universe count show it instead of the stock silently vanishing
-            screener_rows.append({"Ticker": ticker, "Company": row.get("company", ticker), "Sector": row.get("sector"),
-                                  "Region": row.get("region"), "Decision": NO_DATA_STANCE, "Action": "N/A",
-                                  "Verdict": "N/A", "Confidence": "LOW",
-                                  "Why": "no price history on file" if ticker_prices.empty else "not scored",
-                                  "Missing": ["price history"] if ticker_prices.empty else ["scores"],
-                                  "_beyond_model": False,
-                                  # R7-01: empty containers, not NaN (readers call dict() / .get() on them)
-                                  "Components": {}, "Flags": "", "_valuation": {}, "_metrics": {}, "_reasons": [],
-                                  "_warnings": [], "Conflicts": "", "EPS Momentum": "N/A", "Rev Momentum": "N/A",
-                                  # the columns the app and the snapshot read, so a table of placeholders only is complete
-                                  "Price": float("nan"), "Quality": float("nan"), "Value": float("nan"),
-                                  "Momentum": float("nan"), "Revisions": float("nan"), "Upside (%)": float("nan"),
-                                  "RSI (14)": float("nan"), "MCap (B)": float("nan"), "Smart Money": "N/A",
-                                  "Trend": "N/A"})
+            screener_rows.append(placeholder_row(ticker, row, no_prices=ticker_prices.empty))
             continue
         
         # RSI (Pre-calculated in transform.py)

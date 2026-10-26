@@ -285,3 +285,33 @@ def test_the_overdue_clock_of_a_top_without_an_entry_starts_when_it_was_known():
              "entry_date": pd.NaT if i == 19 else pd.Timestamp("2026-03-02"),
              "exit_date_1": pd.NaT if i == 19 else pd.Timestamp("2026-03-05")} for i in range(20)]
     assert ft.quintile_net_of_costs(pd.DataFrame(rows), 1)["unresolved_periods"] == 0     # not yet a week old
+
+
+# ── Codex review, group 4 ────────────────────────────────────────────────────────────────────────────────────────────
+def test_a_table_of_placeholders_has_every_column_of_a_real_row_and_the_presets_run(tmp_path):
+    from core import scan_presets
+    from core.screener import build_screener_table
+    from services.db import read_warehouse
+    from tests.synthetic_warehouse import build
+    db = build(str(tmp_path / "dw.duckdb"))
+    with duckdb.connect(db, read_only=True) as conn:
+        frames = read_warehouse(conn)
+    real = build_screener_table(frames[1], frames[0], frames[4], frames[3], frames[7])
+    empty = build_screener_table(frames[1], frames[0].iloc[:0], frames[4], frames[3], frames[7])
+    assert set(real.columns) <= set(empty.columns), sorted(set(real.columns) - set(empty.columns))
+    for preset in scan_presets.PRESETS:
+        preset.rule(empty)                                                 # no KeyError on a table with no figures
+
+
+def test_stored_fx_for_minor_units_and_padded_codes(monkeypatch):
+    from services import market_data as md
+    monkeypatch.setattr(md, "_stored_fx", lambda ccy, generation=None: (0.05, "2026-10-23") if ccy == "ZAR" else None)
+    fn = getattr(md.stored_fx_rate, "__wrapped__", md.stored_fx_rate)
+    assert fn("ZAc") == pytest.approx(0.0005) and fn(" ZAR ") == pytest.approx(0.05) and fn("XXX") is None
+
+
+@pytest.mark.parametrize("yahoo,tv", [("RR.L", "LSE:RR."), ("BP.L", "LSE:BP."), ("GSK.L", "LSE:GSK"), ("BT-A.L", "LSE:BT.A"),
+                                      ("BAJAJ-AUTO.BO", "BSE:BAJAJ_AUTO")])
+def test_more_tradingview_symbols(yahoo, tv):
+    from core.symbols import get_tv_symbol
+    assert get_tv_symbol(yahoo) == tv

@@ -77,9 +77,12 @@ def point_in_time(passages: pd.DataFrame, as_of: Optional[date]) -> pd.DataFrame
         return passages
     if "filed" not in passages.columns:
         return passages.head(0)
-    filed = pd.to_datetime(passages["filed"], utc=True, errors="coerce").dt.tz_convert(None).dt.normalize()
+    filed = pd.to_datetime(passages["filed"], errors="coerce")
+    if getattr(filed.dt, "tz", None) is not None:
+        filed = filed.dt.tz_localize(None)                  # keep the wall-clock day: 2025-01-01 00:00+09:00 is 1 Jan
+    filed = filed.dt.normalize()
     cut = pd.Timestamp(as_of)
-    cut = (cut.tz_convert(None) if cut.tzinfo is not None else cut).normalize()     # R8-05: tz-aware vs naive
+    cut = (cut.tz_localize(None) if cut.tzinfo is not None else cut).normalize()    # R8-05: tz-aware vs naive
     return passages[filed.notna() & (filed <= cut)]
 
 

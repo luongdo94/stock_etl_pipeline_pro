@@ -294,9 +294,9 @@ def event_reactions(events: pd.DataFrame, close: pd.Series, tz: str, bench: Opti
         drift_gap = (i + 1 + DRIFT_SESSIONS < len(c)
                      and _skipped(sessions[i + 1], sessions[i + 1 + DRIFT_SESSIONS], DRIFT_SESSIONS) > MAX_SKIPPED_DRIFT)
         if gap_1d:
-            r1 = np.nan
+            r1 = drift = np.nan                              # the reaction day is not the report's: nor is the drift after it
         if gap_2d:
-            r2 = np.nan
+            r2 = drift = np.nan                              # the drift starts after the reaction day: a hole moves it
         if drift_gap:
             drift = np.nan
         abn2 = abnd = np.nan

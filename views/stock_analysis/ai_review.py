@@ -59,7 +59,8 @@ def render(dd, ctx):
         if r["data_disagreements"]:
             st.markdown(f"**{labels['data_disagreements']}**")
             _bullets(r["data_disagreements"])
-        st.markdown(f"**{labels['label_would_change_if']}**")
-        _bullets(r["label_would_change_if"])
+        if r["label_would_change_if"]:
+            st.markdown(f"**{labels['label_would_change_if']}**")
+            _bullets(r["label_would_change_if"])
         st.markdown(f"**{labels['verify_yourself']}**")
         _bullets(r["verify_yourself"])

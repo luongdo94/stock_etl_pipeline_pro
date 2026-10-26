@@ -18,7 +18,9 @@ def get_tv_symbol(t: str) -> str:
     _amex = {"SPY","QQQ","IWM","GLD","SLV","TLT","HYG","EEM","EFA","DIA",
              "XLF","XLE","XLK","XLV","SQQQ","TQQQ","VXX","LQD"}
     if t in _amex: return f"AMEX:{t}"
-    if t.endswith(".L"):   return f"LSE:{t[:-2].replace('-', '.')}"         # BT-A.L -> LSE:BT.A (K7-06)
+    if t.endswith(".L"):                                                     # BT-A.L -> LSE:BT.A (K7-06)
+        base = t[:-2].replace('-', '.')
+        return f"LSE:{base}." if len(base) <= 2 and base.isalpha() else f"LSE:{base}"    # RR.L -> LSE:RR. (2-letter EPICs)
     if t.endswith(".DE"):  return f"XETR:{t[:-3]}"
     if t.endswith(".T"):   return f"TSE:{t[:-2]}"
     if t.endswith(".PA"):  return f"EURONEXT:{t[:-3]}"
@@ -42,7 +44,7 @@ def get_tv_symbol(t: str) -> str:
     if t.endswith(".TW"):  return f"TWSE:{t[:-3]}"
     if t.endswith(".SA"):  return f"BMFBOVESPA:{t[:-3]}"
     if t.endswith(".NS"):  return f"NSE:{t[:-3].replace('-', '_')}"
-    if t.endswith(".BO"):  return f"BSE:{t[:-3]}"
+    if t.endswith(".BO"):  return f"BSE:{t[:-3].replace('-', '_')}"
     if t.endswith(".BR"):  return f"EURONEXT:{t[:-3]}"
     if t.endswith(".LS"):  return f"EURONEXT:{t[:-3]}"
     if ":" in t: return t
