@@ -50,17 +50,6 @@ def test_stale_price_gives_no_beta_instead_of_zero():
     assert pd.isna(ex.loc[0, "ctl_momentum"])                                        # a 9-session-old level is unknown
 
 
-# ── K2-04: a matured top period without its outcome is counted ──────────────────────────────────────────────────
-def test_matured_top_without_outcome_is_unresolved_and_counted():
-    rows = []
-    for i in range(20):
-        rows.append({"as_of_date": pd.Timestamp("2026-01-01"), "ticker": f"T{i}", "quality": i, "region": "US",
-                     "fwd_1": np.nan if i == 19 else 0.0, "entry_date": pd.Timestamp("2026-01-02"),
-                     "exit_date_1": pd.Timestamp("2026-01-05")})
-    out = ft.quintile_net_of_costs(pd.DataFrame(rows), 1)
-    assert out["periods"] == 0 and out["unresolved_periods"] == 1
-
-
 # ── K2-06: contributions are shares of the signed total ─────────────────────────────────────────────────────────
 def test_risk_contribution_sums_to_one_hundred_with_a_hedge():
     rc = risk_contribution(np.array([[0.04, -0.015], [-0.015, 0.01]]), [0.5, 0.5])

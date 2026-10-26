@@ -37,9 +37,11 @@ def test_wilder_rsi_is_unknown_at_a_gap_and_reseeds():
     close = pd.Series([100, 102, 101, np.nan, 103, 102, 104, 105], dtype=float)
     rsi = indicators.wilder_rsi(close, period=2)
     assert np.isnan(rsi.iloc[3]) and np.isnan(rsi.iloc[4])          # the gap and the change across it
-    assert np.isfinite(rsi.iloc[-1])                                # seeded again from the next two known changes
+    # seeded again from the next two known changes (-1, +2): gain 1, loss 0.5 -> RSI 66.667; then +1 -> gain 1, loss 0.25 -> 80
+    assert rsi.iloc[6] == pytest.approx(200 / 3) and rsi.iloc[7] == pytest.approx(80.0)
     seed_gap = pd.Series([100, np.nan, 101, 102, 103, 104], dtype=float)
-    assert np.isfinite(indicators.wilder_rsi(seed_gap, period=2).iloc[-1])   # a gap in the seed no longer voids it
+    out = indicators.wilder_rsi(seed_gap, period=2)
+    assert np.isnan(out.iloc[3]) and out.iloc[4] == pytest.approx(100.0) and out.iloc[5] == pytest.approx(100.0)
     contiguous = pd.Series(100 + np.sin(np.arange(40)), dtype=float)
     new = indicators.wilder_rsi(contiguous)
     d = np.diff(contiguous.to_numpy())                                   # the textbook Wilder recursion, by hand
@@ -66,7 +68,8 @@ def test_short_history_has_a_finite_stop_and_target():
     df = pd.DataFrame({"date": pd.bdate_range("2026-01-01", periods=n), "price_close": 100.0, "price_high": 101.0,
                        "price_low": 99.0, "volume": 1e6})
     m = levels.get_tactical_metrics(df, 100.0)
-    assert np.isfinite(m["stop_loss"]) and np.isfinite(m["tp1"])     # 9-13 sessions no longer give NaN (K5-06)
+    assert m["stop_loss"] < 100.0 < m["tp1"]                         # 9-13 sessions no longer give NaN (K5-06), and it makes sense
+    assert m["stop_loss"] == pytest.approx(93.12) and m["tp1"] == pytest.approx(107.12)
 
 
 # ── K5-05: a missing volume voids Volume Flow ───────────────────────────────────────────────────────────────────

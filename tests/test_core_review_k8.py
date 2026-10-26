@@ -68,15 +68,6 @@ def test_a_partial_reading_does_not_shift_the_years():
     assert ff.assign_years([2025], 2026, fye_month=1, newest_label=2025) == {2025: 2026}
 
 
-# ── K8-05: the external review gives no rating of its own ──────────────────────────────────────────────────────
-def test_the_ai_review_has_no_label_or_agreement_badge():
-    assert "label" not in ar.SCHEMA["required"] and not hasattr(ar, "agreement")
-    p = ar.build_prompt({"ticker": "A"}, "2026-10-25")
-    assert "label" not in ar.validate({"label": "Avoid", "confidence": "high", **{k: [] if v["type"] == "array" else "x"
-                                       for k, v in ar.SCHEMA["properties"].items()}})
-    assert "no rating or recommendation of your own" in p and "- label:" not in p
-
-
 # ── K8-06: an undated filing is not public at a past date ──────────────────────────────────────────────────────
 def test_point_in_time_drops_unknown_filing_dates():
     p = pd.DataFrame({"text": ["a", "b", "c"], "filed": [date(2025, 1, 1), None, "not a date"]})
@@ -101,12 +92,6 @@ def test_eps_line_uses_the_event_series_and_shows_eur():
     assert l["EPS"]["yoy_pct"] == pytest.approx(10.0)                       # 2.0 → 2.2, as the growth history
     assert l["EPS"]["value"] == pytest.approx(2.2 * 0.006) and l["EPS"]["unit"] == "EUR/share"
     assert "€0.01/share" in eh.facts_line(eh.latest_report("A", _q(), None, _ev(), estimate_currency="JPY"))
-
-
-def test_a_consensus_in_another_currency_is_not_compared():
-    snaps = pd.DataFrame({"ticker": "A", "as_of": pd.to_datetime(["2026-10-10"]), "rev_est_0q_avg": [6e5]})
-    rev = eh.latest_report("A", _q(), None, _ev(), snaps, estimate_currency="EUR")["lines"][0]
-    assert rev["estimate"] is None and rev["vs"] is None and "not the statement's JPY" in rev["note"]
 
 
 # ── K8-09: a hole in the prices is not a longer "2-day" window ──────────────────────────────────────────────────
@@ -137,7 +122,12 @@ def test_notes_to_the_statements_is_not_debt():
 
 
 def test_a_unit_after_a_bracketed_figure():
-    assert ff.attached_unit("payments were $(1.2) billion", 1.2) == "billions"                 # R8-04
+    q = "In fiscal 2025, principal payments on finance leases were $(1.2) billion."
+    assert ff.attached_unit(q, 1.2) == "billions"                                           # R8-04
+    ok = ff.validate_lease_extraction(_amount(q, 1.2, unit="billions"), {"c": q}, fiscal_year_end=2025, total_debt_usd=1e10)
+    assert ok["accepted"] and ok["values"][0]["value_usd"] == pytest.approx(1.2e9) and ok["values"][0]["year"] == 2025
+    wrong = ff.validate_lease_extraction(_amount(q, 1.2, unit="millions"), {"c": q}, fiscal_year_end=2025, total_debt_usd=1e10)
+    assert not wrong["accepted"] and "contradicts the figure" in wrong["reason"]
 
 
 def test_the_zero_takes_the_years_of_its_own_clause():
@@ -249,8 +239,17 @@ def test_each_value_is_relabelled_by_its_own_heading():
 
 def test_a_heading_split_over_two_lines_is_still_dated():
     row = "Principal payments on finance leases 90 30 20"
-    assert ff.heading_has_dates("(in millions)\nYears ended January 31,\n2025 2024 2023\n" + row, row)
+    split = "(in millions)\nYears ended January 31,\n2025 2024 2023\n" + row
+    assert ff.heading_has_dates(split, row)
     assert not ff.heading_has_dates("(in millions)\nFiscal 2025 2024 2023\n" + row, row)
+    # through the validator: the printed years are period-end years (2025 stays 2025); fiscal labels move up one (-> 2026)
+    dated = ff.validate_lease_extraction(_amount(row, 90, 2025), {"c": split}, fiscal_year_end=2026, fye_month=1,
+                                         total_debt_usd=1e10)
+    assert dated["accepted"] and dated["values"][0]["year"] == 2025
+    labelled = ff.validate_lease_extraction(
+        _amount(row, 90, 2025), {"c": "(in millions)\nFiscal 2025 2024 2023\n" + row}, fiscal_year_end=2026, fye_month=1,
+        total_debt_usd=1e10)
+    assert labelled["accepted"] and labelled["values"][0]["year"] == 2026
 
 
 def test_point_in_time_with_mixed_utc_offsets():

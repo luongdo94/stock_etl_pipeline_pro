@@ -25,6 +25,8 @@ def test_prompt_carries_the_screener_numbers_and_says_the_label_is_unvalidated()
     p = ar.build_prompt(ROW, "2026-10-18")
     assert "ABC - Abc Corp" in p and "Quality 80/100" in p and "Value n/a/100" in p and "-7.2" in p
     assert "UNVALIDATED" in p and "no price targets" in p.lower()
+    assert "no rating or recommendation of your own" in p and "- label:" not in p       # K8-05: one Decision only
+    assert not hasattr(ar, "agreement")
 
 
 def test_validate_accepts_a_complete_review_and_drops_malformed_ones():

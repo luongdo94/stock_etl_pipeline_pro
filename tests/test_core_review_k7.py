@@ -24,11 +24,11 @@ def test_deterioration_needs_an_observed_revenue_trend():
 
 
 # ── K7-04: a code with spaces is still a minor unit ─────────────────────────────────────────────────────────────
-@pytest.mark.parametrize("code,minor", [(" GBp ", True), ("GBp", True), (" ZAc", True), ("GBP", False), (None, False)])
-def test_minor_unit_detection_strips_spaces(code, minor):
+@pytest.mark.parametrize("code,minor,major", [(" GBp ", True, "GBP"), ("GBp", True, "GBP"), (" ZAc", True, "ZAR"),
+                                               ("GBP", False, "GBP"), (None, False, None)])
+def test_minor_unit_detection_strips_spaces(code, minor, major):
     assert currency.is_minor(code) is minor
-    if code:
-        assert currency.major_currency(code) in ("GBP", "ZAR")
+    assert currency.major_currency(code) == major
 
 
 # ── K7-05: an estimated publication date is not used in strict mode ─────────────────────────────────────────────
@@ -72,7 +72,9 @@ def test_a_nan_valuation_in_stored_inputs_does_not_break_the_feed():
                 "rules_version": "r", "score_version": "v", "inputs": inputs}
     out = feed.decision_changes(pd.DataFrame([snap("2026-10-23", "NOT ENOUGH DATA", '{"valuation": NaN}'),
                                               snap("2026-10-24", "AVOID / TRIM", '{"valuation": {}}')]))
-    assert len(out["changes"]) == 1
+    (change,) = out["changes"]
+    assert (change["ticker"], change["from"], change["to"]) == ("A", "NOT ENOUGH DATA", "AVOID / TRIM")
+    assert change["direction"] == "data" and "valuation" not in change["causes"]      # no invented valuation difference
 
 
 def test_strict_point_in_time_ignores_the_warehouse_lag_estimate():

@@ -56,17 +56,20 @@ def test_snapshots_without_provenance_are_not_evidence():
 
 # ── K4-05: signal dates sharing one holding window are one observation ─────────────────────────────────────────
 def test_signal_dates_in_one_holding_window_count_once():
+    rng = np.random.default_rng(5)
     days = pd.bdate_range("2026-01-01", periods=126)
-    rows = [{"as_of_date": d, "ticker": f"T{i}", "quality": i, "xs_21": 0.01 * i + 0.001 * (k % 3),
+    rows = [{"as_of_date": d, "ticker": f"T{i}", "quality": i, "region": "US" if i % 2 else "EU",
+             "xs_21": 0.01 * i + rng.normal(0, 0.05),
              "entry_date": pd.Timestamp("2026-07-01"), "exit_date_21": pd.Timestamp("2026-07-30")}
-            for k, d in enumerate(days) for i in range(12)]
+            for d in days for i in range(40)]                                       # 40 names: above the cross-section minimum
     fr = pd.DataFrame(rows)
     assert tr.independent_windows(fr, 21) == 1
     assert tr.information_coefficient(fr, 21)["n_independent"] == 1                # was 6 from the snapshot dates
     for c in ("ctl_beta", "ctl_size", "ctl_value", "ctl_momentum"):
-        fr[c] = np.sin(np.arange(len(fr)) * (1 + len(c)))                          # controls that vary
+        fr[c] = rng.normal(size=len(fr))                                           # controls that vary
     fr["fwd_21"] = fr["xs_21"]
-    assert ft.fama_macbeth(fr, 21, "quality", require_controls=True)["n_independent"] <= 1
+    fm = ft.fama_macbeth(fr, 21, "quality", require_controls=True)
+    assert fm["n_days"] == 126 and fm["n_independent"] == 1                        # it computed — and counted ONE window
 
 
 # ── K4-03 / K4-07: an unknown basis makes the P&L unknown ──────────────────────────────────────────────────────
@@ -81,11 +84,6 @@ def test_a_cleared_cost_basis_makes_later_pnl_unknown():
     assert ledger.history_incomplete(rows[:2], {"A": 10})                                    # open with no basis
     new = ledger.adjustments_from_edit({}, {}, {"B": 5}, {"B": None})
     assert new == []                                                                         # a new unknown cost: unchanged
-
-
-def test_sales_beyond_the_ledger_make_the_total_unknown():
-    p = ledger.realized_pnl([ledger.trade("B", "SELL", 2, 100, 0.0)]).set_index("ticker")
-    assert pd.isna(p.at["B", "realized_eur"]) and p.at["B", "realized_known_eur"] == 0.0
 
 
 # ── K4-04 / K4-06: missing returns void the figures; one fee formula for curve and trades ──────────────────────

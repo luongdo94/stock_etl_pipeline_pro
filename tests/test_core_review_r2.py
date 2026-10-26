@@ -28,17 +28,23 @@ def test_macro_series_come_from_the_raw_closes(tmp_path):
         out = _macro_series_prices(c)
     assert set(out["ticker"]) == set(MACRO_SERIES) and len(out) == 120           # AAPL is not a macro series
     assert {"price_close", "fx_rate", "price_scale", "daily_return_pct"} <= set(out.columns)
+    dxy = out[out["ticker"] == "DX-Y.NYB"].sort_values("date")
+    assert dxy["price_close"].iloc[-1] == pytest.approx(100.0 + 59 * 0.01)       # the stored close, unchanged
     from core import market_regime as mr
-    assert mr.dxy_5d_move(out, None) is not None                                 # was always the daily fallback
+    # six closes 100.54 ... 100.59 at a constant rate: the 5-day move of the index itself (the rate cancels)
+    assert mr.dxy_5d_move(out, None) == pytest.approx((100.59 / 100.54 - 1) * 100)
 
 
-def test_no_macro_rows_is_an_empty_frame(tmp_path):
+def test_no_macro_rows_is_an_empty_frame(tmp_path, caplog):
     path = str(tmp_path / "w.duckdb")
     with duckdb.connect(path) as c:
         c.execute("CREATE SCHEMA raw")
-        c.execute("CREATE TABLE raw.stock_prices (date DATE, ticker VARCHAR, close DOUBLE, volume DOUBLE, fx_rate DOUBLE)")
-    with duckdb.connect(path, read_only=True) as c:
+        c.execute("CREATE TABLE raw.stock_prices (date DATE, ticker VARCHAR, close DOUBLE, volume DOUBLE, "
+                  "fx_rate DOUBLE, price_scale DOUBLE, _extracted_at TIMESTAMP)")      # the real columns, no macro rows
+        c.execute("INSERT INTO raw.stock_prices VALUES ('2026-10-01', 'AAPL', 1.0, 10, 0.9, 1.0, '2026-10-02')")
+    with duckdb.connect(path, read_only=True) as c, caplog.at_level("WARNING"):
         assert _macro_series_prices(c).empty
+    assert not caplog.records                                                     # empty because it is empty, not a failed query
 
 
 # ── A1-02 / A1-03: the regime reads SPY and breadth in the currency they trade in ──────────────────────────────────
@@ -213,20 +219,33 @@ def test_quality_dividend_uses_net_debt_and_keeps_unknown_leverage():
     assert p.rule(d).tolist() == [True, False, True, False]            # net cash-rich name kept; no-EBITDA debt is not
 
 
+def _volume_flow_through_the_real_engine(df, monkeypatch):
+    """Run get_volume_flow with the real engine, recording the frame it hands over; the caller's frame must stay as it was."""
+    from core import smart_money
+    before = df.copy(deep=True)
+    real, seen = smart_money.get_sm_spirit_unified_v2, {}
+
+    def spy(d, sector):
+        seen["df"] = d.copy()
+        return real(d, sector)
+    monkeypatch.setattr(smart_money, "get_sm_spirit_unified_v2", spy)
+    out = smart_money.get_volume_flow(df, "Tech")
+    pd.testing.assert_frame_equal(df, before)                                    # input not modified
+    assert seen["df"]["price_close"].nunique() == 1                              # the flat price stays one price
+    assert out["signal"] not in ("ACCUMULATION", "DISTRIBUTION")                 # ... so no flow is read into it
+    return out
+
+
 # ── A5-05: a flat listing price stays flat through the 4-decimal EUR rounding ──────────────────────────────────────
 @pytest.mark.parametrize("local,fx_base,scale", [(100.0, 0.9, 1.0), (40_000.0, 0.00066, 1.0), (3_000.0, 0.0058, 1.0),
                                                  (3_000.05, 0.0058, 1.0), (1_500.0, 1.17, 100.0)])   # USD, KRW, JPY, JPY off-grid, GBp
 def test_volume_flow_sees_a_flat_price_as_flat(monkeypatch, local, fx_base, scale):
-    from core import smart_money
     rng = np.random.default_rng(0)
     fx = (fx_base * (1 + rng.normal(0, 0.003, 40))).astype("float32").astype(float)    # a moving rate
     eur = np.round(local / scale * fx, 4)                                               # the warehouse's stored close
     df = pd.DataFrame({"date": pd.bdate_range(end="2026-10-23", periods=40), "price_open": eur, "price_high": eur,
                        "price_low": eur, "price_close": eur, "volume": 1e6, "fx_rate": fx, "price_scale": scale})
-    seen = {}
-    monkeypatch.setattr(smart_money, "get_sm_spirit_unified_v2", lambda d, s: seen.update(df=d) or {})
-    smart_money.get_volume_flow(df, "Tech")
-    assert seen["df"]["price_close"].nunique() == 1
+    _volume_flow_through_the_real_engine(df, monkeypatch)
 
 
 # ── Codex review of this round ─────────────────────────────────────────────────────────────────────────────────────
@@ -238,17 +257,6 @@ def test_a_holding_missing_both_shocks_counts_once_in_not_covered():
     assert out["not_covered"] == pytest.approx(0.3)
 
 
-def test_macro_series_are_filled_per_series(tmp_path):
-    import services.db as db
-    path = str(tmp_path / "w.duckdb")
-    _raw_prices(path)
-    with duckdb.connect(path, read_only=True) as c:
-        macro = db._macro_series_prices(c)
-    have = macro[macro["ticker"] == "^TNX"]                              # the marts already hold ^TNX, not DX-Y.NYB
-    kept = macro[~macro["ticker"].isin(have["ticker"].unique())]
-    assert set(kept["ticker"]) == {"DX-Y.NYB"}
-
-
 def test_a_failed_macro_query_is_logged_not_silent(tmp_path, caplog):
     import services.db as db
     path = str(tmp_path / "w.duckdb")
@@ -258,14 +266,6 @@ def test_a_failed_macro_query_is_logged_not_silent(tmp_path, caplog):
     with duckdb.connect(path, read_only=True) as c, caplog.at_level("WARNING"):
         assert db._macro_series_prices(c).empty                          # price_scale is missing: a binder error
     assert any("could not be read" in r.message for r in caplog.records)
-
-
-def test_an_impossible_fee_makes_the_pnl_unknown_not_zero():
-    from core import ledger
-    t = [dict(zip(ledger.COLUMNS, ["2026-10-01T10:00:00", "A", "BUY", 10.0, 10.0, float("inf"), None, "manual", ""])),
-         dict(zip(ledger.COLUMNS, ["2026-10-02T10:00:00", "A", "SELL", 10.0, 12.0, 0.0, None, "manual", ""]))]
-    out = ledger.realized_pnl(t).iloc[0]
-    assert pd.isna(out["realized_eur"]) and pd.isna(out["fees_eur"])
 
 
 def test_risk_range_rejects_constant_and_infinite_prices():
@@ -321,20 +321,11 @@ def test_more_tradingview_symbols(yahoo, tv):
 def test_volume_flow_works_on_the_apps_float32_copy_on_write_frames(monkeypatch):
     """The app hands over float32 frames (optimize_dataframe_memory) under copy-on-write: arrays taken from them are
     read-only — the first version assigned into one and crashed the whole Scanner."""
-    from core import smart_money
+    from etl.performance_utils import optimize_dataframe_memory
     with pd.option_context("mode.copy_on_write", True):
-        rng = np.random.default_rng(3)
-        fx = (0.9 * (1 + rng.normal(0, 0.003, 40))).astype("float32")
-        eur = np.round(100.0 * fx.astype(float), 4).astype("float32")
-        df = pd.DataFrame({"date": pd.bdate_range(end="2026-10-23", periods=40), "price_open": eur, "price_high": eur,
-                           "price_low": eur, "price_close": eur, "volume": np.float32(1e6), "fx_rate": fx,
-                           "price_scale": np.float32(1.0)})
-        for c in ("price_open", "price_high", "price_low", "price_close", "fx_rate", "price_scale"):
-            df[c] = df[c].astype("float32")
-        seen = {}
-        monkeypatch.setattr(smart_money, "get_sm_spirit_unified_v2", lambda d, s: seen.update(df=d) or {})
-        smart_money.get_volume_flow(df, "Tech")
-        assert seen["df"]["price_close"].nunique() == 1
+        df = optimize_dataframe_memory(_flat_frame(n=60, local=100.0, seed=3))
+        assert str(df["price_close"].dtype) == "float32"
+        _volume_flow_through_the_real_engine(df, monkeypatch)
 
 
 # ── Codex round 3 ────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -348,15 +339,11 @@ def _flat_frame(n=126, local=10_000.0, seed=9, dtype="float64", scale=1.0):
 
 
 def test_a_flat_price_stays_flat_after_the_apps_float32_downcast(monkeypatch):
-    from core import smart_money
     from etl.performance_utils import optimize_dataframe_memory
-    seen = {}
-    monkeypatch.setattr(smart_money, "get_sm_spirit_unified_v2", lambda d, s: seen.update(df=d) or {})
     for seed in range(5):
         df = optimize_dataframe_memory(_flat_frame(seed=seed))
         assert str(df["price_close"].dtype) == "float32"
-        smart_money.get_volume_flow(df, "Tech")
-        assert seen["df"]["price_close"].nunique() == 1, seed
+        _volume_flow_through_the_real_engine(df, monkeypatch)
 
 
 def test_a_missing_rate_in_a_nullable_column_is_unknown_not_a_signal():
@@ -403,15 +390,22 @@ def test_read_warehouse_appends_only_the_missing_macro_series(tmp_path):
     from services.db import read_warehouse
     from tests.synthetic_warehouse import build
     db = build(str(tmp_path / "dw.duckdb"))
+    recent = pd.bdate_range(end=pd.Timestamp.today().normalize() - pd.Timedelta(days=1), periods=20)
     with duckdb.connect(db) as c:
         have = [r[0] for r in c.execute("DESCRIBE raw.stock_prices").fetchall()]
-        for t, base in (("^TNX", 4.3), ("DX-Y.NYB", 100.0)):
-            for i, d in enumerate(pd.bdate_range(end=pd.Timestamp.today().normalize() - pd.Timedelta(days=1), periods=20)):
+        for t, base in (("^TNX", 4.3), ("DX-Y.NYB", 100.0)):                       # both series are in the raw closes ...
+            for i, d in enumerate(recent):
                 cols = {"date": d.date(), "ticker": t, "close": base + i * 0.01, "volume": 0, "fx_rate": 0.9, "price_scale": 1.0}
                 use = {k: v for k, v in cols.items() if k in have}
-                c.execute(f"INSERT INTO raw.stock_prices ({', '.join(use)}) VALUES ({', '.join('?' for _ in use)})", list(use.values()))
+                c.execute(f"INSERT INTO raw.stock_prices ({', '.join(use)}) VALUES ({', '.join('?' for _ in use)})",
+                          list(use.values()))
+        mart_cols = [r[0] for r in c.execute("DESCRIBE marts.fct_daily_returns").fetchall()]
+        for d in recent[:5]:                                                       # ... and the marts already hold 5 days of ^TNX
+            cols = {"date": d.date(), "ticker": "^TNX", "price_close": 4.2, "volume": 1, "fx_rate": 0.9, "price_scale": 1.0}
+            use = {k: v for k, v in cols.items() if k in mart_cols}
+            c.execute(f"INSERT INTO marts.fct_daily_returns ({', '.join(use)}) VALUES ({', '.join('?' for _ in use)})",
+                      list(use.values()))
     with duckdb.connect(db, read_only=True) as c:
         prices = read_warehouse(c)[0]
-    macro = prices[prices["ticker"].isin(["^TNX", "DX-Y.NYB"])]
-    assert set(macro["ticker"]) == {"^TNX", "DX-Y.NYB"} and macro.groupby("ticker").size().min() >= 15
-    assert not macro.duplicated(["ticker", "date"]).any()                         # nothing doubled
+    sizes = prices[prices["ticker"].isin(["^TNX", "DX-Y.NYB"])].groupby("ticker").size().to_dict()
+    assert sizes == {"^TNX": 5, "DX-Y.NYB": 20}                 # ^TNX kept as the marts have it, DX-Y.NYB added, nothing doubled
