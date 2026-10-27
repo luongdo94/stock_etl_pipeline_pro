@@ -84,7 +84,7 @@ def test_c18_peer_dotplot_guard(monkeypatch):
     dd = NS(ticker="A", meta=companies.iloc[0].to_dict())
     peers.render(dd, ctx)
     assert not ui.charts
-    assert any("3 available, 2 missing" in s for s in ui.messages)
+    assert any("3 available, 2 excluded" in s for s in ui.messages)
     companies.loc[5, "roe"] = .22
     ui.messages.clear()
     peers.render(dd, ctx)
@@ -93,8 +93,10 @@ def test_c18_peer_dotplot_guard(monkeypatch):
     assert trace.name == "Peers" and list(trace.y) == list("BCEF")
     assert list(trace.x) == [12., 18., 20., 22.]
     assert selected.name == "A (Selected)" and list(selected.x) == [15.]
-    assert any("1 of 5 peers missing" in s for s in ui.messages)
+    assert any("1 of 5 peers have N/A or non-interpretable values" in s for s in ui.messages)
     assert any(s.x0 == s.x1 == 18. for s in fig.layout.shapes)
+    # R1-07: the vertical order is the order of the values, the selected stock (15) between B (12) and C (18)
+    assert fig.layout.yaxis.type == "category" and list(fig.layout.yaxis.categoryarray) == list("BACEF")
 
 
 def test_c19_growth_history_guard(monkeypatch):

@@ -7,6 +7,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from core.peer_chart import peer_dotplot_frame
 from ui.sticky import sticky_choice
 from ui.components import phone_safe_chart
 from views.stock_analysis.layout import layer_banner
@@ -115,7 +116,7 @@ def render(dd, ctx):
         for _, pr in peer_df.iterrows():
             rows.append(_build_row(pr, pr["ticker"], False))
 
-        comp_df = pd.DataFrame(rows)
+        comp_df = pd.DataFrame(rows).drop_duplicates("ticker", keep="first").set_index("ticker")
 
         # ── Dynamic Column Definitions based on Business Type ─────────
         _sector_lower = str(_ticker_sector).lower()
@@ -197,14 +198,14 @@ def render(dd, ctx):
 
         # ── Sector Average row ─────────────────────────────────────────
         _numeric_cols = [c[0] for c in _COL_DEFS if c[0] not in ("company", "market_cap")]
-        _peer_only = comp_df[~comp_df["is_selected"]]
-        avg_vals   = _peer_only[_numeric_cols].mean(numeric_only=True)
-        avg_row    = {"ticker": "AVG", "company": f"⊘ {_match_level} Average", "is_selected": False, "market_cap": None}
-        for c in _numeric_cols:
-            avg_row[c] = avg_vals.get(c)
-        comp_df = pd.concat([comp_df, pd.DataFrame([avg_row])], ignore_index=True)
-        comp_df = comp_df.set_index("ticker")
-        avg_dict = {c: avg_vals.get(c) for c in _numeric_cols}
+        comp_df[_numeric_cols] = comp_df[_numeric_cols].apply(pd.to_numeric, errors="coerce").replace(
+            [float("inf"), float("-inf")], float("nan"),
+        )
+        _col_format_map = {c[0]: c[2] for c in _COL_DEFS}
+        avg_dict = {c: peer_dotplot_frame(comp_df, c, _col_format_map[c])[1] for c in _numeric_cols}
+        avg_row = {"ticker": "AVG", "company": f"⊘ {_match_level} Average", "is_selected": False, "market_cap": None}
+        avg_row.update(avg_dict)
+        comp_df = pd.concat([comp_df, pd.DataFrame([avg_row]).set_index("ticker")])
 
         # ── Color coding ───────────────────────────────────────────────
         # Higher = green: growth, margins, roe, fcf
@@ -231,18 +232,18 @@ def render(dd, ctx):
             return ""
 
         def _fmt_cap(v):
-            if v is None or pd.isna(v): return "—"
+            if v is None or pd.isna(v): return "N/A"
             if v >= 1e12: return f"€{v/1e12:.1f}T"
             if v >= 1e9:  return f"€{v/1e9:.0f}B"
             return f"€{v/1e6:.0f}M"
 
         def _fmt_pct(v, sign=False):
-            if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
+            if v is None or pd.isna(v): return "N/A"
             prefix = "+" if sign and float(v) > 0 else ""
             return f"{prefix}{float(v):.1f}%"
 
         def _fmt_x(v, decimals=1):
-            if v is None or (isinstance(v, float) and pd.isna(v)): return "—"
+            if v is None or pd.isna(v): return "N/A"
             fv = float(v)
             if fv <= 0: return "N/A"
             return f"{fv:.{decimals}f}x"
@@ -276,7 +277,7 @@ def render(dd, ctx):
                 comparison = ""
                 if is_sel and col_key in _numeric_cols:
                     avg = avg_dict.get(col_key)
-                    if pd.isna(val) or avg is None or pd.isna(avg) or (fmt in ("x", "x1") and val <= 0):
+                    if pd.isna(val) or avg is None or pd.isna(avg) or (fmt in ("x", "x1") and (val < 0 or (val == 0 and col_key != "debt_to_equity"))):
                         comparison = " · N/A"
                     else:
                         comparison = (" · Above peer average" if val > avg else
@@ -308,6 +309,7 @@ def render(dd, ctx):
         </div>
         <div style="font-size:0.78rem; color:inherit; margin-top:-4px; margin-bottom:16px;">
           Selected ticker cells state Above / Below / At peer average; N/A means unavailable.
+          AVG is the arithmetic mean of available peers, excluding the selected ticker and non-interpretable multiples.
         </div>
         """
         st.markdown(html_table, unsafe_allow_html=True)
@@ -324,24 +326,25 @@ def render(dd, ctx):
         if not chosen_metric or chosen_metric not in _numeric_cols:
             chosen_metric = _numeric_cols[0] if _numeric_cols else None
         if chosen_metric:
-            # same N/A rule as the table: a multiple at or below 0 is not interpretable
-            _fmt = {c[0]: c[2] for c in _COL_DEFS}.get(chosen_metric)
-            _known = comp_df[chosen_metric].notna() & (comp_df.index != "AVG")
-            if _fmt in ("x", "x1"):
-                _known &= comp_df[chosen_metric] > 0
-            peers_only_rows = comp_df[(comp_df.index != "AVG") & (~comp_df["is_selected"])]
-            n_total_peers = len(peers_only_rows)
-            valid_peers = peers_only_rows[_known[peers_only_rows.index]]
-            n_valid_peers = len(valid_peers)
-            n_missing_peers = n_total_peers - n_valid_peers
+            _fmt = _col_format_map.get(chosen_metric)
+            plot_rows, avg_val, n_missing_peers, selected_unavailable = peer_dotplot_frame(
+                comp_df, chosen_metric, _fmt,
+            )
+            peers_plot = plot_rows[~plot_rows["is_selected"]]
+            sel_plot = plot_rows[plot_rows["is_selected"]]
+            n_valid_peers = len(peers_plot)
+            n_total_peers = n_valid_peers + n_missing_peers
+            _metric_label = _col_label_map.get(chosen_metric, chosen_metric)
+            if selected_unavailable:
+                st.caption(f"{deep_ticker} (selected): N/A for {_metric_label}; omitted from plot.")
             if n_valid_peers < 4:
-                st.caption(f"Dot plot requires ≥ 4 peers with data ({n_valid_peers} available, {n_missing_peers} missing).")
+                st.caption(f"Dot plot requires ≥ 4 peers with interpretable data ({n_valid_peers} available, {n_missing_peers} excluded).")
             else:
                 if n_missing_peers > 0:
-                    st.caption(f"{n_missing_peers} of {n_total_peers} peers missing data for {_col_label_map.get(chosen_metric, chosen_metric)}; omitted from plot.")
-                plot_rows = comp_df[_known].sort_values(chosen_metric, ascending=True)
-                peers_plot = plot_rows[~plot_rows["is_selected"]]
-                sel_plot = plot_rows[plot_rows["is_selected"]]
+                    st.caption(f"{n_missing_peers} of {n_total_peers} peers have N/A or non-interpretable values for {_metric_label}; omitted from plot.")
+                st.caption("Sorted by value, low to high. Peer Avg is the arithmetic mean of plotted peers, excluding the selected ticker; same as AVG in the table. All values are shown, including outliers.")
+                _unit = "%" if _fmt in ("pct", "pct_sign") else "x"
+                _number_format = ",.2f" if _fmt == "x1" else ",.1f"
                 fig_dots = go.Figure()
                 if not peers_plot.empty:
                     fig_dots.add_trace(go.Scatter(
@@ -350,7 +353,7 @@ def render(dd, ctx):
                         mode="markers",
                         name="Peers",
                         marker=dict(color="#64748b", size=10),
-                        hovertemplate="<b>%{y}</b>: %{x}<extra></extra>"
+                        hovertemplate=f"<b>%{{y}}</b>: %{{x:{_number_format}}}{_unit}<extra></extra>"
                     ))
                 if not sel_plot.empty:
                     fig_dots.add_trace(go.Scatter(
@@ -359,23 +362,24 @@ def render(dd, ctx):
                         mode="markers",
                         name=f"{deep_ticker} (Selected)",
                         marker=dict(color="#38bdf8", size=14, line=dict(color="#0284c7", width=2)),
-                        hovertemplate="<b>%{y} (selected)</b>: %{x}<extra></extra>"
+                        hovertemplate=f"<b>%{{y}} (selected)</b>: %{{x:{_number_format}}}{_unit}<extra></extra>"
                     ))
-                avg_val = avg_dict.get(chosen_metric)
-                if avg_val is not None and not pd.isna(avg_val):
+                if avg_val is not None:
                     fig_dots.add_vline(
-                        x=float(avg_val),
+                        x=avg_val,
                         line_dash="dash",
                         line_color="#f59e0b",
                         line_width=1.5,
-                        annotation_text=f"Peer Avg: {avg_val:.1f}",
+                        annotation_text=f"Peer Avg: {avg_val:{_number_format}}{_unit}",
                         annotation_position="top right"
                     )
                 fig_dots.update_layout(
-                    title=dict(text=f"Peer Distribution — {_col_label_map.get(chosen_metric, chosen_metric)}", font=dict(size=14)),
+                    title=dict(text=f"Peer Distribution — {_metric_label}", font=dict(size=14)),
                     height=280,
-                    xaxis=dict(zeroline=True, zerolinecolor="rgba(128,128,128,0.2)"),
-                    yaxis=dict(autorange="reversed"),
+                    xaxis=dict(title=f"{_metric_label} ({_unit})", tickformat=_number_format, ticksuffix=_unit,
+                               zeroline=True, zerolinecolor="rgba(128,128,128,0.2)"),
+                    yaxis=dict(type="category", categoryorder="array", categoryarray=plot_rows.index.tolist(),
+                               autorange="reversed"),
                     legend=dict(orientation="h", yanchor="bottom", y=-0.25, xanchor="center", x=0.5),
                     margin=dict(l=10, r=20, t=40, b=45)
                 )
