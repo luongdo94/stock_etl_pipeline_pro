@@ -234,3 +234,28 @@ def api_key() -> str:
 
 def sec_user_agent() -> str:
     return os.environ.get("SEC_USER_AGENT", "")
+
+
+# ── structured one-page earnings brief ───────────────────────────────────────────────────────
+def brief_passages(text: str) -> str:
+    """One shared selection for the model prompt, cache identity and evidence checks."""
+    from core.retrieval import select_passages
+    return select_passages(text, SECTION_QUERIES, budget=15000)
+
+
+def generate_er_brief(prompt: str, api_key: str = "", *, summariser: str = "Cohere", model=None, effort=None) -> str:
+    """Return raw JSON; core.er_brief validates malformed responses and each item's evidence."""
+    from core.er_brief import BRIEF_SCHEMA
+    if summariser == "Codex (local)":
+        return summarise_earnings_codex(prompt, model=model, effort=effort, schema=BRIEF_SCHEMA)
+    if not api_key:
+        raise ValueError("COHERE_API_KEY is not set")
+    import cohere
+    co = cohere.ClientV2(api_key=api_key)
+    resp = co.chat(model=LLM_MODEL, messages=[{"role": "user", "content": prompt}], max_tokens=5000,
+                   response_format={"type": "json_object"})
+    blocks = getattr(resp.message, "content", None) or []
+    output = "\n".join(block.text for block in blocks if getattr(block, "text", None))
+    if not output.strip():
+        raise RuntimeError("Cohere returned an empty ER Brief")
+    return output

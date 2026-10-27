@@ -20,6 +20,82 @@ from ui.icons import render_header
 MIN_REGION = 15          # smaller regions are pooled so a "market" benchmark is not the stock itself
 
 
+def _render_er_brief(ticker, company, event_ts, language, summariser, model, codex_model, effort,
+                     report, facts, release_key, data_error=None):
+    """Explicit build only; reuse the note's SEC release, never its headline fallback."""
+    import json
+    from core.er_brief import BRIEF_VERSION, build_brief_prompt, compose_card, validate_brief
+    from ui.er_brief import render as render_brief
+
+    render_header("book", "ER Brief (one page)", level="####")
+    if data_error:
+        st.error(f"ER Brief data could not be read: {data_error}")
+        return
+    if event_ts is None:
+        st.warning("ER Brief requires a stored report event to match the release; no report event is available.")
+        return
+    if report and (report.get("reported") is None or pd.Timestamp(report["reported"]) != pd.Timestamp(event_ts)):
+        st.warning("The latest stored statements do not match this report event. ER Brief is unavailable to avoid "
+                   "combining different quarters.")
+        return
+    identity = svc.note_key(ticker, event_ts, language,
+                            facts + json.dumps(report, sort_keys=True, default=str), model=model)
+    slot = f"er_brief::{BRIEF_VERSION}::{identity}"
+    if st.button("Build the ER brief", key="er_brief_build"):
+        try:
+            with st.spinner("Collecting the report text..."):
+                release = st.session_state.get(release_key)
+                if release is None:
+                    release = svc.sec_press_release(ticker, svc.sec_user_agent())
+                    st.session_state[release_key] = release
+                text, where, fdate = release
+                reason = None
+                if not text or not text.strip():
+                    reason = f"No valid earnings release ({where}). ER Brief cannot use news headlines."
+                elif not svc.release_matches_event(fdate, event_ts):
+                    reason = (f"The latest SEC earnings release (filed {fdate}) is not the report of "
+                              f"{_local(event_ts, ticker)[0]} in our data. ER Brief cannot combine different quarters.")
+                elif "no Exhibit 99 found" in str(where):
+                    reason = "The SEC filing has no earnings release exhibit. ER Brief cannot use the primary filing alone."
+                if reason:
+                    st.session_state.pop(slot, None)
+                    st.session_state.pop(release_key, None)
+                    st.warning(reason)
+                else:
+                    sent_text = svc.brief_passages(text)
+                    source = f"SEC 8-K earnings press release filed {fdate}: {where}"
+                    card_key = slot + "::" + svc.text_hash(text)
+                    if card_key not in st.session_state:
+                        prompt = build_brief_prompt(company, ticker, facts or "- none", source, sent_text, language)
+                        with st.spinner("Writing the ER brief..."):
+                            raw = svc.generate_er_brief(prompt, svc.api_key() if summariser != "Codex (local)" else "",
+                                                        summariser=summariser, model=codex_model, effort=effort)
+                        checked = validate_brief(raw, sent_text, facts or "- none")
+                        if any(d["section"] == "brief" for d in checked["dropped"]):
+                            raise ValueError("The model returned invalid ER Brief JSON; please retry.")
+                        st.session_state[card_key] = compose_card(
+                            report, checked, language=language, company=company, ticker=ticker,
+                            reported=_local(event_ts, ticker)[0], source=source, model=model,
+                            created_at=pd.Timestamp.now(tz="UTC"))
+                    st.session_state[slot] = card_key
+        except Exception as exc:
+            st.session_state.pop(slot, None)
+            st.error(f"ER Brief unavailable: {exc}")
+    card_key = st.session_state.get(slot)
+    release = st.session_state.get(release_key)
+    # A source refreshed by the note invalidates a previously built brief, including on an ordinary rerun.
+    if card_key and release:
+        text, where, fdate = release
+        valid = (text and svc.release_matches_event(fdate, event_ts) and
+                 "no Exhibit 99 found" not in str(where) and
+                 card_key == slot + "::" + svc.text_hash(text))
+        if not valid:
+            st.session_state.pop(slot, None)
+            return
+        if card_key in st.session_state:
+            render_brief(st.session_state[card_key])
+
+
 def _region_map(companies: pd.DataFrame) -> dict:
     reg = companies.set_index("ticker")["region"].fillna("Other").replace({"United States": "US"})
     counts = reg.value_counts()
@@ -413,6 +489,7 @@ def render(ctx):
         lang = sticky_radio("Language", ["English", "Vietnamese"], "English", "er_lang", horizontal=True)
         summariser = sticky_radio("Summariser", svc.summariser_options(), "Cohere", "er_summariser", horizontal=True)
         model = svc.LLM_MODEL
+        codex_model = effort = None
         if summariser == "Codex (local)":
             codex_model, effort = render_codex_options("earnings")
             model = codex_label(codex_model, effort)
@@ -424,23 +501,32 @@ def render(ctx):
         reaction = (rt[pd.to_datetime(rt["earnings_ts"], utc=True) == pd.Timestamp(last["earnings_ts"])]
                     if last is not None and not rt.empty else pd.DataFrame())
         ret_2d = reaction.iloc[0]["ret_2d"] if not reaction.empty else None
+        _brief_report, _brief_error = None, events.attrs.get("error")
         try:
             from services.db import load_estimate_snapshots as _les
-            _hl = _eh.facts_line(_eh.latest_report(t, ctx.get("quarterly_fin"), ctx.get("hist_fcf_q_full"), events,
-                                                   _les(ctx.get("data_version")), estimate_currency=_fin_currency(ctx, t)))
-        except Exception:
+            _snaps = _les(ctx.get("data_version"))
+            for _frame in (ctx.get("quarterly_fin"), ctx.get("hist_fcf_q_full"), _snaps):
+                if _frame is not None and _frame.attrs.get("error"):
+                    _brief_error = _frame.attrs["error"]
+            _brief_report = _eh.latest_report(t, ctx.get("quarterly_fin"), ctx.get("hist_fcf_q_full"), events,
+                                               _snaps, estimate_currency=_fin_currency(ctx, t))
+            _hl = _eh.facts_line(_brief_report)
+        except Exception as exc:
             _hl = None
+            _brief_error = f"{type(exc).__name__}: {exc}"
         facts = "\n".join(filter(None, [_hl,
             f"- Latest report: {_local(last['earnings_ts'], t)[0]}; EPS {last['eps_actual']} vs consensus {last['eps_estimate']} "
             f"(surprise {_pct(last['surprise_pct'])}); 2-day price reaction {_pct(ret_2d)}." if last is not None else None,
             f"- Beat rate over the last {b['n']} reports: {_pct(b['beat_rate'], 0, False)}." if b["n"] else None,
             f"- Next report: {nxt_txt}." if nxt is not None else None]))
         key = svc.note_key(t, last["earnings_ts"] if last is not None else None, lang, facts, model=model)
+        _release_key = f"er_release::{t}::{last['earnings_ts'] if last is not None else 'none'}::{ctx.get('data_version')}"
         if st.button("Summarise the latest report", key="er_ai"):
             company = names.get(t, t)
             mismatch = None
             with st.spinner("Collecting the report text..."):
                 text, where, fdate = svc.sec_press_release(t, svc.sec_user_agent())
+                st.session_state[_release_key] = (text, where, fdate)
                 if text and last is not None and not svc.release_matches_event(fdate, last["earnings_ts"]):
                     # the newest 8-K is another quarter than the newest report in our data: do not mix them
                     mismatch = (f"The latest SEC earnings release (filed {fdate}) is not the report of "
@@ -494,6 +580,9 @@ def render(ctx):
         if not svc.sec_user_agent():
             st.caption("For US stocks the note uses the SEC 8-K earnings press release when SEC_USER_AGENT is set "
                        "(e.g. 'Your Name your@email.com'); otherwise it falls back to recent headlines.")
+
+        _render_er_brief(t, names.get(t, t), last["earnings_ts"] if last is not None else None,
+                         lang, summariser, model, codex_model, effort, _brief_report, facts, _release_key, _brief_error)
 
     # ── universe study ──────────────────────────────────────────────────────────────────────
     elif section == "Surprise study":
