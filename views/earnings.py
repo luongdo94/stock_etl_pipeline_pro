@@ -277,9 +277,12 @@ def render(ctx):
         held = held_tickers(user["holdings"])
         lists_ok = user["holdings_ok"] and user["watchlist_ok"]
         default = "Held" if lists_ok and held else "All"
-        show = sticky_choice("Show", ["Held", "Watchlist", "All"] if lists_ok else ["All"],
-                             default, "er_show", disabled=not lists_ok)
-        if not lists_ok:
+        personal = lists_ok and auth.signed_in()            # Held / Watchlist need an account (A-08)
+        show = sticky_choice("Show", ["Held", "Watchlist", "All"] if personal else ["All"],
+                             default if personal else "All", "er_show", disabled=not personal)
+        if not auth.signed_in():
+            st.caption("Sign in to filter by your holdings or watchlist; All stored report dates are shown.")
+        elif not lists_ok:
             st.warning("Your lists could not be read")
             show = "All"
             st.caption("Showing All stored report dates while your lists are unavailable.")

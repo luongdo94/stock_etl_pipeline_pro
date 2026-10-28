@@ -37,6 +37,8 @@ def codex_path():
 
 
 def run_codex(prompt, timeout=300, model=None, effort=None, web=False, schema=None) -> str:
+    from services.auth import require_signed_in
+    require_signed_in("run Codex")
     model = DEFAULT_MODEL if model is None else model
     effort = DEFAULT_EFFORT if effort is None else effort
     if model not in codex_models():

@@ -215,6 +215,8 @@ def build_summary_prompt(company: str, ticker: str, facts: str, source: str, tex
 def summarise_earnings(api_key: str, company: str, ticker: str, facts: str, source: str, text: str,
                        language: str = "English") -> str:
     """LLM note on the latest report (Cohere). Raises on a missing key or an API error."""
+    from services.auth import require_signed_in
+    require_signed_in("write AI notes (language model)")
     if not api_key:
         raise ValueError("COHERE_API_KEY is not set")
     import cohere
@@ -245,6 +247,8 @@ def brief_passages(text: str) -> str:
 
 def generate_er_brief(prompt: str, api_key: str = "", *, summariser: str = "Cohere", model=None, effort=None) -> str:
     """Return raw JSON; core.er_brief validates malformed responses and each item's evidence."""
+    from services.auth import require_signed_in
+    require_signed_in("build the ER brief (language model)")
     from core.er_brief import BRIEF_SCHEMA
     if summariser == "Codex (local)":
         return summarise_earnings_codex(prompt, model=model, effort=effort, schema=BRIEF_SCHEMA)

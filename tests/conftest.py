@@ -79,3 +79,13 @@ def _signed_in_unless_anonymous(request, monkeypatch):
     from services import auth
     monkeypatch.setattr(auth, "signed_in", lambda: True)
     yield
+
+
+@pytest.fixture
+def loopback_address():
+    """Local dev mode needs an explicit loopback server address (A-01); AppTest leaves it unset."""
+    from streamlit import config
+    before = config.get_option("server.address")
+    config.set_option("server.address", "127.0.0.1")
+    yield
+    config.set_option("server.address", before)

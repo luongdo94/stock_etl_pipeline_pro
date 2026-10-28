@@ -91,7 +91,7 @@ def test_cash_round_trips_through_the_store(tmp_path, monkeypatch):
 
 # ── Integration: Generate → Apply → rerun → reload in the real Portfolio page ────────────────────────────────────
 @pytest.mark.smoke
-def test_apply_rerun_and_reload_keep_nav_cash_and_ten_percent_weights(tmp_path, monkeypatch):
+def test_apply_rerun_and_reload_keep_nav_cash_and_ten_percent_weights(tmp_path, monkeypatch, loopback_address):
     pytest.importorskip("streamlit")
     from streamlit.testing.v1 import AppTest
 

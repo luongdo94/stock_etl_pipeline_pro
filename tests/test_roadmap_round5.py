@@ -137,7 +137,7 @@ def test_a_failed_load_blocks_every_save(monkeypatch):
 
 
 @pytest.mark.smoke
-def test_apply_with_a_failing_save_keeps_the_proposal_and_the_holdings(tmp_path, monkeypatch):
+def test_apply_with_a_failing_save_keeps_the_proposal_and_the_holdings(tmp_path, monkeypatch, loopback_address):
     pytest.importorskip("streamlit")
     from streamlit.testing.v1 import AppTest
     import duckdb

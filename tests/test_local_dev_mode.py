@@ -21,9 +21,12 @@ def test_off_by_default(monkeypatch, addr):
 def test_on_for_localhost(monkeypatch, addr):
     monkeypatch.setenv("LOCAL_DEV_MODE", "1")
     monkeypatch.delenv("SUPABASE_REMOTE_MODE", raising=False)
-    for a in (None, "", "localhost", "127.0.0.1"):
+    for a in ("localhost", "127.0.0.1", "::1"):
         addr(a)
         assert auth.local_dev_mode() is True
+    for a in (None, ""):                                  # unset = Streamlit binds 0.0.0.0: not local (A-01)
+        addr(a)
+        assert auth.local_dev_mode() is False
 
 
 def test_refused_when_exposed_or_remote(monkeypatch, addr):

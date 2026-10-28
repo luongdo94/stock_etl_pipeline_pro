@@ -89,6 +89,8 @@ def decision_brief(decision: dict) -> str:
 # ── COHERE AI INTELLIGENCE ENGINE ───────────────────────────────────────────
 def get_cohere_insight(api_key: str, metrics: dict) -> str:
     """Generates an institutional-grade stock analysis report using Cohere Command-R+."""
+    from services.auth import require_signed_in
+    require_signed_in("run the AI review (language model)")
     try:
         import cohere
         co = cohere.ClientV2(api_key=api_key)
@@ -188,6 +190,8 @@ def get_unified_verdict(api_key: str, metrics: dict, nlp_result: dict, language:
     Unified Alpha-Risk Intelligence — Chief Investment Officer (CIO) mode.
     Combines quantitative fundamentals + NLP news sentiment into one actionable verdict.
     """
+    from services.auth import require_signed_in
+    require_signed_in("run the AI news and risk review (language model)")
     try:
         import cohere
         co = cohere.ClientV2(api_key=api_key)

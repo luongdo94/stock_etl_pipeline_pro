@@ -101,6 +101,8 @@ def ask(question: str, toolbox: ToolBox, *, history: Optional[list] = None, tab:
     "tool_plan", "raw_calls"}` — the Cohere call by default (injectable for tests).
     Returns {"text", "citations", "docs": {id: document}, "tools": [(name, args)], "ungrounded", "rating_conflicts",
     "llm_calls", "error"}."""
+    from services.auth import require_signed_in
+    require_signed_in("use the assistant")
     from services.ai import stance_conflicts, ungrounded_numbers
     sys_msg = SYSTEM.format(today=(today or date.today()).isoformat(), tab=tab or "app",
                             ticker_note=f"; the stock open in Stock Analysis is {ticker}" if ticker else "")

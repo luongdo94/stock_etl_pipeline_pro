@@ -163,6 +163,8 @@ def answer(question: str, docs: pd.DataFrame, *, system: str, language: str = "E
            cfg: Optional[dict] = None, chat: Optional[Callable] = None) -> dict:
     """{"text", "citations": [{start, end, text, ids}], "docs": the passages used, "ungrounded": [numbers]}.
     `docs` — passages [chunk_id, text, title]. The model sees them as documents and cites them."""
+    from services.auth import require_signed_in
+    require_signed_in("ask questions (language model)")
     from services.ai import ungrounded_numbers
     c = _cfg(cfg)
     documents = [{"id": str(r.chunk_id), "data": {"title": str(getattr(r, "title", "") or ""), "snippet": str(r.text)}}
@@ -325,6 +327,8 @@ def news_passages(ticker, days=30, *, as_of=None):
 
 def news_digest(ticker, company, language="English", *, as_of=None, chat=None, yahoo_factory=None, budget=18000):
     """One cited answer from up to 20 passages across fixed topics; no news embeddings or article downloads."""
+    from services.auth import require_signed_in
+    require_signed_in("summarise the news (language model)")
     from services.news import fetch_yahoo_news
     yahoo = fetch_yahoo_news(ticker, ticker_factory=yahoo_factory)
     now = as_of or datetime.now(timezone.utc)

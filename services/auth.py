@@ -135,6 +135,7 @@ def _login_form(cm):
                             st.session_state["authenticated"] = True
                             st.session_state["user_id"] = resp.user.id
                             st.session_state["user_email"] = resp.user.email
+                            st.session_state["auth_expires_at"] = time.time() + _COOKIE_TTL_DAYS * 86400
 
                             # 3. Brief sleep to allow the component to send the set-cookie command to browser BEFORE rerun
                             time.sleep(0.5)
@@ -181,7 +182,7 @@ def _login_form(cm):
 
 
 LOCAL_USER_ID = "00000000-0000-0000-0000-00000000dev1"
-_LOCAL_HOSTS = (None, "", "localhost", "127.0.0.1", "::1")
+_LOCAL_HOSTS = ("localhost", "127.0.0.1", "::1")   # explicit loopback only: an unset address binds 0.0.0.0 (A-01)
 
 
 def local_dev_mode() -> bool:
@@ -198,11 +199,11 @@ def local_dev_mode() -> bool:
     try:
         address = st.get_option("server.address")
     except Exception:
-        address = None
+        return False
     return address in _LOCAL_HOSTS
 
 
-_COOKIE_MANAGER = None        # the page's cookie component (one per run), used by the sign-in dialog
+_CM_KEY = "_auth_cookie_manager"   # this session's cookie component (re-created each run), for the sign-in dialog
 
 
 def signed_in() -> bool:
@@ -215,7 +216,6 @@ def restore_session(cm=None):
     browses anonymously, and sign-in is asked for only where it is needed — to SAVE data (watchlist, portfolio, alert
     rules, trades) and for the AI features that run on the owner's language-model key (see can_use)."""
     import os
-    global _COOKIE_MANAGER
     if os.environ.get("LOCAL_DEV_MODE") == "1" and not local_dev_mode():
         st.error("LOCAL_DEV_MODE is only allowed when the app is served from localhost and is not in cloud mode. "
                  "Unset it, or sign in normally.")
@@ -225,7 +225,7 @@ def restore_session(cm=None):
         return
     if cm is None:
         cm = get_cookie_manager()
-    _COOKIE_MANAGER = cm
+    st.session_state[_CM_KEY] = cm
 
     if "authenticated" not in st.session_state:
         st.session_state["authenticated"] = False
@@ -233,6 +233,10 @@ def restore_session(cm=None):
         st.session_state["user_email"] = None
 
     if st.session_state["authenticated"]:
+        exp = st.session_state.get("auth_expires_at")
+        if exp is not None and time.time() > exp:          # the signed session ran out while the tab stayed open (A-04)
+            _clear_session()
+            st.rerun()
         return
 
     # Check cookie
@@ -245,6 +249,7 @@ def restore_session(cm=None):
             st.session_state["authenticated"] = True
             st.session_state["user_id"] = data["user_id"]
             st.session_state["user_email"] = data.get("user_email", "")
+            st.session_state["auth_expires_at"] = data.get("exp")
             st.rerun()
             return
 
@@ -260,7 +265,24 @@ def restore_session(cm=None):
 
 @st.dialog("Sign in")
 def _sign_in_dialog():
-    _login_form(_COOKIE_MANAGER)
+    _login_form(st.session_state.get(_CM_KEY))
+
+
+def require_signed_in(what: str) -> None:
+    """Second line of defence for the app's paid / local-model calls (A-05): the pages already ask for an account; a
+    call that still arrives without one is refused here. Not used by the ETL (it never calls these entry points)."""
+    if not signed_in():
+        raise PermissionError(f"Sign in to {what}.")
+
+
+def _clear_session() -> None:
+    """Nothing of the previous user's session survives (assistant history, portfolio and watchlist state, research
+    answers — review REV-01); the visitor continues anonymously."""
+    for k in list(st.session_state.keys()):
+        del st.session_state[k]
+    st.session_state["authenticated"] = False
+    st.session_state["user_id"] = None
+    st.session_state["user_email"] = None
 
 
 def can_use(purpose: str, key: str) -> bool:
@@ -293,13 +315,12 @@ def render_user_profile(cm=None):
     st.sidebar.markdown(f"**{st.session_state.get('user_email', 'User')}**")
 
     if st.sidebar.button("Logout", use_container_width=True):
-        cm.delete(_COOKIE_NAME, key="del_login_cookie")
-        # Everything the session holds belongs to this user (assistant history with portfolio documents, portfolio and
-        # watchlist state, research answers): none of it may survive into the next sign-in (review REV-01).
-        for k in list(st.session_state.keys()):
-            del st.session_state[k]
-        st.session_state["authenticated"] = False
-        st.session_state["user_id"] = None
-        st.session_state["user_email"] = None
+        try:
+            if cm is not None:
+                cm.delete(_COOKIE_NAME, key="del_login_cookie")
+        except Exception:                 # no cookie (e.g. no COOKIE_SECRET): signing out must still happen (A-02)
+            pass
+        finally:
+            _clear_session()
         time.sleep(0.5)
         st.rerun()

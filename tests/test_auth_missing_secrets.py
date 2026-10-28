@@ -106,3 +106,46 @@ def test_can_use_asks_for_sign_in_only_when_there_is_no_account(monkeypatch, sta
     monkeypatch.setattr(auth.st, "stop", lambda: pytest.fail("nothing is stopped"))
     assert auth.can_use("keep a watchlist", "wl") is allowed
     assert (shown == []) is allowed and all("Sign in to keep a watchlist" in s for s in shown)
+
+
+@pytest.mark.anonymous
+def test_the_paid_entry_points_refuse_a_call_without_an_account(monkeypatch):
+    """A-05: the pages ask for an account; a call that still arrives anonymously is refused before any model is used."""
+    from services import ai, assistant, codex_local, earnings, research
+    monkeypatch.setattr(auth.st, "session_state", {"authenticated": False, "user_id": None})
+    calls = [lambda: codex_local.run_codex("x"),
+             lambda: assistant.ask("x", None),
+             lambda: research.answer("x", None, system="s"),
+             lambda: research.news_digest("A", "A"),
+             lambda: earnings.summarise_earnings("k", "A", "A", "", "", ""),
+             lambda: earnings.generate_er_brief("x", "k"),
+             lambda: ai.get_cohere_insight("k", {}),
+             lambda: ai.get_unified_verdict("k", {}, {})]
+    for call in calls:
+        with pytest.raises(PermissionError):
+            call()
+
+
+@pytest.mark.anonymous
+def test_logout_without_a_cookie_still_signs_out(monkeypatch):
+    """A-02: the cookie library deletes with `del` (KeyError when there is no cookie); the session must still end."""
+    from types import SimpleNamespace
+
+    class Rerun(Exception):
+        pass
+
+    class CookieManager:
+        def delete(self, *a, **k):
+            raise KeyError("hqi_session")
+
+    state = {"authenticated": True, "user_id": "u1", "user_email": "u@x", "portfolio": {"A": 1}}
+    sidebar = SimpleNamespace(markdown=lambda *a, **k: None, caption=lambda *a, **k: None,
+                              button=lambda *a, **k: True)
+    monkeypatch.setattr(auth, "local_dev_mode", lambda: False)
+    monkeypatch.setattr(auth.st, "session_state", state)
+    monkeypatch.setattr(auth.st, "sidebar", sidebar)
+    monkeypatch.setattr(auth.time, "sleep", lambda s: None)
+    monkeypatch.setattr(auth.st, "rerun", lambda: (_ for _ in ()).throw(Rerun()))
+    with pytest.raises(Rerun):
+        auth.render_user_profile(CookieManager())
+    assert state == {"authenticated": False, "user_id": None, "user_email": None}     # nothing of the user remains

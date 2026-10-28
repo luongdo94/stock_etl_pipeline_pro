@@ -186,7 +186,7 @@ def test_targets_and_ledger_round_trip_locally(tmp_path, monkeypatch):
 
 
 @pytest.mark.smoke
-def test_portfolio_tab_shows_stress_targets_and_records_a_rebalance(tmp_path, monkeypatch):
+def test_portfolio_tab_shows_stress_targets_and_records_a_rebalance(tmp_path, monkeypatch, loopback_address):
     from streamlit.testing.v1 import AppTest
     import duckdb
     import services.db as db
