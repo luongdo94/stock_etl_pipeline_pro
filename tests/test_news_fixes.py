@@ -7,7 +7,6 @@ from urllib.parse import parse_qs, urlparse
 import duckdb
 import pytest
 from services import news
-from etl import llm_parser
 from streamlit.testing.v1 import AppTest
 
 
@@ -28,7 +27,6 @@ def positive(titles):
 def no_real_model(monkeypatch):
     from services import ai
     monkeypatch.setattr(ai, "get_finbert_pipeline", lambda: pytest.fail("real model requested"))
-    monkeypatch.setattr(llm_parser, "_get_client", lambda: pytest.fail("real LLM requested"))
 
 
 @pytest.mark.parametrize("parse", [lambda u: (_ for _ in ()).throw(OSError("offline")),
@@ -39,24 +37,12 @@ def no_real_model(monkeypatch):
 def test_feed_failure_is_unavailable_in_all_callers(parse):
     r = news.fetch_news_sentiment("Company", "T", parse=parse, get_pipe=lambda: None)
     assert r["status"] == "unavailable" and r["error"] and r["avg"] is None
-    r = llm_parser.analyze_risk_with_llm("T", "Company", parse=parse)
-    assert r["status"] == "unavailable" and r["error"]
-    assert "No recent news" not in str(r["key_insights"])
-    assert all(r[k] is None for k in ("red_flag_score", "headline_sentiment_score", "confidence"))
-
-
-def test_empty_feed_is_no_news_without_neutral_defaults():
-    r = llm_parser.analyze_risk_with_llm("T", "Company", parse=lambda u: feed())
-    assert r["status"] == "no_news" and r["error"] is None
-    assert all(r[k] is None for k in ("red_flag_score", "headline_sentiment_score", "confidence"))
 
 
 @pytest.mark.parametrize("ticker,company", [("T", "AT&T"), ("J", "Jacobs"), ("KR", "Kroger"),
                                                   ("T", ""), ("J", "J"), ("SAP.DE", "")])
 def test_company_or_qualified_symbol_query(ticker, company):
-    urls = []
-    llm_parser._fetch_recent_headlines(ticker, company, parse=lambda u: urls.append(u) or feed())
-    q = parse_qs(urlparse(urls[0]).query)["q"][0]
+    q = parse_qs(urlparse(news.news_url(company, ticker)).query)["q"][0]
     if "." not in ticker:                      # a bare symbol clashes (T, J, KR); an exchange suffix does not
         assert q != f"{ticker} stock when:7d"
     if company and company != ticker:
@@ -80,7 +66,6 @@ def test_local_feed_english_only_scoring_and_deduplication():
     assert scored == ["Profits rise!"]
     assert len(r["items"]) == 2 and r["n_scored"] == 1 and r["avg"] == 1
     assert r["items"][1]["lang"] == "de-DE" and r["items"][1]["score"] is None
-    assert "Gewinn" in llm_parser._fetch_recent_headlines("SAP.DE", "SAP", parse=parse)[1]
 
 
 @pytest.mark.parametrize("suffix,hl,gl", [(".PA", "fr-FR", "FR"), (".AS", "nl-NL", "NL"),
@@ -166,35 +151,72 @@ def test_local_unscored_caption_and_counts():
 
 def risk_page():
     import pandas as pd
+    import streamlit as st
     from types import SimpleNamespace as NS
     from views.stock_analysis.risk_hub import render
+    decision = NS(stance=st.session_state.get("test_stance", "HOLD / WATCH"), confidence="LOW", reasons=["r"],
+                  conflicts=[], confidence_notes=[], warnings=[])
     dd = NS(r1=1, r2=2, s1=1, s2=2, stop_loss=1, w52_pos=50, ai_score=60, cur_p=10, ticker="T",
-            meta={"company": "Company"}, meta_enriched={}, sm={"signal": "N/A"}, scores={"components": {}}, rsi=50, z_score=0)
+            meta={"company": "Company"}, meta_enriched={}, sm={"signal": "N/A"}, scores={"components": {}}, rsi=50, z_score=0,
+            extra={"decision": decision})
     render(dd, {"_dxy_pct": None, "_vix_val": None, "prices_full": pd.DataFrame({"ticker": ["T"], "date": ["2026-10-01"]}),
                 "earnings_surprise_full": pd.DataFrame(), "macro": {}, "regime": "NEUTRAL"})
 
 
-def test_saved_ai_review_none_is_na():
-    at = AppTest.from_function(risk_page)
-    at.session_state["unified_verdict_T"] = {"nlp_score": None, "nlp_sentiment": None, "report": "No headlines"}
-    at.run()
-    assert not at.exception
-    text = " ".join(m.value for m in at.markdown)
-    assert "N/A" in text and "None%" not in text and ">None<" not in text
-
-
-@pytest.mark.parametrize("error", [None, "News feed unavailable: HTTP 503"])
-def test_failed_or_empty_ai_review_shows_na_without_synthesis(monkeypatch, error):
-    from views.stock_analysis import risk_hub
-    monkeypatch.setattr(risk_hub, "analyze_risk_with_llm", lambda *a, **k: {
-        "red_flag_score": None, "headline_sentiment_score": None, "confidence": None, "error": error})
-    monkeypatch.setattr(risk_hub, "get_unified_verdict", lambda *a, **k: pytest.fail("unexpected LLM synthesis"))
+def test_risk_page_has_one_agent_button_and_no_cio_review(monkeypatch):
+    """The CIO narrative is gone; one button runs the research agent on the stock, and its cited answer is shown for
+    the spec it was written for only."""
+    from services import assistant
+    from ui import assistant as ui_assistant
+    monkeypatch.setattr(assistant, "available", lambda: True)
+    monkeypatch.setattr(assistant, "models", lambda: ["Cohere"])
+    monkeypatch.setattr(ui_assistant, "_toolbox", lambda ctx: "toolbox")
+    refreshed = []
+    monkeypatch.setattr(news, "fetch_news_sentiment", lambda company, ticker, get_pipe, include_yahoo:
+                        refreshed.append((ticker, get_pipe(), include_yahoo)) or
+                        {"error": None, "yahoo": {"error": None, "history_error": "disk full"}})
+    asked = []
+    def ask(question, toolbox, **kw):
+        asked.append((question, toolbox, kw["ticker"]))
+        return {"text": "Agent answer.", "citations": [], "docs": {}, "tools": [], "ungrounded": [],
+                "rating_conflicts": [], "llm_calls": 2, "error": None}
+    monkeypatch.setattr(assistant, "ask", ask)
     at = AppTest.from_function(risk_page).run()
-    next(b for b in at.button if b.label == "Run AI news and risk review").click().run()
-    assert not at.exception
-    assert "N/A" in " ".join(e.value for e in list(at.info) + list(at.caption))
-    if error:
-        assert any("unavailable" in e.value for e in at.error)
+    assert not at.exception, [e.value for e in at.exception]
+    assert [b.label for b in at.button] == ["Run agent review", "Load headlines and sentiment"]
+    assert "CIO" not in " ".join(m.value for m in at.markdown)
+    at.button(key="agent_review_btn_T").click().run()
+    assert asked == [(assistant.STOCK_REVIEW_QUESTION.format(ticker="T", language="English"), "toolbox", "T")]
+    assert refreshed == [("T", None, True)]                                        # news refreshed, FinBERT not loaded
+    assert any("Agent answer." in m.value for m in at.markdown)
+    assert any("disk full" in c.value for c in at.caption)                        # Yahoo fetched but not stored (R2)
+
+
+@pytest.mark.parametrize("change", ["language", "decision", "day"])
+def test_a_saved_agent_review_is_shown_only_for_its_day_decision_and_language(monkeypatch, change):
+    """R1: one snapshot, but the Decision moves with the calendar (earnings blackout, stale prices)."""
+    import datetime as dt
+    from services import assistant
+    from ui import assistant as ui_assistant
+    from views.stock_analysis import risk_hub
+    monkeypatch.setattr(assistant, "available", lambda: True)
+    monkeypatch.setattr(assistant, "models", lambda: ["Cohere"])
+    monkeypatch.setattr(ui_assistant, "_toolbox", lambda ctx: None)
+    monkeypatch.setattr(news, "fetch_news_sentiment", lambda *a, **k: {"error": None, "yahoo": {}})
+    monkeypatch.setattr(assistant, "ask", lambda *a, **k: {"text": "Agent answer.", "citations": [], "docs": {},
+                        "tools": [], "ungrounded": [], "rating_conflicts": [], "llm_calls": 1, "error": None})
+    at = AppTest.from_function(risk_page).run()
+    at.button(key="agent_review_btn_T").click().run()
+    assert any("Agent answer." in m.value for m in at.markdown)
+    if change == "language":
+        at.radio(key="agent_language").set_value("Vietnamese")
+    elif change == "decision":
+        at.session_state["test_stance"] = "AVOID"
+    else:
+        monkeypatch.setattr(risk_hub, "date", type("D", (), {"today": staticmethod(lambda: dt.date(2099, 1, 1))}))
+    at.run()
+    assert not any("Agent answer." in m.value for m in at.markdown)
+    assert any("run it again" in c.value for c in at.caption)
 
 
 def test_partial_feed_keeps_items_with_explicit_error():
@@ -202,7 +224,6 @@ def test_partial_feed_keeps_items_with_explicit_error():
         return feed(entry()) if "en-US" in url else NS(entries=[], status=503)
     r = news.fetch_news_sentiment("SAP", "SAP.DE", parse=parse, get_pipe=lambda: positive)
     assert r["items"] and r["status"] == "partial" and "de-DE" in r["error"]
-    assert llm_parser._fetch_recent_headlines("SAP.DE", "SAP", parse=parse) == [r["items"][0]["title"]]
     # nothing answered: unavailable, never "no news"
     dead = lambda url: NS(entries=[], status=503)              # noqa: E731
     assert news.fetch_news_sentiment("SAP", "SAP.DE", parse=dead)["status"] == "unavailable"
@@ -212,7 +233,6 @@ def test_only_local_headlines_never_load_finbert():
     parse = lambda url: feed() if "en-US" in url else feed(entry("Lokale Meldung - Zeitung"))
     r = news.fetch_news_sentiment("SAP", "SAP.DE", parse=parse)
     assert len(r["items"]) == 1 and r["n_scored"] == 0 and r["avg"] is None and r["mood"] is None
-    assert llm_parser._fetch_recent_headlines("SAP.DE", "SAP", parse=parse) == ["Lokale Meldung"]
 
 
 def test_failed_sentiment_never_leaves_partial_item_scores():

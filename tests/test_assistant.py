@@ -91,6 +91,22 @@ def test_filings_are_us_only_and_unknown_tools_are_refused():
     assert b.run("place_order", {"ticker": "AAA"})[0]["error"] == "place_order"
 
 
+@pytest.mark.parametrize("reader,expect", [
+    (lambda t: pd.DataFrame({"chunk_id": ["a", "b"], "text": ["old item", "new item"], "title": ["Old", "New"],
+                             "published": ["2026-10-01", "2026-10-20"], "origin": ["google", "yahoo"],
+                             "link": ["https://x/old", "https://x/new"]}), ["New", "Old"]),
+    (lambda t: pd.DataFrame(columns=["chunk_id", "text", "title", "published", "origin", "link"]), "no stored news"),
+    (lambda t: (_ for _ in ()).throw(OSError("store locked")), "store locked"),
+])
+def test_recent_news_is_newest_first_and_an_unreadable_store_is_not_no_news(reader, expect):
+    """The agent review's news tool: dated documents newest first; empty and unreadable are told apart."""
+    docs = _box(news=reader).run("recent_news", {"ticker": "AAA"})
+    if isinstance(expect, list):
+        assert [d["title"] for d in docs] == expect and docs[0]["source"] == "https://x/new"
+    else:
+        assert expect in docs[0]["error"]
+
+
 # ── the tool-use loop and its checks ─────────────────────────────────────────────────────────────────────────────
 class _FakeLLM:
     """Plans get_decision on the first call, then answers with `final`."""

@@ -91,6 +91,16 @@ def point_in_time(passages: pd.DataFrame, as_of: Optional[date]) -> pd.DataFrame
     return passages[filed.notna() & (filed <= cut)]
 
 
+def _has_vector(e) -> bool:
+    """A stored embedding: a passage not embedded yet reads back as None, NaN or pd.NA (BM25 only for it)."""
+    if e is None or e is pd.NA:
+        return False
+    try:
+        return len(e) > 0
+    except TypeError:
+        return False
+
+
 def retrieve(passages: pd.DataFrame, query: str, k: int = 8, *, query_vec=None, as_of: Optional[date] = None,
              shortlist: int = 40, rerank: Optional[Callable] = None, where: Optional[dict] = None) -> pd.DataFrame:
     """The `k` most relevant passages for `query`, best first, with columns `score` and `rank_source`.
@@ -112,7 +122,7 @@ def retrieve(passages: pd.DataFrame, query: str, k: int = 8, *, query_vec=None, 
     rankings = [[int(i) for i in np.argsort(-bm, kind="stable") if bm[i] > 0]]
     sources = "bm25"
     if query_vec is not None and "embedding" in df.columns:
-        has = df["embedding"].map(lambda e: e is not None and len(e) > 0)
+        has = df["embedding"].map(_has_vector)
         if has.any():
             idx = np.flatnonzero(has.to_numpy())
             sims = cosine(np.vstack(df.loc[has, "embedding"].map(np.asarray).to_list()), query_vec)

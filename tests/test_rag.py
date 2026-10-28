@@ -46,6 +46,17 @@ def test_dense_scores_fuse_with_bm25_and_rerank_reorders():
     assert broken["rank_source"].iloc[0] == "bm25"
 
 
+@pytest.mark.parametrize("missing", [None, pd.NA, float("nan")])
+def test_a_passage_not_embedded_yet_falls_back_to_bm25_for_it(missing):
+    """Real store: 49 of AAPL's 214 passages read back with embedding pd.NA, and len(pd.NA) broke every filings search."""
+    p = _passages().assign(embedding=pd.Series([[1, 0], [0, 1], [0.9, 0.1], missing], dtype=object))
+    unembedded = p["chunk_id"].iloc[3]
+    term = next(w for w in p["text"].iloc[3].lower().split()
+                if len(w) > 4 and w.isalpha() and not any(w in t.lower() for t in p["text"].iloc[:3]))
+    hits = rt.retrieve(p, term, k=2, query_vec=np.array([1.0, 0.0]))
+    assert hits["rank_source"].iloc[0] == "bm25+dense" and unembedded in hits["chunk_id"].tolist()   # found by BM25
+
+
 def test_chunks_respect_the_size_and_overlap():
     text = "\n".join(f"Sentence number {i} about leases and revenue." for i in range(300))
     ch = rt.chunk_text(text, size=500, overlap=100)

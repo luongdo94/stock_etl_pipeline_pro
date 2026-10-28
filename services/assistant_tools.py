@@ -76,6 +76,10 @@ SPECS = [
                     "releases) relevant to a question. For qualitative questions: moat, risks, drivers, guidance.",
      "parameters": {"type": "object", "required": ["ticker", "question"],
                     "properties": {"ticker": {"type": "string"}, "question": {"type": "string"}}}},
+    {"name": "recent_news",
+     "description": "Stored news of ONE stock from the last 30 days: dated headlines and summaries (Google News, "
+                    "Yahoo) and US 8-K earnings releases, newest first. Context only — not an input of the Decision.",
+     "parameters": {"type": "object", "required": ["ticker"], "properties": {"ticker": {"type": "string"}}}},
     {"name": "search_methodology",
      "description": "Passages of this tool's documentation and rules (how scores, valuation, BUY gates, stops work).",
      "parameters": {"type": "object", "required": ["question"], "properties": {"question": {"type": "string"}}}},
@@ -115,7 +119,7 @@ class ToolBox:
                  portfolio_reader: Optional[Callable] = None, deep_decision: Optional[Callable] = None,
                  filings: Optional[Callable] = None, methodology: Optional[Callable] = None,
                  policy: Optional[dict] = None, as_of: Optional[date] = None, portfolio_risk_reader: Optional[Callable] = None,
-                 prices: Optional[pd.DataFrame] = None):
+                 prices: Optional[pd.DataFrame] = None, news: Optional[Callable] = None):
         self.m = m_df if m_df is not None else pd.DataFrame()
         self.companies = companies if companies is not None else pd.DataFrame()
         self.annual, self.hist_fcf = annual_fin, hist_fcf
@@ -124,6 +128,7 @@ class ToolBox:
         self.filings, self.methodology = filings, methodology
         self.portfolio_risk_reader = portfolio_risk_reader
         self.prices = prices
+        self.news = news
         self.policy = policy
         self.as_of = as_of or date.today()
         self._n = 0
@@ -393,6 +398,25 @@ class ToolBox:
             return [{"id": self._id("error"), "title": "no filings stored", "source": "filing store",
                      "error": f"no filings stored for {t} yet (python -m etl.filings --tickers {t})"}]
         return self._passages(hits, "filing", {"ticker": t})
+
+    def tool_recent_news(self, ticker: str) -> list:
+        t, err = self.resolve(ticker)
+        if err:
+            return [err]
+        if self.news is None:
+            return [{"id": self._id("error"), "title": "news unavailable", "source": "news store", "error": "off"}]
+        try:
+            hits = self.news(t)
+        except Exception as e:                            # unreadable store: unknown, not "no news"
+            return [{"id": self._id("error"), "title": "news unavailable", "source": "news store",
+                     "error": f"{type(e).__name__}: {e}"}]
+        if hits is None or hits.empty:
+            return [{"id": self._id("error"), "title": "no stored news", "source": "news store",
+                     "error": f"no stored news for {t} in the last 30 days"}]
+        hits = hits.sort_values("published", ascending=False, key=lambda s: pd.to_datetime(s, utc=True, errors="coerce"))
+        return [_clean({"id": self._id("news"), "title": r.title, "source": r.link or r.chunk_id, "ticker": t,
+                        "published": r.published, "origin": r.origin, "text": str(r.text)[:700]})
+                for r in hits.head(12).itertuples()]
 
     def tool_search_methodology(self, question: str) -> list:
         if self.methodology is None:

@@ -2,9 +2,7 @@
 from core.portfolio_review import risk_contribution, target_drift
 from core.portfolio_risk import apply_rebalance
 import copy
-import inspect
 import json
-from pathlib import Path
 from unittest.mock import Mock
 
 import numpy as np
@@ -258,11 +256,6 @@ def test_ai_review_replaces_cio_and_blocks_draft_import(review_ui):
     at.button(key="run_portfolio_review_btn").click().run()
     call.assert_not_called()
     assert not at.get("chat_message")
-    source = inspect.getsource(portfolio)
-    assert '_render_agent_review(ctx, _review_spec, import_pending)' in source
-    assert "CIO Board Meeting" not in source and "analyze_portfolio_with_llm" not in source
-    parser = (Path(__file__).resolve().parents[1] / "etl/llm_parser.py").read_text(encoding="utf-8")
-    assert "def analyze_portfolio_with_llm" not in parser and "def get_rebalance_directives" not in parser
 
 
 @pytest.mark.parametrize("change", ["snapshot", "holdings", "costs", "cash", "model", "language", "targets", "horizon"])

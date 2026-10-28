@@ -29,6 +29,14 @@ Quote only computed Decision and policy: no independent rating, price target or 
 Discuss weight adjustments only within the policy's Allowed %; N/A is unknown, never zero.
 Answer in {language}."""
 
+STOCK_REVIEW_QUESTION = """Review {ticker}. Call get_decision, get_metrics and recent_news for {ticker}; if it is a US
+listing, also call search_filings for {ticker} on its main risks and recent results. Cite those documents.
+Cover: the computed Decision with its reasons, conflicts and confidence notes; the main strengths and weaknesses in the
+metrics; what the news and filings say that matters (risks, catalysts, guidance) and where it is in tension with the
+Decision, as a risk to monitor; and what would have to change for the stance to change.
+Quote only the computed Decision: no independent rating, price target or order. N/A is unknown, never zero.
+Answer in {language}."""
+
 SYSTEM = """You are the research assistant inside "Honest Quant Intelligence", a decision-support app for equities.
 Today is {today}. The user is on the "{tab}" tab{ticker_note}.
 

@@ -111,16 +111,14 @@ def test_can_use_asks_for_sign_in_only_when_there_is_no_account(monkeypatch, sta
 @pytest.mark.anonymous
 def test_the_paid_entry_points_refuse_a_call_without_an_account(monkeypatch):
     """A-05: the pages ask for an account; a call that still arrives anonymously is refused before any model is used."""
-    from services import ai, assistant, codex_local, earnings, research
+    from services import assistant, codex_local, earnings, research
     monkeypatch.setattr(auth.st, "session_state", {"authenticated": False, "user_id": None})
     calls = [lambda: codex_local.run_codex("x"),
              lambda: assistant.ask("x", None),
              lambda: research.answer("x", None, system="s"),
              lambda: research.news_digest("A", "A"),
              lambda: earnings.summarise_earnings("k", "A", "A", "", "", ""),
-             lambda: earnings.generate_er_brief("x", "k"),
-             lambda: ai.get_cohere_insight("k", {}),
-             lambda: ai.get_unified_verdict("k", {}, {})]
+             lambda: earnings.generate_er_brief("x", "k")]
     for call in calls:
         with pytest.raises(PermissionError):
             call()

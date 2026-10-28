@@ -226,11 +226,6 @@ def test_ai_copy_describes_public_flow_without_institutional_claims():
     for spec in SPECS:
         if spec["name"] in {"screen", "compare"}:
             assert "Volume Flow" in spec["description"] and CONTEXT in spec["description"]
-    for path in ("etl/llm_parser.py", "services/ai.py"):
-        source = (ROOT / path).read_text(encoding="utf-8")
-        assert "Volume Flow" in source and CONTEXT in source
-        assert "Accumulation = institutional buying" not in source
-        assert "Institutional flow. ACCUMULATION = buying" not in source
 
 
 class _Session(dict):

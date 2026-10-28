@@ -57,7 +57,7 @@ def _isolated_filings_store(tmp_path, monkeypatch):
     """The RAG filing store is a real file under warehouse/ — no test may create or read it."""
     from etl import filings
     monkeypatch.setattr(filings, "FILINGS_DB_PATH", str(tmp_path / "filings.duckdb"))
-    # .env is loaded on import (etl/llm_parser.py): the pipeline's filings step must not reach SEC or Cohere in a test
+    # .env may be loaded (app.py, run.py): the pipeline's filings step must not reach SEC or Cohere in a test
     monkeypatch.setattr(filings, "_sec_user_agent", lambda: None)
     monkeypatch.setattr(filings, "_llm_available", lambda: False)
 
