@@ -27,7 +27,7 @@ from services.user_store import (append_trades, load_portfolio_with_cash, load_t
 from ui.components import format_value, phone_safe_chart, render_metric_tile
 from ui.range_control import chart_range, resolve_range
 from ui.sidebar import is_phone_layout
-from ui.sticky import sticky, sticky_choice, sticky_radio
+from ui.sticky import forget, sticky, sticky_choice, sticky_radio
 from ui.decision_panel import render_alert_inbox
 from ui.icons import render_header
 import pandas as pd, io
@@ -192,7 +192,8 @@ def _render_summary(ctx, prices):
     c1.metric("NAV (holdings + cash)", format_value(summary["nav"], ",.2f", prefix="€"))
     c2.metric("Cash", format_value(summary["cash"], ",.2f", prefix="€"))
     c3.metric("Unrealised P&L", format_value(summary["pnl"], "+,.2f", prefix="€"))
-    label = "Imported draft — not saved" if "_import_saved_book" in st.session_state else "Saved holdings"
+    label = ("Imported draft — not saved" if "_import_saved_book" in st.session_state
+             else "Saved holdings" if auth.signed_in() else "Draft holdings — this browser tab only")
     st.caption(f"{label} · priced {summary['priced']} of {summary['holdings']} · "
                f"warehouse snapshot {ctx.get('data_version', 'unknown')} · latest stored closes, dates below.")
     if summary["nav"] is None:
@@ -223,6 +224,24 @@ def _render_summary(ctx, prices):
                 from views.scanner import _open_analysis
                 st.button(f"Open {item['ticker']}", key=f"pf_review_open_{i}",
                           on_click=_open_analysis, args=(item["ticker"],))
+
+
+def _own_book():
+    """The book on screen belongs to whoever is signed in now (A-06). On sign-in a visitor's draft is dropped, so it can
+    never be saved over the account's stored portfolio; the account's book is then read afresh."""
+    from services.user_store import DRAFT_PORTFOLIO, DRAFT_TRADES
+    owner = st.session_state.get("user_id")
+    if "_pf_owner" in st.session_state and st.session_state["_pf_owner"] != owner:
+        for key in (*_IMPORT_BOOK, "portfolio_db_synced", "portfolio_load_failed", "portfolio_stale_error",
+                    "pending_optimization", "pending_opt_strategy", "_pending_opt_spec", "portfolio_agent_review",
+                    "_import_saved_book", "_import_toast", "_import_warnings", "_import_ambiguous", "_save_error",
+                    "_apply_error", "_ledger_warning", "trades_load_error", "last_portfolio_tickers",
+                    "last_portfolio_version", "portfolio_df", DRAFT_PORTFOLIO, DRAFT_TRADES):
+            st.session_state.pop(key, None)
+        for prefix in ("mt_", "pf_import", "p_portfolio_editor", "do_import_btn", "pf_upload"):  # typed inputs too (A06-R1)
+            forget(prefix)
+        st.session_state["_portfolio_version"] = st.session_state.get("_portfolio_version", 0) + 1
+    st.session_state["_pf_owner"] = owner
 
 
 def _retry_portfolio_load():
@@ -271,8 +290,10 @@ def render(ctx):
     t_end = ctx['t_end']
     t_start = ctx['t_start']
     render_header("package", "Portfolio", level="###")
-    if not auth.can_use("keep a portfolio, its trades and alert rules", "portfolio"):
-        return
+    _own_book()
+    if not auth.signed_in():
+        auth.can_use("save a portfolio to your account. Until then this is a draft kept in this browser tab only; "
+                     "signing in discards it and opens your account's saved portfolio", "portfolio")
     def _thesis_stops():
         """Today's Decision thesis stop per ticker — recorded ONCE when a position is opened (P1/5)."""
         if m_df is None or m_df.empty or "_thesis_stop" not in m_df.columns:
@@ -357,7 +378,7 @@ def render(ctx):
     _section = sticky_choice("Portfolio section", _sections, "Overview", "pf_section")
     _alert_rules = []
     if _section == "Activity":
-        _alert_rules = load_alert_rules()
+        _alert_rules = load_alert_rules() if auth.signed_in() else []      # alert rules need an account
         _render_alert_center(ctx, _alert_rules)
         _render_trade_ledger()
         return
@@ -378,7 +399,8 @@ def render(ctx):
             # --- CSV / Excel Portfolio Importer ---
             with st.popover("Import Portfolio", width="stretch"):
                 st.markdown("**Format:** `ticker` (required), `shares`, `cost`, `currency` (optional, default EUR)")
-                uploaded_file = st.file_uploader("Select file", type=["csv", "xlsx"], label_visibility="collapsed")
+                uploaded_file = st.file_uploader("Select file", type=["csv", "xlsx"], label_visibility="collapsed",
+                                                 key=f"pf_upload_{st.session_state.get('user_id')}")   # per owner (A06-R1)
                 import_mode = sticky_radio("Mode", ["Overwrite", "Merge (Accumulate)"], "Overwrite", "pf_import_mode", horizontal=True, label_visibility="collapsed")
                 _n_now = len(st.session_state.get("portfolio_tickers", []))
                 st.caption(f"Overwrite replaces the {_n_now} holding(s) now in this session with the file's rows."
@@ -664,7 +686,7 @@ def render(ctx):
                 st.session_state.portfolio_cash_eur = float(cash_in)
                 st.session_state.pop("_save_error", None)
                 st.session_state.pop("_import_saved_book", None)
-                st.toast("Portfolio saved.")
+                st.toast("Portfolio saved." if auth.signed_in() else "Draft updated — this browser tab only.")
                 st.rerun()
             else:
                 st.error(f"Portfolio NOT saved — {st.session_state.get('_save_error')} Your edits are shown but not "
@@ -1462,7 +1484,8 @@ def render(ctx):
                                 st.session_state['_portfolio_version'] += 1
                                 st.session_state.pending_optimization = None
                                 st.session_state.pending_opt_strategy = None
-                                st.toast(f"Portfolio saved (in the app, not a broker order) · NAV €{_res['nav_after']:,.2f} "
+                                st.toast(("Portfolio saved" if auth.signed_in() else "Draft updated (this tab only)")
+                                         + f" (in the app, not a broker order) · NAV €{_res['nav_after']:,.2f} "
                                          f"(costs €{_res['cost']:,.2f}) · cash €{_res['cash']:,.2f}"
                                          + (f" · {len(_pol_now['blocked'])} increase(s) blocked" if _pol_now["blocked"] else ""))
                             st.rerun()
@@ -1615,6 +1638,8 @@ def _render_agent_review(ctx, book_spec, import_pending):
     from ui.codex_options import render_codex_options, codex_label
     if not assistant.available():
         st.info("Set COHERE_API_KEY or install Codex locally to use the assistant.")
+        return
+    if not auth.can_use("run the agent portfolio review (it calls the language model)", "pf_agent"):
         return
     options = assistant.models()
     default = "Codex (local)" if not os.environ.get("COHERE_API_KEY") and len(options) > 1 else "Cohere"
@@ -1815,6 +1840,8 @@ def _render_alert_center(ctx, _alert_rules):
     format_ticker = ctx["format_ticker"]
     # 6. ── ALERT CENTER (persisted per user in Supabase: sql/supabase/stock_alerts.sql) ──
     render_header("activity", "Alert Center", level="###")
+    if not auth.can_use("keep alert rules", "pf_alerts"):
+        return
     st.caption("Rules are saved to your account and checked against the latest warehouse data every "
                "time the dashboard loads (in-app; no e-mail delivery is configured).")
     _rules = _alert_rules

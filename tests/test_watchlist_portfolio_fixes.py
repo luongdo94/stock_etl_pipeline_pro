@@ -451,3 +451,99 @@ def test_watchlist_stale_reload_uses_existing_draft_reset(isolated_session):
     assert "wl_bulk_baseline" not in isolated_session and "wl_edit_AAPL_baseline" not in isolated_session
     user_store.save_watchlist(user_store.load_watchlist())
     assert local_store.load_watchlist_records()[0]["Ticker"] == "AAPL"
+
+
+@pytest.mark.anonymous
+def test_a06_a_visitor_keeps_a_draft_portfolio_and_ledger_in_the_session_only(isolated_session, monkeypatch):
+    """A-06: without an account the portfolio and the trade ledger work as a draft held in this session; nothing is
+    written to a store or the cloud (the fixture fails on any cloud client)."""
+    monkeypatch.setattr(user_store.auth, "local_dev_mode", lambda: False)
+    isolated_session.update(authenticated=False, user_id=None)
+    ok, msg = user_store.save_portfolio_checked({"AAPL": 2.0}, {"AAPL": np.nan}, 100.0)
+    assert ok and "sign in" in msg
+    holdings, cash = user_store.load_portfolio_with_cash()
+    assert holdings["AAPL"]["shares"] == 2.0 and pd.isna(holdings["AAPL"]["cost"]) and cash == 100.0
+    assert user_store.append_trades([{"ticker": "AAPL", "side": "BUY", "qty": 2.0}])[0]
+    assert user_store.load_trades()["ticker"].tolist() == ["AAPL"]
+    assert not any(local_store.STORE_DIR.iterdir())                                  # no local file either
+
+
+@pytest.mark.anonymous
+def test_a06_signing_in_never_saves_the_visitors_draft_or_typed_trade_into_the_account(monkeypatch, tmp_path):
+    """A-06 / A06-R1: a visitor records a draft trade and types another quantity, then signs in. The account's stored
+    book is shown, the typed quantity is reset, and the next trade adds only itself to the account's book."""
+    monkeypatch.undo()
+    mode = {"local": False}                                    # anonymous first; the account then lives in the store
+    monkeypatch.setattr(local_store, "STORE_DIR", tmp_path)
+    monkeypatch.setattr(user_store.auth, "local_dev_mode", lambda: mode["local"])
+    monkeypatch.setattr(user_store.auth, "get_supabase_client", lambda: pytest.fail("network forbidden"))
+    monkeypatch.setattr(portfolio.st, "file_uploader", lambda *a, **k: None)
+    local_store.save_portfolio({"AAPL": 1, "MSFT": 1, user_store.CASH_KEY: 1000.0},
+                               {"AAPL": 100, "MSFT": 100, user_store.CASH_KEY: 1.0})
+    at = AppTest.from_function(portfolio_page)
+    at.session_state["authenticated"], at.session_state["user_id"] = False, None
+    at.session_state["_kept::pf_section"] = "Holdings"
+    at.run()
+    at.number_input(key="mt_shares_input").set_value(5.0).run()
+    at.checkbox(key="mt_from_cash").uncheck().run()                                 # the visitor's "new deposit"
+    next(b for b in at.button if b.label == "Confirm Transaction").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert at.session_state["portfolio_shares"] == {"AAPL": 5.0}   # the draft
+    at.number_input(key="mt_shares_input").set_value(7.0).run()                     # typed, not confirmed
+    assert local_store.load_portfolio()["AAPL"]["shares"] == 1                      # nothing written
+
+    at.session_state["authenticated"], at.session_state["user_id"] = True, "u1"
+    mode["local"] = True
+    at.run()
+    assert at.session_state["portfolio_shares"] == {"AAPL": 1.0, "MSFT": 1.0}         # the account's book
+    assert at.number_input(key="mt_shares_input").value == 1.0                      # the typed 7 is gone
+    assert at.checkbox(key="mt_from_cash").value is True                            # and the deposit choice
+    next(b for b in at.button if b.label == "Confirm Transaction").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    stored = local_store.load_portfolio()
+    assert stored["AAPL"]["shares"] == 2.0 and stored["MSFT"]["shares"] == 1.0      # +1, not +5 or +7
+    assert [r["qty"] for r in local_store.load_trades()] == [1.0]                   # the draft trade is not in the ledger
+    assert at.session_state["portfolio_cash_eur"] < 1000.0                          # paid from the account's cash
+
+
+@pytest.mark.anonymous
+def test_a06_signing_in_drops_the_draft_so_it_cannot_overwrite_the_account(isolated_session, monkeypatch):
+    """A-06: the draft on screen belongs to the visitor; after sign-in the account's book is read afresh."""
+    monkeypatch.setattr(user_store.auth, "local_dev_mode", lambda: False)
+    isolated_session.update(authenticated=False, user_id=None)
+    user_store.save_portfolio_checked({"AAPL": 2.0}, {"AAPL": 1.0}, 0.0)
+    book(isolated_session, {"AAPL": 2.0}, {"AAPL": 1.0})
+    isolated_session["portfolio_db_synced"] = True
+    portfolio._own_book()
+    assert isolated_session["portfolio_shares"] == {"AAPL": 2.0}                   # same visitor: the draft stays
+    isolated_session.update(authenticated=True, user_id="u1")
+    portfolio._own_book()
+    for key in ("portfolio_shares", "portfolio_db_synced", user_store.DRAFT_PORTFOLIO):
+        assert key not in isolated_session
+
+
+@pytest.mark.anonymous
+def test_a06_r2_the_signal_feed_reviews_a_visitors_draft_holdings(isolated_session, monkeypatch):
+    """A06-R2: a draft holding is reviewed (not an empty "readable" feed); a visitor has no watchlist or rules."""
+    from ui import signal_hub
+    monkeypatch.setattr(user_store.auth, "local_dev_mode", lambda: False)
+    isolated_session.update(authenticated=False, user_id=None)
+    user_store.save_portfolio_checked({"AAPL": 2.0}, {"AAPL": 1.0}, 50.0)
+    data = signal_hub._user_data()
+    assert data["holdings"]["AAPL"]["shares"] == 2.0 and data["cash"] == 50.0 and data["holdings_ok"]
+    assert data["watchlist"] is None and data["rules"] == []
+
+
+@pytest.mark.anonymous
+def test_a06_r5_needs_review_lists_a_visitors_draft_items(isolated_session, monkeypatch):
+    """A06-R5: the badge counts draft items, so the panel shows them instead of only a sign-in notice."""
+    from ui import signal_hub
+    shown = []
+    monkeypatch.setattr(signal_hub.st, "markdown", lambda body, **k: shown.append(body))
+    monkeypatch.setattr(signal_hub.st, "caption", lambda *a, **k: None)
+    monkeypatch.setattr(signal_hub.st, "info", lambda *a, **k: pytest.fail("draft items hidden behind sign-in"))
+    isolated_session.update(authenticated=False, user_id=None)
+    item = {"severity": next(iter(signal_hub._SEV)), "ticker": "AAPL", "kind": "Decision", "scope": "held",
+            "decision": "AVOID", "message": "AAPL is AVOID", "source": "screener", "data_as_of": None}
+    signal_hub._needs_review([item], {"user": {"holdings": {"AAPL": {"shares": 1.0}}, "watchlist": None, "rules": []}})
+    assert any("AAPL is AVOID" in body for body in shown)

@@ -306,6 +306,17 @@ def read_watchlist_status() -> tuple:
     return df, ok
 
 
+# A visitor without an account keeps a DRAFT portfolio and trade ledger in this browser session only (A-06): it is
+# never written anywhere and is gone when the tab closes or the visitor signs in.
+DRAFT_PORTFOLIO = "_draft_portfolio"
+DRAFT_TRADES = "_draft_trades"
+DRAFT_SAVED = "Kept in this browser tab only — sign in to save it."
+
+
+def _anonymous() -> bool:
+    return not (st.session_state.get("authenticated") and st.session_state.get("user_id"))
+
+
 def load_portfolio_from_db():
     """Holdings only (cash excluded) — for callers that value positions, e.g. candidate_impact."""
     return split_cash(_load_portfolio_raw())[0]
@@ -322,8 +333,8 @@ def _load_portfolio_raw(track_revision=False):
             st.session_state["portfolio_load_failed"] = True
             st.sidebar.error(f"Portfolio not readable: {e}")
             return {}
-    if not st.session_state.get("authenticated") or not st.session_state.get("user_id"):
-        return {}
+    if _anonymous():
+        return {t: dict(row) for t, row in st.session_state.get(DRAFT_PORTFOLIO, {}).items()}
     try:
         supabase = auth.get_supabase_client()
         rev = _cloud_revision(supabase, "stock_portfolio") if track_revision else None
@@ -394,8 +405,10 @@ def save_portfolio_checked(shares_dict, cost_dict, cash_eur=None, stops=None, ta
                 return False, _stale("stock_portfolio")
             return False, f"Not saved locally ({e})."
         return True, "Saved locally."
-    if not st.session_state.get("authenticated") or not st.session_state.get("user_id"):
-        return False, "Not saved: not signed in."
+    if _anonymous():
+        st.session_state[DRAFT_PORTFOLIO] = {
+            t: {"shares": float(qty), "cost": _nullable(cost_dict.get(t), float)} for t, qty in shares_dict.items()}
+        return True, DRAFT_SAVED
     try:
         supabase = auth.get_supabase_client()
         user_id = st.session_state["user_id"]
@@ -429,8 +442,8 @@ def load_trades() -> pd.DataFrame:
         except local_store.LocalStoreError as e:
             st.session_state["trades_load_error"] = str(e)
             rows = []
-    elif not st.session_state.get("authenticated") or not st.session_state.get("user_id"):
-        rows = []
+    elif _anonymous():
+        rows = list(st.session_state.get(DRAFT_TRADES, []))
     else:
         try:
             supabase = auth.get_supabase_client()
@@ -454,8 +467,9 @@ def append_trades(rows: list) -> tuple:
             return True, "recorded locally"
         except OSError as e:
             return False, f"ledger not written locally ({e})"
-    if not st.session_state.get("authenticated") or not st.session_state.get("user_id"):
-        return False, "ledger not written: not signed in"
+    if _anonymous():
+        st.session_state.setdefault(DRAFT_TRADES, []).extend(dict(r) for r in rows)
+        return True, "kept in this browser tab only"
     try:
         supabase = auth.get_supabase_client()
         uid = st.session_state["user_id"]

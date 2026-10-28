@@ -84,7 +84,7 @@ def test_strategy_lab_backtest_runs(warehouse):
 @pytest.mark.anonymous
 @pytest.mark.parametrize("tab,asks", [("🌐 Market Pulse", None), ("🔭 Stock Scanner", None),
                                       ("📋 Watchlist", "Sign in to keep a watchlist"),
-                                      ("💼 Portfolio", "Sign in to keep a portfolio")])
+                                      ("💼 Portfolio", "signing in discards it")])
 def test_an_anonymous_visitor_browses_and_is_asked_to_sign_in_only_to_save(warehouse, tab, asks):
     """No login wall: the data pages open without an account; saving (watchlist, portfolio) asks for sign-in."""
     at = AppTest.from_file(os.path.join(ROOT, "app.py"), default_timeout=300)

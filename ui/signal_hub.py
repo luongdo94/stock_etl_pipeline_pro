@@ -75,6 +75,8 @@ def _user_data() -> dict:
             data["rules_ok"] = err is None
         except Exception:
             data["rules"], data["rules_ok"] = [], False
+    else:                                   # a visitor's draft portfolio is reviewed too; no watchlist or rules (A06-R2)
+        data["holdings"], data["cash"], data["stops"], data["holdings_ok"] = read_portfolio_status()
     ok = data["holdings_ok"] and data["watchlist_ok"] and data["rules_ok"]
     st.session_state[HUB_USER_CACHE] = {"uid": uid, "at": time.monotonic(), "data": data,
                                         "ttl": _USER_TTL_S if ok else _RETRY_TTL_S}
@@ -176,9 +178,12 @@ def render(*, m_df, prices_full, companies_full, reco_df, earnings_cal, advice, 
 
 def _needs_review(items, hub):
     user = hub["user"]
-    if not st.session_state.get("user_id"):
-        st.info("Sign in to see your portfolio and watchlist alerts.")
-        return
+    if not st.session_state.get("user_id"):              # a visitor's draft portfolio is reviewed (A06-R5)
+        if not user["holdings"]:
+            st.info("Sign in to keep a watchlist and alert rules, or add holdings to a draft in Portfolio to review them.")
+            return
+        st.caption("Browsing without an account: the draft portfolio of this browser tab is reviewed; sign in for a "
+                   "watchlist and alert rules.")
     held, wl = len(user["holdings"] or {}), len((user["watchlist"] if user["watchlist"] is not None else []))
     st.caption(f"Your scope: {held} holding(s), {wl} watchlist idea(s), {len(user['rules'] or [])} rule(s). "
                "Most urgent first; the badge counts ACT and REVIEW items, INFO is shown but not counted.")
