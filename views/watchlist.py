@@ -12,6 +12,7 @@ from ui.icons import render_header
 from ui.sticky import forget, sticky, sticky_choice
 from ui.watchlist_status import STATUS_LABELS, UNKNOWN, open_idea_tickers, restore_statuses, status_choices, status_for_save, status_label
 from views.stock_analysis.watchlist_save import _idea_version
+from services import auth
 
 
 def _watchlist_version(frame):
@@ -47,6 +48,8 @@ def render(ctx):
 
     render_header("calendar", "Watchlist & Idea Pipeline")
     st.write("Track and prune your high-conviction ideas. A thesis without an invalidation level is just a gamble.")
+    if not auth.can_use("keep a watchlist and its idea pipeline", "watchlist"):
+        return
 
     wl_df = load_watchlist()
     if st.session_state.get("watchlist_stale_error"):

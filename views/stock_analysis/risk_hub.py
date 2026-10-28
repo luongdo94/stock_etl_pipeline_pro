@@ -11,6 +11,7 @@ from views.stock_analysis.layout import layer_banner
 from etl.llm_parser import analyze_risk_with_llm
 from services.ai import get_finbert_pipeline, get_unified_verdict
 from ui.icons import render_header
+from services import auth
 
 
 def _known(v):
@@ -144,7 +145,8 @@ def render(dd, ctx):
     with col_lang:
         llm_language = st.selectbox("Language", ["English", "Vietnamese"], index=0, label_visibility="collapsed")
     with col_btn:
-        run_audit_btn = st.button("Run AI news and risk review", type="primary", use_container_width=True)
+        run_audit_btn = (auth.can_use("run the AI news and risk review (it calls the language model)", "risk_ai")
+                         and st.button("Run AI news and risk review", type="primary", use_container_width=True))
 
     if run_audit_btn:
         with st.spinner(f"Scanning news for {meta['company']}..."):

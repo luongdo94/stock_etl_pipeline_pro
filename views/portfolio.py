@@ -31,6 +31,7 @@ from ui.sticky import sticky, sticky_choice, sticky_radio
 from ui.decision_panel import render_alert_inbox
 from ui.icons import render_header
 import pandas as pd, io
+from services import auth
 
 
 _STRATEGY_OPTIONS = {
@@ -270,6 +271,8 @@ def render(ctx):
     t_end = ctx['t_end']
     t_start = ctx['t_start']
     render_header("package", "Portfolio", level="###")
+    if not auth.can_use("keep a portfolio, its trades and alert rules", "portfolio"):
+        return
     def _thesis_stops():
         """Today's Decision thesis stop per ticker — recorded ONCE when a position is opened (P1/5)."""
         if m_df is None or m_df.empty or "_thesis_stop" not in m_df.columns:

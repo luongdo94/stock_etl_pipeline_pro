@@ -4,6 +4,7 @@ import streamlit as st
 from core import valuation as val
 from core.decision import load_rules
 from ui.icons import render_header
+from services import auth
 
 
 def render(ctx):
@@ -157,6 +158,8 @@ def _methodology_qa():
                "result use *Why this Decision?* in Stock Analysis.")
     if not research.available():
         st.info("Set COHERE_API_KEY to ask questions.")
+        return
+    if not auth.can_use("ask the methodology (it calls the language model)", "docs_rag"):
         return
     with st.form("docs_rag"):
         q = st.text_input("Question", placeholder="e.g. When is a valuation 'not reliable'? How is the stop set?")

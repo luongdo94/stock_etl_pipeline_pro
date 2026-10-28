@@ -16,6 +16,7 @@ from ui.codex_options import render_codex_options, codex_label
 from ui.sticky import (follow_active_ticker, my_tickers, remember_ticker, sticky, sticky_choice, sticky_radio,
                        ticker_options)
 from ui.icons import render_header
+from services import auth
 
 MIN_REGION = 15          # smaller regions are pooled so a "market" benchmark is not the stock itself
 
@@ -41,7 +42,7 @@ def _render_er_brief(ticker, company, event_ts, language, summariser, model, cod
     identity = svc.note_key(ticker, event_ts, language,
                             facts + json.dumps(report, sort_keys=True, default=str), model=model)
     slot = f"er_brief::{BRIEF_VERSION}::{identity}"
-    if st.button("Build the ER brief", key="er_brief_build"):
+    if auth.signed_in() and st.button("Build the ER brief", key="er_brief_build"):    # the note's notice explains why
         try:
             with st.spinner("Collecting the report text..."):
                 release = st.session_state.get(release_key)
@@ -521,7 +522,8 @@ def render(ctx):
             f"- Next report: {nxt_txt}." if nxt is not None else None]))
         key = svc.note_key(t, last["earnings_ts"] if last is not None else None, lang, facts, model=model)
         _release_key = f"er_release::{t}::{last['earnings_ts'] if last is not None else 'none'}::{ctx.get('data_version')}"
-        if st.button("Summarise the latest report", key="er_ai"):
+        _ai_ok = auth.can_use("write AI notes and the ER brief (they call the language model)", "er_ai")
+        if _ai_ok and st.button("Summarise the latest report", key="er_ai"):
             company = names.get(t, t)
             mismatch = None
             with st.spinner("Collecting the report text..."):

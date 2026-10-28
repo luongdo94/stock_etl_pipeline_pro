@@ -7,6 +7,7 @@ import streamlit as st
 
 from services import research
 from views.stock_analysis.layout import layer_banner
+from services import auth
 
 _MAX_KEPT = 6           # answers kept per ticker in the session (oldest dropped)
 _PRESET_LABELS = {"moat": "Business model & moat", "risks": "Key risk factors", "drivers": "What drove results",
@@ -63,6 +64,8 @@ def _filings_tab(dd, lang):
                + (" — passages embedded for semantic search" if passages["embedding"].notna().any()
                   else " — word search only (no embeddings yet)"))
     st.caption("Each preset or question calls the language model (Cohere); stored answers are shown without a new call.")
+    if not auth.can_use("ask questions about the filings (it calls the language model)", f"rag_{t}"):
+        return
     cols = st.columns(len(_PRESET_LABELS))
     asked, sections = None, None
     for col, (key, label) in zip(cols, _PRESET_LABELS.items()):
@@ -91,6 +94,8 @@ def _decision_tab(dd, lang, snapshot=None):
                "and config/decision_rules.yaml. It cannot change the stance.")
     default = (f"Why is {dd.ticker} rated {stance}? Which rule or data gap decides it, and what would have to change "
                f"for a BUY CANDIDATE?")
+    if not auth.can_use("ask why this Decision was reached (it calls the language model)", f"rag_dec_{dd.ticker}"):
+        return
     with st.form(f"rag_dec_{dd.ticker}"):
         q = st.text_input("Question about this result", value=default)
         go = st.form_submit_button("Explain — Calls the language model")
@@ -144,7 +149,8 @@ def _news_tab(dd, lang):
     st.caption("Context only — not used by the Decision")
     st.caption("Headlines and summaries from Google News / Yahoo, plus stored US 8-K earnings releases. "
                "The button refreshes Yahoo and calls the language model once when passages exist.")
-    if st.button("Summarise news (last 30 days)", key=f"news_digest_btn_{dd.ticker}"):
+    if auth.can_use("summarise the news (it calls the language model)", f"news_digest_{dd.ticker}") and \
+            st.button("Summarise news (last 30 days)", key=f"news_digest_btn_{dd.ticker}"):
         with st.spinner("Reading stored news and writing a cited digest…"):
             try:
                 res = research.news_digest(dd.ticker, dd.meta.get("company", dd.ticker), lang)

@@ -99,27 +99,16 @@ def get_cookie_manager():
 
 
 def _login_form(cm):
-    """Render the Login / Signup UI. Writes cookie on success."""
+    """The Login / Signup widgets (shown in the sign-in dialog). Writes the cookie on success. Without a configured
+    Supabase the reason is shown and the app keeps running for browsing — only saving and the AI features need it."""
     supabase = _new_auth_client()
     if not supabase:
-        st.error("Authentication is not configured. Add SUPABASE_URL and SUPABASE_ANON_KEY "
+        st.error("Sign-in is not configured. Add SUPABASE_URL and SUPABASE_ANON_KEY "
                  "(or SUPABASE_KEY) to .streamlit/secrets.toml. For local development without "
                  "Supabase login, run ./scripts/windows/start_dashboard.ps1 from the project directory.")
-        st.stop()
+        return
 
-    # Native inputs, buttons and menu follow the selected Light/Dark theme.
-    st.markdown("<br><br>", unsafe_allow_html=True)
-    st.markdown(
-        "<h1 style='text-align:center;'>Honest Quant Intelligence</h1>",
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        "<p style='text-align:center; color:inherit; font-size:1.1em;'>Sign in to your research workspace</p><br>",
-        unsafe_allow_html=True,
-    )
-
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
+    with st.container():
         tab_login, tab_signup = st.tabs(["Log In", "Sign Up"])
 
         with tab_login:
@@ -138,7 +127,7 @@ def _login_form(cm):
                             # 1. Write the signed cookie (skipped when COOKIE_SECRET is unset:
                             #    the session then lasts only for this browser tab)
                             token = _sign_session(resp.user.id, resp.user.email)
-                            if token:
+                            if token and cm is not None:
                                 expires = datetime.now() + timedelta(days=_COOKIE_TTL_DAYS)
                                 cm.set(_COOKIE_NAME, token, expires_at=expires, key="set_login_cookie")
 
@@ -213,11 +202,20 @@ def local_dev_mode() -> bool:
     return address in _LOCAL_HOSTS
 
 
-def require_auth(cm=None):
-    """
-    Authentication gateway.
-    """
+_COOKIE_MANAGER = None        # the page's cookie component (one per run), used by the sign-in dialog
+
+
+def signed_in() -> bool:
+    """A user with an account is signed in (local dev mode counts as signed in)."""
+    return bool(st.session_state.get("authenticated") and st.session_state.get("user_id"))
+
+
+def restore_session(cm=None):
+    """Who is browsing. There is no login wall: a valid signed cookie restores the account; without one the visitor
+    browses anonymously, and sign-in is asked for only where it is needed — to SAVE data (watchlist, portfolio, alert
+    rules, trades) and for the AI features that run on the owner's language-model key (see can_use)."""
     import os
+    global _COOKIE_MANAGER
     if os.environ.get("LOCAL_DEV_MODE") == "1" and not local_dev_mode():
         st.error("LOCAL_DEV_MODE is only allowed when the app is served from localhost and is not in cloud mode. "
                  "Unset it, or sign in normally.")
@@ -227,6 +225,7 @@ def require_auth(cm=None):
         return
     if cm is None:
         cm = get_cookie_manager()
+    _COOKIE_MANAGER = cm
 
     if "authenticated" not in st.session_state:
         st.session_state["authenticated"] = False
@@ -256,13 +255,32 @@ def require_auth(cm=None):
             time.sleep(0.5)  # Let the component initialize
         st.rerun()  # Force a rerun to capture the cookies now that JS is loaded
 
-    # If we reach here, user is truly not authenticated
-    _login_form(cm)
-    st.stop()
+    # no valid cookie: an anonymous visitor (nothing is stopped)
+
+
+@st.dialog("Sign in")
+def _sign_in_dialog():
+    _login_form(_COOKIE_MANAGER)
+
+
+def can_use(purpose: str, key: str) -> bool:
+    """True when the visitor is signed in. Otherwise a one-line notice saying what needs an account, with a Sign in
+    button that opens the sign-in dialog, and False — so a caller writes `if auth.can_use(...) and st.button(...)`."""
+    if signed_in():
+        return True
+    c1, c2 = st.columns([4, 1])
+    c1.info(f"Sign in to {purpose}. Everything else works without an account.")
+    if c2.button("Sign in", key=f"signin_{key}", width="stretch"):
+        _sign_in_dialog()
+    return False
 
 
 def render_user_profile(cm=None):
-    if not st.session_state.get("authenticated"):
+    if not signed_in():
+        st.sidebar.caption("Browsing without an account. Sign in to save a watchlist, a portfolio and alerts, and to "
+                           "use the AI features.")
+        if st.sidebar.button("Sign in", key="sidebar_sign_in", use_container_width=True):
+            _sign_in_dialog()
         return
 
     if local_dev_mode():

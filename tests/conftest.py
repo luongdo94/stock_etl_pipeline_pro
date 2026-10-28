@@ -67,3 +67,15 @@ def _isolated_news_history(tmp_path, monkeypatch):
     """News tests must never access the project warehouse history."""
     from services import news
     monkeypatch.setattr(news, "NEWS_DB_PATH", str(tmp_path / "news_history.duckdb"))
+
+
+@pytest.fixture(autouse=True)
+def _signed_in_unless_anonymous(request, monkeypatch):
+    """Feature tests run as a signed-in user (saving and the AI features need an account since the login wall went);
+    tests of what an anonymous visitor sees are marked `anonymous` and keep the real check."""
+    if request.node.get_closest_marker("anonymous"):
+        yield
+        return
+    from services import auth
+    monkeypatch.setattr(auth, "signed_in", lambda: True)
+    yield

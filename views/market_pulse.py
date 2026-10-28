@@ -13,6 +13,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from core import market_regime as mr
+from services import auth
 from ui.components import phone_safe_chart
 from ui.icons import render_header
 from ui.range_control import chart_range
@@ -256,7 +257,7 @@ def _macro_brief(ctx):
         signed_in = bool(st.session_state.get("user_id"))
         spec = (ctx.get("data_version"), model or codex_local.DEFAULT_MODEL, effort or codex_local.DEFAULT_EFFORT,
                 language, signed_in, st.session_state.get("user_id"))
-        if st.button("Write macro brief — Codex with web search, ~2–4 min", key="mp_macro_write"):
+        if auth.can_use("write the macro brief (it runs Codex on this machine)", "mp_macro") and                 st.button("Write macro brief — Codex with web search, ~2–4 min", key="mp_macro_write"):
             started = perf_counter()
             portfolio = None
             if signed_in:                  # read on the click only: the landing tab must not value the book every rerun

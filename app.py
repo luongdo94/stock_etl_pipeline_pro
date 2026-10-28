@@ -36,11 +36,10 @@ from ui.styles import inject_global_css
 st.set_page_config(page_title="Honest Quant Intelligence", layout="wide",
                    initial_sidebar_state="expanded")
 
-# ── Auth (multi-tenant). require_auth may return before the cookie round-trip completes. ──
+# ── Who is browsing: no login wall. A signed cookie restores the account; otherwise the visitor browses anonymously
+# and is asked to sign in only to save data or to use the AI features (services.auth.can_use). ──
 cm = auth.get_cookie_manager()
-auth.require_auth(cm)
-if not st.session_state.get("authenticated"):
-    st.stop()
+auth.restore_session(cm)
 st.session_state.setdefault("pending_rebalance_portfolio", None)
 st.session_state.setdefault("active_ticker", "AAPL")
 inject_global_css()

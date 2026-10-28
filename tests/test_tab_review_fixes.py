@@ -447,18 +447,13 @@ def test_c05_selected_panels_use_stored_fx_and_keep_native(monkeypatch):
         assert ui.tables[-1]["value"].iloc[0] == ("€90K" if rate else "$100K")
 
 
-def test_c06_auth_recovery_path_resolves_and_stops(monkeypatch):
+def test_c06_auth_recovery_path_resolves(monkeypatch):
     from services import auth
     ui = UI()
     monkeypatch.setattr(auth, "st", ui)
     monkeypatch.setattr(auth, "_new_auth_client", lambda: None)
-    class Stopped(Exception):
-        pass
-    def stop():
-        raise Stopped()
-    ui.stop = stop
-    with pytest.raises(Stopped):
-        auth._login_form(None)
+    ui.stop = lambda: pytest.fail("anonymous browsing continues; only the sign-in dialog explains the setup")
+    auth._login_form(None)
     text = " ".join(ui.messages)
     assert "./scripts/windows/start_dashboard.ps1" in text
     assert (Path(__file__).resolve().parents[1] / "scripts/windows/start_dashboard.ps1").is_file()

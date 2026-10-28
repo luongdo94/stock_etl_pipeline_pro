@@ -81,16 +81,28 @@ def test_strategy_lab_backtest_runs(warehouse):
 
 
 @pytest.mark.smoke
-def test_unauthenticated_user_sees_login_only(warehouse):
-    at = AppTest.from_file(os.path.join(ROOT, "app.py"), default_timeout=120)
+@pytest.mark.anonymous
+@pytest.mark.parametrize("tab,asks", [("🌐 Market Pulse", None), ("🔭 Stock Scanner", None),
+                                      ("📋 Watchlist", "Sign in to keep a watchlist"),
+                                      ("💼 Portfolio", "Sign in to keep a portfolio")])
+def test_an_anonymous_visitor_browses_and_is_asked_to_sign_in_only_to_save(warehouse, tab, asks):
+    """No login wall: the data pages open without an account; saving (watchlist, portfolio) asks for sign-in."""
+    at = AppTest.from_file(os.path.join(ROOT, "app.py"), default_timeout=300)
     at.secrets["SUPABASE_URL"] = "http://127.0.0.1:9"
     at.secrets["SUPABASE_KEY"] = "test-key"
     at.secrets["COOKIE_SECRET"] = "test-secret"
     at.session_state["cm_pass"] = 1  # skip the cookie-component warm-up rerun
+    at.session_state["active_tab"] = tab
     at.run()
     assert not at.exception, [e.value for e in at.exception]
-    assert any(b.label == "Sign In" for b in at.button)
-    assert not any("Compare all rules" in (b.label or "") for b in at.button)
+    assert not at.session_state["authenticated"]
+    assert not any(b.label == "Sign In" for b in at.button)                      # the old login form is not shown
+    assert any(b.key == "sidebar_sign_in" for b in at.sidebar.button)            # sign-in is offered, not forced
+    notices = [i.value for i in at.info]
+    if asks:
+        assert any(asks in n for n in notices), notices
+    else:
+        assert not any(n.startswith("Sign in to keep") for n in notices)
 
 
 STOCK_GROUPS = ["Overview", "Business & value", "Price & timing", "Risks & data"]

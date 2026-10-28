@@ -290,6 +290,7 @@ def portfolio_ui(monkeypatch, tmp_path):
     monkeypatch.undo()
     monkeypatch.setattr(local_store, "STORE_DIR", tmp_path)
     monkeypatch.setattr(user_store.auth, "local_dev_mode", lambda: True)
+    monkeypatch.setattr(user_store.auth, "signed_in", lambda: True)          # undo() dropped the conftest default
     monkeypatch.setattr(user_store.auth, "get_supabase_client", lambda: pytest.fail("network forbidden"))
     monkeypatch.setattr(portfolio.st, "file_uploader", lambda *a, **k: None)
     local_store.save_portfolio({"AAPL": 1, "MSFT": 1}, {"AAPL": 100, "MSFT": 100})

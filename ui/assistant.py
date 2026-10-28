@@ -11,6 +11,7 @@ from services import assistant
 from services.assistant_tools import ToolBox
 from ui.sticky import sticky_radio
 from ui.codex_options import render_codex_options, codex_label
+from services import auth
 
 _HISTORY_KEY = "assistant_history"
 _MAX_KEPT = 20
@@ -144,6 +145,8 @@ def render(ctx):
                         "with sources. It explains the computed Decision; it never gives its own rating.")
             if not assistant.available():
                 st.info("Set COHERE_API_KEY or install Codex locally to use the assistant.")
+                return
+            if not auth.can_use("use the assistant (it reads your portfolio and calls the language model)", "assistant"):
                 return
             _own_session()
             options = assistant.models()

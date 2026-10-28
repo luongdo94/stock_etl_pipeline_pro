@@ -13,6 +13,7 @@ from ui.watchlist_status import UNKNOWN, status_choices, status_for_save, status
 from views.stock_analysis.layout import layer_banner
 
 from services.user_store import load_watchlist, save_watchlist
+from services import auth
 
 STATUSES = ["🔵 PENDING", "🟢 ACTIVE", "🟡 REVIEW", "🔴 INVALIDATED", "⚫ CLOSED"]
 
@@ -115,4 +116,5 @@ def render(dd, ctx):
     if pd.isna(next_earnings):
         next_earnings = "TBD"
     with st.expander("Save Idea to Watchlist Pipeline", expanded=False):
-        _save_form(dd.ticker, dd.act_str, dd.act_desc, dd.s1, dd.stop_loss, dd.tp1, next_earnings)
+        if auth.can_use("save ideas to your watchlist", f"watchlist_save_{dd.ticker}"):
+            _save_form(dd.ticker, dd.act_str, dd.act_desc, dd.s1, dd.stop_loss, dd.tp1, next_earnings)
