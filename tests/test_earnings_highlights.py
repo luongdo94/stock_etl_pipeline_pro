@@ -162,3 +162,61 @@ def test_eps_line_uses_the_event_series_and_shows_eur():
     assert l["EPS"]["yoy_pct"] == pytest.approx(10.0)                       # 2.0 → 2.2, as the growth history
     assert l["EPS"]["value"] == pytest.approx(2.2 * 0.006) and l["EPS"]["unit"] == "EUR/share"
     assert "€0.01/share" in eh.facts_line(eh.latest_report("A", _event_quarters(), None, _ev(), estimate_currency="JPY"))
+
+
+@pytest.mark.smoke
+def test_one_button_fetches_the_open_stocks_report_live_and_waits_a_minute(warehouse, monkeypatch):
+    """The button asks Yahoo / the SEC for the open stock only; the result is shown (session only) and merged into its
+    tiles; a second request within a minute is not possible."""
+    from services import earnings as svc
+    calls = []
+    raw = pd.DataFrame({"EPS Estimate": [9.0], "Reported EPS": [9.5], "Surprise(%)": [5.56]},
+                       index=pd.DatetimeIndex([pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=1)]))
+    real = svc.fetch_live_report
+    monkeypatch.setattr(svc, "fetch_live_report", lambda t, ua: calls.append(t) or real(
+        t, ua, earnings_dates=lambda _t: raw, release=lambda _t, _ua: ("Revenue was $90.1 billion. Diluted earnings per share was $9.40.",
+                                 "https://sec.example/ex99.htm", "2026-10-27")))
+    at = _app("🗓️ Earnings")
+    at.session_state["_kept::er_section"] = "Single stock"
+    at.session_state["active_ticker"] = "AAPL"
+    at.run()
+    button = at.button(key="er_live_btn_AAPL")
+    assert not button.disabled and calls == []                                       # nothing fetched on open
+    button.click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert calls == ["AAPL"]
+    assert at.button(key="er_live_btn_AAPL").disabled                               # drawn disabled at once (ER-08)
+    at.button(key="er_live_btn_AAPL").click().run()                                # a click inside the minute
+    assert calls == ["AAPL"]                                                        # is not a second request
+    text = " ".join(c.value for c in at.caption)
+    assert "Live data for AAPL" in text and "EPS 9.5 vs estimate 9" in text and "https://sec.example/ex99.htm" in text
+    shown = " ".join(m.value for m in at.markdown)
+    assert "Revenue:** $90.1 billion" in shown and "Diluted EPS (GAAP):** $9.40" in shown and "adjusted / non-GAAP):** N/A" in shown
+    at.run()                                                                          # the next run: within the minute
+    assert at.button(key="er_live_btn_AAPL").disabled and "Next live fetch possible" in " ".join(c.value for c in at.caption)
+    assert calls == ["AAPL"]
+
+
+@pytest.mark.smoke
+def test_er05_er06_a_newer_snapshot_clears_the_live_fetch_and_the_consensus_is_the_stored_one(warehouse, monkeypatch):
+    from services import earnings as svc
+    seen = []
+    real_consensus = svc.consensus_for_release
+    monkeypatch.setattr(svc, "consensus_for_release", lambda ev, t, f: seen.append(ev) or real_consensus(ev, t, f))
+    raw = pd.DataFrame({"EPS Estimate": [99.0], "Reported EPS": [1.0], "Surprise(%)": [-99.0]},
+                       index=pd.DatetimeIndex([pd.Timestamp.now(tz="UTC") - pd.Timedelta(days=1)]))
+    real = svc.fetch_live_report
+    monkeypatch.setattr(svc, "fetch_live_report", lambda t, ua: real(
+        t, ua, earnings_dates=lambda _t: raw, release=lambda _t, _ua: ("Revenue was $1.0 billion.", "u", "2026-10-27")))
+    at = _app("🗓️ Earnings")
+    at.session_state["_kept::er_section"] = "Single stock"
+    at.session_state["active_ticker"] = "AAPL"
+    at.run()
+    at.button(key="er_live_btn_AAPL").click().run()
+    assert seen and not (seen[0]["eps_estimate"] == 99.0).any()                    # the stored frame, not the live one
+    live = at.session_state["er_live::AAPL"]
+    live["snapshot"] = "an older snapshot"
+    at.session_state["er_live::AAPL"] = live
+    at.run()
+    assert "er_live::AAPL" not in at.session_state
+    assert any("newer data snapshot" in c.value for c in at.caption)

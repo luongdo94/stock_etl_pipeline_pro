@@ -242,6 +242,116 @@ def _open_single_stock(ticker):
     st.session_state["_kept::er_section"] = "Single stock"
 
 
+def _live_report(t, events, snapshot=None):
+    """The "fetch now" button of the open stock. Its result stays in this session (the stored snapshot is unchanged
+    until the next ETL run) and is merged into this stock's events, so the tiles, the AI note and the ER brief use it.
+    A newer snapshot replaces it: the ETL's later reading wins over an older live one (ER-05)."""
+    import time as _time
+    key = f"er_live::{t}"
+    live = st.session_state.get(key)
+    if live and live.get("snapshot") != snapshot:
+        st.session_state.pop(key, None)
+        live = None
+        st.caption("A newer data snapshot is loaded; the earlier live fetch was cleared.")
+    wait = svc.LIVE_COOLDOWN_S - (_time.time() - live["_at"]) if live else 0
+    c1, c2 = st.columns([1, 3])
+    clicked = c1.button("Fetch the latest report (live)", key=f"er_live_btn_{t}", width="stretch", disabled=wait > 0,
+                        help=f"Asks Yahoo (earnings dates, EPS) and, for US listings, the SEC (8-K press release) now, "
+                             f"for {t} only. At most once a minute per stock.")
+    if clicked and wait <= 0:                         # the cooldown is enforced, not only shown (ER-08)
+        with st.spinner(f"Fetching {t}'s latest report from Yahoo and the SEC…"):
+            live = svc.fetch_live_report(t, svc.sec_user_agent())
+        live["_at"], live["snapshot"] = _time.time(), snapshot
+        # the consensus as STORED in the snapshot, not one the live fetch brought (ER-06)
+        live["consensus"] = svc.consensus_for_release(events, t, live["release"][2])
+        st.session_state[key] = live
+        st.rerun()                                    # draw the button disabled at once
+    if not live:
+        c2.caption("Shows the stored snapshot. The button fetches this stock's newest report now (session only).")
+        return events
+    ev, (text, where, fdate) = live["events"], live["release"]
+    reported = ev[ev["eps_actual"].notna()].sort_values("earnings_ts") if not ev.empty else ev
+    parts = [f"Live data for {t}, fetched {live['fetched_at']:%d %b %Y %H:%M} UTC (session only; the stored snapshot "
+             "is unchanged until the next ETL run)."]
+    if live["events_error"]:
+        parts.append(live["events_error"] + ".")
+    elif reported.empty:
+        parts.append("Yahoo returned no reported quarter.")
+    else:
+        r = reported.iloc[-1]
+        parts.append(f"Yahoo: newest reported {pd.Timestamp(r['earnings_ts']):%d %b %Y}, EPS {r['eps_actual']:g} vs "
+                     f"estimate {'N/A' if pd.isna(r['eps_estimate']) else format(r['eps_estimate'], 'g')}.")
+    parts.append(f"SEC 8-K earnings release filed {fdate}: {where}" if text else f"SEC release: {where}.")
+    figs = live.get("figures") or {}
+    if wait > 0:
+        parts.append(f"Next live fetch possible in {wait:.0f} s.")
+    c2.caption(" ".join(parts))
+    merged = svc.with_live_events(events, live)
+    if text:
+        _release_figures(t, figs, live.get("consensus"), fdate)
+    return merged
+
+
+def _live_brief_inputs(t, events, event_ts, report, facts, release_key):
+    """When the live button fetched the SEC release of a report in the calendar — also one Yahoo has not filled in yet —
+    the agent (ER Brief) writes from THAT release: the brief's report is the one the release belongs to, the release
+    text is the one fetched, and its headline figures and the stored consensus are the facts. Statements of a quarter
+    the ETL has not stored yet are not invented: the KPI tiles then read N/A. Otherwise the stored inputs, unchanged."""
+    live = st.session_state.get(f"er_live::{t}")
+    text, where, fdate = (live or {}).get("release") or (None, None, None)
+    if not text or "no Exhibit 99 found" in str(where):
+        return event_ts, report, facts, release_key
+    ev = events[events["ticker"] == t]
+    match = ev[ev["earnings_ts"].map(lambda ts: bool(svc.release_matches_event(fdate, ts))).astype(bool)]
+    if match.empty:
+        return event_ts, report, facts, release_key
+    live_ts = match["earnings_ts"].iloc[-1]
+    if report is not None and (report.get("reported") is None or pd.Timestamp(report["reported"]) != pd.Timestamp(live_ts)):
+        report = None                                       # the stored statements are another quarter's
+    figs = live.get("figures") or {}
+    shown = {k: (figs[k]["shown"] if figs.get(k) else "N/A") for k in ("revenue", "eps_gaap", "eps_adjusted")}
+    consensus = live.get("consensus")                 # the stored consensus, kept at fetch time (ER-06)
+    live_facts = "\n".join(filter(None, [
+        f"- SEC earnings release filed {fdate} (amounts as printed, US dollars): revenue {shown['revenue']}; diluted EPS "
+        f"(GAAP) {shown['eps_gaap']}; EPS (adjusted / non-GAAP) {shown['eps_adjusted']}.",
+        f"- Consensus EPS estimate for this report (Yahoo, stored): {consensus:g}." if consensus is not None else None,
+        None if report is not None else "- This quarter's statements are not stored yet (next ETL run).",
+    ]))
+    key = f"er_release_live::{t}::{pd.Timestamp(live_ts).isoformat()}"
+    st.session_state[key] = (text, where, fdate)
+    st.caption(f"ER Brief: written from the SEC release fetched live (filed {fdate})"
+               + ("" if report is not None else "; this quarter's statements are not stored yet, so the EUR KPI tiles "
+                                                "read N/A until the next ETL run") + ".")
+    return live_ts, report, live_facts, key
+
+
+def _release_figures(t, figs, consensus, fdate):
+    """The headline figures read from the SEC release itself (core.release_figures), each with its sentence. They
+    arrive with the release — before the data provider updates — and are shown as reported, never merged into the
+    stored history (the provider's EPS basis is not stated)."""
+    labels = (("revenue", "Revenue"), ("eps_gaap", "Diluted EPS (GAAP)"), ("eps_adjusted", "EPS (adjusted / non-GAAP)"))
+    cells = []
+    for k, label in labels:
+        f = figs.get(k)
+        cells.append(f"**{label}:** {f['shown'] if f else 'N/A — not stated in the release summary'}")
+    st.markdown(f"From the SEC release filed {fdate}: " + " · ".join(cells))
+    eps = figs.get("eps_adjusted") or figs.get("eps_gaap")
+    if consensus is not None and eps:
+        basis = "adjusted" if figs.get("eps_adjusted") else "GAAP"
+        diff = (eps["value"] / consensus - 1) if consensus > 0 else None
+        st.caption(f"Consensus EPS estimate for this report (Yahoo, stored): {consensus:g}. The release's {basis} EPS is "
+                   f"{eps['value']:g}" + (f" ({diff:+.1%} vs the estimate)" if diff is not None else "") +
+                   ". Yahoo does not say whether its estimate is GAAP or adjusted; most estimates are adjusted.")
+    found = [(label, figs[k]) for k, label in labels if figs.get(k)]
+    if found:
+        with st.expander("Where each figure was read (verbatim from the release)"):
+            for label, f in found:
+                st.markdown(f"**{label} — {f['shown']}**")
+                st.caption(f["quote"])
+    st.caption("Read by fixed rules from the release's opening summary (amounts as printed, in US dollars). A figure the "
+               "summary does not state is N/A, never estimated.")
+
+
 def render(ctx):
     prices_full, companies = ctx["prices_full"], ctx["companies_full"]
     m_df, fe = ctx["m_df"], ctx.get("forward_estimates_full", pd.DataFrame())
@@ -362,6 +472,7 @@ def render(ctx):
         remember_ticker(t)
         if default and default not in universe:                 # the stock researched elsewhere has no report stored
             st.caption(f"No earnings records are stored for {default}. Showing {t}; choose another stock above.")
+        events = _live_report(t, events, ctx.get("data_version"))   # one button: this stock's newest report, now
         hist = events[events["ticker"] == t]
         rt = reactions[reactions["ticker"] == t].sort_values("reaction_day", ascending=False) if not reactions.empty else pd.DataFrame()
         b, mv, nxt = er.beat_summary(hist), er.expected_move(rt) if not rt.empty else {"n": 0, "median_abs": None, "max_abs": None}, er.next_event(hist)
@@ -586,8 +697,10 @@ def render(ctx):
             st.caption("For US stocks the note uses the SEC 8-K earnings press release when SEC_USER_AGENT is set "
                        "(e.g. 'Your Name your@email.com'); otherwise it falls back to recent headlines.")
 
-        _render_er_brief(t, names.get(t, t), last["earnings_ts"] if last is not None else None,
-                         lang, summariser, model, codex_model, effort, _brief_report, facts, _release_key, _brief_error)
+        _b_event, _b_report, _b_facts, _b_key = _live_brief_inputs(
+            t, events, last["earnings_ts"] if last is not None else None, _brief_report, facts, _release_key)
+        _render_er_brief(t, names.get(t, t), _b_event, lang, summariser, model, codex_model, effort, _b_report,
+                         _b_facts, _b_key, _brief_error)
 
     # ── universe study ──────────────────────────────────────────────────────────────────────
     elif section == "Surprise study":

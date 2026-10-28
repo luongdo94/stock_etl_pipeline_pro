@@ -15,7 +15,7 @@ import pandas as pd
 import streamlit as st
 
 from core import earnings as er
-from core.sec_documents import pick_exhibit99
+from core.sec_documents import exhibit99_from_index, is_exhibit991, pick_exhibit99
 from services.codex_local import codex_path, run_codex as summarise_earnings_codex
 from services.db import get_db_connection
 
@@ -97,8 +97,19 @@ def universe_reactions(_events: pd.DataFrame, _prices: pd.DataFrame, region_of: 
 
 
 # ── text for the AI summary ──────────────────────────────────────────────────────────────────
+_SEC_LOCK = __import__("threading").Lock()
+_SEC_MIN_INTERVAL_S = 0.25          # at most 4 requests a second from this app process, all sessions together
+_sec_last = [0.0]                   # (the SEC's fair-access limit is 10/s per client; the ETL paces itself separately)
+
+
 def _sec_get(url: str, user_agent: str):
     import requests
+    import time as _t
+    with _SEC_LOCK:                  # every session of the app shares one pace (ER-09)
+        wait = _SEC_MIN_INTERVAL_S - (_t.monotonic() - _sec_last[0])
+        if wait > 0:
+            _t.sleep(wait)
+        _sec_last[0] = _t.monotonic()
     r = requests.get(url, headers={"User-Agent": user_agent, "Accept-Encoding": "gzip, deflate"}, timeout=20)
     r.raise_for_status()
     return r
@@ -140,6 +151,8 @@ def sec_press_release(ticker: str, user_agent: str):
                 base = f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc_nd}"
                 names = [i["name"] for i in _sec_get(f"{base}/index.json", user_agent).json()["directory"]["item"]]
                 exhibit = pick_exhibit99(names)
+                if not is_exhibit991(exhibit):         # the index's own EX-99.1 before a 99.2 or nothing (ER-07)
+                    exhibit = exhibit99_from_index(_sec_get(f"{base}/{acc}-index.html", user_agent).text) or exhibit
                 url = f"{base}/{exhibit or doc}"
                 where = url if exhibit else f"{url} (primary document; no Exhibit 99 found)"
                 return html_to_text(_sec_get(url, user_agent).text, limit=RELEASE_MAX_CHARS), where, fdate
@@ -239,10 +252,30 @@ def sec_user_agent() -> str:
 
 
 # ── structured one-page earnings brief ───────────────────────────────────────────────────────
+_SAFE_HARBOR = re.compile(r"\b(?:Cautionary (?:Note|Statement)s? Regarding Forward[- ]Looki ?ng Statements|"
+                          r"Forward[- ]Looki ?ng Statements|Safe Harbor Statement)\b(?!\s+section)", re.I)
+_AFTER_SAFE_HARBOR = re.compile(r"\b(?:Non-GAAP Financial Measures|About [A-Z][A-Za-z]+|Conference Call|CONDENSED|"
+                                r"Condensed Consolidated|Investor (?:Relations )?Contact|Media Contact)\b")
+
+
+def without_safe_harbor(text: str) -> str:
+    """The release without its forward-looking-statements boilerplate (a list of generic risks, not this quarter's
+    news, which was quoted as "what to watch"); a mention like "the Cautionary Note ... section of this release" is
+    not the section."""
+    text = text or ""
+    m = next((h for h in _SAFE_HARBOR.finditer(text, 1500)
+              if (h.group(0).replace("Looki ng", "Looking").istitle() or h.group(0).isupper())   # a heading, not prose
+              and re.search(r"risk|uncertaint", text[h.end():h.end() + 2500], re.I)), None)
+    if not m:
+        return text
+    end = _AFTER_SAFE_HARBOR.search(text, m.end() + 200)
+    return text[:m.start()] + (text[end.start():] if end else "")
+
+
 def brief_passages(text: str) -> str:
     """One shared selection for the model prompt, cache identity and evidence checks."""
     from core.retrieval import select_passages
-    return select_passages(text, SECTION_QUERIES, budget=15000)
+    return select_passages(without_safe_harbor(text), SECTION_QUERIES, budget=15000)
 
 
 def generate_er_brief(prompt: str, api_key: str = "", *, summariser: str = "Cohere", model=None, effort=None) -> str:
@@ -256,10 +289,74 @@ def generate_er_brief(prompt: str, api_key: str = "", *, summariser: str = "Cohe
         raise ValueError("COHERE_API_KEY is not set")
     import cohere
     co = cohere.ClientV2(api_key=api_key)
-    resp = co.chat(model=LLM_MODEL, messages=[{"role": "user", "content": prompt}], max_tokens=5000,
+    resp = co.chat(model=LLM_MODEL, messages=[{"role": "user", "content": prompt}], max_tokens=4000,   # the model allows 4096
                    response_format={"type": "json_object"})
     blocks = getattr(resp.message, "content", None) or []
     output = "\n".join(block.text for block in blocks if getattr(block, "text", None))
     if not output.strip():
         raise RuntimeError("Cohere returned an empty ER Brief")
     return output
+
+
+LIVE_COOLDOWN_S = 60        # per stock and session: one live request a minute (Yahoo / SEC fair use from a shared IP)
+
+
+def fetch_live_report(ticker: str, user_agent: str, *, earnings_dates=None, release=None) -> dict:
+    """The newest report of ONE stock, fetched now: Yahoo's earnings dates (EPS estimate / actual / surprise) and, for a
+    US listing, the latest SEC 8-K earnings release. Nothing is written — the stored snapshot changes at the next ETL
+    run. A failed request is reported as an error, never as "no report" (`events_error` / the release reason).
+    `earnings_dates(ticker)` / `release(ticker, ua)` are injectable for tests."""
+    from datetime import datetime, timezone
+    from etl.earnings_events import COLUMNS, parse_earnings_dates
+    fetched_at = datetime.now(timezone.utc)
+    events, events_error = pd.DataFrame(columns=list(COLUMNS)), None
+    try:
+        if earnings_dates is None:
+            import yfinance as yf
+            _forget_yahoo_cache()                     # yfinance caches responses for the process life (ER-01)
+            raw = yf.Ticker(ticker).get_earnings_dates(limit=12)
+        else:
+            raw = earnings_dates(ticker)
+        if raw is None:                               # yfinance's answer when the page had no earnings table (ER-10)
+            raise ValueError("Yahoo returned no earnings table")
+        events = parse_earnings_dates(ticker, raw, now=fetched_at.replace(tzinfo=None))
+    except Exception as e:
+        events_error = f"Yahoo earnings dates unavailable: {type(e).__name__}: {str(e)[:120]}"
+    text, where, fdate = (release or sec_press_release)(ticker, user_agent)
+    from core.release_figures import headline_figures
+    return {"ticker": ticker, "fetched_at": fetched_at, "events": events, "events_error": events_error,
+            "release": (text, where, fdate), "figures": headline_figures(text) if text else None}
+
+
+def consensus_for_release(events: pd.DataFrame, ticker: str, filing_date):
+    """The stored consensus EPS estimate of the report the 8-K belongs to (same quarter: filed on the report day or
+    within RELEASE_MATCH_DAYS), or None. Yahoo does not say whether its estimate is GAAP or adjusted."""
+    if events is None or events.empty or not filing_date:
+        return None
+    ev = events[events["ticker"] == ticker]
+    hit = ev[ev["earnings_ts"].map(lambda ts: bool(release_matches_event(filing_date, ts))).astype(bool)]
+    est = pd.to_numeric(hit["eps_estimate"], errors="coerce").dropna()
+    return float(est.iloc[-1]) if not est.empty else None
+
+
+def _forget_yahoo_cache() -> None:
+    """Drop yfinance's in-process response cache (an LRU without expiry) so a "live" request asks Yahoo again."""
+    try:
+        from yfinance.data import YfData
+        YfData.cache_get.cache_clear()
+    except Exception:                                 # another yfinance version: nothing cached this way
+        pass
+
+
+def with_live_events(events: pd.DataFrame, live: dict) -> pd.DataFrame:
+    """The stored events with ONE stock's live events merged in (same history-preserving merge as the ETL); other
+    stocks untouched; the frame's attrs (a read error) kept."""
+    from etl.earnings_events import COLUMNS, merge_events
+    t = live["ticker"]
+    if live["events"] is None or live["events"].empty:
+        return events
+    stored = events[events["ticker"] == t]
+    merged = merge_events(stored[[c for c in COLUMNS if c in stored.columns]], live["events"])
+    out = pd.concat([events[events["ticker"] != t], er.fill_surprise(merged)], ignore_index=True)
+    out.attrs.update(events.attrs)
+    return out

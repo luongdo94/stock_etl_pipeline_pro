@@ -247,6 +247,7 @@ def test_ui_models_persist_separate_notes_and_warn_on_unsent_numbers(local_codex
     monkeypatch.setattr(sticky_module, "st", ui)
     for name in ("render_header", "follow_active_ticker", "remember_ticker", "_latest_report"):
         monkeypatch.setattr(view, name, lambda *a, **kw: None)
+    monkeypatch.setattr(view, "_live_report", lambda t, events, snapshot=None: events)          # the live button has its own AppTest
     monkeypatch.setattr(view, "my_tickers", lambda: [])
     monkeypatch.setattr(view, "sticky_choice", lambda label, options, default, key, **kw:
                         "Single stock" if key == "er_section" else options[0])
@@ -293,3 +294,103 @@ def test_ui_models_persist_separate_notes_and_warn_on_unsent_numbers(local_codex
     assert ui.radios[-1][1] == ["Cohere"]
     assert any(kind == "markdown" and "COHERE" in m for kind, m in ui.messages)
     assert not any(kind == "markdown" and "CODEX" in m for kind, m in ui.messages)
+
+
+_INDEX = """<table class="tableFile" summary="Document Format Files">
+<tr><th>Seq</th><th>Description</th><th>Document</th><th>Type</th><th>Size</th></tr>
+<tr><td scope="row">1</td><td scope="row">8-K</td><td scope="row"><a href="/ix?doc=/Archives/edgar/data/1/2/stx-20261027.htm">stx-20261027.htm</a></td><td scope="row">8-K</td><td>1</td></tr>
+<tr class="evenRow"><td scope="row">2</td><td scope="row">EX-99.1</td><td scope="row"><a href="/Archives/edgar/data/1/2/stxq12027pressreleasefinan.htm">stxq12027pressreleasefinan.htm</a></td><td scope="row">EX-99.1</td><td>2</td></tr>
+<tr><td scope="row">3</td><td scope="row">EX-99.2</td><td scope="row"><a href="/Archives/edgar/data/1/2/slides.htm">slides.htm</a></td><td scope="row">EX-99.2</td><td>3</td></tr>
+<tr><td scope="row">6</td><td scope="row"></td><td scope="row"><a href="/Archives/edgar/data/1/2/logo.jpg">logo.jpg</a></td><td scope="row">GRAPHIC</td><td>4</td></tr>
+</table>"""
+
+
+def test_the_exhibit_is_found_by_the_index_type_when_its_name_does_not_say_it():
+    """Seagate 2026-10-27: the press release file is stxq12027pressreleasefinan.htm (EX-99.1 only in the index); the
+    file-name picker found nothing and the 8-K cover page (5 kB, no figures) was read instead."""
+    from core.sec_documents import exhibit99_from_index
+    names = ["stx-20261027.htm", "stxq12027pressreleasefinan.htm", "seagatelogo.jpg"]
+    assert pick_exhibit99(names) is None
+    assert exhibit99_from_index(_INDEX) == "stxq12027pressreleasefinan.htm"            # 99.1 before 99.2, no graphic
+    assert exhibit99_from_index("<table></table>") is None and exhibit99_from_index(None) is None
+
+
+@pytest.mark.parametrize("dates, expect_error", [
+    (lambda t: (_ for _ in ()).throw(ConnectionError("rate limited")), "rate limited"),
+    (lambda t: pd.DataFrame(), None),
+])
+def test_a_failed_live_fetch_is_an_error_not_an_empty_report(dates, expect_error):
+    from services import earnings as svc
+    live = svc.fetch_live_report("STX", "ua", earnings_dates=dates, release=lambda t, ua: (None, "no 8-K", None))
+    assert live["events"].empty and live["release"] == (None, "no 8-K", None)
+    assert (expect_error in live["events_error"]) if expect_error else live["events_error"] is None
+
+
+def test_live_events_change_only_the_open_stock_and_keep_the_history():
+    from services import earnings as svc
+    ts = lambda d: pd.Timestamp(d, tz="UTC")                                            # noqa: E731
+    stored = pd.DataFrame({"ticker": ["STX", "STX", "AAPL"], "earnings_ts": [ts("2026-04-28"), ts("2026-07-28"), ts("2026-07-30")],
+                           "eps_estimate": [3.51, 5.09, 1.4], "eps_actual": [4.10, 5.71, 1.6], "surprise_pct": [0.1676, 0.1209, 0.14],
+                           "_extracted_at": pd.Timestamp("2026-10-20")})
+    stored.attrs["error"] = None
+    raw = pd.DataFrame({"EPS Estimate": [7.43], "Reported EPS": [7.68], "Surprise(%)": [3.36]},
+                       index=pd.DatetimeIndex([pd.Timestamp("2026-10-27 16:00", tz="America/New_York")]))
+    live = svc.fetch_live_report("STX", "ua", earnings_dates=lambda t: raw, release=lambda t, ua: ("text", "url", "2026-10-27"))
+    out = svc.with_live_events(stored, live)
+    stx = out[out["ticker"] == "STX"].sort_values("earnings_ts")
+    assert list(stx["eps_actual"]) == [4.10, 5.71, 7.68]                               # stored history kept + the new report
+    assert out[out["ticker"] == "AAPL"]["eps_actual"].tolist() == [1.6] and "error" in out.attrs
+
+
+def test_er01_er10_a_live_request_asks_yahoo_again_and_no_table_is_an_error(monkeypatch):
+    """ER-01: yfinance caches responses for the process life — the cache is dropped before a live request.
+    ER-10: yfinance returns None when the page had no earnings table — unavailable, not "no reported quarter"."""
+    import sys
+    import types
+    from services import earnings as svc
+    cleared = []
+    monkeypatch.setattr(svc, "_forget_yahoo_cache", lambda: cleared.append(1))
+    monkeypatch.setitem(sys.modules, "yfinance", types.SimpleNamespace(
+        Ticker=lambda t: types.SimpleNamespace(get_earnings_dates=lambda limit: None)))
+    live = svc.fetch_live_report("FTNT", "ua", release=lambda t, ua: (None, "n/a", None))
+    assert cleared == [1] and "no earnings table" in live["events_error"] and live["events"].empty
+
+
+def test_er07_the_index_ex991_wins_over_a_named_ex992(monkeypatch):
+    from services import earnings as svc
+    index = ('<tr><td>2</td><td>EX-99.1</td><td><a href="/Archives/edgar/data/1/2/q3release.htm">q3release.htm</a></td>'
+             '<td>EX-99.1</td></tr><tr><td>3</td><td>EX-99.2</td><td><a href="/Archives/edgar/data/1/2/ex99_2.htm">'
+             'ex99_2.htm</a></td><td>EX-99.2</td></tr>')
+    sub = {"filings": {"recent": {"form": ["8-K"], "items": ["2.02,9.01"], "accessionNumber": ["0000000001-26-000001"],
+                                  "filingDate": ["2026-10-28"], "primaryDocument": ["form8k.htm"]}}}
+    asked = []
+
+    def get(url, ua):
+        asked.append(url)
+        if url.endswith(".json") and "submissions" in url:
+            return types.SimpleNamespace(json=lambda: sub)
+        if url.endswith("index.json"):
+            return types.SimpleNamespace(json=lambda: {"directory": {"item": [{"name": "form8k.htm"}, {"name": "ex99_2.htm"},
+                                                                            {"name": "q3release.htm"}]}})
+        if url.endswith("-index.html"):
+            return types.SimpleNamespace(text=index)
+        return types.SimpleNamespace(text="<p>Revenue was $1.0 billion.</p>")
+    import types
+    monkeypatch.setattr(svc, "_cik_map", lambda ua: {"ABC": 1})
+    monkeypatch.setattr(svc, "_sec_get", get)
+    text, where, fdate = svc.sec_press_release("ABC", "ua")
+    assert where.endswith("/q3release.htm") and fdate == "2026-10-28" and "Revenue" in text
+
+
+def test_er09_sec_requests_of_all_sessions_share_one_pace(monkeypatch):
+    monkeypatch.undo()                                   # the real _sec_get; requests.get is replaced below
+    import requests
+    import time
+    from services import earnings as svc
+    slept = []
+    monkeypatch.setattr(time, "sleep", lambda s: slept.append(s))
+    monkeypatch.setattr(requests, "get", lambda *a, **k: types.SimpleNamespace(raise_for_status=lambda: None))
+    import types
+    svc._sec_last[0] = time.monotonic()                                  # a request just went out
+    svc._sec_get("https://www.sec.gov/x", "ua")
+    assert slept and 0 < slept[0] <= svc._SEC_MIN_INTERVAL_S
