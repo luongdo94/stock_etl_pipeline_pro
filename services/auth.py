@@ -217,6 +217,8 @@ def restore_session(cm=None):
     rules, trades) and for the AI features that run on the owner's language-model key (see can_use)."""
     import os
     if os.environ.get("LOCAL_DEV_MODE") == "1" and not local_dev_mode():
+        from ui.loading import clear_card
+        clear_card()                                   # the start-up card goes before the error page
         st.error("LOCAL_DEV_MODE is only allowed when the app is served from localhost and is not in cloud mode. "
                  "Unset it, or sign in normally.")
         st.stop()
@@ -256,8 +258,7 @@ def restore_session(cm=None):
     # Give Streamlit 1 pass to establish the component connection if we have NO raw cookie
     if "cm_pass" not in st.session_state:
         st.session_state["cm_pass"] = 1
-        with st.spinner(""):
-            time.sleep(0.5)  # Let the component initialize
+        time.sleep(0.5)  # Let the component initialize (the start-up card is on screen meanwhile)
         st.rerun()  # Force a rerun to capture the cookies now that JS is loaded
 
     # no valid cookie: an anonymous visitor (nothing is stopped)

@@ -6,19 +6,19 @@ from types import SimpleNamespace
 import pytest
 from streamlit.testing.v1 import AppTest
 
-from tests.test_app_smoke import ROOT, _app, warehouse  # noqa: F401
+from tests.test_app_smoke import ROOT, app_statements, _app, warehouse  # noqa: F401
 from views.stock_analysis import GROUPS, price_range, risk_hub
 
 
 def _navigation():
     tree = ast.parse(Path(ROOT, "app.py").read_text(encoding="utf-8"))
     values = {}
-    for node in tree.body:
+    for node in app_statements(tree):
         if isinstance(node, ast.Assign):
             for target in node.targets:
                 if isinstance(target, ast.Name) and target.id in ("TABS", "TAB_LABELS"):
                     values[target.id] = ast.literal_eval(node.value)
-    guard = next(node for node in tree.body if isinstance(node, ast.If)
+    guard = next(node for node in app_statements(tree) if isinstance(node, ast.If)
                  and "st.session_state.get('active_tab')" in ast.unparse(node.test))
     return values, guard
 

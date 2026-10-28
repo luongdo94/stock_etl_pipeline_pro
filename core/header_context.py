@@ -13,7 +13,7 @@ import pandas as pd
 
 from core.market_regime import STALE_DAYS
 
-TITLE = "Honest Quant Intelligence"
+TITLE = "Evidentia"
 # the same words as the sidebar's badge (tests keep the two equal)
 LEVEL_WORDS = {"OK": "Up to date", "WARN": "Check", "STALE": "Stale", "UNKNOWN": "Unknown"}
 LEVEL_COLORS = {"OK": "#2ecc71", "WARN": "#f1c40f", "STALE": "#e74c3c", "UNKNOWN": "#8899aa"}

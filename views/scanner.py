@@ -245,14 +245,15 @@ def _summary(scope, changes, ctx):
     counts = sv.decision_counts(scope)
     er = sv.earnings_soon(scope)
     issue = int(sv.needs_data_mask(scope).sum()) if len(scope) else 0
-    cols = st.columns(8)
+    cols = st.columns(9)
     for col, (label, n) in zip(cols, [("BUY", counts[sv.STANCES[0]]), ("RESEARCH", counts[sv.STANCES[1]]),
                                        ("HOLD / WATCH", counts[sv.STANCES[2]]), ("AVOID / TRIM", counts[sv.STANCES[3]]),
-                                       ("NOT ENOUGH DATA", counts[sv.STANCES[4]]), ("Needs data", int(issue)),
+                                       ("NO DCF ANCHOR", counts[sv.STANCES[4]]),
+                                       ("NOT ENOUGH DATA", counts[sv.STANCES[5]]), ("Needs data", int(issue)),
                                        (f"Earnings ≤{sv.ER_SOON_DAYS}d", er["soon"])]):
         col.metric(label, n, help="Stocks, in the region / sector / search scope below.")
     n_ch = len((changes or {}).get("changes") or [])
-    cols[7].metric("Changed", n_ch if (changes or {}).get("previous") else "N/A",
+    cols[8].metric("Changed", n_ch if (changes or {}).get("previous") else "N/A",
                    help="Stance changes between the two newest recorded daily snapshots. N/A until two exist.")
     notes = []
     if (changes or {}).get("rules_changed") and n_ch:

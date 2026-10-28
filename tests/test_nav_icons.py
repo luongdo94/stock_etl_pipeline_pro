@@ -5,14 +5,14 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from tests.test_app_smoke import ROOT, TABS, _app, warehouse  # noqa: F401
+from tests.test_app_smoke import ROOT, app_statements, TABS, _app, warehouse  # noqa: F401
 
 
 def navigation():
     # Read constants without importing/running app.py (auth, dotenv, warehouse).
     tree = ast.parse(Path(ROOT, "app.py").read_text(encoding="utf-8"))
     values = {}
-    for node in tree.body:
+    for node in app_statements(tree):
         if isinstance(node, ast.Assign):
             for target in node.targets:
                 if isinstance(target, ast.Name) and target.id in ("TABS", "TAB_LABELS"):
@@ -35,9 +35,9 @@ def test_tab_labels_cover_all_raw_ids():
 def test_tab_guard_precedes_horizon(raw):
     from types import SimpleNamespace
     tree, values = navigation()
-    guard = next(n for n in tree.body if isinstance(n, ast.If)
+    guard = next(n for n in app_statements(tree) if isinstance(n, ast.If)
                  and "st.session_state.get('active_tab')" in ast.unparse(n.test))
-    horizon = next(n for n in tree.body if isinstance(n, ast.Assign)
+    horizon = next(n for n in app_statements(tree) if isinstance(n, ast.Assign)
                    and isinstance(n.value, ast.Call) and ast.unparse(n.value.func) == "resolve_range")   # the default chart range
     assert guard.lineno < horizon.lineno
     state = {} if raw is None else {"active_tab": raw}

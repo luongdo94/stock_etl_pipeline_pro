@@ -74,7 +74,7 @@ def test_header_in_the_app_has_no_quality_index_regime_or_clock_and_navigates(wa
     at = _app("🔬 Stock Analysis").run()
     assert not at.exception, [e.value for e in at.exception]
     html = " ".join(m.value for m in at.markdown)
-    assert "Honest Quant Intelligence" in html and "Prices latest:" in html and "Data:" in html
+    assert "Evidentia" in html and "Prices latest:" in html and "Data:" in html
     assert "Quality Index" not in html and "Market Context" not in html and " UTC" not in html
     assert any(e.label == "Data details" for e in at.expander)
     at.button(key="hdr_go_health").click().run()

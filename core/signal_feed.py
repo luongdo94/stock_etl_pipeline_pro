@@ -21,12 +21,15 @@ from typing import Optional
 import pandas as pd
 
 from core import alerts as al
+from core.decision import is_label_split
 from ui.watchlist_status import open_idea_tickers
 
 SEVERITY_ORDER = {"action": 0, "review": 1, "info": 2}
 SCOPE_ORDER = {"portfolio": 0, "watchlist": 1, "market": 2}
 # better → worse
-STANCE_RANK = {"BUY CANDIDATE": 0, "RESEARCH CANDIDATE": 1, "HOLD / WATCH": 2, "NOT ENOUGH DATA": 3, "AVOID / TRIM": 4}
+STANCE_RANK = {"BUY CANDIDATE": 0, "RESEARCH CANDIDATE": 1, "HOLD / WATCH": 2, "NO DCF ANCHOR": 3, "NOT ENOUGH DATA": 3,
+               "AVOID / TRIM": 4}
+_NO_VALUE = {"NO DCF ANCHOR", "NOT ENOUGH DATA"}     # stances without a DCF value
 
 
 def _valuation(inputs) -> dict:
@@ -67,8 +70,8 @@ def decision_changes(snaps: pd.DataFrame) -> dict:
     out.update(as_of=d1, previous=d0)
     for t in b.index.intersection(a.index):
         old, new = a.loc[t], b.loc[t]
-        if old["decision"] == new["decision"]:
-            continue
+        if old["decision"] == new["decision"] or is_label_split(old["decision"], new["decision"], old.get("inputs")):
+            continue                 # the 2026-10 label split renamed this state; it did not change
         i0, i1 = _inputs(old.get("inputs")), _inputs(new.get("inputs"))
         v0, v1 = (v if isinstance(v, dict) else {} for v in (i0.get("valuation"), i1.get("valuation")))   # NaN is truthy
         diffs = []
@@ -103,7 +106,7 @@ def decision_changes(snaps: pd.DataFrame) -> dict:
                  "rules" if kinds == ["rules"] else "rules+data" if "rules" in kinds else kinds[0])
         up = STANCE_RANK.get(new["decision"], 3) < STANCE_RANK.get(old["decision"], 3)
         # K6-07: losing (or regaining) the inputs is a change in what can be judged, not an up- or downgrade
-        data_change = "NOT ENOUGH DATA" in (new["decision"], old["decision"])
+        data_change = bool(_NO_VALUE & {new["decision"], old["decision"]})
         out["changes"].append({"ticker": t, "from": old["decision"], "to": new["decision"],
                                "direction": "data" if data_change else "up" if up else "down", "cause": cause,
                                "causes": kinds,

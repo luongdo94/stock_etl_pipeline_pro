@@ -282,3 +282,12 @@ def test_only_the_decision_column_is_coloured_like_a_rating():
     assert coloured.get((0, "Verdict"), "inherit") != "inherit"                           # the Decision is coloured
     assert not any(c == "Action" for (_, c) in coloured)                                  # U2-02: the Signal is not
     assert coloured.get((1, "Verdict")) == "inherit"                                      # N/A is not HOLD-yellow
+
+
+def test_no_dcf_anchor_is_counted_on_its_own_and_is_not_needs_data():
+    """137 of 147 'NOT ENOUGH DATA' rows (2026-10-28) had their data: a non-positive cash flow is not a data gap."""
+    d = pd.DataFrame({"Ticker": ["A", "B"], "Decision": [dec.NO_ANCHOR, dec.NO_DATA], "Coverage (%)": [90.0, 90.0]})
+    counts = sv.decision_counts(d)
+    assert (counts[dec.NO_ANCHOR], counts[dec.NO_DATA]) == (1, 1)
+    assert sv.needs_data_mask(d).tolist() == [False, True]
+    assert sv.data_issue(d.iloc[0].to_dict()) == "No DCF anchor: cash flow to equity not positive"

@@ -1126,7 +1126,8 @@ def render(ctx):
                       {'Without validated Track Record evidence, an otherwise eligible stock is RESEARCH CANDIDATE with no size.' if _evidence_on else 'BUY can appear before validation. Evidence status is unchanged; confidence remains capped at MEDIUM without validation.'}
                     * **HOLD / WATCH:** no sufficient margin of safety either way, a blocked gate or an open conflict, or the DCF is not informative. When the price is above the bull case and outside the model's range, the action reads "HOLD — review": the DCF cannot support the price, so it is not a "keep" signal.
                     * **AVOID / TRIM:** price is above even the bull-case value (fresh data only), unless both Quality ≥ {_rules_for_copy['scores']['avoid_spared_quality']:g} and Momentum ≥ {_rules_for_copy['scores']['avoid_spared_momentum']:g}. Weak or unknown quality/momentum does not get this exemption.
-                    * **NOT ENOUGH DATA:** no usable or informative valuation with the required inputs.
+                    * **NO DCF ANCHOR:** the inputs are there, but the cash flow to equity is not positive — nothing to discount; judge on relative value and quality.
+                    * **NOT ENOUGH DATA:** an input the valuation needs is missing.
 
                     These are triage labels: they do not know your tax lots or target weights.
 

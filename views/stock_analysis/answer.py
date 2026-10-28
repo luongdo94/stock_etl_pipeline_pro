@@ -13,7 +13,7 @@ import streamlit as st
 from core import decision as dec
 
 _STANCE_COLORS = {dec.BUY: "#2ecc71", dec.RESEARCH: "#3498db", dec.HOLD: "#f1c40f", dec.AVOID: "#e74c3c",
-                  dec.NO_DATA: "#8899aa"}
+                  dec.NO_ANCHOR: "#8899aa", dec.NO_DATA: "#8899aa"}
 _CONF_COLORS = {"HIGH": "#2ecc71", "MEDIUM": "#f1c40f", "LOW": "#e74c3c"}
 MAX_LINES = 3
 

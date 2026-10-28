@@ -951,6 +951,33 @@ def dcf_reliability(sector, price, base_value, bull_value, implied_growth) -> tu
     return True, None
 
 
+def _eur(v: float) -> str:
+    return f"{v / 1e9:+,.2f}bn" if abs(v) >= 1e9 else f"{v / 1e6:+,.1f}M"
+
+
+def _no_anchor_note(fcfe, hist_fcf, ticker, ctx, from_statements: bool, cyclical: bool, unknown=()) -> str:
+    """Why there is no DCF value although the cash flow is known: the figure and, from statements, each basis year.
+    Unknown deductions can only LOWER the cash flow to equity, so the figure is then an upper bound — still not positive,
+    the conclusion holds — and the note says which items are unknown instead of calling the figure exact (A4)."""
+    names = {"stock_based_comp": "stock-based compensation", "interest_paid_cff": "interest paid in financing",
+             "lease_principal_paid": "lease principal"}
+    if unknown:
+        tail = (f" — before {', '.join(names.get(k, k) for k in unknown)} (unknown, which can only lower it): already "
+                "not positive, so there is no cash flow to discount and no DCF value.")
+    else:
+        tail = " — no positive cash flow to discount, so no DCF value (the inputs are there; nothing is missing)."
+    if cyclical:
+        return f"Cycle-normalised cash flow to equity is {_eur(fcfe)} EUR a year{tail}"
+    if not from_statements:
+        return f"The provider's free cash flow is {_eur(fcfe)} EUR{tail}"
+    rows = basis_rows(hist_fcf, ticker)
+    per_year = _after_sbc(rows, ctx, ticker)
+    years = [int(y) for y in rows["year"]]
+    span = f"{years[0]}–{years[-1]}" if len(years) > 1 else f"{years[0]}"
+    detail = " · ".join(f"{y} {_eur(float(v))}" for y, v in zip(years, per_year))
+    return f"Median cash flow to equity {span} is {_eur(fcfe)} EUR ({detail}){tail}"
+
+
 def risk_free_from_macro(macro: dict) -> float:
     """^TNX is quoted in percent (4.3 = 4.3%)."""
     v = _finite((macro or {}).get("US10Y", {}).get("val"))
@@ -1067,6 +1094,10 @@ def _valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, m
     bull = scen["bull"].value_per_share if scen else None
     implied = reverse_dcf_growth(price, fcfe, shares, coe, tg) if valuable else None
     reliable, note = dcf_reliability(None, price, base, bull, implied)       # sector test already done by uses_book_model
+    # Known but not positive cash flow to equity: the data is there, the DCF has nothing to discount (NO DCF ANCHOR,
+    # not NOT ENOUGH DATA). The note states the figures so the reader sees why.
+    no_anchor = bool(base is None and fcfe is not None and fcfe <= 0
+                 and shares is not None and np.isfinite(shares) and shares > 0)        # NaN shares = missing (A1)
     # every later reliability check runs only while `reliable`, so this stays the note that is shown
     beyond_model = base is not None and not reliable and beyond_model_range(price, bull, implied)
     _sect = f"{meta.get('sector') or ''} {meta.get('industry') or ''}".lower()
@@ -1090,6 +1121,9 @@ def _valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, m
     # R4-02: EVERY applicable deduction must be known for EVERY one of 3 consecutive fiscal years — one verified item
     # no longer lets an unknown one through, and the filer's country is not evidence of its cash-flow classification.
     deduction_status = fcfe_deduction_status(hist_fcf, ticker, ctx=dctx)
+    if no_anchor:
+        note = _no_anchor_note(fcfe, hist_fcf, ticker, dctx, statement_fcf is not None, bool(cycle),
+                               [k for k, s in deduction_status.items() if s["status"] == UNKNOWN])
     if reliable and valuable and _required("require_verified_fcfe_deductions"):
         _unknown = [k for k, s in deduction_status.items() if s["status"] == UNKNOWN]
         if statement_fcf is None:
@@ -1124,7 +1158,7 @@ def _valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, m
         **listing, "fcf_basis_year": int(basis_year) if basis_year is not None else None,
         "model": "dcf", "fcfe": fcfe, "fcf_source": fcf_source, "shares": shares, "refinancing": refi,
         "growth": growth, "growth_sources": sources, "reliable": reliable, "note": note,
-        "beyond_model": beyond_model, "risk_free": rf, "cost_of_equity": coe, "terminal_growth": tg, "currency": ass["currency"],
+        "beyond_model": beyond_model, "no_anchor": no_anchor, "risk_free": rf, "cost_of_equity": coe, "terminal_growth": tg, "currency": ass["currency"],
         "rate_source": ass["source"], "scenarios": scen,
         "base": base,
         "bear": scen["bear"].value_per_share if scen else None,

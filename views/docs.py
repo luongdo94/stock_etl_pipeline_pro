@@ -108,6 +108,9 @@ def render(ctx):
           unless Quality ≥ {rules.get('scores', {}).get('avoid_spared_quality', 70):.0f} AND Momentum ≥
           {rules.get('scores', {}).get('avoid_spared_momentum', 40):.0f}, both known: then **HOLD / WATCH**.
           Otherwise a weakness permits AVOID; the model alone is not a sell signal for a strong stock.
+        - **NO DCF ANCHOR**: the inputs are there but the cash flow to equity (median of the basis years) is not
+          positive, so there is nothing to discount; the reason lists the figures. **NOT ENOUGH DATA**: an input the
+          value needs is missing.
         - When the price is above the bull case and outside the range the model can represent (implied growth above
           the model's cap), the Decision stays **HOLD / WATCH** but is flagged: the holder's action reads "HOLD —
           review", because the DCF cannot support the price. It is not a "keep" signal.

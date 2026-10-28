@@ -43,7 +43,7 @@ def frame_fingerprint(*frames) -> str:
     return hashlib.sha1("|".join([model_version()] + [_frame_digest(f) for f in frames]).encode()).hexdigest()
 
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=3600, show_spinner=False)         # not "Running _cached_screener(...)": app.py shows the step
 def _cached_screener(_companies_df, _prices_df, _quarterly_fin, _annual_fin, _hist_fcf, risk_free_pct, _estimates,
                      track_record_ok, data_key: str, _earnings_cal=None, today: str = "", _sec_annual_history=None):
     macro = {"US10Y": {"val": risk_free_pct}} if risk_free_pct else {}

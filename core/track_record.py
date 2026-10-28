@@ -225,10 +225,16 @@ def recommendation_log(snapshots: pd.DataFrame, action_col: str = "action") -> p
     """Rows where a ticker's action differs from its previous snapshot (first sighting included)."""
     if snapshots.empty:
         return snapshots
+    from core.decision import is_label_split
     s = snapshots.sort_values(["ticker", "as_of_date"]).copy()
     prev = s.groupby("ticker")[action_col].shift()
     s["previous_action"] = prev
-    return s[prev.isna() | (prev != s[action_col])].sort_values("as_of_date", ascending=False)
+    changed = prev.isna() | (prev != s[action_col])
+    if {"decision", "inputs"} <= set(s.columns):          # the 2026-10 label split is not a new call (same entry kept)
+        g = s.groupby("ticker")
+        split = [is_label_split(o, n, i) for o, n, i in zip(g["decision"].shift(), s["decision"], g["inputs"].shift())]
+        changed &= ~pd.Series(split, index=s.index)
+    return s[changed].sort_values("as_of_date", ascending=False)
 
 
 def since_call_returns(log: pd.DataFrame, prices: pd.DataFrame) -> pd.Series:

@@ -10,6 +10,7 @@ from datetime import date
 from pathlib import Path
 from typing import Optional
 
+import json
 import numpy as np
 import pandas as pd
 import yaml
@@ -37,8 +38,31 @@ BUY = "BUY CANDIDATE"
 RESEARCH = "RESEARCH CANDIDATE"   # passes every BUY gate except validated forward-return evidence: no size (R3-K1)
 HOLD = "HOLD / WATCH"
 AVOID = "AVOID / TRIM"
-NO_DATA = "NOT ENOUGH DATA"
-STANCES = (BUY, RESEARCH, HOLD, AVOID, NO_DATA)
+NO_ANCHOR = "NO DCF ANCHOR"    # the inputs are there, but the cash flow to equity is not positive: nothing to discount
+NO_DATA = "NOT ENOUGH DATA"    # an input the value needs is missing
+STANCES = (BUY, RESEARCH, HOLD, AVOID, NO_ANCHOR, NO_DATA)
+
+
+def is_label_split(old_stance, new_stance, old_inputs) -> bool:
+    """NOT ENOUGH DATA -> NO DCF ANCHOR where the OLD snapshot already held a known, non-positive cash flow to equity:
+    the same state under its pre-2026-10 name, not a new call or a data change. Losing or regaining an input (no FCFE
+    known before, or NO DCF ANCHOR -> NOT ENOUGH DATA) is a real change and is not matched."""
+    if (old_stance, new_stance) != (NO_DATA, NO_ANCHOR):
+        return False
+    try:
+        inputs = json.loads(old_inputs) if isinstance(old_inputs, str) else (old_inputs or {})
+    except (TypeError, ValueError):
+        return False
+    val = inputs.get("valuation") if isinstance(inputs, dict) else None
+    if not isinstance(val, dict):
+        return False
+    fcfe = _finite(val.get("fcfe"))
+    if fcfe is None or fcfe > 0:
+        return False
+    if "shares" not in val:          # a snapshot from before shares were stored: the rename itself (legacy)
+        return True
+    shares = _finite(val.get("shares"))
+    return shares is not None and shares > 0      # shares missing then -> regained now is a real recovery (A2)
 
 # Red flags that veto a BUY outright (a flag is not one confidence note among many — R3-E). Labels come from
 # core.scoring.FLAG_LABELS; matched as substrings of the "; "-joined flag text the scores carry.
@@ -191,6 +215,7 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
                    fundamentals_date: Optional[date] = None, next_earnings: Optional[date] = None,
                    track_record_ok: bool = False, quality_score: Optional[float] = None,
                    valuation_reliable: bool = True, valuation_note: Optional[str] = None,
+                   valuation_no_anchor: bool = False,
                    valuation_beyond_model: bool = False,
                    value_score: Optional[float] = None, risk_flags: str = "",
                    coverage_pct: Optional[float] = None, market_cap_eur: Optional[float] = None,
@@ -320,7 +345,7 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
     # ── Stance ─────────────────────────────────────────────────────────────────────
     reasons = []
     if base_value is None:
-        stance = NO_DATA
+        stance = NO_ANCHOR if valuation_no_anchor else NO_DATA
         reasons.append(valuation_note or "No DCF value — judge on relative valuation and quality only.")
     elif not valuation_reliable:
         # Never BUY or AVOID on a DCF the model itself flags as uninformative
@@ -484,6 +509,8 @@ def holding_action(stance: str, held: bool, weight_pct: Optional[float] = None,
         return "HOLD — keep, no adds" if held else "WATCH — not held"
     if stance == AVOID:
         return "TRIM / EXIT — review" if held else "AVOID — do not buy"
+    if stance == NO_ANCHOR:
+        return "REVIEW — no valuation anchor" if held else "NO DCF ANCHOR — judge on relative value"
     return "REVIEW — no valuation anchor" if held else "NOT ENOUGH DATA"
 
 
@@ -530,6 +557,7 @@ def decide(*, price: float, vin: dict, stop_loss: Optional[float], meta, scores:
         price_date=price_date, fundamentals_date=fundamentals_as_of(meta), next_earnings=next_earnings,
         track_record_ok=track_record_ok, quality_score=sc.get("quality"), valuation_reliable=vin["reliable"],
         valuation_note=vin["note"], valuation_beyond_model=bool(vin.get("beyond_model")),
+        valuation_no_anchor=bool(vin.get("no_anchor")),
         value_score=sc.get("value"), risk_flags=sc.get("flags") or "",
         coverage_pct=sc.get("coverage"), market_cap_eur=_finite(meta.get("market_cap")),
         expected_value=vin.get("expected_value"), scenario_irr=vin.get("irr"),

@@ -508,3 +508,26 @@ def test_a_nan_valuation_in_stored_inputs_does_not_break_the_feed():
     (change,) = out["changes"]
     assert (change["ticker"], change["from"], change["to"]) == ("A", "NOT ENOUGH DATA", "AVOID / TRIM")
     assert change["direction"] == "data" and "valuation" not in change["causes"]      # no invented valuation difference
+
+
+@pytest.mark.parametrize("before, old_inputs, after, counted, direction", [
+    # the 2026-10 split: the old snapshot already held a known, non-positive cash flow -> a rename, not a change
+    ("NOT ENOUGH DATA", '{"valuation": {"fcfe": -3700000.0}}', "NO DCF ANCHOR", False, None),        # legacy row
+    ("NOT ENOUGH DATA", '{"valuation": {"fcfe": -3.7e6, "shares": 2.0e7}}', "NO DCF ANCHOR", False, None),
+    # negative cash flow, but the share count was missing and is back: a real recovery (A2)
+    ("NOT ENOUGH DATA", '{"valuation": {"fcfe": -3.7e6, "shares": null}}', "NO DCF ANCHOR", True, "data"),
+    # no cash flow known before -> the input arrived: a real data change (A2)
+    ("NOT ENOUGH DATA", '{"valuation": {"fcfe": null}}', "NO DCF ANCHOR", True, "data"),
+    ("NOT ENOUGH DATA", "{}", "NO DCF ANCHOR", True, "data"),
+    ("NO DCF ANCHOR", '{"valuation": {"fcfe": -1.0}}', "NOT ENOUGH DATA", True, "data"),   # the input was lost
+    ("HOLD / WATCH", "{}", "NO DCF ANCHOR", True, "data"),    # losing the anchor is not a downgrade
+    ("NO DCF ANCHOR", "{}", "BUY CANDIDATE", True, "data"),
+])
+def test_only_an_evidenced_relabel_is_skipped_and_data_changes_stay(before, old_inputs, after, counted, direction):
+    def snap(day, decision, inputs="{}"):
+        return {"as_of_date": pd.Timestamp(day), "ticker": "A", "decision": decision, "price_close": 10.0,
+                "rules_version": "r", "score_version": "v", "inputs": inputs}
+    out = feed.decision_changes(pd.DataFrame([snap("2026-10-23", before, old_inputs), snap("2026-10-24", after)]))
+    assert len(out["changes"]) == int(counted)
+    if counted:
+        assert out["changes"][0]["direction"] == direction

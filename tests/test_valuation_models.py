@@ -131,6 +131,39 @@ def test_a_cheap_bank_is_only_actionable_once_capital_inputs_are_not_required(mo
     assert vin["reliable"] and vin["base"] / price - 1 > 0.25 and _decide(vin).stance != "NOT ENOUGH DATA"
 
 
+@pytest.mark.parametrize("case, fcf, no_anchor, note", [
+    # SUSS MicroTec (SMHN.DE, 2026-10): known statements, median cash flow to equity negative
+    ("negative median", [-0.8e6, 25.9e6, -22.6e6], True, "Median cash flow to equity 2023–2025 is -0.8M EUR"),
+    ("zero median", [0.0, 0.0, 5e6], True, "2023 +0.0M · 2024 +0.0M · 2025 +5.0M"),
+    ("positive", [5e9, 5e9, 5e9], False, None),
+])
+def test_known_cash_flow_without_a_positive_median_is_no_dcf_anchor_not_missing_data(case, fcf, no_anchor, note):
+    """Data present but nothing to discount → NO DCF ANCHOR, with the figures; NOT ENOUGH DATA stays for missing input."""
+    h = pd.DataFrame({"ticker": ["X"] * 3, "year": [2023, 2024, 2025], "free_cash_flow": fcf})
+    vin = v.valuation_inputs(company(currency="EUR", free_cashflow=fcf[-1]), 40.0, h, "X", MACRO)
+    assert vin["no_anchor"] is no_anchor
+    if no_anchor:
+        assert vin["base"] is None and note in vin["note"]
+        # no deduction columns here: they are unknown, so the figure is an upper bound and the note names them (A4)
+        assert "unknown, which can only lower it" in vin["note"] and "nothing is missing" not in vin["note"]
+    stance = decision.build_decision(price=40.0, base_value=vin["base"], bear_value=vin["bear"], bull_value=vin["bull"],
+                                     stop_loss=36.0, currency="EUR", track_record_ok=True, quality_score=70,
+                                     valuation_reliable=vin["reliable"], valuation_note=vin["note"],
+                                     valuation_no_anchor=vin["no_anchor"], rules=decision.load_rules()).stance
+    assert (stance == "NO DCF ANCHOR") is no_anchor
+
+
+@pytest.mark.parametrize("meta, hist_fcf", [
+    (dict(free_cashflow=None), pd.DataFrame()),                                   # no cash flow at all
+    (dict(market_cap=None), None),                                                # no share count
+    (dict(market_cap=float("nan")), None),                                        # NaN is missing, not present (A1)
+])
+def test_a_missing_input_is_still_not_enough_data(meta, hist_fcf):
+    h = hist(-1e9) if hist_fcf is None else hist_fcf
+    vin = v.valuation_inputs(company(**meta), 40.0, h, "X", MACRO)
+    assert vin["base"] is None and vin["no_anchor"] is False
+
+
 # ── stock-based compensation ─────────────────────────────────────────────────────────────────
 def test_free_cash_flow_is_taken_after_stock_comp():
     assert v.normalized_statement_fcf(hist(5e9, sbc=2e9), "X") == pytest.approx(3e9)
@@ -185,3 +218,17 @@ def test_peer_pb_roe_line_shows_relative_cheapness():
     fit = v.pb_roe_peer_fit(pd.concat([peers, pd.DataFrame([{"ticker": "IND", "sector": "Software"}])]), "B3")
     assert fit["n"] == 8 and fit["residual_pct"] < -40 and fit["actual_pb"] == 0.6
     assert v.pb_roe_peer_fit(peers.head(5), "B3") is None                          # too few peers
+
+
+def test_a_nan_price_gives_no_share_count_so_not_no_dcf_anchor():
+    """A1: finite market cap, NaN fallback price -> shares NaN; NaN must not count as a known share count."""
+    vin = v.valuation_inputs(company(), float("nan"), hist(-1e9), "X", MACRO)
+    assert vin["no_anchor"] is False
+
+
+def test_with_every_deduction_known_the_note_calls_the_inputs_complete(monkeypatch):
+    known = {"status": "OBSERVED", "by_year": {2023: "OBSERVED", 2024: "OBSERVED", 2025: "OBSERVED"}, "source": "test"}
+    monkeypatch.setattr(v, "fcfe_deduction_status", lambda *a, **k: {
+        k: dict(known) for k in ("stock_based_comp", "interest_paid_cff", "lease_principal_paid")})
+    vin = v.valuation_inputs(company(currency="EUR"), 40.0, hist(-1e6), "X", MACRO)
+    assert vin["no_anchor"] and "nothing is missing" in vin["note"] and "unknown" not in vin["note"]

@@ -20,7 +20,7 @@ import pandas as pd
 from core import decision as dec
 
 VIEWS = ("Candidates", "Held", "Watchlist", "Needs data", "Changed", "All")
-STANCES = (dec.BUY, dec.RESEARCH, dec.HOLD, dec.AVOID, dec.NO_DATA)
+STANCES = (dec.BUY, dec.RESEARCH, dec.HOLD, dec.AVOID, dec.NO_ANCHOR, dec.NO_DATA)
 _RANK = {s: i for i, s in enumerate(STANCES)}
 LOW_COVERAGE = 60.0           # % of the scoring inputs observable below which the page already says "pulled toward neutral"
 ER_SOON_DAYS = 7              # the Decision's earnings blackout window (config/decision_rules.yaml)
@@ -94,6 +94,8 @@ def data_issue(row) -> Optional[str]:
     Reads the row's Decision, valuation reliability, coverage and missing inputs — it checks no gate itself."""
     if row.get("Decision") == dec.NO_DATA:
         return "Not enough data for a Decision"
+    if row.get("Decision") == dec.NO_ANCHOR:
+        return "No DCF anchor: cash flow to equity not positive"
     val = row.get("_valuation")
     if isinstance(val, dict) and val.get("reliable") is False:
         return "Valuation not reliable"

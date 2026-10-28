@@ -77,7 +77,7 @@ def test_the_regime_is_stated_once_on_market_pulse_and_not_in_the_header(warehou
     at = _app("🌐 Market Pulse")
     at.run()
     blocks = [m.value for m in at.markdown]
-    header = next(b for b in blocks if "Honest Quant Intelligence" in b)
+    header = next(b for b in blocks if "Evidentia" in b)
     html = " ".join(blocks)
     label = next(r for _, r, _, _ in mr.REGIMES if r in html)
     assert label not in header                              # the header names the data, not the market (HEADER_REDESIGN_IDEAS)

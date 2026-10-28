@@ -1,14 +1,14 @@
-# 🚀 Honest Quant Intelligence Platform (v10.5)
+# 🚀 Evidentia (v10.5)
 
 **A professional-grade, institutional-level stock analytics, diagnostic, and backtesting engine.**
 
-Honest Quant is a research and screening tool: Quality / Value / Momentum scores, an FCFE DCF (justified P/B for financials) and one rule-based Decision per stock. It does not forecast prices with deep learning (those models were tested, failed a walk-forward test and were removed). Designed for advanced traders and portfolio managers, the platform transforms raw market data into institutional-grade, actionable execution plans.
+Evidentia is a research and screening tool: Quality / Value / Momentum scores, an FCFE DCF (justified P/B for financials) and one rule-based Decision per stock. It does not forecast prices with deep learning (those models were tested, failed a walk-forward test and were removed). Designed for advanced traders and portfolio managers, the platform transforms raw market data into institutional-grade, actionable execution plans.
 
 ---
 
 ## 🏗️ 1. Architecture & ETL Pipeline
 
-The backbone of Honest Quant is a robust, production-ready Data Engineering pipeline running on a modern data stack.
+The backbone of Evidentia is a robust, production-ready Data Engineering pipeline running on a modern data stack.
 
 ### Data Ingestion & Extraction (`etl/extract.py`)
 - **Data Providers**: Utilizes a dual-source strategy combining `yahooquery` (for sensitive Financials/Earnings) and `yfinance` (for high-velocity Price/FX data).
@@ -180,7 +180,7 @@ profit, entry zone or intrinsic value has been reached, and holdings/ideas repor
 
 ## 🛡️ 5. Observability & System Integrity
 
-Honest Quant is built for production reliability, incorporating an enterprise-grade observability layer to ensure data fidelity.
+Evidentia is built for production reliability, incorporating an enterprise-grade observability layer to ensure data fidelity.
 
 ### Persistent Audit Layer (`marts.etl_audit`)
 Every ETL execution is logged in the warehouse. The system tracks:
@@ -401,7 +401,7 @@ YAHOO_FINANCE_BREAKER = CircuitBreaker(
 #### 3. **Missing Translations / Language Issues**
 
 **Symptoms:**
-- Text appears as keys (e.g., "app.title" instead of "Honest Quant")
+- Text appears as keys (e.g., "app.title" instead of "Evidentia")
 - Language selector not working
 - Mixed languages in UI
 
@@ -421,7 +421,7 @@ Edit `locales/en.json` or `locales/vi.json`:
 ```json
 {
   "app": {
-    "title": "Honest Quant Intelligence",
+    "title": "Evidentia",
     "subtitle": "Institutional-Grade Analytics"
   },
   "messages": {

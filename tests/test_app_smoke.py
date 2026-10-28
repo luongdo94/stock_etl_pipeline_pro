@@ -23,6 +23,16 @@ TABS = ["🌐 Market Pulse", "🔭 Stock Scanner", "🔬 Stock Analysis", "🗓�
         "🧪 Strategy Lab", "📈 Track Record", "📋 Watchlist", "💼 Portfolio", "🩺 Data Health", "📖 Docs"]
 
 
+def app_statements(tree):
+    """app.py's module-level statements, including those run inside a `with boot.phase(...)` start-up step."""
+    import ast
+    out = []
+    for node in tree.body:
+        is_phase = isinstance(node, ast.With) and any("boot.phase" in ast.unparse(i.context_expr) for i in node.items)
+        out.extend(node.body if is_phase else [node])
+    return out
+
+
 @pytest.fixture(scope="module")
 def warehouse(tmp_path_factory):
     import services.db as db
@@ -168,7 +178,7 @@ def test_decision_and_signal_never_contradict_across_the_universe(warehouse):
     assert len(t) > 0 and {"Verdict", "Action"} <= set(t.columns) and "Decision" not in t.columns
     arrow = t["Verdict"].str[-1]
     decision = t["Verdict"].str[:-2]
-    assert set(decision) <= {"BUY CANDIDATE", "HOLD / WATCH", "AVOID / TRIM", "NOT ENOUGH DATA"}
+    assert set(decision) <= {"BUY CANDIDATE", "HOLD / WATCH", "AVOID / TRIM", "NO DCF ANCHOR", "NOT ENOUGH DATA"}
     assert set(arrow) <= {"▲", "·", "▼"}
     expected = t["Action"].map({"STRONG SETUP": "▲", "FAVOURABLE": "▲", "NEUTRAL": "·", "WEAKENING": "▼", "UNFAVOURABLE": "▼"})
     assert (arrow == expected).all()
@@ -462,3 +472,46 @@ def test_cr02_data_health_shows_the_same_last_good_run_as_the_sidebar(warehouse)
         assert side.group(1) == metric.value
     else:
         assert "Last good ETL: unknown" in card and metric.value == "unknown"
+
+
+@pytest.mark.smoke
+def test_the_start_up_card_shows_the_steps_and_is_gone_once_the_page_is_drawn(warehouse, monkeypatch):
+    """No "Running _cached_screener(...)": one branded card on the first run of a session, cleared before the page."""
+    from ui import loading
+    shown = []
+    real = loading._card
+    monkeypatch.setattr(loading, "_card", lambda step, details: shown.append((step, dict(details))) or real(step, details))
+    at = _app("🌐 Market Pulse")
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert [s for s, _ in shown] == [0, 1, 2, 3] and "listings" in shown[-1][1][1] and "stocks" in shown[-1][1][2]
+    assert at.session_state[loading.BOOT_DONE]
+    assert not any("hq-boot" in m.value for m in at.markdown)                     # cleared, not left above the page
+    shown.clear()
+    at.run()
+    assert shown == []                                                             # later runs: no card
+
+
+
+@pytest.mark.smoke
+@pytest.mark.parametrize("failure", ["exception", "stop"])
+def test_the_start_up_card_is_removed_when_start_up_fails(warehouse, monkeypatch, failure):
+    """B1: an exception or an st.stop() error page during start-up never leaves the loading card on screen."""
+    import services.db as db
+    from ui import loading
+    if failure == "exception":
+        monkeypatch.setattr(db, "load_snapshot", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("disk gone")))
+    at = AppTest.from_file(os.path.join(ROOT, "app.py"), default_timeout=300)
+    at.secrets["SUPABASE_URL"] = "http://127.0.0.1:9"
+    at.secrets["SUPABASE_KEY"] = "test-key"
+    at.secrets["COOKIE_SECRET"] = "test-secret"
+    at.session_state["cm_pass"] = 1
+    if failure == "stop":
+        monkeypatch.setenv("LOCAL_DEV_MODE", "1")                    # not served from loopback -> auth stops the page
+    at.run()
+    assert not any("hq-boot" in m.value for m in at.markdown)
+    assert not at.session_state[loading.BOOT_DONE] if loading.BOOT_DONE in at.session_state else True
+    if failure == "exception":
+        assert at.exception and "disk gone" in at.exception[0].value
+    else:
+        assert any("LOCAL_DEV_MODE" in e.value for e in at.error)

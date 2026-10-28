@@ -16,6 +16,7 @@ from core import signal_feed as feed
 from ui.watchlist_status import STATUS_LABELS, open_idea_tickers
 
 ROOT = Path(__file__).resolve().parents[1]
+from tests.test_app_smoke import app_statements  # noqa: E402
 
 
 def _inputs():
@@ -60,7 +61,7 @@ def test_s201_saved_valuation_differences_and_incomplete_evidence():
 def test_s202_unknown_quality_through_app_observations_and_other_consumers():
     # Execute the actual app score assignments without starting auth, data loading or the app.
     tree = ast.parse((ROOT / "app.py").read_text(encoding="utf-8"))
-    assignments = [n for n in tree.body if isinstance(n, ast.Assign)
+    assignments = [n for n in app_statements(tree) if isinstance(n, ast.Assign)
                    and any(ast.unparse(t) == "reco_df['score']" for t in n.targets)]
     assert len(assignments) == 2
     names = ["UNKNOWN", "ZERO", "LOW", "INF", "NEG_INF"]

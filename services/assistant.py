@@ -37,7 +37,7 @@ Decision, as a risk to monitor; and what would have to change for the stance to 
 Quote only the computed Decision: no independent rating, price target or order. N/A is unknown, never zero.
 Answer in {language}."""
 
-SYSTEM = """You are the research assistant inside "Honest Quant Intelligence", a decision-support app for equities.
+SYSTEM = """You are the research assistant inside "Evidentia", a decision-support app for equities.
 Today is {today}. The user is on the "{tab}" tab{ticker_note}.
 
 Rules:

@@ -237,7 +237,7 @@ def _decision_changes(hub):
         up, down = sum(c["direction"] == "up" for c in rule), sum(c["direction"] == "down" for c in rule)
         _data = len(rule) - up - down
         with st.expander(f"Rules / score version changed, nothing else visible — {len(rule)} stance(s) re-rated "
-                         f"({up} up, {down} down" + (f", {_data} to / from NOT ENOUGH DATA" if _data else "")
+                         f"({up} up, {down} down" + (f", {_data} to / from a stance without a DCF value" if _data else "")
                          + "). A methodology change, not news about the companies."):
             st.dataframe(pd.DataFrame([{"Ticker": c["ticker"], "From": c["from"], "To": c["to"]} for c in rule]),
                          hide_index=True, width="stretch")

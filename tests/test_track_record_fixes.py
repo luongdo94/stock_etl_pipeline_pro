@@ -422,3 +422,16 @@ def test_signal_dates_in_one_holding_window_count_once():
     fr["fwd_21"] = fr["xs_21"]
     fm = ft.fama_macbeth(fr, 21, "quality", require_controls=True)
     assert fm["n_days"] == 126 and fm["n_independent"] == 1                        # it computed — and counted ONE window
+
+
+def test_the_label_split_is_not_a_new_call_in_the_recommendation_log():
+    """A3: NOT ENOUGH DATA (known negative cash flow) -> NO DCF ANCHOR keeps the original entry; a later real change
+    is still logged."""
+    import pandas as pd
+    from core import track_record as tr
+    rows = pd.DataFrame({"ticker": ["A"] * 3, "as_of_date": pd.to_datetime(["2026-10-27", "2026-10-28", "2026-10-29"]),
+                         "decision": ["NOT ENOUGH DATA", "NO DCF ANCHOR", "HOLD / WATCH"],
+                         "inputs": ['{"valuation": {"fcfe": -5.0}}', '{"valuation": {"fcfe": -5.0}}',
+                                    '{"valuation": {"fcfe": 9.0}}']})
+    log = tr.recommendation_log(rows, "decision")
+    assert sorted(log["decision"]) == ["HOLD / WATCH", "NOT ENOUGH DATA"]          # no entry for the rename

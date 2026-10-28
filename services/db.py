@@ -115,6 +115,8 @@ class SnapshotUnstable(RuntimeError):
 def _give_up(message: str):
     """Stop the run: nothing is read from a snapshot that is not the session's. Never returns."""
     logger.warning(message)
+    from ui.loading import clear_card
+    clear_card()                                       # the start-up card goes before the error page
     st.error(message)
     st.stop()
     raise SnapshotUnstable(message)
@@ -494,7 +496,7 @@ def _source_unchanged(loaded) -> bool:
         return True
 
 
-@st.cache_data(ttl=600, show_spinner="Loading Institutional Data Warehouse...")
+@st.cache_data(ttl=600, show_spinner=False)          # app.py shows the start-up card / a plain spinner
 def load_snapshot(version=None) -> tuple:
     """(frames, version of the snapshot they were read from). `version` (data_version() at the call) keys the cache,
     so a new warehouse file / published manifest is loaded on the next run instead of after the TTL. The returned

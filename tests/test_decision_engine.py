@@ -123,6 +123,10 @@ class TestDecision:
     def test_no_value_is_not_enough_data(self):
         assert self._d(base_value=None, bear_value=None).stance == "NOT ENOUGH DATA"
 
+    def test_no_value_with_known_cash_flow_is_no_dcf_anchor(self):
+        d = self._d(base_value=None, bear_value=None, valuation_no_anchor=True)
+        assert d.stance == "NO DCF ANCHOR" and d.position["size_pct"] == 0
+
     def test_unvalidated_signals_cap_confidence(self):
         assert self._d(track_record_ok=False).confidence != "HIGH"
 
