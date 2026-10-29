@@ -118,7 +118,7 @@ def test_the_paid_entry_points_refuse_a_call_without_an_account(monkeypatch):
              lambda: research.answer("x", None, system="s"),
              lambda: research.news_digest("A", "A"),
              lambda: earnings.summarise_earnings("k", "A", "A", "", "", ""),
-             lambda: earnings.generate_er_brief("x", "k")]
+             lambda: earnings.generate_er_sheet("x", "k")]
     for call in calls:
         with pytest.raises(PermissionError):
             call()

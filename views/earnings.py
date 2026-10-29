@@ -21,28 +21,25 @@ from services import auth
 MIN_REGION = 15          # smaller regions are pooled so a "market" benchmark is not the stock itself
 
 
-def _render_er_brief(ticker, company, event_ts, language, summariser, model, codex_model, effort,
-                     report, facts, release_key, data_error=None):
-    """Explicit build only; reuse the note's SEC release, never its headline fallback."""
-    import json
-    from core.er_brief import BRIEF_VERSION, build_brief_prompt, compose_card, validate_brief
-    from ui.er_brief import render as render_brief
+def _render_er_sheet(ticker, company, event_ts, language, summariser, model, codex_model, effort, release_key,
+                     eps_consensus=None, estimate_snaps=None, data_error=None):
+    """The ER sheet: built on request only, from the SEC release of THIS report (the AI note's or the live one, never
+    news headlines). The model points at each figure; core.er_sheet checks every line; the header (revenue / EPS vs
+    the stored consensus) is computed by code."""
+    from core.er_sheet import (SHEET_VERSION, build_sheet_prompt, compose, header_lines, period_ended,
+                               revenue_consensus_before, validate_sheet)
+    from core.release_figures import headline_figures
+    from ui.er_sheet import render as render_sheet
 
-    render_header("book", "ER Brief (one page)", level="####")
+    render_header("book", "ER sheet", level="####")
     if data_error:
-        st.error(f"ER Brief data could not be read: {data_error}")
+        st.error(f"ER sheet data could not be read: {data_error}")
         return
     if event_ts is None:
-        st.warning("ER Brief requires a stored report event to match the release; no report event is available.")
+        st.warning("The ER sheet needs a report in the earnings calendar to match the release; none is available.")
         return
-    if report and (report.get("reported") is None or pd.Timestamp(report["reported"]) != pd.Timestamp(event_ts)):
-        st.warning("The latest stored statements do not match this report event. ER Brief is unavailable to avoid "
-                   "combining different quarters.")
-        return
-    identity = svc.note_key(ticker, event_ts, language,
-                            facts + json.dumps(report, sort_keys=True, default=str), model=model)
-    slot = f"er_brief::{BRIEF_VERSION}::{identity}"
-    if auth.signed_in() and st.button("Build the ER brief", key="er_brief_build"):    # the note's notice explains why
+    slot = f"er_sheet::{SHEET_VERSION}::{ticker}::{pd.Timestamp(event_ts).isoformat()}::{language}::{model}"
+    if auth.signed_in() and st.button("Build the ER sheet", key="er_sheet_build"):    # the note's notice explains why
         try:
             with st.spinner("Collecting the report text..."):
                 release = st.session_state.get(release_key)
@@ -52,49 +49,49 @@ def _render_er_brief(ticker, company, event_ts, language, summariser, model, cod
                 text, where, fdate = release
                 reason = None
                 if not text or not text.strip():
-                    reason = f"No valid earnings release ({where}). ER Brief cannot use news headlines."
+                    reason = f"No valid earnings release ({where}). The ER sheet cannot use news headlines."
                 elif not svc.release_matches_event(fdate, event_ts):
                     reason = (f"The latest SEC earnings release (filed {fdate}) is not the report of "
-                              f"{_local(event_ts, ticker)[0]} in our data. ER Brief cannot combine different quarters.")
+                              f"{_local(event_ts, ticker)[0]} in our data. The sheet cannot combine different quarters.")
                 elif "no Exhibit 99 found" in str(where):
-                    reason = "The SEC filing has no earnings release exhibit. ER Brief cannot use the primary filing alone."
-                if reason:
-                    st.session_state.pop(slot, None)
-                    st.session_state.pop(release_key, None)
-                    st.warning(reason)
-                else:
-                    sent_text = svc.brief_passages(text)
-                    source = f"SEC 8-K earnings press release filed {fdate}: {where}"
-                    card_key = slot + "::" + svc.text_hash(text)
-                    if card_key not in st.session_state:
-                        prompt = build_brief_prompt(company, ticker, facts or "- none", source, sent_text, language)
-                        with st.spinner("Writing the ER brief..."):
-                            raw = svc.generate_er_brief(prompt, svc.api_key() if summariser != "Codex (local)" else "",
-                                                        summariser=summariser, model=codex_model, effort=effort)
-                        checked = validate_brief(raw, sent_text, facts or "- none")
-                        if any(d["section"] == "brief" for d in checked["dropped"]):
-                            raise ValueError("The model returned invalid ER Brief JSON; please retry.")
-                        st.session_state[card_key] = compose_card(
-                            report, checked, language=language, company=company, ticker=ticker,
-                            reported=_local(event_ts, ticker)[0], source=source, model=model,
-                            created_at=pd.Timestamp.now(tz="UTC"))
-                    st.session_state[slot] = card_key
+                    reason = "The SEC filing has no earnings release exhibit. The sheet cannot use the cover page alone."
+            if reason:
+                st.session_state.pop(slot, None)
+                st.session_state.pop(release_key, None)
+                st.warning(reason)
+            else:
+                body = svc.without_safe_harbor(text)
+                card_key = slot + "::" + svc.text_hash(text)
+                if card_key not in st.session_state:
+                    with st.spinner("Reading the release (about 1-4 minutes)..."):
+                        raw = svc.generate_er_sheet(build_sheet_prompt(company, ticker, body, language),
+                                                    svc.api_key() if summariser != "Codex (local)" else "",
+                                                    summariser=summariser, model=codex_model, effort=effort)
+                    checked = validate_sheet(raw, body)
+                    if any(d["what"] == "sheet" for d in checked["dropped"]):
+                        raise ValueError("The model's reply was not a valid sheet; please retry.")
+                    header = header_lines(headline_figures(body),
+                                          revenue_consensus_before(estimate_snaps, ticker, fdate), eps_consensus, language)
+                    st.session_state[card_key] = compose(
+                        checked, header, company=company, ticker=ticker, language=language, period=period_ended(body),
+                        source=f"SEC 8-K earnings press release filed {fdate}: {where}", model=model,
+                        created_at=pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%d %H:%M UTC"))
+                st.session_state[slot] = card_key
         except Exception as exc:
             st.session_state.pop(slot, None)
-            st.error(f"ER Brief unavailable: {exc}")
+            st.error(f"ER sheet unavailable: {exc}")
     card_key = st.session_state.get(slot)
     release = st.session_state.get(release_key)
-    # A source refreshed by the note invalidates a previously built brief, including on an ordinary rerun.
+    # a source refreshed by the note or the live button invalidates a sheet built from the earlier text
     if card_key and release:
         text, where, fdate = release
-        valid = (text and svc.release_matches_event(fdate, event_ts) and
-                 "no Exhibit 99 found" not in str(where) and
-                 card_key == slot + "::" + svc.text_hash(text))
+        valid = (text and svc.release_matches_event(fdate, event_ts) and "no Exhibit 99 found" not in str(where)
+                 and card_key == slot + "::" + svc.text_hash(text))
         if not valid:
             st.session_state.pop(slot, None)
             return
         if card_key in st.session_state:
-            render_brief(st.session_state[card_key])
+            render_sheet(st.session_state[card_key])
 
 
 def _region_map(companies: pd.DataFrame) -> dict:
@@ -319,9 +316,7 @@ def _live_brief_inputs(t, events, event_ts, report, facts, release_key):
     ]))
     key = f"er_release_live::{t}::{pd.Timestamp(live_ts).isoformat()}"
     st.session_state[key] = (text, where, fdate)
-    st.caption(f"ER Brief: written from the SEC release fetched live (filed {fdate})"
-               + ("" if report is not None else "; this quarter's statements are not stored yet, so the EUR KPI tiles "
-                                                "read N/A until the next ETL run") + ".")
+    st.caption(f"ER sheet: read from the SEC release fetched live (filed {fdate}).")
     return live_ts, report, live_facts, key
 
 
@@ -616,7 +611,7 @@ def render(ctx):
         reaction = (rt[pd.to_datetime(rt["earnings_ts"], utc=True) == pd.Timestamp(last["earnings_ts"])]
                     if last is not None and not rt.empty else pd.DataFrame())
         ret_2d = reaction.iloc[0]["ret_2d"] if not reaction.empty else None
-        _brief_report, _brief_error = None, events.attrs.get("error")
+        _brief_report, _brief_error, _snaps = None, events.attrs.get("error"), None
         try:
             from services.db import load_estimate_snapshots as _les
             _snaps = _les(ctx.get("data_version"))
@@ -699,8 +694,16 @@ def render(ctx):
 
         _b_event, _b_report, _b_facts, _b_key = _live_brief_inputs(
             t, events, last["earnings_ts"] if last is not None else None, _brief_report, facts, _release_key)
-        _render_er_brief(t, names.get(t, t), _b_event, lang, summariser, model, codex_model, effort, _b_report,
-                         _b_facts, _b_key, _brief_error)
+        # the EPS consensus as STORED: kept by the live fetch, else the stored event of this report
+        _live = st.session_state.get(f"er_live::{t}") or {}
+        if "consensus" in _live:
+            _eps_cons = _live["consensus"]
+        else:
+            _ev = hist[pd.to_datetime(hist["earnings_ts"], utc=True) == pd.Timestamp(_b_event)] if _b_event is not None                 else hist.iloc[0:0]
+            _est = pd.to_numeric(_ev["eps_estimate"], errors="coerce").dropna()
+            _eps_cons = float(_est.iloc[-1]) if not _est.empty else None
+        _render_er_sheet(t, names.get(t, t), _b_event, lang, summariser, model, codex_model, effort, _b_key,
+                         eps_consensus=_eps_cons, estimate_snaps=_snaps, data_error=_brief_error)
 
     # ── universe study ──────────────────────────────────────────────────────────────────────
     elif section == "Surprise study":

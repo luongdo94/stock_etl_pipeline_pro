@@ -272,29 +272,33 @@ def without_safe_harbor(text: str) -> str:
     return text[:m.start()] + (text[end.start():] if end else "")
 
 
-def brief_passages(text: str) -> str:
-    """One shared selection for the model prompt, cache identity and evidence checks."""
-    from core.retrieval import select_passages
-    return select_passages(without_safe_harbor(text), SECTION_QUERIES, budget=15000)
+COHERE_SHEET_TIMEOUT_S = 240     # a long release can take Cohere minutes; the user is told to try Codex instead
 
 
-def generate_er_brief(prompt: str, api_key: str = "", *, summariser: str = "Cohere", model=None, effort=None) -> str:
-    """Return raw JSON; core.er_brief validates malformed responses and each item's evidence."""
+def generate_er_sheet(prompt: str, api_key: str = "", *, summariser: str = "Cohere", model=None, effort=None) -> str:
+    """Return the model's raw JSON; core.er_sheet.validate_sheet checks every line against the release."""
     from services.auth import require_signed_in
-    require_signed_in("build the ER brief (language model)")
-    from core.er_brief import BRIEF_SCHEMA
+    require_signed_in("build the ER sheet (language model)")
+    from core.er_sheet import SHEET_SCHEMA
     if summariser == "Codex (local)":
-        return summarise_earnings_codex(prompt, model=model, effort=effort, schema=BRIEF_SCHEMA)
+        return summarise_earnings_codex(prompt, model=model, effort=effort, schema=SHEET_SCHEMA, timeout=600)
     if not api_key:
         raise ValueError("COHERE_API_KEY is not set")
     import cohere
     co = cohere.ClientV2(api_key=api_key)
-    resp = co.chat(model=LLM_MODEL, messages=[{"role": "user", "content": prompt}], max_tokens=4000,   # the model allows 4096
-                   response_format={"type": "json_object"})
+    try:
+        resp = co.chat(model=LLM_MODEL, messages=[{"role": "user", "content": prompt}], max_tokens=4000,   # model max 4096
+                       response_format={"type": "json_object"},
+                       request_options={"timeout_in_seconds": COHERE_SHEET_TIMEOUT_S})
+    except Exception as e:
+        if "timeout" in type(e).__name__.lower() or "timed out" in str(e).lower():
+            raise RuntimeError(f"Cohere did not answer within {COHERE_SHEET_TIMEOUT_S} s for this long release — "
+                               "choose Codex (local) as the summariser.") from e
+        raise
     blocks = getattr(resp.message, "content", None) or []
     output = "\n".join(block.text for block in blocks if getattr(block, "text", None))
     if not output.strip():
-        raise RuntimeError("Cohere returned an empty ER Brief")
+        raise RuntimeError("Cohere returned an empty ER sheet")
     return output
 
 

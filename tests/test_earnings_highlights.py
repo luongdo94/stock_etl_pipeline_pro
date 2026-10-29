@@ -220,3 +220,36 @@ def test_er05_er06_a_newer_snapshot_clears_the_live_fetch_and_the_consensus_is_t
     at.run()
     assert "er_live::AAPL" not in at.session_state
     assert any("newer data snapshot" in c.value for c in at.caption)
+
+
+@pytest.mark.smoke
+def test_the_er_sheet_is_built_from_the_release_and_shows_only_checked_lines(warehouse, monkeypatch):
+    """Build the ER sheet with a fake release and a fake model reply: checked lines render, a wrong-column line is
+    listed as dropped, the header comes from the release by rules."""
+    import json
+    from services import earnings as svc
+    events = svc.load_earnings_events(None)
+    last = events[(events["ticker"] == "AAPL") & events["eps_actual"].notna()].sort_values("earnings_ts").iloc[-1]
+    fdate = pd.Timestamp(last["earnings_ts"]).date().isoformat()
+    release = ("Apple reports results. The Company posted quarterly revenue of $109.4 billion, up 16 percent year "
+               "over year. Diluted earnings per share was $2.02, up 29 percent year over year. Condensed statements "
+               "(in millions) Three Months Ended 2025 2026 iPhone 44,582 50,300 Services 27,423 30,100")
+    monkeypatch.setattr(svc, "sec_press_release", lambda t, ua: (release, "https://sec.example/ex991.htm", fdate))
+    monkeypatch.setattr(svc, "sec_user_agent", lambda: "test")
+    reply = {"sections": [{"title": "Products", "items": [
+        {"label": "iPhone", "kind": "amount", "value": "50,300", "prior": "44,582", "yoy": None,
+         "quote": "iPhone 44,582 50,300", "source": "table"},
+        {"label": "Services", "kind": "amount", "value": "27,423", "prior": None, "yoy": None,
+         "quote": "Services 27,423 30,100", "source": "table"}]}], "key_updates": [], "guidance": []}
+    monkeypatch.setattr(svc, "generate_er_sheet", lambda *a, **k: json.dumps(reply))
+    at = _app("🗓️ Earnings")
+    at.session_state["_kept::er_section"] = "Single stock"
+    at.session_state["active_ticker"] = "AAPL"
+    at.run()
+    at.button(key="er_sheet_build").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert not at.error, [e.value for e in at.error]
+    sheet = next(m.value for m in at.markdown if "er-sheet" in m.value)
+    assert "iPhone" in sheet and "$50.3B" in sheet and "+13%" in sheet                  # the latest column, same-row YoY
+    assert "$109.4B" in sheet and "$2.02" in sheet                                   # the header, read by rules
+    assert "1 line(s) dropped" in sheet and "latest period" in sheet                  # Services: last year's column
