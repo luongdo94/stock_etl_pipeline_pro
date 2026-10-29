@@ -17,6 +17,7 @@ import streamlit as st
 from core import earnings as er
 from core.sec_documents import exhibit99_from_index, is_exhibit991, pick_exhibit99
 from services.codex_local import codex_path, run_codex as summarise_earnings_codex
+from services.agy_local import agy_path, run_agy as summarise_earnings_agy
 from services.db import get_db_connection
 
 logger = logging.getLogger(__name__)
@@ -240,7 +241,7 @@ def summarise_earnings(api_key: str, company: str, ticker: str, facts: str, sour
 
 
 def summariser_options() -> list:
-    return ["Cohere"] + (["Codex (local)"] if codex_path() else [])
+    return ["Cohere"] + (["Codex (local)"] if codex_path() else []) + (["Antigravity (local)"] if agy_path() else [])
 
 
 def api_key() -> str:
@@ -280,6 +281,8 @@ def generate_er_sheet(prompt: str, api_key: str = "", *, summariser: str = "Cohe
     from services.auth import require_signed_in
     require_signed_in("build the ER sheet (language model)")
     from core.er_sheet import SHEET_SCHEMA
+    if summariser == "Antigravity (local)":
+        return summarise_earnings_agy(prompt, model=model, effort=effort, schema=SHEET_SCHEMA, timeout=600)
     if summariser == "Codex (local)":
         return summarise_earnings_codex(prompt, model=model, effort=effort, schema=SHEET_SCHEMA, timeout=600)
     if not api_key:

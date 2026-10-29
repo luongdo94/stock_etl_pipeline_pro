@@ -293,7 +293,7 @@ def test_ai_review_unavailable_matches_assistant_info(review_ui, monkeypatch):
     at, call = review_ui
     monkeypatch.setattr(assistant, "available", lambda: False)
     at.run()
-    assert any("Set COHERE_API_KEY or install Codex locally" in e.value for e in at.info)
+    assert any("Set COHERE_API_KEY or install Codex or Antigravity locally" in e.value for e in at.info)
     assert not at.button and not at.get("chat_message")
     call.assert_not_called()
 

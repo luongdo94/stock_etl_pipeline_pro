@@ -14,6 +14,7 @@ _REAL_CODEX_PATH = codex_local.codex_path
 
 @pytest.fixture(autouse=True)
 def isolated_codex(monkeypatch, tmp_path):
+    monkeypatch.setattr(assistant, "agy_path", lambda: None)
     monkeypatch.setenv("CODEX_HOME", str(tmp_path))
     monkeypatch.setattr(codex_local, "codex_path", lambda: "fake-codex")
     monkeypatch.setattr(assistant, "codex_path", lambda: "fake-codex")
@@ -163,6 +164,7 @@ def test_earnings_forwards_selection_and_separates_notes(monkeypatch):
     monkeypatch.setattr(svc, "load_earnings_events", lambda *a: events)
     monkeypatch.setattr(svc, "universe_reactions", lambda *a, **kw: pd.DataFrame())
     monkeypatch.setattr(svc, "codex_path", lambda: "fake-codex")
+    monkeypatch.setattr(svc, "agy_path", lambda: "fake-agy")
     monkeypatch.setattr(svc, "api_key", lambda: "fake")
     monkeypatch.setattr(svc, "sec_user_agent", lambda: "fake")
     monkeypatch.setattr(svc, "sec_press_release", lambda *a: ("Revenue 24468", "SEC", "2026-10-21"))
@@ -178,6 +180,7 @@ render(dict(prices_full=pd.DataFrame(columns=["date", "ticker", "price_close", "
             m_df=pd.DataFrame(), format_ticker=str))
 ''').run()
     assert not at.exception
+    assert "Antigravity (local)" in at.radio(key="er_summariser").options
     at.radio(key="er_summariser").set_value("Codex (local)").run()
     at.selectbox(key="codex_earnings_model").select("listed").run()
     at.selectbox(key="codex_earnings_effort").select("low").run()

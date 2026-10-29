@@ -101,21 +101,25 @@ def _render_agent_review(dd, ctx):
     from services.news import fetch_news_sentiment
     from ui.assistant import _render_turn, _toolbox
     from ui.codex_options import codex_label
+    from ui.agy_options import agy_label
     render_header("zap", "Agent review", level="####")
     st.caption("The research agent reads this stock's computed Decision, its metrics, the news of the last 30 days and "
                "(US listings) the SEC filings, and writes a cited review. Context only: it explains the Decision and "
                "never changes it.")
     if not assistant.available():
-        st.info("Set COHERE_API_KEY or install Codex locally to use the agent.")
+        st.info("Set COHERE_API_KEY or install Codex or Antigravity locally to use the agent.")
         return
     if not auth.can_use("run the agent review (it calls the language model)", f"agent_{dd.ticker}"):
         return
     options = assistant.models()
-    default = "Codex (local)" if not os.environ.get("COHERE_API_KEY") and len(options) > 1 else "Cohere"
+    default = options[1] if not os.environ.get("COHERE_API_KEY") and len(options) > 1 else "Cohere"
     model = st.session_state.get(kept_key("assistant_model"), default)       # the Assistant's choice, one for the app
     model = model if model in options else default
     codex_model, effort = st.session_state.get("_codex_model"), st.session_state.get("_codex_effort")
-    model_name = codex_label(codex_model, effort) if model == "Codex (local)" else model
+    if model == "Antigravity (local)":
+        codex_model, effort = st.session_state.get("_agy_model"), st.session_state.get("_agy_effort")
+    model_name = (codex_label(codex_model, effort) if model == "Codex (local)" else
+                  agy_label(codex_model, effort) if model == "Antigravity (local)" else model)
     c_lang, c_btn = st.columns([1, 3])
     with c_lang:
         language = sticky_radio("Language", ["English", "Vietnamese"], "English", "agent_language", horizontal=True,
@@ -140,7 +144,8 @@ def _render_agent_review(dd, ctx):
                                                yahoo.get("history_error")) if e)
             started = perf_counter()
             res = assistant.ask(question, _toolbox(ctx), tab="Stock Analysis", ticker=dd.ticker,
-                                chat=assistant._codex_chat(codex_model, effort) if model == "Codex (local)" else None)
+                                chat=assistant._codex_chat(codex_model, effort) if model == "Codex (local)" else
+                                     assistant._agy_chat(codex_model, effort) if model == "Antigravity (local)" else None)
         st.session_state[key] = {"spec": spec, "at": pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%d %H:%M UTC"),
                                  "news_error": news_error or None,
                                  "turn": {"q": question, "res": res, "model": model_name,

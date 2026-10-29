@@ -53,6 +53,15 @@ def _clean_store_flags():
 
 
 @pytest.fixture(autouse=True)
+def _no_installed_antigravity(monkeypatch):
+    """An Antigravity CLI installed on the test machine must not change what a test sees (model lists, availability);
+    tests of the runner set it explicitly."""
+    from services import agy_local, assistant, earnings
+    for module in (agy_local, assistant, earnings):
+        monkeypatch.setattr(module, "agy_path", lambda: None)
+
+
+@pytest.fixture(autouse=True)
 def _isolated_filings_store(tmp_path, monkeypatch):
     """The RAG filing store is a real file under warehouse/ — no test may create or read it."""
     from etl import filings

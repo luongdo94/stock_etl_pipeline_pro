@@ -1637,18 +1637,22 @@ def _render_agent_review(ctx, book_spec, import_pending):
     from services import assistant
     from ui.assistant import _render_turn, _toolbox
     from ui.codex_options import render_codex_options, codex_label
+    from ui.agy_options import render_agy_options, agy_label
     if not assistant.available():
-        st.info("Set COHERE_API_KEY or install Codex locally to use the assistant.")
+        st.info("Set COHERE_API_KEY or install Codex or Antigravity locally to use the assistant.")
         return
     if not auth.can_use("run the agent portfolio review (it calls the language model)", "pf_agent"):
         return
     options = assistant.models()
-    default = "Codex (local)" if not os.environ.get("COHERE_API_KEY") and len(options) > 1 else "Cohere"
+    default = options[1] if not os.environ.get("COHERE_API_KEY") and len(options) > 1 else "Cohere"
     model = sticky_radio("Model", options, default, "pf_agent_model", horizontal=True)
     model_name = model
     if model == "Codex (local)":
         codex_model, effort = render_codex_options("portfolio")
         model_name = codex_label(codex_model, effort)
+    elif model == "Antigravity (local)":
+        codex_model, effort = render_agy_options("portfolio")
+        model_name = agy_label(codex_model, effort)
     language = sticky_radio("Language", ["English", "Vietnamese"], "English", "pf_review_lang", horizontal=True)
     spec = dict(book_spec, model=model_name, language=language, owner=st.session_state.get("user_id"),
                 targets=sorted(st.session_state.get("portfolio_targets", {}).items()),
@@ -1663,7 +1667,8 @@ def _render_agent_review(ctx, book_spec, import_pending):
         with st.spinner("Reviewing your portfolio…"):
             started = perf_counter()
             res = assistant.ask(question, _toolbox(ctx), tab="Portfolio",
-                                chat=assistant._codex_chat(codex_model, effort) if model == "Codex (local)" else None)
+                                chat=assistant._codex_chat(codex_model, effort) if model == "Codex (local)" else
+                                     assistant._agy_chat(codex_model, effort) if model == "Antigravity (local)" else None)
         st.session_state["portfolio_agent_review"] = {
             "spec": spec, "at": pd.Timestamp.now(tz="UTC"),
             "turn": {"q": question, "res": res, "model": model_name, "elapsed": perf_counter() - started}}

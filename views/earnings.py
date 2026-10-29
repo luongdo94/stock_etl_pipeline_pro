@@ -13,6 +13,7 @@ from services import earnings as svc
 
 from ui.components import format_value, phone_safe_chart
 from ui.codex_options import render_codex_options, codex_label
+from ui.agy_options import render_agy_options, agy_label
 from ui.sticky import (follow_active_ticker, my_tickers, remember_ticker, sticky, sticky_choice, sticky_radio,
                        ticker_options)
 from ui.icons import render_header
@@ -65,7 +66,7 @@ def _render_er_sheet(ticker, company, event_ts, language, summariser, model, cod
                 if card_key not in st.session_state:
                     with st.spinner("Reading the release (about 1-4 minutes)..."):
                         raw = svc.generate_er_sheet(build_sheet_prompt(company, ticker, body, language),
-                                                    svc.api_key() if summariser != "Codex (local)" else "",
+                                                    svc.api_key() if summariser == "Cohere" else "",
                                                     summariser=summariser, model=codex_model, effort=effort)
                     checked = validate_sheet(raw, body)
                     if any(d["what"] == "sheet" for d in checked["dropped"]):
@@ -603,6 +604,9 @@ def render(ctx):
         if summariser == "Codex (local)":
             codex_model, effort = render_codex_options("earnings")
             model = codex_label(codex_model, effort)
+        elif summariser == "Antigravity (local)":
+            codex_model, effort = render_agy_options("earnings")
+            model = agy_label(codex_model, effort)
         if model == svc.LLM_MODEL and not svc.api_key():
             sticky(st.text_input, "Cohere API key (kept only for this session)", "", "cohere_api_key", type="password",
                           help="Or set COHERE_API_KEY in the environment.")
@@ -667,6 +671,8 @@ def render(ctx):
                         with st.spinner("Writing the note..."):
                             note = (svc.summarise_earnings_codex(prompt, model=codex_model, effort=effort)
                                     if summariser == "Codex (local)" else
+                                    svc.summarise_earnings_agy(prompt, model=codex_model, effort=effort)
+                                    if summariser == "Antigravity (local)" else
                                     svc.summarise_earnings(svc.api_key(), company, t, facts or "- none", source, text, lang))
                         elapsed = time.perf_counter() - started
                         from services.ai import ungrounded_numbers

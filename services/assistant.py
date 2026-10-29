@@ -16,6 +16,7 @@ from typing import Callable, Optional
 
 from services.assistant_tools import SPECS, ToolBox, doc_text
 from services.codex_local import codex_path, run_codex
+from services.agy_local import agy_path, run_agy
 
 MODEL = "command-a-03-2025"
 MAX_STEPS = 3                     # tool rounds per question
@@ -67,11 +68,11 @@ def plain_numbers(text: str) -> str:
 
 
 def models() -> list:
-    return ["Cohere"] + (["Codex (local)"] if codex_path() else [])
+    return ["Cohere"] + (["Codex (local)"] if codex_path() else []) + (["Antigravity (local)"] if agy_path() else [])
 
 
 def available() -> bool:
-    return bool(os.environ.get("COHERE_API_KEY") or codex_path())
+    return bool(os.environ.get("COHERE_API_KEY") or codex_path() or agy_path())
 
 
 def _tools() -> list:
@@ -202,7 +203,8 @@ def _codex_citations(answer: str, ids: set):
     return text + answer[last:], citations
 
 
-def _codex_chat(model=None, effort=None) -> Callable:
+def _codex_chat(model=None, effort=None, *, runner=None, provider="Codex") -> Callable:
+    runner = runner or run_codex
     def call(messages, tools):
         rounds = sum(m["role"] == "assistant" and bool(m.get("tool_calls")) for m in messages)
         ids = {d["document"]["id"] for m in messages if m["role"] == "tool" for d in m["content"]}
@@ -216,7 +218,7 @@ def _codex_chat(model=None, effort=None) -> Callable:
         if rounds >= 2:
             prompt += '\nTool limit reached: return an answer from the supplied documents; no more tool calls.'
         for attempt in range(2):
-            raw = run_codex(prompt, model=model, effort=effort)
+            raw = runner(prompt, model=model, effort=effort)
             try:
                 value = _codex_json(raw)
                 answer, calls = value.get("answer"), value.get("tool_calls")
@@ -229,7 +231,7 @@ def _codex_chat(model=None, effort=None) -> Callable:
                 raise ValueError("expected answer string or tool_calls with object arguments")
             except ValueError as exc:
                 if attempt:
-                    raise RuntimeError("Codex returned invalid JSON after one retry") from exc
+                    raise RuntimeError(f"{provider} returned invalid JSON after one retry") from exc
                 prompt += '\nReturn only valid JSON in one of the two specified forms.'
         plan = str(value.get("plan") or "")
         tcs = []
@@ -239,10 +241,14 @@ def _codex_chat(model=None, effort=None) -> Callable:
                 plan += f" Warning: ignored unknown tool {tc['name']}."
                 continue
             if rounds >= 2:
-                raise RuntimeError("Codex stopped after 2 tool rounds — ask a narrower question")
+                raise RuntimeError(f"{provider} stopped after 2 tool rounds — ask a narrower question")
             tcs.append({"id": f"codex-{serial + len(tcs) + 1}", "name": tc["name"], "arguments": tc["arguments"]})
         text, citations = _codex_citations(answer or "", ids)
         raw_calls = [{"id": t["id"], "type": "function", "function": {
             "name": t["name"], "arguments": json.dumps(t["arguments"])}} for t in tcs]
         return {"text": text, "citations": citations, "tool_calls": tcs, "tool_plan": plan, "raw_calls": raw_calls}
     return call
+
+
+def _agy_chat(model=None, effort=None) -> Callable:
+    return _codex_chat(model, effort, runner=run_agy, provider="Antigravity")

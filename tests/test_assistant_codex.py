@@ -16,6 +16,7 @@ from tests.test_assistant import _box
 def no_real_models(monkeypatch):
     def forbidden(*args, **kwargs):
         raise AssertionError("A real model/subprocess must never run in these tests")
+    monkeypatch.setattr(assistant, "agy_path", lambda: None)
     monkeypatch.setattr(assistant, "run_codex", forbidden)
     monkeypatch.setattr(codex_local.subprocess, "run", forbidden)
     monkeypatch.setattr(assistant, "_client", forbidden)
