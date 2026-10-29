@@ -257,6 +257,8 @@ def _render_financial_valuation(meta, price, vin, companies=None):
         st.info("Normalised ROE is not available for this stock, so no residual-income scenarios are shown "
                 "(an unknown ROE is not 0%).")
         return
+    if vin.get("consensus_note") and vin["consensus_note"] not in vin["growth_sources"]:
+        st.caption(vin["consensus_note"])
     st.info("**Sensitivity sandbox** — changing these inputs recomputes the scenarios below ONLY. The Decision "
             "Summary, scanner, alerts, watchlist and AI brief keep using the system defaults shown in the inputs' "
             "starting values.")
@@ -333,18 +335,37 @@ def render_valuation_section(*, meta, price, vin, relval, companies=None):
         return _render_financial_valuation(meta, price, vin, companies)
     st.markdown("---")
     render_header("gem", "Intrinsic Valuation (FCFE DCF) — Scenarios & Sensitivity")
+    implied = vin.get("implied_growth")
+    hold = vin.get("hold_years", 0)
+    if implied is not None:
+        st.markdown(f"The price implies **{implied:+.1%}** starting growth (held {hold} years, fading to "
+                    f"{vin['terminal_growth']:.1%} by year {val.EXPLICIT_YEARS}) at a cost of equity of "
+                    f"{vin['cost_of_equity']:.1%}; the company's anchored growth is {vin['growth']:+.1%} "
+                    f"({', '.join(vin['growth_sources'])}).")
+    else:
+        reason = ("cost of equity does not exceed terminal growth" if vin.get("rate_error") else
+                  "no positive cash flow or known share count" if not vin.get("fcfe") or vin["fcfe"] <= 0
+                  or not vin.get("shares") else "price beyond the model range")
+        st.markdown(f"Reverse DCF unavailable: {reason}.")
+    erp_info = vin.get("erp_info") or {}
+    erp = vin.get("erp", val.EQUITY_RISK_PREMIUM)
+    source = erp_info.get("source", "configured (unavailable)")
+    detail = (f"{source} from {erp_info.get('n', 0)} stocks, region {erp_info.get('region', 'unknown')}, "
+              f"snapshot {erp_info.get('snapshot') or 'unknown'}" if source.startswith("market-implied") else source)
+    st.caption(f"Cost of equity {vin['cost_of_equity']:.1%} = risk-free {vin['risk_free']:.1%} "
+               f"[{vin['rate_source']}] + "
+               f"beta {vin.get('adjusted_beta', 1.0):.2f} × ERP {erp:.1%} ({detail}). "
+               f"Growth hold: {vin.get('hold_reason', 'ROIC unknown')}.")
     if not vin["fcfe"] or vin["fcfe"] <= 0 or not vin["shares"]:
         st.info((vin["note"] or "No positive free cash flow — a cash-flow valuation is not meaningful.")
                 + " Use the relative valuation and quality pillars instead.")
         return
     if not vin["reliable"] and vin["note"]:
         st.warning(vin["note"])
-    st.caption(f"Free cash flow is after interest, so it is discounted at the cost of equity "
-               f"(CAPM: {vin['currency']} risk-free {vin['risk_free']:.1%} [{vin['rate_source']}] + Blume-adjusted β×"
-               f"{val.EQUITY_RISK_PREMIUM:.0%} ERP) and debt is not subtracted again. "
+    st.caption(f"Free cash flow is after interest, so debt is not subtracted again. "
                f"Base cash flow: {vin['fcf_source']} (the Value score's FCF yield uses a different basis — provider TTM "
                f"FCF minus the latest SBC; see docs/FINANCIAL_DATA_DICTIONARY.md). Starting growth anchored on: "
-               f"{', '.join(vin['growth_sources'])}; it fades to the terminal rate over {val.EXPLICIT_YEARS} years.")
+               f"{', '.join(vin['growth_sources'])}; it fades to the terminal rate by year {val.EXPLICIT_YEARS}.")
     st.info("**Sensitivity sandbox** — changing these inputs recomputes the scenarios below ONLY. The Decision "
             "Summary, scanner, alerts, watchlist and AI brief keep using the system defaults shown in the inputs' "
             "starting values.")
@@ -358,7 +379,7 @@ def render_valuation_section(*, meta, price, vin, relval, companies=None):
     if r <= tg:
         st.warning("Cost of equity must exceed terminal growth.")
         return
-    scen = val.dcf_scenarios(vin["fcfe"], vin["shares"], g, r, tg)
+    scen = val.dcf_scenarios(vin["fcfe"], vin["shares"], g, r, tg, hold_years=hold)
     cols = st.columns(3)
     for col, key, color in zip(cols, ("bear", "base", "bull"), ("#e74c3c", "#3498db", "#2ecc71")):
         s = scen[key]
@@ -370,13 +391,13 @@ def render_valuation_section(*, meta, price, vin, relval, companies=None):
             <div style='color:{color}; font-weight:700;'>{mos:+.0%} vs price · {val.valuation_verdict(mos)}</div></div>""",
                      unsafe_allow_html=True)
     _render_model_risk(vin, scen, price)
-    implied = val.reverse_dcf_growth(price, vin["fcfe"], vin["shares"], r, tg)
+    implied = val.reverse_dcf_growth(price, vin["fcfe"], vin["shares"], r, tg, hold_years=hold)
     if implied is not None:
         st.markdown(f"**Reverse DCF:** at €{price:,.2f} the market prices in **{implied:+.1%}** starting growth "
                     f"(your base case {g:+.1%}). Buying only makes sense if you believe growth beats that.")
     growths = [g - 0.06, g - 0.03, g, g + 0.03, g + 0.06]
     rates = [x for x in (r - 0.02, r - 0.01, r, r + 0.01, r + 0.02) if x > tg]
-    table = val.sensitivity_table(vin["fcfe"], vin["shares"], growths, rates, tg)
+    table = val.sensitivity_table(vin["fcfe"], vin["shares"], growths, rates, tg, hold_years=hold)
     st.markdown("**Sensitivity — value per share (rows: starting growth, columns: cost of equity)**")
     st.dataframe(_style_sensitivity(table, price), width="stretch")
     st.caption(f"Green = value above the €{price:,.2f} price (darker: at least the {val.REQUIRED_MARGIN_OF_SAFETY:.0%} "

@@ -124,6 +124,7 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
     # Same rows, order, index and dtypes as the old `frame[frame.ticker == t]`, and the same sorts are applied after;
     # a ticker without rows still gets the full frame (financial helpers then filter it as before).
     _px_by, _fcf_by, _ann_by, _q_by = (_by_ticker(f) for f in (_prices_df, _hist_fcf, _annual_fin, _quarterly_fin))
+    _est_by = _by_ticker(_estimates)
 
     # Build lookups by ticker (QoQ — consecutive quarter growth). These used to read the YoY columns while the label,
     # presets and docstring promised QoQ (audit R3-E). QoQ is seasonal: read it with the fiscal calendar in mind.
@@ -194,7 +195,8 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
             analyst_target=float(row.get('target_mean_price') or 0)
         )
         _vin = valuation_inputs(row, float(cur_p), _t_fcf, ticker, _macro or {}, _t_ann, prices=ticker_prices,
-                                sec_annual_history=_sec_by.get(ticker))
+                                sec_annual_history=_sec_by.get(ticker),
+                                estimates=_est_by[ticker].iloc[0] if ticker in _est_by else None)
         _dec = decide(
             price=float(cur_p), vin=_vin, stop_loss=_tm["stop_loss"], meta=row,
             scores={"quality": quality_raw, "value": value_score, "flags": _sc["flags"], "coverage": _cov,

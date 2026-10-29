@@ -157,8 +157,10 @@ def build(ctx, deep_ticker):
     tp1 = tm["tp1"]
     tp2 = max(target_p, tm["tp2"]) if target_p > 0 else tm["tp2"]
 
+    _estimate_rows = _fe[_fe["ticker"] == deep_ticker] if _fe is not None and not _fe.empty and "ticker" in _fe else None
     vin = valuation_inputs(meta, cur_p, ctx["hist_fcf_full"], deep_ticker, ctx["macro"], annual_fin, prices=_df_levels,
-                           sec_annual_history=ctx.get("sec_annual_history"))
+                           sec_annual_history=ctx.get("sec_annual_history"),
+                           estimates=_estimate_rows.iloc[0] if _estimate_rows is not None and not _estimate_rows.empty else None)
     relval = relative_valuation(companies_full, deep_ticker)
     next_er = None
     _er = earnings_cal[earnings_cal["ticker"] == deep_ticker] if not earnings_cal.empty else earnings_cal

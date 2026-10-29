@@ -30,7 +30,7 @@ def test_valuation_inputs_flags_a_price_beyond_the_model():
     out = run(400.)                         # the price implies ~51 % starting growth, above the 30 % limit
     assert out["reliable"] is False and out["beyond_model"] is True
     assert "beyond the model" in out["note"]
-    ok = run(100.)
+    ok = run(80.)                           # implied ~8 % vs the 0 % anchor: inside the market_growth_gap
     assert ok["reliable"] is True and ok["beyond_model"] is False
 
 

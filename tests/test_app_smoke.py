@@ -481,3 +481,18 @@ def test_the_start_up_card_is_removed_when_start_up_fails(warehouse, monkeypatch
         assert at.exception and "disk gone" in at.exception[0].value
     else:
         assert any("LOCAL_DEV_MODE" in e.value for e in at.error)
+
+
+@pytest.mark.smoke
+def test_stock_valuation_leads_with_reverse_dcf_and_erp_source(warehouse):
+    at = _app("🔬 Stock Analysis")
+    at.session_state["deep_ticker_selector"] = "AAPL"
+    at.session_state["sa_group"] = "Business & value"
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    lines = [m.value for m in at.markdown]
+    market_line = next(i for i, line in enumerate(lines) if "The price implies" in line or "Reverse DCF unavailable:" in line)
+    scenario_line = next((i for i, line in enumerate(lines) if "bear · g" in line), len(lines))
+    assert market_line < scenario_line
+    assert any("Cost of equity" in c.value and "ERP" in c.value
+               and ("configured (" in c.value or "market-implied" in c.value) for c in at.caption)

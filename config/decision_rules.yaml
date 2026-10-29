@@ -53,8 +53,16 @@ liquidity:
   max_exit_days: 5
 
 valuation:
+  forward_growth_min_analysts: 3
+  forward_growth_max_age_days: 45
   # DCF verdicts are very sensitive to these two numbers — change them deliberately.
-  equity_risk_premium: 0.05   # cost of equity = 10Y yield + Blume beta x ERP
+  equity_risk_premium: 0.05   # fallback when the market premium cannot be estimated
+  erp_mode: implied
+  implied_erp_bounds: [0.03, 0.06]
+  implied_erp_min_stocks: 30
+  hold_5y_roic_spread: 0.05
+  hold_3y_roic_spread: 0.02
+  market_growth_gap: 0.10      # implied growth this far above the anchor: the DCF cannot refute the price (no AVOID)
   required_margin_of_safety: 0.25   # BUY needs base value >= price x 1.25; AVOID needs price > bull case
   horizon_years: 4             # holding horizon for the annualised return shown with the Decision
   scenario_probabilities: {bear: 0.25, base: 0.50, bull: 0.25}   # probability-weighted value (judgement, edit)

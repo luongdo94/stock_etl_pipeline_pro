@@ -29,7 +29,7 @@ from core import market_regime as mr
 from etl.utils import clean_upside_pct
 from services.db import DB_PATH, MACRO_SERIES, data_version, load_snapshot, track_record_ok
 from services.market_data import stored_macro
-from services.screener import get_master_screener_data
+from services.screener import get_master_screener_data, get_snapshot_erps
 from ui import header, sidebar
 from ui.loading import Boot
 from ui.styles import inject_global_css
@@ -87,13 +87,14 @@ if prices_full.empty:
 # the market inputs STORED in this snapshot: no request to a provider on open, the same on every run of the snapshot
 with boot.phase(2):
     macro = stored_macro(_loaded_version) or {}
+    macro["implied_erp"] = get_snapshot_erps(companies_full, prices_full, hist_fcf_full, annual_fin, macro, sec_annual_history, forward_estimates_full)
     # Same live 10Y yield as the Decision Summary → the screener's Decision column and the panel agree
     _track_ok = track_record_ok(prices_full, rows_key=len(prices_full))
     m_df = get_master_screener_data(companies_full, prices_full, quarterly_fin, annual_fin, hist_fcf_full,
                                     risk_free_pct=macro.get("US10Y", {}).get("val"),
                                     hist_fcf_rows=len(hist_fcf_full), _estimates=forward_estimates_full,
                                     estimates_rows=len(forward_estimates_full), track_record_ok=_track_ok,
-                                    _earnings_cal=earnings_cal, _sec_annual_history=sec_annual_history)
+                                    _earnings_cal=earnings_cal, _sec_annual_history=sec_annual_history, macro=macro)
 boot.note(2, f"{len(m_df):,} stocks")
 with boot.phase(3):
 

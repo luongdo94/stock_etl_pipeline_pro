@@ -180,6 +180,9 @@ def build_snapshot(db_path: str = DB_PATH, track_db_path: str = TRACK_DB_PATH) -
         logger.warning("Track Record evidence not computable: %s", e)
         track_ok = False
     earnings_cal = frames[5] if len(frames) > 5 else None
+    from core.valuation import snapshot_implied_erps
+    macro["implied_erp"] = snapshot_implied_erps(companies, prices, hist_fcf, annual, macro,
+                                                  frames[14] if len(frames) > 14 else None, estimates)
     table = build_screener_table(companies, prices, quarterly, annual, hist_fcf, macro, estimates,
                                  track_record_ok=track_ok, _earnings_cal=earnings_cal,
                                  _sec_annual_history=frames[14] if len(frames) > 14 else None)

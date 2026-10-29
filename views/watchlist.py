@@ -65,12 +65,15 @@ def render(ctx):
         # ── Sell-discipline inbox: plan levels hit, value reached, earnings ahead ──
         _latest = latest_snapshot(prices_full)
         _iv = {}
+        _estimates = ctx.get("forward_estimates_full")
         for _t in wl_df["Ticker"].dropna().unique():
             _row = companies_full[companies_full["ticker"] == _t]
             if not _row.empty and _t in _latest.index:
+                _est = _estimates[_estimates["ticker"] == _t] if _estimates is not None and not _estimates.empty and "ticker" in _estimates else None
                 _v = valuation_inputs(_row.iloc[0], float(_latest.at[_t, "price_close"]),
                                       hist_fcf_full, _t, macro, annual_fin, prices=prices_full,
-                                      sec_annual_history=ctx.get("sec_annual_history"))
+                                      sec_annual_history=ctx.get("sec_annual_history"),
+                                      estimates=_est.iloc[0] if _est is not None and not _est.empty else None)
                 _iv[_t] = _v["base"] if _v["reliable"] else None   # only a trustworthy value can trigger
         render_alert_inbox(watchlist_triggers(wl_df, _latest, _iv)
                            + earnings_soon(earnings_cal, open_idea_tickers(wl_df)))

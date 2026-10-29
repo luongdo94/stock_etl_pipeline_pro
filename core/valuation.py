@@ -131,6 +131,65 @@ def cost_of_equity(beta=None, risk_free: float = RISK_FREE, erp: Optional[float]
     return risk_free + b * erp
 
 
+
+def erp_region(currency):
+    """Group currencies by the monetary regime used for discounting."""
+    c = major_currency(currency)
+    return "USD/HKD" if c in ("USD", "HKD") else ("Europe" if c in ("EUR", "GBP", "CHF", "SEK", "DKK", "NOK") else "other")
+
+
+def implied_erp(rows, fallback, bounds=None, min_stocks=None, region="pooled"):
+    """Find the ERP equating aggregate equity value with aggregate market capitalisation."""
+    cfg = _valuation_config()
+    bounds = bounds or cfg.get("implied_erp_bounds", [0.03, 0.06])
+    minimum = int(min_stocks if min_stocks is not None else cfg.get("implied_erp_min_stocks", 30))
+    lo, hi = map(float, bounds)
+    valid = []
+    for row in rows:
+        price, shares, fcfe, growth, beta, rf, tg, hold = row
+        values = [_finite(x) for x in (price, shares, fcfe, growth, rf, tg, hold)]
+        if (any(x is None for x in values) or price <= 0 or shares <= 0 or fcfe <= 0
+                or cost_of_equity(beta, rf, lo) <= tg):
+            continue
+        valid.append((price, shares, fcfe, growth, beta, rf, tg, int(hold)))
+    result = {"erp": fallback, "n": len(valid), "region": region, "source": "configured (too few stocks)"}
+    if len(valid) < minimum:
+        return result
+    def difference(erp):
+        return sum(dcf_equity_value(fcfe, growth, cost_of_equity(beta, rf, erp), tg, hold_years=hold)
+                   - price * shares for price, shares, fcfe, growth, beta, rf, tg, hold in valid)
+    if difference(lo) <= 0:
+        premium = lo
+    elif difference(hi) >= 0:
+        premium = hi
+    else:
+        for _ in range(60):
+            mid = (lo + hi) / 2
+            if difference(mid) > 0:
+                lo = mid
+            else:
+                hi = mid
+        premium = (lo + hi) / 2
+    return {"erp": premium, "n": len(valid), "region": region, "source": "market-implied"}
+
+
+def growth_hold(annual_fin, ticker, coe):
+    """Use the scoring engine's measured ROIC, not its return-on-capital proxy."""
+    if annual_fin is None or annual_fin.empty or not {"ticker", "year", "total_equity"} <= set(annual_fin.columns):
+        return 0, "ROIC unknown"
+    from core.scoring import _history_features
+    rows = annual_fin[annual_fin["ticker"] == ticker]
+    if rows.empty:
+        return 0, "ROIC unknown"
+    history = _history_features(rows)
+    roic = _finite(history.loc[ticker, "roic_median"])
+    if roic is None:
+        return 0, "ROIC unknown"
+    spread = roic / 100 - coe
+    cfg = _valuation_config()
+    hold = 5 if spread >= float(cfg.get("hold_5y_roic_spread", 0.05)) else (3 if spread >= float(cfg.get("hold_3y_roic_spread", 0.02)) else 0)
+    return hold, f"ROIC {roic:.1f}% less cost of equity {coe:.1%}"
+
 def fcf_cagr(values: Iterable) -> Optional[float]:
     """CAGR between the first and last POSITIVE free cash flow of an annual series (oldest → newest)."""
     v = [x for x in (_finite(x) for x in values) if x is not None]
@@ -150,23 +209,54 @@ def cagr_by_year(years, values) -> Optional[float]:
     return (pairs[-1][1] / pairs[0][1]) ** (1 / span) - 1 if span > 0 else None
 
 
+def forward_revenue_cagr(estimates, min_analysts=None, max_age_days=None):
+    """A current, sufficiently supported two-year consensus; missing evidence is never zero."""
+    if estimates is None:
+        return None, "consensus unavailable: missing estimates"
+    minimum = _configured("forward_growth_min_analysts", 3) if min_analysts is None else min_analysts
+    max_age = _configured("forward_growth_max_age_days", 45) if max_age_days is None else max_age_days
+    n = _finite(estimates.get("n_analysts_cur_y"))
+    if n is None or n < minimum:
+        return None, f"consensus unavailable: fewer than {minimum:g} analysts or analyst count missing"
+    stamp = pd.to_datetime(estimates.get("_extracted_at"), errors="coerce", utc=True)
+    if pd.isna(stamp):
+        return None, "consensus unavailable: estimate date missing or invalid"
+    age = (date.today() - stamp.date()).days
+    if age < 0 or age > max_age:
+        return None, "consensus unavailable: stale or future estimate date"
+    current = _finite(estimates.get("rev_growth_cur_y"))
+    next_year = _finite(estimates.get("rev_growth_next_y"))
+    if current is None or next_year is None:
+        return None, "consensus unavailable: missing revenue growth"
+    if current < -1 or next_year < -1:
+        return None, "consensus unavailable: invalid revenue growth"
+    growth = float(np.sqrt((1 + current) * (1 + next_year)) - 1)
+    if not np.isfinite(growth):
+        return None, "consensus unavailable: invalid revenue growth"
+    return growth, f"consensus revenue CAGR 2y ({n:g} analysts, as of {stamp.date().isoformat()})"
+
+
 def anchor_growth(revenue_growth=None, earnings_growth=None, hist_fcf_cagr=None,
-                  default: float = 0.05, revenue_cagr=None) -> tuple:
+                  default: float = 0.05, revenue_cagr=None, forward_growth=None,
+                  forward_label="consensus revenue CAGR 2y") -> tuple:
     """
     Starting growth for the DCF, built the way an analyst would:
-      1. Anchor on REVENUE: multi-year revenue CAGR from annual statements (preferred), else
-         Yahoo's revenueGrowth (a single-quarter YoY — noisy: +44% for XOM on an oil spike).
+      1. Anchor on the average of historical revenue CAGR and forward consensus when both are known;
+         use either alone, or finally the noisy latest-quarter YoY when neither is known.
       2. Earnings growth and FCF CAGR (each clipped to ±30%) may only pull the median of all
          inputs within ±5pp of that revenue anchor — margins cannot outgrow sales for 10 years.
       3. Clip to [-5%, 20%].
     Returns (growth, list of sources used).
     """
-    rev_anchor = _finite(revenue_cagr)
-    rev_label = "3Y revenue CAGR"
+    historical, forward = _finite(revenue_cagr), _finite(forward_growth)
+    rev_anchor = ((historical + forward) / 2 if historical is not None and forward is not None
+                  else historical if historical is not None else forward)
+    rev_labels = (["3Y revenue CAGR"] if historical is not None else []) + ([forward_label] if forward is not None else [])
     if rev_anchor is None:
-        rev_anchor, rev_label = _finite(revenue_growth), "revenue growth (latest quarter YoY)"
+        rev_anchor = _finite(revenue_growth)
+        rev_labels = ["revenue growth (latest quarter YoY)"] if rev_anchor is not None else []
     eg, fc = _finite(earnings_growth), _finite(hist_fcf_cagr)
-    named = {rev_label: rev_anchor,
+    named = {"revenue anchor": rev_anchor,
              "earnings growth": float(np.clip(eg, -0.30, 0.30)) if eg is not None else None,
              "FCF CAGR": float(np.clip(fc, -0.30, 0.30)) if fc is not None else None}
     used = {k: v for k, v in named.items() if v is not None}
@@ -175,7 +265,7 @@ def anchor_growth(revenue_growth=None, earnings_growth=None, hist_fcf_cagr=None,
     g = float(np.median(list(used.values())))
     if rev_anchor is not None:
         g = float(np.clip(g, rev_anchor - GROWTH_BAND, rev_anchor + GROWTH_BAND))
-    return float(np.clip(g, GROWTH_FLOOR, GROWTH_CAP)), list(used)
+    return float(np.clip(g, GROWTH_FLOOR, GROWTH_CAP)), rev_labels + [k for k in used if k != "revenue anchor"]
 
 
 def cycle_basis(meta, ticker, history, annual_fin, as_of=None):
@@ -525,34 +615,31 @@ def sbc_available(hist_fcf: pd.DataFrame, ticker: str, years: int = BASIS_YEARS)
 
 
 def dcf_equity_value(fcfe: float, growth: float, discount_rate: float,
-                     terminal_growth: float = TERMINAL_GROWTH, years: int = EXPLICIT_YEARS) -> float:
-    """Present value of FCFE: explicit years with growth fading to terminal, plus Gordon terminal value."""
+                     terminal_growth: float = TERMINAL_GROWTH, years: int = EXPLICIT_YEARS,
+                     hold_years: int = 0) -> float:
+    """Discount the same cash flows used by the reverse model and scenario IRR."""
     if discount_rate <= terminal_growth:
         raise ValueError("discount rate must exceed terminal growth")
-    pv, cf = 0.0, float(fcfe)
-    for t in range(1, years + 1):
-        g_t = growth + (terminal_growth - growth) * (t - 1) / max(years - 1, 1)
-        cf *= (1 + g_t)
-        pv += cf / (1 + discount_rate) ** t
-    terminal = cf * (1 + terminal_growth) / (discount_rate - terminal_growth)
-    return pv + terminal / (1 + discount_rate) ** years
+    flows, terminal = _scenario_flows(fcfe, growth, discount_rate, terminal_growth, years, hold_years)
+    return (sum(cf / (1 + discount_rate) ** t for t, cf in enumerate(flows, 1))
+            + terminal / (1 + discount_rate) ** years)
 
 
 def dcf_per_share(fcfe, shares, growth, discount_rate, terminal_growth=TERMINAL_GROWTH,
-                  years=EXPLICIT_YEARS) -> Optional[float]:
+                  years=EXPLICIT_YEARS, hold_years=0) -> Optional[float]:
     fcfe, shares = _finite(fcfe), _finite(shares)
     if not fcfe or fcfe <= 0 or not shares or shares <= 0:
         return None
-    return dcf_equity_value(fcfe, growth, discount_rate, terminal_growth, years) / shares
+    return dcf_equity_value(fcfe, growth, discount_rate, terminal_growth, years, hold_years) / shares
 
 
 def reverse_dcf_growth(price, fcfe, shares, discount_rate, terminal_growth=TERMINAL_GROWTH,
-                       years=EXPLICIT_YEARS, lo=-0.5, hi=1.0) -> Optional[float]:
+                       years=EXPLICIT_YEARS, lo=-0.5, hi=1.0, hold_years=0) -> Optional[float]:
     """Starting growth rate the current price implies (bisection). None if outside [lo, hi]."""
     price = _finite(price)
-    if not price or price <= 0 or dcf_per_share(fcfe, shares, 0.0, discount_rate, terminal_growth, years) is None:
+    if not price or price <= 0 or dcf_per_share(fcfe, shares, 0.0, discount_rate, terminal_growth, years, hold_years) is None:
         return None
-    f = lambda g: dcf_per_share(fcfe, shares, g, discount_rate, terminal_growth, years) - price
+    f = lambda g: dcf_per_share(fcfe, shares, g, discount_rate, terminal_growth, years, hold_years) - price
     if f(lo) > 0 or f(hi) < 0:
         return None
     for _ in range(80):
@@ -569,30 +656,33 @@ class Scenario:
     value_per_share: Optional[float]
 
 
-def terminal_value_share(fcfe, growth, discount_rate, terminal_growth=TERMINAL_GROWTH, years=EXPLICIT_YEARS):
-    """Share of the DCF value that comes from the terminal value (0-1); None when not computable."""
+def terminal_value_share(fcfe, growth, discount_rate, terminal_growth=TERMINAL_GROWTH,
+                         years=EXPLICIT_YEARS, hold_years=0):
+    """Share of value attributable to the terminal value, on the same flow path as the DCF."""
     fcfe = _finite(fcfe)
     if not fcfe or fcfe <= 0 or discount_rate <= terminal_growth:
         return None
-    total = dcf_equity_value(fcfe, growth, discount_rate, terminal_growth, years)
-    pv, cf = 0.0, float(fcfe)
-    for t in range(1, years + 1):
-        cf *= 1 + growth + (terminal_growth - growth) * (t - 1) / max(years - 1, 1)
-        pv += cf / (1 + discount_rate) ** t
-    return 1 - pv / total if total > 0 else None
+    flows, terminal = _scenario_flows(fcfe, growth, discount_rate, terminal_growth, years, hold_years)
+    pv = sum(cf / (1 + discount_rate) ** t for t, cf in enumerate(flows, 1))
+    terminal_pv = terminal / (1 + discount_rate) ** years
+    total = pv + terminal_pv
+    return terminal_pv / total if total > 0 else None
 
 
-def _scenario_flows(fcfe, growth, r, tg, years=EXPLICIT_YEARS):
+def _scenario_flows(fcfe, growth, r, tg, years=EXPLICIT_YEARS, hold_years=0):
     """Per-period cash flows of the DCF (t = 1..years) and the terminal value at `years` (undiscounted)."""
     cf, flows = float(fcfe), []
+    hold = min(max(int(hold_years), 1), max(years - 1, 1))
     for t in range(1, years + 1):
-        cf *= 1 + growth + (tg - growth) * (t - 1) / max(years - 1, 1)
+        progress = max(t - hold, 0) / max(years - hold, 1)
+        g_t = growth + (tg - growth) * progress
+        cf *= 1 + g_t
         flows.append(cf)
     return flows, flows[-1] * (1 + tg) / (r - tg)
 
 
 def scenario_irr(fcfe, shares, growth, discount_rate, terminal_growth, price, horizon: int = 4,
-                 years: int = EXPLICIT_YEARS) -> Optional[float]:
+                 years: int = EXPLICIT_YEARS, hold_years: int = 0) -> Optional[float]:
     """
     Holding-period IRR of buying at `price` if the scenario materialises (audit A06): per-share cash flows to equity in
     years 1..H, plus the model's own value of everything after year H, received at H. Assumes cash flow to equity is
@@ -602,7 +692,7 @@ def scenario_irr(fcfe, shares, growth, discount_rate, terminal_growth, price, ho
     fcfe, shares, price = _finite(fcfe), _finite(shares), _finite(price)
     if not fcfe or fcfe <= 0 or not shares or shares <= 0 or not price or price <= 0 or discount_rate <= terminal_growth:
         return None
-    flows, tv = _scenario_flows(fcfe, growth, discount_rate, terminal_growth, years)
+    flows, tv = _scenario_flows(fcfe, growth, discount_rate, terminal_growth, years, hold_years)
     H = int(min(max(horizon, 1), years))
     per_share = [f / shares for f in flows]
     exit_value = (sum(per_share[t - 1] / (1 + discount_rate) ** (t - H) for t in range(H + 1, years + 1))
@@ -642,23 +732,26 @@ def expected_value(scen: dict) -> Optional[float]:
     return sum(p[k] * vals[k] for k in vals)
 
 
-def dcf_scenarios(fcfe, shares, growth, discount_rate, terminal_growth=TERMINAL_GROWTH) -> dict:
+def dcf_scenarios(fcfe, shares, growth, discount_rate, terminal_growth=TERMINAL_GROWTH, hold_years=0) -> dict:
     """Bear / base / bull: growth ∓5pp and discount rate ±1pp."""
     out = {}
     for name, dg, dr in (("bear", -0.05, +0.01), ("base", 0.0, 0.0), ("bull", +0.05, -0.01)):
-        r = max(discount_rate + dr, terminal_growth + 0.01)
+        if discount_rate <= terminal_growth:
+            raise ValueError("discount rate must exceed terminal growth")
+        floor = terminal_growth + min(0.01, (discount_rate - terminal_growth) / 2)
+        r = discount_rate if name == "base" else max(discount_rate + dr, floor)
         g = float(np.clip(growth + dg, GROWTH_FLOOR - 0.05, GROWTH_CAP + 0.05))
-        out[name] = Scenario(name, g, r, dcf_per_share(fcfe, shares, g, r, terminal_growth))
+        out[name] = Scenario(name, g, r, dcf_per_share(fcfe, shares, g, r, terminal_growth, hold_years=hold_years))
     return out
 
 
-def sensitivity_table(fcfe, shares, growths, rates, terminal_growth=TERMINAL_GROWTH) -> pd.DataFrame:
+def sensitivity_table(fcfe, shares, growths, rates, terminal_growth=TERMINAL_GROWTH, hold_years=0) -> pd.DataFrame:
     """Value per share for each (growth row × discount-rate column)."""
     data = {}
     for r in rates:
         col = []
         for g in growths:
-            col.append(dcf_per_share(fcfe, shares, g, r, terminal_growth) if r > terminal_growth else None)
+            col.append(dcf_per_share(fcfe, shares, g, r, terminal_growth, hold_years=hold_years) if r > terminal_growth else None)
         data[f"{r:.1%}"] = col
     return pd.DataFrame(data, index=[f"{g:+.0%}" for g in growths])
 
@@ -904,6 +997,73 @@ def _financial_inputs(meta, price: float, annual_fin, ticker: str, coe: float, t
     }
 
 
+
+def snapshot_implied_erps(companies, prices, hist_fcf, annual_fin, macro=None, sec_annual_history=None, estimates=None):
+    """Calibrate once on snapshot frames; historical callers must supply historical frames explicitly."""
+    cfg = _valuation_config()
+    fallback = _configured("equity_risk_premium", 0.05)
+    regions = ("USD/HKD", "Europe", "other")
+    if cfg.get("erp_mode", "implied") != "implied":
+        return {r: {"erp": fallback, "n": 0, "region": r, "source": "configured (erp_mode)"} for r in regions}
+    def partition(df):
+        if df is None or df.empty or "ticker" not in df.columns:
+            return {}
+        return {t: group for t, group in df.groupby("ticker", sort=False)}
+    px, fcf, ann, sec, est = (partition(df) for df in (prices, hist_fcf, annual_fin, sec_annual_history, estimates))
+    groups = {r: [] for r in regions}
+    evidence = {r: [] for r in regions}
+    dates = pd.to_datetime(prices["date"], errors="coerce") if prices is not None and not prices.empty else pd.Series(dtype="datetime64[ns]")
+    snapshot_date = dates.max().date().isoformat() if dates.notna().any() else None
+    for _, meta in companies.iterrows():
+        ticker = meta.get("ticker")
+        if str(ticker).startswith("^") or str(meta.get("sector") or "").strip().lower() in ("benchmark", "volatility", "index"):
+            continue
+        p, f = px.get(ticker), fcf.get(ticker)
+        if p is None or f is None or not basis_complete(basis_rows(f, ticker)) or uses_book_model(meta, f, ticker):
+            continue
+        sector = f"{meta.get('sector') or ''} {meta.get('industry') or ''}".lower()
+        if any(k in sector for k in REIT_KEYWORDS):
+            continue
+        quote = p.sort_values("date").iloc[-1]
+        price = _finite(quote.get("price_close"))
+        if price is None or price <= 0:
+            continue
+        inputs = valuation_inputs(meta, price, f, ticker, {k: val for k, val in (macro or {}).items() if k != "implied_erp"},
+                                  ann.get(ticker), prices=p, sec_annual_history=sec.get(ticker),
+                                  estimates=est[ticker].iloc[0] if ticker in est else None)
+        if inputs.get("fcfe") is None or inputs["fcfe"] <= 0 or not inputs.get("shares"):
+            continue
+        region = erp_region(meta.get("currency"))
+        groups[region].append((price, inputs["shares"], inputs["fcfe"], inputs["growth"], meta.get("beta"),
+                               inputs["risk_free"], inputs["terminal_growth"], inputs["hold_years"]))
+        evidence[region].append((ticker, ann.get(ticker)))
+    # The hold depends on the cost of equity, so update it against the solved ERP until stable.
+    result = {}
+    for _ in range(12):
+        pooled = implied_erp([row for rows in groups.values() for row in rows], fallback)
+        result = {}
+        for region, rows in groups.items():
+            entry = implied_erp(rows, fallback, region=region)
+            if entry["source"] != "market-implied" and pooled["source"] == "market-implied":
+                entry = {**pooled, "region": region, "source": "market-implied (pooled; too few regional stocks)"}
+            result[region] = {**entry, "snapshot": snapshot_date}
+        changed = False
+        for region in regions:
+            for i, (ticker, annual) in enumerate(evidence[region]):
+                row = groups[region][i]
+                hold, _ = growth_hold(annual, ticker, cost_of_equity(row[4], row[5], result[region]["erp"]))
+                if hold != row[7]:
+                    groups[region][i] = (*row[:7], hold)
+                    changed = True
+        if not changed:
+            break
+    else:
+        # A discrete hold threshold can make the fixed point oscillate; do not publish a mismatched ERP.
+        result = {r: {"erp": fallback, "n": len(groups[r]), "region": r,
+                      "source": "configured (calibration did not converge)", "snapshot": snapshot_date}
+                  for r in regions}
+    return result
+
 def latest_statement_fcf(hist_fcf: pd.DataFrame, ticker: str) -> Optional[float]:
     """Most recent annual cash-flow-statement FCF (EUR) for the ticker, if any."""
     if hist_fcf is None or hist_fcf.empty or "free_cash_flow" not in hist_fcf.columns:
@@ -992,12 +1152,12 @@ def holding_horizon() -> int:
         return 4
 
 
-def _irrs(scen, fcfe, shares, price, tg) -> dict:
+def _irrs(scen, fcfe, shares, price, tg, hold_years=0) -> dict:
     """Bear / base / bull IRR (fractions) and their probability-weighted average."""
     if not scen:
         return {}
     H = holding_horizon()
-    out = {k: scenario_irr(fcfe, shares, s.growth, s.discount_rate, tg, price, H) for k, s in scen.items()}
+    out = {k: scenario_irr(fcfe, shares, s.growth, s.discount_rate, tg, price, H, hold_years=hold_years) for k, s in scen.items()}
     p = scenario_probabilities()
     out["expected"] = (sum(p[k] * out[k] for k in ("bear", "base", "bull"))
                        if all(out.get(k) is not None for k in ("bear", "base", "bull")) else None)
@@ -1007,35 +1167,46 @@ def _irrs(scen, fcfe, shares, price, tg) -> dict:
 
 def valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, macro: dict,
                      annual_fin: Optional[pd.DataFrame] = None, prices: Optional[pd.DataFrame] = None,
-                     sec_annual_history: Optional[pd.DataFrame] = None, as_of=None) -> dict:
+                     sec_annual_history: Optional[pd.DataFrame] = None, as_of=None, estimates=None) -> dict:
     """Valuation of one issuer. Within this call the issuer's basis rows and deduction status are prepared once and
-    reused (PERF-05: they were rebuilt ~7× per issuer); the memo lives only for the call, so nothing can go stale."""
+    reused (PERF-05: they were rebuilt ~7× per issuer); the memo lives only for the call, so nothing can go stale.
+    Historical as_of valuations ignore current forward estimates to prevent look-ahead."""
     if _MEMO.get() is not None:
-        return _valuation_inputs(meta, price, hist_fcf, ticker, macro, annual_fin, prices, sec_annual_history, as_of)
+        return _valuation_inputs(meta, price, hist_fcf, ticker, macro, annual_fin, prices, sec_annual_history, as_of, estimates)
     token = _MEMO.set({})
     try:
-        return _valuation_inputs(meta, price, hist_fcf, ticker, macro, annual_fin, prices, sec_annual_history, as_of)
+        return _valuation_inputs(meta, price, hist_fcf, ticker, macro, annual_fin, prices, sec_annual_history, as_of, estimates)
     finally:
         _MEMO.reset(token)
 
 
 def _valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, macro: dict,
                       annual_fin: Optional[pd.DataFrame] = None, prices: Optional[pd.DataFrame] = None,
-                      sec_annual_history: Optional[pd.DataFrame] = None, as_of=None) -> dict:
+                      sec_annual_history: Optional[pd.DataFrame] = None, as_of=None, estimates=None) -> dict:
     """
     Company-anchored intrinsic value inputs + scenarios + reverse model (EUR, per share).
 
     Industrials and tech: FCFE DCF. Banks, insurers and other financials: residual income on book value (ROE fading to the cost of equity).
     The risk-free rate and terminal growth come from the currency the cash flows are earned in.
+    Historical as_of calls use the configured ERP and ignore current estimates to avoid look-ahead.
     """
     ass = currency_assumptions(meta.get("currency"), macro)
     rf, tg = ass["risk_free"], ass["terminal_growth"]
-    coe = cost_of_equity(meta.get("beta"), risk_free=rf)
+    region = erp_region(ass["currency"])
+    configured = _configured("equity_risk_premium", 0.05)
+    erp_info = ((macro or {}).get("implied_erp") or {}).get(region) if as_of is None and _valuation_config().get("erp_mode", "implied") == "implied" else None
+    erp_info = erp_info or {"erp": configured, "n": 0, "region": region, "source": "configured (historical as-of)" if as_of is not None else "configured (unavailable or disabled)"}
+    erp = _finite(erp_info.get("erp"))
+    erp = configured if erp is None else erp
+    beta = _finite(meta.get("beta"))
+    adjusted_beta = 1.0 if beta is None or beta <= 0 else float(np.clip(2 / 3 * beta + 1 / 3, 0.6, 2.0))
+    coe = cost_of_equity(meta.get("beta"), risk_free=rf, erp=erp)
+    erp_details = {"erp": erp, "erp_info": erp_info, "adjusted_beta": adjusted_beta}
     px = prices[prices["ticker"] == ticker].sort_values("date") if prices is not None and not prices.empty else pd.DataFrame()
     quote = px.iloc[-1] if not px.empty else {}
     listing = {"trading_fx_rate": _finite(quote.get("fx_rate")), "trading_currency": quote.get("currency")}
     if uses_book_model(meta, hist_fcf, ticker):
-        return {**_financial_inputs(meta, price, annual_fin, ticker, coe, tg, ass), **listing}
+        return {**_financial_inputs(meta, price, annual_fin, ticker, coe, tg, ass), **listing, **erp_details}
 
     # Cash-flow-statement FCF after stock-based compensation (EUR) first; Yahoo's levered FCF only as a fallback
     dctx = deduction_context(meta, ticker)               # accounting-standard rules + disclosed assumptions
@@ -1082,24 +1253,52 @@ def _valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, m
     else:
         hist_cagr = None
     rev_cagr = revenue_cagr(annual_fin, ticker)
+    from core.scoring import in_sector_group
+    cyclical = in_sector_group(meta.get("sector"), meta.get("industry"), "cyclical")
+    if cyclical:
+        forward, consensus_note = None, "consensus not used: cyclical"
+    elif as_of is not None:
+        forward, consensus_note = None, "consensus not used: historical as-of"
+    else:
+        forward, consensus_note = forward_revenue_cagr(estimates)
     growth, sources = anchor_growth(meta.get("revenue_growth"), meta.get("earnings_growth"),
-                                    hist_cagr, revenue_cagr=rev_cagr)
+                                    hist_cagr, revenue_cagr=rev_cagr, forward_growth=forward,
+                                    forward_label=consensus_note)
+    if cyclical:
+        sources.append(consensus_note)
     if cycle:
         sources.append(cycle["note"])
         fcf_source = cycle["note"] + "; financing deductions as in 3Y FCFE basis" + _deduction_evidence_text(
             fcfe_deduction_status(hist_fcf, ticker, ctx=dctx))
-    valuable = bool(fcfe and fcfe > 0 and shares)
-    scen = dcf_scenarios(fcfe, shares, growth, coe, tg) if valuable else {}
+    if growth < 0 and cyclical:
+        growth = 0.0
+        sources.append("cyclical: down-cycle growth not extrapolated; cash flow is "
+                       + ("cycle-normalised" if cycle else ("the 3-year median" if statement_fcf is not None
+                                                          else "provider FCF (3-year median unavailable)")))
+    hold_years, hold_reason = growth_hold(annual_fin, ticker, coe)
+    rate_error = coe <= tg
+    valuable = bool(fcfe and fcfe > 0 and shares and not rate_error)
+    scen = dcf_scenarios(fcfe, shares, growth, coe, tg, hold_years=hold_years) if valuable else {}
     base = scen["base"].value_per_share if scen else None
     bull = scen["bull"].value_per_share if scen else None
-    implied = reverse_dcf_growth(price, fcfe, shares, coe, tg) if valuable else None
+    implied = reverse_dcf_growth(price, fcfe, shares, coe, tg, hold_years=hold_years) if valuable else None
     reliable, note = dcf_reliability(None, price, base, bull, implied)       # sector test already done by uses_book_model
+    if rate_error:
+        reliable, note = False, "Cost of equity must exceed terminal growth; check the configured assumptions."
+    # The market can price growth far above the available company and consensus evidence, so the DCF cannot refute
+    # that price — HOLD with the review flag, never an AVOID from it.
+    gap_limit = _configured("market_growth_gap", 0.10)
+    market_gap = bool(reliable and implied is not None and implied - growth > gap_limit)
+    if market_gap:
+        reliable, note = False, (f"The price implies {implied:+.0%} starting growth, {implied - growth:.0%} above the "
+                                 f"company's anchored {growth:+.0%}: the market expects growth beyond the evidence the "
+                                 "model rests on, which the DCF cannot refute. Context only, not used for BUY/AVOID.")
     # Known but not positive cash flow to equity: the data is there, the DCF has nothing to discount (NO DCF ANCHOR,
     # not NOT ENOUGH DATA). The note states the figures so the reader sees why.
     no_anchor = bool(base is None and fcfe is not None and fcfe <= 0
                  and shares is not None and np.isfinite(shares) and shares > 0)        # NaN shares = missing (A1)
     # every later reliability check runs only while `reliable`, so this stays the note that is shown
-    beyond_model = base is not None and not reliable and beyond_model_range(price, bull, implied)
+    beyond_model = base is not None and not reliable and (market_gap or beyond_model_range(price, bull, implied))
     _sect = f"{meta.get('sector') or ''} {meta.get('industry') or ''}".lower()
     if reliable and any(k in _sect for k in REIT_KEYWORDS):
         # CFO − capex leaves out property ACQUISITIONS (investing, funded by new equity / debt), so a REIT's "FCFE" is
@@ -1108,9 +1307,9 @@ def _valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, m
         reliable, note = False, ("REIT: an FCFE DCF ignores property acquisitions funded by new equity and debt, so it "
                                  "overstates distributable cash — value shown as context only (an AFFO / NAV model is "
                                  "needed). Not used for BUY/AVOID.")
-    tv_share = terminal_value_share(fcfe, growth, coe, tg) if valuable else None
+    tv_share = terminal_value_share(fcfe, growth, coe, tg, hold_years=hold_years) if valuable else None
     growth_note = None
-    if valuable and rev_cagr is None:
+    if valuable and rev_cagr is None and forward is None:
         growth_note = ("Growth anchor is not a multi-year revenue CAGR (fewer than 3 annual statements or unverified "
                        "currency/FX) — it rests on single-quarter YoY figures; treat the base value as low-evidence.")
     if reliable and tv_share is not None and tv_share > MAX_TERMINAL_SHARE:
@@ -1155,10 +1354,10 @@ def _valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, m
     basis = basis_rows(hist_fcf, ticker)
     basis_year = _finite(basis["year"].iloc[-1]) if statement_fcf is not None and not basis.empty else None
     return {
-        **listing, "fcf_basis_year": int(basis_year) if basis_year is not None else None,
+        **listing, **erp_details, "hold_years": hold_years, "hold_reason": hold_reason, "fcf_basis_year": int(basis_year) if basis_year is not None else None,
         "model": "dcf", "fcfe": fcfe, "fcf_source": fcf_source, "shares": shares, "refinancing": refi,
-        "growth": growth, "growth_sources": sources, "reliable": reliable, "note": note,
-        "beyond_model": beyond_model, "no_anchor": no_anchor, "risk_free": rf, "cost_of_equity": coe, "terminal_growth": tg, "currency": ass["currency"],
+        "growth": growth, "growth_sources": sources, "consensus_note": consensus_note, "reliable": reliable, "note": note,
+        "beyond_model": beyond_model, "no_anchor": no_anchor, "rate_error": rate_error, "risk_free": rf, "cost_of_equity": coe, "terminal_growth": tg, "currency": ass["currency"],
         "rate_source": ass["source"], "scenarios": scen,
         "base": base,
         "bear": scen["bear"].value_per_share if scen else None,
@@ -1167,6 +1366,6 @@ def _valuation_inputs(meta, price: float, hist_fcf: pd.DataFrame, ticker: str, m
         "fcfe_adjustments": adj, "fcfe_deduction_status": {k: s["status"] for k, s in deduction_status.items()},
         "fcfe_deduction_sources": {k: s.get("source") for k, s in deduction_status.items()},
         "terminal_share": tv_share, "growth_note": growth_note,
-        "irr": _irrs(scen, fcfe, shares, price, tg),
+        "irr": _irrs(scen, fcfe, shares, price, tg, hold_years),
         "expected_value": expected_value(scen) if scen else None, "probabilities": scenario_probabilities(),
     }
