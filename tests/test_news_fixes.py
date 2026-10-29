@@ -154,13 +154,16 @@ def risk_page():
     import streamlit as st
     from types import SimpleNamespace as NS
     from views.stock_analysis.risk_hub import render
+    from views.stock_analysis import ai_review
     decision = NS(stance=st.session_state.get("test_stance", "HOLD / WATCH"), confidence="LOW", reasons=["r"],
                   conflicts=[], confidence_notes=[], warnings=[])
     dd = NS(r1=1, r2=2, s1=1, s2=2, stop_loss=1, w52_pos=50, ai_score=60, cur_p=10, ticker="T",
             meta={"company": "Company"}, meta_enriched={}, sm={"signal": "N/A"}, scores={"components": {}}, rsi=50, z_score=0,
             extra={"decision": decision})
-    render(dd, {"_dxy_pct": None, "_vix_val": None, "prices_full": pd.DataFrame({"ticker": ["T"], "date": ["2026-10-01"]}),
-                "earnings_surprise_full": pd.DataFrame(), "macro": {}, "regime": "NEUTRAL"})
+    ctx = {"_dxy_pct": None, "_vix_val": None, "prices_full": pd.DataFrame({"ticker": ["T"], "date": ["2026-10-01"]}),
+                "earnings_surprise_full": pd.DataFrame(), "macro": {}, "regime": "NEUTRAL"}
+    ai_review.render(dd, ctx)
+    render(dd, ctx)
 
 
 def test_risk_page_has_one_agent_button_and_no_cio_review(monkeypatch):
@@ -186,9 +189,9 @@ def test_risk_page_has_one_agent_button_and_no_cio_review(monkeypatch):
     assert [b.label for b in at.button] == ["Run agent review", "Load headlines and sentiment"]
     assert "CIO" not in " ".join(m.value for m in at.markdown)
     at.button(key="agent_review_btn_T").click().run()
-    assert asked == [(assistant.STOCK_REVIEW_QUESTION.format(ticker="T", language="English"), "toolbox", "T")]
+    assert asked == [(assistant.STRUCTURED_STOCK_REVIEW_QUESTION.format(ticker="T", language="English"), "toolbox", "T")]
     assert refreshed == [("T", None, True)]                                        # news refreshed, FinBERT not loaded
-    assert any("Agent answer." in m.value for m in at.markdown)
+    assert any("Agent answer." in m.value for m in at.text)
     assert any("disk full" in c.value for c in at.caption)                        # Yahoo fetched but not stored (R2)
 
 
@@ -198,7 +201,7 @@ def test_a_saved_agent_review_is_shown_only_for_its_day_decision_and_language(mo
     import datetime as dt
     from services import assistant
     from ui import assistant as ui_assistant
-    from views.stock_analysis import risk_hub
+    from views.stock_analysis import ai_review
     monkeypatch.setattr(assistant, "available", lambda: True)
     monkeypatch.setattr(assistant, "models", lambda: ["Cohere"])
     monkeypatch.setattr(ui_assistant, "_toolbox", lambda ctx: None)
@@ -207,15 +210,15 @@ def test_a_saved_agent_review_is_shown_only_for_its_day_decision_and_language(mo
                         "tools": [], "ungrounded": [], "rating_conflicts": [], "llm_calls": 1, "error": None})
     at = AppTest.from_function(risk_page).run()
     at.button(key="agent_review_btn_T").click().run()
-    assert any("Agent answer." in m.value for m in at.markdown)
+    assert any("Agent answer." in m.value for m in at.text)
     if change == "language":
         at.radio(key="agent_language").set_value("Vietnamese")
     elif change == "decision":
         at.session_state["test_stance"] = "AVOID"
     else:
-        monkeypatch.setattr(risk_hub, "date", type("D", (), {"today": staticmethod(lambda: dt.date(2099, 1, 1))}))
+        monkeypatch.setattr(ai_review, "date", type("D", (), {"today": staticmethod(lambda: dt.date(2099, 1, 1))}))
     at.run()
-    assert not any("Agent answer." in m.value for m in at.markdown)
+    assert not any("Agent answer." in m.value for m in at.text)
     assert any("run it again" in c.value for c in at.caption)
 
 

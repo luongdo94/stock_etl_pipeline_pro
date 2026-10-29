@@ -38,6 +38,63 @@ Decision, as a risk to monitor; and what would have to change for the stance to 
 Quote only the computed Decision: no independent rating, price target or order. N/A is unknown, never zero.
 Answer in {language}."""
 
+REVIEW_KEYS = ("decision_and_why", "strengths", "weaknesses", "news_and_filings", "what_would_change")
+STRUCTURED_STOCK_REVIEW_QUESTION = """Review {ticker}. Call get_decision, get_metrics and recent_news; for a US
+listing also call search_filings for risks and recent results. Return only a JSON object with exactly these keys:
+decision_and_why, strengths, weaknesses, news_and_filings, what_would_change. Each value is a short list of objects
+with exactly text and sources, where sources is a list of document IDs returned by the tools in this turn.
+Use only get_decision for decision_and_why and get_metrics for strengths and weaknesses. Cover risks, catalysts,
+guidance and tension with the Decision in news_and_filings. Explain what would change the Decision. Cite every point.
+The computed Decision is the only rating; do not issue a rating, price target or order. Unknown is N/A, never zero.
+Write in {language}."""
+
+
+def parse_stock_review(result, stance):
+    """Filter each point against this turn's evidence before the card can display it."""
+    from services.ai import stance_conflicts, ungrounded_numbers
+    try:
+        text = (result.get("text") or "").strip()
+        if text.startswith("```"):                    # models often fence the JSON (```json ... ```)
+            text = text.split("\n", 1)[1] if "\n" in text else ""
+            text = text.rsplit("```", 1)[0]
+        value = json.loads(text)
+        if not isinstance(value, dict) or set(value) != set(REVIEW_KEYS):
+            raise ValueError("unexpected sections")
+        if any(not isinstance(value[k], list) for k in REVIEW_KEYS):
+            raise ValueError("sections must be lists")
+        if any(not isinstance(x, dict) or not {"text", "sources"} <= set(x) or
+               not isinstance(x["text"], str) or not isinstance(x["sources"], list) or
+               not all(isinstance(i, str) for i in x["sources"]) for k in REVIEW_KEYS for x in value[k]):
+            raise ValueError("invalid point")
+    except (ValueError, TypeError):
+        return None, []
+    docs = result.get("docs") or {}
+    origins = result.get("doc_tools") or {}
+    kept, dropped = {k: [] for k in REVIEW_KEYS}, []
+    for key in REVIEW_KEYS:
+        for point in value[key]:
+            text = point["text"]
+            ids = [i for i in point["sources"] if i in docs and not docs[i].get("error")]
+            required = "get_decision" if key == "decision_and_why" else "get_metrics" if key in ("strengths", "weaknesses") else None
+            if required:
+                ids = [i for i in ids if origins.get(i) == required]
+            reasons = []
+            if not ids:
+                reasons.append("no cited document" if not required else f"no cited {required} document")
+            evidence = "\n".join(doc_text(docs[i]) for i in ids)
+            # "81/100" is a score on its 0-100 scale: the denominator is not a figure the documents must contain
+            bad = ungrounded_numbers(plain_numbers(re.sub(r"/\s*100\b", "", text)), plain_numbers(evidence))
+            if bad:
+                reasons.append("ungrounded numbers: " + ", ".join(f"{n:g}" for n in bad))
+            conflicts = stance_conflicts(text, stance or "NONE")
+            if conflicts:
+                reasons.append("rating conflicts with Decision: " + ", ".join(conflicts))
+            if reasons:
+                dropped.append({"text": text, "reason": "; ".join(reasons)})
+            else:
+                kept[key].append({"text": text, "sources": ids})
+    return kept, dropped
+
 SYSTEM = """You are the research assistant inside "Evidentia", a decision-support app for equities.
 Today is {today}. The user is on the "{tab}" tab{ticker_note}.
 
@@ -121,8 +178,9 @@ def ask(question: str, toolbox: ToolBox, *, history: Optional[list] = None, tab:
     messages.append({"role": "user", "content": question})
     call = chat or _cohere_chat(model)
     docs, used, calls = {}, [], 0
+    doc_tools = {}
     out = {"text": "", "citations": [], "docs": docs, "tools": used, "ungrounded": [], "rating_conflicts": [],
-           "llm_calls": 0, "error": None}
+           "llm_calls": 0, "error": None, "doc_tools": doc_tools}
     try:
         for step in range(MAX_STEPS + 1):
             r = call(messages, _tools())
@@ -144,6 +202,7 @@ def ask(question: str, toolbox: ToolBox, *, history: Optional[list] = None, tab:
                 used.append((tc["name"], args))
                 for d in res:
                     docs[d["id"]] = d
+                    doc_tools[d["id"]] = tc["name"]
                 messages.append({"role": "tool", "tool_call_id": tc["id"],
                                  "content": [{"type": "document", "document": {"id": d["id"], "data": {"json": doc_text(d)}}}
                                              for d in res]})

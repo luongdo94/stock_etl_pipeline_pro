@@ -137,6 +137,23 @@ def _render_turn(turn):
             st.caption("No tool was used — the answer is not backed by the app's data.")
 
 
+
+def model_choice(options, default, scope):
+    """Keep the two model widgets in sync without sharing a Streamlit widget key."""
+    from ui.sticky import kept_key
+    shared = kept_key("assistant_model")
+    key = "assistant_model" if scope == "assistant" else f"assistant_model_{scope}"
+    synced = f"{key}::synced"
+    current = st.session_state.get(shared, default)
+    current = current if current in options else default
+    # take the shared choice only when it changed elsewhere (or on first use): writing it on every run would undo a
+    # change the user just made in THIS widget
+    if key not in st.session_state or st.session_state.get(synced) != current:
+        st.session_state[key] = current
+    value = st.radio("Model", options, key=key, horizontal=True)
+    st.session_state[shared] = st.session_state[synced] = value
+    return value
+
 @st.fragment
 def render(ctx):
     """The floating button and its chat. Call once per page run (app.py, after the tab)."""
@@ -153,7 +170,7 @@ def render(ctx):
             _own_session()
             options = assistant.models()
             default = options[1] if not os.environ.get("COHERE_API_KEY") and len(options) > 1 else "Cohere"
-            model = sticky_radio("Model", options, default, key="assistant_model", horizontal=True)
+            model = model_choice(options, default, "assistant")
             model_name = model
             if model == "Codex (local)":
                 codex_model, effort = render_codex_options("assistant")

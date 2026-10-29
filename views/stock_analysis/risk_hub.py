@@ -1,7 +1,4 @@
-"""Layer 3 — the agent review, news sentiment (FinBERT) and quality metrics."""
-import os
-from datetime import date
-
+"""Layer 3 — news sentiment (FinBERT) and quality metrics."""
 import pandas as pd
 import streamlit as st
 
@@ -10,8 +7,6 @@ from views.stock_analysis.layout import layer_banner
 
 from services.ai import get_finbert_pipeline
 from ui.icons import render_header
-from ui.sticky import kept_key, sticky_radio
-from services import auth
 
 
 def _known(v):
@@ -92,80 +87,10 @@ def _render_news(meta, ticker, snapshot=None):
                 st.markdown(f"[Read Article ↗]({it['link']})")
 
 
-def _render_agent_review(dd, ctx):
-    """One button: the research agent (services/assistant.py) reads this stock's computed Decision, its metrics, the
-    stored news and, for a US listing, the SEC filings, and writes a cited review. It replaces the CIO narrative: it
-    explains the Decision, never rates the stock itself, and every number is checked against the tool documents."""
-    from time import perf_counter
-    from services import assistant
-    from services.news import fetch_news_sentiment
-    from ui.assistant import _render_turn, _toolbox
-    from ui.codex_options import codex_label
-    from ui.agy_options import agy_label
-    render_header("zap", "Agent review", level="####")
-    st.caption("The research agent reads this stock's computed Decision, its metrics, the news of the last 30 days and "
-               "(US listings) the SEC filings, and writes a cited review. Context only: it explains the Decision and "
-               "never changes it.")
-    if not assistant.available():
-        st.info("Set COHERE_API_KEY or install Codex or Antigravity locally to use the agent.")
-        return
-    if not auth.can_use("run the agent review (it calls the language model)", f"agent_{dd.ticker}"):
-        return
-    options = assistant.models()
-    default = options[1] if not os.environ.get("COHERE_API_KEY") and len(options) > 1 else "Cohere"
-    model = st.session_state.get(kept_key("assistant_model"), default)       # the Assistant's choice, one for the app
-    model = model if model in options else default
-    codex_model, effort = st.session_state.get("_codex_model"), st.session_state.get("_codex_effort")
-    if model == "Antigravity (local)":
-        codex_model, effort = st.session_state.get("_agy_model"), st.session_state.get("_agy_effort")
-    model_name = (codex_label(codex_model, effort) if model == "Codex (local)" else
-                  agy_label(codex_model, effort) if model == "Antigravity (local)" else model)
-    c_lang, c_btn = st.columns([1, 3])
-    with c_lang:
-        language = sticky_radio("Language", ["English", "Vietnamese"], "English", "agent_language", horizontal=True,
-                                label_visibility="collapsed")
-    run = c_btn.button("Run agent review", key=f"agent_review_btn_{dd.ticker}", type="primary", width="stretch")
-    st.caption(f"Model: {model_name} (choose it in the Assistant, bottom right).")
-    dec = dd.extra.get("decision")
-    # the Decision also moves with the calendar (earnings blackout, stale prices) under one snapshot (R1)
-    decision_key = repr([getattr(dec, f, None) for f in ("stance", "confidence", "reasons", "conflicts",
-                                                          "confidence_notes", "warnings")])
-    spec = {"ticker": dd.ticker, "snapshot": ctx.get("data_version"), "model": model_name, "language": language,
-            "as_of": date.today().isoformat(), "decision": decision_key}
-    key = f"agent_review::{dd.ticker}"
-    if run:
-        question = assistant.STOCK_REVIEW_QUESTION.format(ticker=dd.ticker, language=language)
-        with st.spinner(f"Reviewing {dd.ticker}…"):
-            # refresh the stored headlines the agent reads: Google News and Yahoo, without the FinBERT model
-            news = fetch_news_sentiment(dd.meta.get("company", dd.ticker), dd.ticker, get_pipe=lambda: None,
-                                        include_yahoo=True)
-            yahoo = news.get("yahoo") or {}
-            news_error = "; ".join(e for e in (news.get("error"), news.get("history_error"), yahoo.get("error"),
-                                               yahoo.get("history_error")) if e)
-            started = perf_counter()
-            res = assistant.ask(question, _toolbox(ctx), tab="Stock Analysis", ticker=dd.ticker,
-                                chat=assistant._codex_chat(codex_model, effort) if model == "Codex (local)" else
-                                     assistant._agy_chat(codex_model, effort) if model == "Antigravity (local)" else None)
-        st.session_state[key] = {"spec": spec, "at": pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%d %H:%M UTC"),
-                                 "news_error": news_error or None,
-                                 "turn": {"q": question, "res": res, "model": model_name,
-                                          "elapsed": perf_counter() - started}}
-    stored = st.session_state.get(key)
-    if stored and stored["spec"] == spec:
-        st.caption(f"Agent review · {stored['at']} · snapshot {spec['snapshot'] or 'unknown'}")
-        if stored["news_error"]:
-            st.caption(f"News not fully refreshed ({stored['news_error']}); the agent read what is stored.")
-        _render_turn(stored["turn"])
-    elif stored:
-        st.caption("The saved review was written for another day, snapshot, Decision, model or language — run it again.")
-
-
 def render(dd, ctx):
     meta = dd.meta
     deep_ticker = dd.ticker
     layer_banner(3, "Risk intelligence hub", "#9b59b6", bottom=0)
-    _render_agent_review(dd, ctx)
-    st.markdown("---")
 
     qual_col, quant_col = st.columns([1, 1])
 

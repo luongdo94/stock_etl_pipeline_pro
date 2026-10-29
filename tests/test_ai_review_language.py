@@ -140,31 +140,14 @@ def test_review_one_passes_model_high_effort_and_language(monkeypatch, tmp_path,
     assert commands[0][commands[0].index("-c") + 1] == 'model_reasoning_effort="high"'
 
 
-@pytest.mark.parametrize("language, headings, caption", [
-    ("Vietnamese", ["Hoạt động kinh doanh", "Luận điểm tích cực", "Luận điểm tiêu cực / rủi ro",
-                    "Sức khỏe tài chính", "Định giá", "90 ngày tới", "Những số liệu sàng lọc có thể gây hiểu nhầm",
-                    "Điều có thể làm cán cân thay đổi", "Tự kiểm chứng"], "không làm thay đổi Decision"),
-    ("English", ["Business", "Bull case", "Bear case / risks", "Financial health", "Valuation", "Next 90 days",
-                 "Where the screener numbers may mislead", "What would tilt the balance", "Verify yourself"],
-     "does not change it"),
+@pytest.mark.parametrize("language, headings", [
+    ("Vietnamese", ["Hoạt động kinh doanh", "Luận điểm tích cực", "Luận điểm tiêu cực / rủi ro", "Định giá",
+                    "Tự kiểm chứng"]),
+    ("English", ["Business", "Bull case", "Bear case / risks", "Valuation", "Verify yourself"]),
 ])
-def test_view_headings_and_caption(monkeypatch, language, headings, caption):
-    got = {"review": review(), "language": language, "decision": ROW["decision"],
-           "as_of": DAY, "generated_at": DAY + "T08:00:00"}
-    monkeypatch.setattr(ar, "load_latest", lambda _: got)
-    markdown, captions, expanders = [], [], []
-
-    def expander(label):
-        expanders.append(label)
-        return nullcontext()
-
-    monkeypatch.setattr(view, "st", SimpleNamespace(
-        expander=expander, caption=captions.append, markdown=markdown.append,
-        columns=lambda _: (nullcontext(), nullcontext())))
-    view.render(SimpleNamespace(ticker="ABC"), None)
-    for heading in headings:
-        assert any(f"**{heading}**" in line for line in markdown)
-    assert caption in captions[0]
-    assert DAY in captions[0]
-    assert "Skip" not in expanders[0] and "confidence" not in expanders[0]     # K8-05: no label of its own
-    assert all("Original content" in line for line in markdown if " — " in line or line.startswith("- "))
+def test_saved_review_headings(language, headings):
+    """The daily job's review keeps its own sections (its business summary is not a 'strength')."""
+    card = view.saved_html(review(), language)
+    assert "Strengths" not in card and "Điểm mạnh" not in card
+    assert all(heading in card for heading in headings)
+    assert "Original content" in card
