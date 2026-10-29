@@ -426,40 +426,6 @@ def test_cr10_the_earnings_tab_lists_the_calendar_when_the_events_table_is_empty
 
 
 @pytest.mark.smoke
-def test_cr12_a_note_is_per_report_source_and_never_shown_after_a_mismatch(warehouse, monkeypatch):
-    """COMMIT_REVIEW CR-12: same report + same source text keeps the note (no new LLM call); a changed source text writes a
-    new note; a request whose release belongs to another quarter shows the warning and NOT the earlier note."""
-    from services import earnings as svc
-    state = {"match": True, "text": "release text v1", "calls": 0}
-    monkeypatch.setattr(svc, "api_key", lambda: "test-key")
-    monkeypatch.setattr(svc, "sec_user_agent", lambda: "Test test@example.com")
-    monkeypatch.setattr(svc, "sec_press_release", lambda t, ua: (state["text"], "https://sec.example/x", "2026-07-30"))
-    monkeypatch.setattr(svc, "release_matches_event", lambda f, e: state["match"])
-
-    def fake_summary(*a, **k):
-        state["calls"] += 1
-        return f"NOTE-{state['calls']}"
-    monkeypatch.setattr(svc, "summarise_earnings", fake_summary)
-    at = _app("🗓️ Earnings")
-    at.session_state["active_ticker"] = "AAPL"
-    at.session_state["er_ticker"] = "AAPL"
-    at.session_state["_kept::er_section"] = "Single stock"
-    at.run()
-    shown = lambda: " ".join(m.value for m in at.markdown)                      # noqa: E731
-    at.button(key="er_ai").click().run()
-    assert not at.exception, [e.value for e in at.exception]
-    assert "NOTE-1" in shown() and state["calls"] == 1
-    at.button(key="er_ai").click().run()
-    assert state["calls"] == 1 and "NOTE-1" in shown()                           # same report, same text: kept
-    state["match"] = False
-    at.button(key="er_ai").click().run()
-    assert any("is not the report of" in w.value for w in at.warning) and "NOTE-1" not in shown()
-    state.update(match=True, text="release text v2, corrected")
-    at.button(key="er_ai").click().run()
-    assert state["calls"] == 2 and "NOTE-2" in shown() and "NOTE-1" not in shown()
-
-
-@pytest.mark.smoke
 def test_cr02_data_health_shows_the_same_last_good_run_as_the_sidebar(warehouse):
     import re
     at = _app("🩺 Data Health").run()

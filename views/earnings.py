@@ -1,7 +1,6 @@
 """View: 🗓️ Earnings — earnings-report (ER) analysis: upcoming reports, a stock's beat / miss and reaction history,
-an AI note on the latest report, and a universe study of what prices did after surprises."""
+ER highlights from the latest report, and a universe study of what prices did after surprises."""
 import html
-import time
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -23,10 +22,9 @@ MIN_REGION = 15          # smaller regions are pooled so a "market" benchmark is
 
 
 def _render_er_sheet(ticker, company, event_ts, language, summariser, model, codex_model, effort, release_key,
-                     eps_consensus=None, estimate_snaps=None, data_error=None):
-    """The ER sheet: built on request only, from the SEC release of THIS report (the AI note's or the live one, never
-    news headlines). The model points at each figure; core.er_sheet checks every line; the header (revenue / EPS vs
-    the stored consensus) is computed by code."""
+                     eps_consensus=None, estimate_snaps=None, data_error=None, clicked=False):
+    """The sheet uses this report's SEC release so figures from different quarters or news cannot be mixed.
+    The model points at each figure; core.er_sheet checks every line and code computes the consensus header."""
     from core.er_sheet import (SHEET_VERSION, build_sheet_prompt, compose, header_lines, period_ended,
                                revenue_consensus_before, validate_sheet)
     from core.release_figures import headline_figures
@@ -40,7 +38,7 @@ def _render_er_sheet(ticker, company, event_ts, language, summariser, model, cod
         st.warning("The ER sheet needs a report in the earnings calendar to match the release; none is available.")
         return
     slot = f"er_sheet::{SHEET_VERSION}::{ticker}::{pd.Timestamp(event_ts).isoformat()}::{language}::{model}"
-    if auth.signed_in() and st.button("Build the ER sheet", key="er_sheet_build"):    # the note's notice explains why
+    if auth.signed_in() and clicked:
         try:
             with st.spinner("Collecting the report text..."):
                 release = st.session_state.get(release_key)
@@ -86,7 +84,7 @@ def _render_er_sheet(ticker, company, event_ts, language, summariser, model, cod
             st.error(f"ER sheet unavailable: {exc}")
     card_key = st.session_state.get(slot)
     release = st.session_state.get(release_key)
-    # a source refreshed by the note or the live button invalidates a sheet built from the earlier text
+    # A refreshed source invalidates a sheet built from the earlier text
     if card_key and release:
         text, where, fdate = release
         valid = (text and svc.release_matches_event(fdate, event_ts) and "no Exhibit 99 found" not in str(where)
@@ -252,7 +250,7 @@ def _latest_report(ticker, events, ctx):
         hide_index=True, width="stretch")
     rep = f"Reported {h['reported']:%Y-%m-%d}. " if h["reported"] is not None else "Report date not stored. "
     st.caption(rep + h["sources"] + " Growth is in the statement currency. Guidance, segment revenue and management "
-               "commentary are not part of the stored data; the AI note below (on request) reads the press release.")
+               "commentary are not part of the stored data; ER highlights can read the press release on request.")
 
 
 def _open_single_stock(ticker):
@@ -263,9 +261,9 @@ def _open_single_stock(ticker):
     st.session_state["_kept::er_section"] = "Single stock"
 
 
-def _live_report(t, events, snapshot=None):
+def _live_report(t, events, snapshot, button_col):
     """The "fetch now" button of the open stock. Its result stays in this session (the stored snapshot is unchanged
-    until the next ETL run) and is merged into this stock's events, so the tiles, the AI note and the ER brief use it.
+    until the next ETL run) and is merged into this stock's events, so the tiles and ER highlights use it.
     A newer snapshot replaces it: the ETL's later reading wins over an older live one (ER-05)."""
     import time as _time
     key = f"er_live::{t}"
@@ -275,8 +273,7 @@ def _live_report(t, events, snapshot=None):
         live = None
         st.caption("A newer data snapshot is loaded; the earlier live fetch was cleared.")
     wait = svc.LIVE_COOLDOWN_S - (_time.time() - live["_at"]) if live else 0
-    c1, c2 = st.columns([1, 3])
-    clicked = c1.button("Fetch the latest report (live)", key=f"er_live_btn_{t}", width="stretch", disabled=wait > 0,
+    clicked = button_col.button("Fetch the latest report (live)", key=f"er_live_btn_{t}", width="stretch", disabled=wait > 0,
                         help=f"Asks Yahoo (earnings dates, EPS) and, for US listings, the SEC (8-K press release) now, "
                              f"for {t} only. At most once a minute per stock.")
     if clicked and wait <= 0:                         # the cooldown is enforced, not only shown (ER-08)
@@ -288,7 +285,7 @@ def _live_report(t, events, snapshot=None):
         st.session_state[key] = live
         st.rerun()                                    # draw the button disabled at once
     if not live:
-        c2.caption("Shows the stored snapshot. The button fetches this stock's newest report now (session only).")
+        st.caption("Shows the stored snapshot. The button fetches this stock's newest report now (session only).")
         return events
     ev, (text, where, fdate) = live["events"], live["release"]
     reported = ev[ev["eps_actual"].notna()].sort_values("earnings_ts") if not ev.empty else ev
@@ -306,7 +303,7 @@ def _live_report(t, events, snapshot=None):
     figs = live.get("figures") or {}
     if wait > 0:
         parts.append(f"Next live fetch possible in {wait:.0f} s.")
-    c2.caption(" ".join(parts))
+    st.caption(" ".join(parts))
     merged = svc.with_live_events(events, live)
     if text:
         _release_figures(t, figs, live.get("consensus"), fdate)
@@ -340,7 +337,6 @@ def _live_brief_inputs(t, events, event_ts, report, facts, release_key):
     ]))
     key = f"er_release_live::{t}::{pd.Timestamp(live_ts).isoformat()}"
     st.session_state[key] = (text, where, fdate)
-    st.caption(f"ER sheet: read from the SEC release fetched live (filed {fdate}).")
     return live_ts, report, live_facts, key
 
 
@@ -375,7 +371,7 @@ def render(ctx):
     prices_full, companies = ctx["prices_full"], ctx["companies_full"]
     m_df, fe = ctx["m_df"], ctx.get("forward_estimates_full", pd.DataFrame())
     render_header("calendar", "Earnings reports (ER)",
-                  subtitle="Beat / miss history · price reactions · upcoming reports · AI note")
+                  subtitle="Beat / miss history · price reactions · upcoming reports · ER highlights")
 
     events = svc.load_earnings_events(ctx.get("data_version"))
     cal_all = _calendar_dates(ctx.get("earnings_cal"))
@@ -491,7 +487,56 @@ def render(ctx):
         remember_ticker(t)
         if default and default not in universe:                 # the stock researched elsewhere has no report stored
             st.caption(f"No earnings records are stored for {default}. Showing {t}; choose another stock above.")
-        events = _live_report(t, events, ctx.get("data_version"))   # one button: this stock's newest report, now
+        with st.expander("Options"):
+            lang = sticky_radio("Language", ["English", "Vietnamese"], "English", "er_lang", horizontal=True)
+            summariser = sticky_radio("Summariser", svc.summariser_options(), "Cohere", "er_summariser", horizontal=True)
+            model = svc.LLM_MODEL
+            codex_model = effort = None
+            if summariser == "Codex (local)":
+                codex_model, effort = render_codex_options("earnings")
+                model = codex_label(codex_model, effort)
+            elif summariser == "Antigravity (local)":
+                codex_model, effort = render_agy_options("earnings")
+                model = agy_label(codex_model, effort)
+            if summariser == "Cohere" and not svc.api_key():
+                sticky(st.text_input, "Cohere API key (kept only for this session)", "", "cohere_api_key", type="password",
+                       help="Or set COHERE_API_KEY in the environment.")
+
+        live = st.session_state.get(f"er_live::{t}")
+        if live and live.get("snapshot") != ctx.get("data_version"):
+            st.session_state.pop(f"er_live::{t}", None)
+            live = None
+            st.caption("A newer data snapshot is loaded; the earlier live fetch was cleared.")
+        sheet_events = svc.with_live_events(events, live) if live else events
+        sheet_hist = sheet_events[sheet_events["ticker"] == t]
+        reported = sheet_hist[sheet_hist["eps_actual"].notna()].sort_values("earnings_ts", ascending=False)
+        last = reported.iloc[0] if not reported.empty else None
+        release_key = f"er_release::{t}::{last['earnings_ts'] if last is not None else 'none'}::{ctx.get('data_version')}"
+        sheet_event, _, _, sheet_key = _live_brief_inputs(
+            t, sheet_events, last["earnings_ts"] if last is not None else None, None, "", release_key)
+        sheet_error, snaps = events.attrs.get("error"), None
+        try:
+            from services.db import load_estimate_snapshots
+            snaps = load_estimate_snapshots(ctx.get("data_version"))
+            for frame in (ctx.get("quarterly_fin"), ctx.get("hist_fcf_q_full"), snaps):
+                if frame is not None and frame.attrs.get("error"):
+                    sheet_error = frame.attrs["error"]
+        except Exception as exc:
+            sheet_error = f"{type(exc).__name__}: {exc}"
+        if live and "consensus" in live:
+            eps_cons = live["consensus"]
+        else:
+            ev = (sheet_hist[pd.to_datetime(sheet_hist["earnings_ts"], utc=True) == pd.Timestamp(sheet_event)]
+                  if sheet_event is not None else sheet_hist.iloc[0:0])
+            estimates = pd.to_numeric(ev["eps_estimate"], errors="coerce").dropna()
+            eps_cons = float(estimates.iloc[-1]) if not estimates.empty else None
+
+        ai_ok = auth.can_use("summarize ER highlights (uses a language model)", "er_highlights_access")
+        live_col, sheet_col = st.columns(2)
+        events = _live_report(t, events, ctx.get("data_version"), live_col)
+        clicked = sheet_col.button("Summarize ER Highlight", key="er_sheet_build", width="stretch") if ai_ok else False
+        _render_er_sheet(t, names.get(t, t), sheet_event, lang, summariser, model, codex_model, effort, sheet_key,
+                         eps_consensus=eps_cons, estimate_snaps=snaps, data_error=sheet_error, clicked=clicked)
         hist = events[events["ticker"] == t]
         rt = reactions[reactions["ticker"] == t].sort_values("reaction_day", ascending=False) if not reactions.empty else pd.DataFrame()
         b, mv, nxt = er.beat_summary(hist), er.expected_move(rt) if not rt.empty else {"n": 0, "median_abs": None, "max_abs": None}, er.next_event(hist)
@@ -616,123 +661,6 @@ def render(ctx):
                        "percentage. Revenue growth needs the same quarter a year earlier, and the data provider serves only "
                        "about the last 5 quarterly statements, so older rows are blank (the history fills in as the ETL stores "
                        "each new quarter) — blank means not stored, not zero.")
-
-        # AI note
-        st.markdown("---")
-        render_header("zap", "AI note on the latest report", level="####")
-        lang = sticky_radio("Language", ["English", "Vietnamese"], "English", "er_lang", horizontal=True)
-        summariser = sticky_radio("Summariser", svc.summariser_options(), "Cohere", "er_summariser", horizontal=True)
-        model = svc.LLM_MODEL
-        codex_model = effort = None
-        if summariser == "Codex (local)":
-            codex_model, effort = render_codex_options("earnings")
-            model = codex_label(codex_model, effort)
-        elif summariser == "Antigravity (local)":
-            codex_model, effort = render_agy_options("earnings")
-            model = agy_label(codex_model, effort)
-        if model == svc.LLM_MODEL and not svc.api_key():
-            sticky(st.text_input, "Cohere API key (kept only for this session)", "", "cohere_api_key", type="password",
-                          help="Or set COHERE_API_KEY in the environment.")
-        reported = hist[hist["eps_actual"].notna()].sort_values("earnings_ts", ascending=False)
-        last = reported.iloc[0] if not reported.empty else None
-        reaction = (rt[pd.to_datetime(rt["earnings_ts"], utc=True) == pd.Timestamp(last["earnings_ts"])]
-                    if last is not None and not rt.empty else pd.DataFrame())
-        ret_2d = reaction.iloc[0]["ret_2d"] if not reaction.empty else None
-        _brief_report, _brief_error, _snaps = None, events.attrs.get("error"), None
-        try:
-            from services.db import load_estimate_snapshots as _les
-            _snaps = _les(ctx.get("data_version"))
-            for _frame in (ctx.get("quarterly_fin"), ctx.get("hist_fcf_q_full"), _snaps):
-                if _frame is not None and _frame.attrs.get("error"):
-                    _brief_error = _frame.attrs["error"]
-            _brief_report = _eh.latest_report(t, ctx.get("quarterly_fin"), ctx.get("hist_fcf_q_full"), events,
-                                               _snaps, estimate_currency=_fin_currency(ctx, t))
-            _hl = _eh.facts_line(_brief_report)
-        except Exception as exc:
-            _hl = None
-            _brief_error = f"{type(exc).__name__}: {exc}"
-        facts = "\n".join(filter(None, [_hl,
-            f"- Latest report: {_local(last['earnings_ts'], t)[0]}; EPS {last['eps_actual']} vs consensus {last['eps_estimate']} "
-            f"(surprise {_pct(last['surprise_pct'])}); 2-day price reaction {_pct(ret_2d)}." if last is not None else None,
-            f"- Beat rate over the last {b['n']} reports: {_pct(b['beat_rate'], 0, False)}." if b["n"] else None,
-            f"- Next report: {nxt_txt}." if nxt is not None else None]))
-        key = svc.note_key(t, last["earnings_ts"] if last is not None else None, lang, facts, model=model)
-        _release_key = f"er_release::{t}::{last['earnings_ts'] if last is not None else 'none'}::{ctx.get('data_version')}"
-        _ai_ok = auth.can_use("write AI notes and the ER brief (they call the language model)", "er_ai")
-        if _ai_ok and st.button("Summarise the latest report", key="er_ai"):
-            company = names.get(t, t)
-            mismatch = None
-            with st.spinner("Collecting the report text..."):
-                text, where, fdate = svc.sec_press_release(t, svc.sec_user_agent())
-                st.session_state[_release_key] = (text, where, fdate)
-                if text and last is not None and not svc.release_matches_event(fdate, last["earnings_ts"]):
-                    # the newest 8-K is another quarter than the newest report in our data: do not mix them
-                    mismatch = (f"The latest SEC earnings release (filed {fdate}) is not the report of "
-                                f"{_local(last['earnings_ts'], t)[0]} in our data — no note, so that one quarter's "
-                                "text is not summarised with another quarter's figures.")
-                    text = ""
-                if text:
-                    source = f"SEC 8-K earnings press release filed {fdate}: {where}"
-                elif mismatch is None:
-                    heads = svc.earnings_headlines(company, t)
-                    text = "\n".join(heads)
-                    source = (f"recent news headlines ({len(heads)}) — secondary source, not the company's release; "
-                              f"press release unavailable: {where}")
-            if mismatch or not text.strip():
-                # no valid source for THIS request: the earlier note of this report is not shown as if it answered it
-                st.session_state.pop(key, None)
-                st.warning(mismatch or f"No source text found ({where}).")
-            else:
-                text_id = svc.text_hash(text)
-                rec = st.session_state.get(key)
-                if rec and rec["text_id"] == text_id:
-                    st.caption("Same report, facts and source text as the note below — kept (no new LLM call).")
-                else:
-                    try:
-                        prompt = svc.build_summary_prompt(company, t, facts or "- none", source, text, lang)
-                        started = time.perf_counter()
-                        with st.spinner("Writing the note..."):
-                            note = (svc.summarise_earnings_codex(prompt, model=codex_model, effort=effort)
-                                    if summariser == "Codex (local)" else
-                                    svc.summarise_earnings_agy(prompt, model=codex_model, effort=effort)
-                                    if summariser == "Antigravity (local)" else
-                                    svc.summarise_earnings(svc.api_key(), company, t, facts or "- none", source, text, lang))
-                        elapsed = time.perf_counter() - started
-                        from services.ai import ungrounded_numbers
-                        from core.retrieval import select_passages
-                        sent_text = select_passages(text, svc.SECTION_QUERIES, budget=15000)
-                        st.session_state[key] = {"note": note, "source": source, "text_id": text_id,
-                                                 "created_at": pd.Timestamp.now(), "model": model, "elapsed": elapsed,
-                                                 "ungrounded": ungrounded_numbers(note, facts + "\n" + sent_text)}
-                    except Exception as e:
-                        st.error(f"AI summary unavailable: {e}")
-        if key in st.session_state:                    # a note of this report, facts, language and model only
-            rec = st.session_state[key]
-            st.markdown(rec["note"])
-            if "elapsed" in rec:
-                st.caption(f"Summariser: {rec['model']} · Runtime: {rec['elapsed']:.1f}s")
-            if rec.get("ungrounded"):
-                st.warning("Numbers not found in the supplied facts and source: " +
-                           ", ".join(f"{n:g}" for n in rec["ungrounded"]))
-            st.caption(f"Source: {rec['source']}. Written {rec['created_at']:%d %b %Y %H:%M} by an LLM from that text — "
-                       "check the original before relying on it. A new source text, or new figures for this report, "
-                       "make a new note.")
-        if not svc.sec_user_agent():
-            st.caption("For US stocks the note uses the SEC 8-K earnings press release when SEC_USER_AGENT is set "
-                       "(e.g. 'Your Name your@email.com'); otherwise it falls back to recent headlines.")
-
-        _b_event, _b_report, _b_facts, _b_key = _live_brief_inputs(
-            t, events, last["earnings_ts"] if last is not None else None, _brief_report, facts, _release_key)
-        # the EPS consensus as STORED: kept by the live fetch, else the stored event of this report
-        _live = st.session_state.get(f"er_live::{t}") or {}
-        if "consensus" in _live:
-            _eps_cons = _live["consensus"]
-        else:
-            _ev = hist[pd.to_datetime(hist["earnings_ts"], utc=True) == pd.Timestamp(_b_event)] if _b_event is not None                 else hist.iloc[0:0]
-            _est = pd.to_numeric(_ev["eps_estimate"], errors="coerce").dropna()
-            _eps_cons = float(_est.iloc[-1]) if not _est.empty else None
-        _render_er_sheet(t, names.get(t, t), _b_event, lang, summariser, model, codex_model, effort, _b_key,
-                         eps_consensus=_eps_cons, estimate_snaps=_snaps, data_error=_brief_error)
 
     # ── universe study ──────────────────────────────────────────────────────────────────────
     elif section == "Surprise study":

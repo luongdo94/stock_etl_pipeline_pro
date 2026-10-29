@@ -1,6 +1,6 @@
 """
 Earnings tab data: announcement events from the warehouse, price reactions for the whole universe (cached), and the
-text an AI summary is built from (SEC press release for US listings, recent headlines otherwise).
+SEC press releases used to build ER highlights.
 """
 import logging
 import os
@@ -8,7 +8,6 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-import urllib.parse
 from functools import lru_cache
 
 import pandas as pd
@@ -49,7 +48,7 @@ RELEASE_MATCH_DAYS = 5      # an 8-K Item 2.02 is filed on the day of the releas
 
 
 def release_matches_event(filing_date, event_ts) -> bool:
-    """Whether an 8-K earnings release filed on `filing_date` belongs to the report stamped `event_ts` (the AI note
+    """Whether an 8-K earnings release filed on `filing_date` belongs to the report stamped `event_ts` (the ER sheet
     must not pair one quarter's press release with another quarter's figures)."""
     if filing_date is None or event_ts is None or pd.isna(filing_date) or pd.isna(event_ts):
         return False
@@ -63,19 +62,9 @@ def release_matches_event(filing_date, event_ts) -> bool:
 
 
 def text_hash(text: str) -> str:
-    """Identity of the source text a note was written from (a corrected release is a different text)."""
+    """Identity of the source text a sheet was built from (a corrected release is a different text)."""
     import hashlib
     return hashlib.sha1(str(text).encode("utf-8", "ignore")).hexdigest()[:12]
-
-
-def note_key(ticker: str, event_ts, language: str, facts: str = "", model: str = None) -> str:
-    """Session key of an AI note: one report of one ticker, its facts, in one language, by one model / prompt (new
-    figures for the same report — a corrected EPS, a new beat rate — are a new note). The source text is fetched on
-    the click and named under the note; the 8-K filing-date check binds it to the report in time, not to a fiscal
-    period."""
-    import hashlib
-    h = hashlib.sha1(f"{model or LLM_MODEL}|{SUMMARY_PROMPT}|{facts}".encode()).hexdigest()[:10]
-    return f"er_note::{ticker}::{pd.Timestamp(event_ts).isoformat() if event_ts is not None else 'none'}::{language}::{h}"
 
 
 @st.cache_data(ttl=3600, show_spinner="Measuring price reactions to past reports...")
@@ -97,7 +86,7 @@ def universe_reactions(_events: pd.DataFrame, _prices: pd.DataFrame, region_of: 
     return pd.concat(out, ignore_index=True) if out else pd.DataFrame()
 
 
-# ── text for the AI summary ──────────────────────────────────────────────────────────────────
+# ── SEC release text ──────────────────────────────────────────────────────────────────
 _SEC_LOCK = __import__("threading").Lock()
 _SEC_MIN_INTERVAL_S = 0.25          # at most 4 requests a second from this app process, all sessions together
 _sec_last = [0.0]                   # (the SEC's fair-access limit is 10/s per client; the ETL paces itself separately)
@@ -167,84 +156,7 @@ def sec_press_release(ticker: str, user_agent: str, index: int = 0):
         return None, f"SEC request failed: {type(e).__name__}", None
 
 
-def earnings_headlines(company: str, ticker: str, max_items: int = 15) -> list:
-    """Recent earnings-related headlines (title + snippet) from Google News RSS."""
-    import feedparser
-    q = urllib.parse.quote(f"{company or ticker} earnings results when:21d")
-    feed = feedparser.parse(f"https://news.google.com/rss/search?q={q}&hl=en-US&gl=US&ceid=US:en")
-    out = []
-    for e in feed.entries[:max_items]:
-        title = e.get("title", "").split(" - ")[0].strip()
-        snippet = html_to_text(e.get("summary", ""), 300)
-        if title:
-            out.append(f"- {title}" + (f" — {snippet}" if snippet and snippet not in title else ""))
-    return out
-
-
-SUMMARY_PROMPT = """You are an equity analyst writing a short, factual note on a company's latest quarterly earnings report.
-
-Company: {company} ({ticker})
-Quantitative facts from our database (trust these numbers):
-{facts}
-
-Source material ({source}):
-\"\"\"
-{text}
-\"\"\"
-
-Write in {language}. Use ONLY the facts and the source material above; when something is not in them, write "not stated"
-instead of guessing. Do not give a buy / sell recommendation. Use these markdown sections, each 1-4 bullet points:
-
-### Headline numbers vs expectations
-### Guidance / outlook
-(each figure with the period it covers, and the consensus only if the source states it)
-### Segment and regional revenue
-(as reported, with the year-on-year change when stated)
-### What drove the quarter
-### Risks and red flags
-### Management tone
-### Other announcements
-(products, partnerships, buybacks, dividends — only those in the source)
-### What to watch next quarter
-"""
-
-
-RELEASE_MAX_CHARS = 400_000         # full press release text; the summary selects from it (core.retrieval.select_passages)
-SECTION_QUERIES = ["revenue net income earnings per share results compared with prior year quarter",
-                   "guidance outlook expects full year forecast raises lowers reaffirms",
-                   "driven by growth decline margin demand pricing segment volume",
-                   "risk headwind uncertainty impairment charge restructuring litigation tariff",
-                   "chief executive officer said commented pleased confident",
-                   "segment region geography revenue by segment operating segment",
-                   "announced launch partnership agreement repurchase dividend",
-                   "next quarter pipeline backlog orders investment plans"]
-
-
-def build_summary_prompt(company: str, ticker: str, facts: str, source: str, text: str,
-                         language: str = "English") -> str:
-    # the whole release is read; a long one is reduced to the passages that answer the note's sections (the tables
-    # and the outlook sit at the end and used to be cut off after 15,000 characters)
-    from core.retrieval import select_passages
-    text = select_passages(text, SECTION_QUERIES, budget=15000)
-    prompt = SUMMARY_PROMPT.format(company=company, ticker=ticker, facts=facts, source=source, text=text,
-                                   language=language)
-    return prompt
-
-
-def summarise_earnings(api_key: str, company: str, ticker: str, facts: str, source: str, text: str,
-                       language: str = "English") -> str:
-    """LLM note on the latest report (Cohere). Raises on a missing key or an API error."""
-    from services.auth import require_signed_in
-    require_signed_in("write AI notes (language model)")
-    if not api_key:
-        raise ValueError("COHERE_API_KEY is not set")
-    import cohere
-    co = cohere.ClientV2(api_key=api_key)
-    prompt = build_summary_prompt(company, ticker, facts, source, text, language)
-    resp = co.chat(model=LLM_MODEL, messages=[{"role": "user", "content": prompt}], max_tokens=1200)
-    return resp.message.content[0].text
-
-
+RELEASE_MAX_CHARS = 400_000         # retain the release text for evidence checking
 def summariser_options() -> list:
     return ["Cohere"] + (["Codex (local)"] if codex_path() else []) + (["Antigravity (local)"] if agy_path() else [])
 

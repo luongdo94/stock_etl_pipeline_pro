@@ -144,67 +144,6 @@ def test_chat_surfaces_forward_selection_and_store_model(monkeypatch, surface):
         assert not any("Review answer." in m.value for m in at.markdown)
 
 
-def test_earnings_forwards_selection_and_separates_notes(monkeypatch):
-    import pandas as pd
-    from services import db, earnings as svc
-    from views import earnings as view
-
-    for name in ("render_header", "follow_active_ticker", "remember_ticker", "_latest_report"):
-        monkeypatch.setattr(view, name, lambda *a, **kw: None)
-    monkeypatch.setattr(view, "my_tickers", lambda: [])
-    choice = view.sticky_choice
-    monkeypatch.setattr(view, "sticky_choice", lambda label, options, default, key, **kw:
-                        "Single stock" if key == "er_section" else choice(label, options, default, key, **kw))
-    monkeypatch.setattr(view._eh, "growth_history", lambda *a: pd.DataFrame())
-    monkeypatch.setattr(view._eh, "latest_report", lambda *a: {})
-    monkeypatch.setattr(view._eh, "facts_line", lambda *a: "EPS 6.88")
-    monkeypatch.setattr(db, "load_estimate_snapshots", lambda *a: pd.DataFrame())
-    events = pd.DataFrame({"ticker": ["META"], "earnings_ts": pd.to_datetime(["2026-10-21 20:00"], utc=True),
-                           "eps_estimate": [6.], "eps_actual": [6.88], "surprise_pct": [.1467]})
-    monkeypatch.setattr(svc, "load_earnings_events", lambda *a: events)
-    monkeypatch.setattr(svc, "universe_reactions", lambda *a, **kw: pd.DataFrame())
-    monkeypatch.setattr(svc, "codex_path", lambda: "fake-codex")
-    monkeypatch.setattr(svc, "agy_path", lambda: "fake-agy")
-    monkeypatch.setattr(svc, "api_key", lambda: "fake")
-    monkeypatch.setattr(svc, "sec_user_agent", lambda: "fake")
-    monkeypatch.setattr(svc, "sec_press_release", lambda *a: ("Revenue 24468", "SEC", "2026-10-21"))
-    fake = Mock(side_effect=lambda prompt, model=None, effort=None: f"Note from {model}")
-    monkeypatch.setattr(codex_local, "run_codex", fake)
-    # Earnings holds a direct alias of the runner; patch that binding too.
-    monkeypatch.setattr(svc, "summarise_earnings_codex", codex_local.run_codex)
-    at = AppTest.from_string('''
-import pandas as pd
-from views.earnings import render
-render(dict(prices_full=pd.DataFrame(columns=["date", "ticker", "price_close", "daily_return_pct"]),
-            companies_full=pd.DataFrame({"ticker": ["META"], "company": ["Meta"], "region": ["US"]}),
-            m_df=pd.DataFrame(), format_ticker=str))
-''').run()
-    assert not at.exception
-    assert "Antigravity (local)" in at.radio(key="er_summariser").options
-    at.radio(key="er_summariser").set_value("Codex (local)").run()
-    at.selectbox(key="codex_earnings_model").select("listed").run()
-    at.selectbox(key="codex_earnings_effort").select("low").run()
-    at.button(key="er_ai").click().run()
-    assert not at.exception
-    assert fake.call_args.kwargs == {"model": "listed", "effort": "low"}
-    assert any("Summariser: Codex (local): listed / low" in c.value for c in at.caption)
-    notes = {k: v for k, v in at.session_state.filtered_state.items() if k.startswith("er_note::")}
-    assert len(notes) == 1
-    at.selectbox(key="codex_earnings_model").select("configured").run()
-    assert not any("Note from listed" in m.value for m in at.markdown)
-    at.button(key="er_ai").click().run()
-    assert not at.exception
-    new_notes = {k: v for k, v in at.session_state.filtered_state.items() if k.startswith("er_note::")}
-    assert len(new_notes) == 2 and set(notes) < set(new_notes)
-    assert {v["model"] for v in new_notes.values()} == {
-        "Codex (local): listed / low", "Codex (local): configured / low"}
-    at.selectbox(key="codex_earnings_model").select("listed").run()
-    at.button(key="er_ai").click().run()
-    assert fake.call_count == 2
-    at.selectbox(key="codex_earnings_effort").select("medium").run()
-    assert not any("Note from listed" in m.value for m in at.markdown)
-
-
 def test_empty_catalog_only_offers_default(monkeypatch):
     from ui import codex_options
     monkeypatch.setattr(codex_options, "codex_models", lambda: [])

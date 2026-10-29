@@ -241,11 +241,16 @@ def test_the_er_sheet_is_built_from_the_release_and_shows_only_checked_lines(war
          "quote": "iPhone 44,582 50,300", "source": "table"},
         {"label": "Services", "kind": "amount", "value": "27,423", "prior": None, "yoy": None,
          "quote": "Services 27,423 30,100", "source": "table"}]}], "key_updates": [], "guidance": []}
-    monkeypatch.setattr(svc, "generate_er_sheet", lambda *a, **k: json.dumps(reply))
+    calls = []
+    monkeypatch.setattr(svc, "generate_er_sheet", lambda *a, **k: calls.append(k) or json.dumps(reply))
     at = _app("🗓️ Earnings")
     at.session_state["_kept::er_section"] = "Single stock"
     at.session_state["active_ticker"] = "AAPL"
     at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert at.button(key="er_live_btn_AAPL").label == "Fetch the latest report (live)"
+    assert at.button(key="er_sheet_build").label == "Summarize ER Highlight"
+    assert not any(b.label == "Summarise the latest report" for b in at.button)
     at.button(key="er_sheet_build").click().run()
     assert not at.exception, [e.value for e in at.exception]
     assert not at.error, [e.value for e in at.error]
@@ -253,6 +258,11 @@ def test_the_er_sheet_is_built_from_the_release_and_shows_only_checked_lines(war
     assert "iPhone" in sheet and "$50.3B" in sheet and "+13%" in sheet                  # the latest column, same-row YoY
     assert "$109.4B" in sheet and "$2.02" in sheet                                   # the header, read by rules
     assert "1 line(s) dropped" in sheet and "latest period" in sheet                  # Services: last year's column
+    at.button(key="er_sheet_build").click().run()
+    assert not at.exception and len(calls) == 1                                      # same source and options use the cache
+    at.radio(key="er_lang").set_value("Vietnamese").run()
+    at.button(key="er_sheet_build").click().run()
+    assert not at.exception and len(calls) == 2                                      # language selects another sheet
 
 
 @pytest.mark.smoke

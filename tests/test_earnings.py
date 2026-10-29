@@ -197,11 +197,6 @@ def test_sec_press_release_refuses_without_user_agent_or_for_foreign_listings():
     assert "not a US listing" in svc.sec_press_release("SAP.DE", "x y@z.com")[1]
 
 
-def test_summary_needs_a_key():
-    from services import earnings as svc
-    with pytest.raises(ValueError):
-        svc.summarise_earnings("", "Apple", "AAPL", "- none", "headlines", "text")
-
 def test_a_yahoo_1500_tokyo_stamp_is_mapped_to_the_next_session_by_the_provider_heuristic():
     """PROVIDER assumption (not the 2026 close: Tokyo closes at 15:30 since 2024-11-05): Yahoo's 15:00 stamp moved the
     next session in 50 of 53 reports after that date (EARNINGS_IMPROVEMENT_PLAN 7.1, measured on price moves)."""
@@ -307,9 +302,6 @@ def test_an_8k_of_another_quarter_is_not_paired_with_the_latest_report():
     assert svc.release_matches_event("2026-07-31", pd.Timestamp("2026-07-30 20:30", tz="UTC"))
     assert not svc.release_matches_event("2026-05-01", pd.Timestamp("2026-07-30 20:30", tz="UTC"))   # Q1 vs Q2
     assert not svc.release_matches_event(None, pd.Timestamp("2026-07-30", tz="UTC"))
-    k = svc.note_key("AAPL", pd.Timestamp("2026-07-30", tz="UTC"), "English")
-    assert k != svc.note_key("AAPL", pd.Timestamp("2026-10-30", tz="UTC"), "English")
-    assert k != svc.note_key("AAPL", pd.Timestamp("2026-07-30", tz="UTC"), "Vietnamese")
 
 
 def test_a_failed_read_is_not_an_empty_calendar(monkeypatch):
@@ -568,14 +560,6 @@ def test_er_f03_a_calendar_date_keeps_its_day_and_has_no_time(ticker, date_):
 def test_cr12_the_8k_filing_date_window(filing, event, ok):
     from services import earnings as svc
     assert svc.release_matches_event(filing, pd.Timestamp(event, tz="UTC")) is ok
-
-
-def test_cr12_note_keys_change_with_facts_model_prompt_and_language():
-    from services import earnings as svc
-    ts = pd.Timestamp("2026-07-30", tz="UTC")
-    base = svc.note_key("AAPL", ts, "English", "- a")
-    assert base != svc.note_key("AAPL", ts, "English", "- b") and base != svc.note_key("AAPL", ts, "Vietnamese", "- a")
-    assert svc.text_hash("release v1") != svc.text_hash("release v1, corrected")
 
 
 def test_r03_a_complete_eps_pair_outranks_a_row_with_the_same_number_of_fields():

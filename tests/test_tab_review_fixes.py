@@ -196,20 +196,6 @@ def earnings_view(monkeypatch, ev, q):
     return v, ui, ctx
 
 
-def test_a08_latest_report_does_not_wait_for_reaction(monkeypatch):
-    v, ui, ctx = earnings_view(monkeypatch, events(), quarter())
-    ui.button = lambda label, **k: k.get("key") == "er_ai"
-    monkeypatch.setattr(v.svc, "sec_user_agent", lambda: "fake")
-    notes = []
-    monkeypatch.setattr(v.svc, "summarise_earnings", lambda *a: notes.append(a) or "note")
-    monkeypatch.setattr(v.svc, "sec_press_release", lambda *a: ("release", "SEC", "2026-10-20"))
-    v.render(ctx)
-    assert len(notes) == 1 and "EPS 2.0" in notes[0][3] and "reaction N/A" in notes[0][3]
-    monkeypatch.setattr(v.svc, "sec_press_release", lambda *a: ("release", "SEC", "2026-07-20"))
-    v.render(ctx)
-    assert len(notes) == 1 and any("not the report" in s for s in ui.messages)
-
-
 def test_a09_quarterly_only_stock_remains_selectable(monkeypatch):
     ev = events().iloc[:0]
     v, ui, ctx = earnings_view(monkeypatch, ev, quarter())
