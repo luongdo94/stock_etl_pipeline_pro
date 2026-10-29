@@ -2,7 +2,7 @@
 import pandas as pd
 import streamlit as st
 
-from services.db import load_ticker_provenance, load_track_record
+from services.db import load_ticker_provenance
 from ui.provenance import render_confidence_line
 from services.user_store import read_portfolio_status
 from ui.decision_panel import render_decision_panel
@@ -38,7 +38,7 @@ def render(dd, ctx):
         stop_loss=dd.stop_loss, vin=dd.vin, relval=dd.relval,
         missing=dd.scores["missing"], scores=dd.scores,
         next_earnings=dd.next_earnings, quality=dd.ai_score,
-        snapshots=load_track_record(), prices=prices_full,
+        snapshots=None, prices=prices_full, evidence_result=ctx.get("evidence"),
         holdings_loader=_holdings_value, companies=ctx["companies_full"],
         signal_conflict=dd.extra.get("signal_conflict"), decision=dd.extra.get("decision"))
     answer.render_overview_details(dd)

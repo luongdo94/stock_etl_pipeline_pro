@@ -27,9 +27,10 @@ except ImportError:
 from services import auth
 from core import market_regime as mr
 from etl.utils import clean_upside_pct
-from services.db import DB_PATH, MACRO_SERIES, data_version, load_snapshot, track_record_ok
+from services.db import DB_PATH, data_version, load_snapshot, evidence
 from services.market_data import stored_macro
 from services.screener import get_master_screener_data, get_snapshot_erps
+from services.market_context import snapshot_prices
 from ui import header, sidebar
 from ui.loading import Boot
 from ui.styles import inject_global_css
@@ -87,18 +88,21 @@ if prices_full.empty:
 # the market inputs STORED in this snapshot: no request to a provider on open, the same on every run of the snapshot
 with boot.phase(2):
     macro = stored_macro(_loaded_version) or {}
-    macro["implied_erp"] = get_snapshot_erps(companies_full, prices_full, hist_fcf_full, annual_fin, macro, sec_annual_history, forward_estimates_full)
+    macro["implied_erp"] = get_snapshot_erps(companies_full, prices_full, hist_fcf_full, annual_fin, macro, sec_annual_history, forward_estimates_full, snapshot_version=_loaded_version)
     # Same live 10Y yield as the Decision Summary → the screener's Decision column and the panel agree
-    _track_ok = track_record_ok(prices_full, rows_key=len(prices_full))
+    _evidence = evidence(prices_full)
+    _track_ok = bool(_evidence.get("ok"))
     m_df = get_master_screener_data(companies_full, prices_full, quarterly_fin, annual_fin, hist_fcf_full,
                                     risk_free_pct=macro.get("US10Y", {}).get("val"),
                                     hist_fcf_rows=len(hist_fcf_full), _estimates=forward_estimates_full,
                                     estimates_rows=len(forward_estimates_full), track_record_ok=_track_ok,
-                                    _earnings_cal=earnings_cal, _sec_annual_history=sec_annual_history, macro=macro)
+                                    _earnings_cal=earnings_cal, _sec_annual_history=sec_annual_history, macro=macro,
+                                    snapshot_version=_loaded_version)
 boot.note(2, f"{len(m_df):,} stocks")
 with boot.phase(3):
 
-    all_tickers = sorted(t for t in prices_full["ticker"].unique().tolist() if t not in MACRO_SERIES)   # not pickable
+    latest_bar, df_spy_global, breadth_ts_global, all_tickers, stock_count, _dxy_move = snapshot_prices(
+        prices_full, _loaded_version)
     ticker_to_name = dict(zip(companies_full["ticker"], companies_full["company"]))
 
 
@@ -158,10 +162,8 @@ with boot.phase(3):
     companies = companies_full[~companies_full["ticker"].isin(indices_list)]
     # every stock with data — a ticker without bars in the chart range keeps its Decision (only its charts are empty)
     current_universe = [t for t in all_tickers if t not in indices_list]
-    stock_count = prices_full[~prices_full["ticker"].isin(indices_list)]["ticker"].nunique()
 
     # ── One Quality score everywhere: the screener's (core/scoring.py). Indices / benchmarks are not scored. ──
-    latest_bar = prices_full.sort_values("date").groupby("ticker").tail(1)
     reco_df = companies_full.merge(
         latest_bar[[c for c in ["ticker", "ma_signal", "price_close", "price_z_score", "rsi"] if c in latest_bar.columns]],
         on="ticker", how="left")
@@ -176,11 +178,9 @@ with boot.phase(3):
     _vix_val = (macro.get("VIX") or {}).get("val")
     _dxy_pct = (macro.get("DXY") or {}).get("pct")
     _tnx_chg = (macro.get("US10Y") or {}).get("chg")
-    df_spy_global = prices_full[prices_full["ticker"] == "SPY"].sort_values("date")
-    breadth_ts_global = mr.breadth_series(prices_full)
     latest_breadth_global = breadth_ts_global.iloc[-1]["breadth_pct"] if not breadth_ts_global.empty else None   # None = unknown, not 0 %
     conf_score_global, _reasons = mr.market_confidence(df_spy_global, latest_breadth_global, _vix_val,
-                                                        mr.dxy_5d_move(prices_full, _dxy_pct), _tnx_chg)
+                                                        _dxy_move if _dxy_move is not None else mr._finite(_dxy_pct), _tnx_chg)
     conf_reason_str = ", ".join(_reasons) if _reasons else "No warning among the inputs."
     _regime = mr.regime_from_score(conf_score_global, _tnx_chg, _dxy_pct, _vix_val)
     regime, regime_ui_color, _macro_regime = _regime["regime"], _regime["color"], _regime["scoring_regime"]
@@ -258,7 +258,7 @@ ctx = dict(
     prices=prices, spy_prices=spy_prices, companies=companies, selected_horizon=selected_horizon,
     t_start=t_start, t_end=t_end, current_universe=current_universe, indices_list=indices_list,
     # scores / screener
-    m_df=m_df, reco_df=reco_df, track_record_ok=_track_ok, _action_map=_action_map, format_ticker=format_ticker,
+    m_df=m_df, reco_df=reco_df, track_record_ok=_track_ok, evidence=_evidence, _action_map=_action_map, format_ticker=format_ticker,
     # market context
     macro=macro, regime=regime, regime_ui_color=regime_ui_color, _macro_regime=_macro_regime,
     regime_advice=_regime["advice"],

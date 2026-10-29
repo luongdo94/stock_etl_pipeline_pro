@@ -709,7 +709,7 @@ def read_warehouse(conn):
 
 
 @snapshot_cached(ttl=600)
-def load_track_record():
+def load_track_record(track_file_key=None):
     """Daily score snapshots written by etl/snapshot.py (empty until the first ETL run with it)."""
     try:
         with get_db_connection(read_only=True) as conn:
@@ -813,8 +813,7 @@ def load_price_history() -> pd.DataFrame:
     It survives full warehouse rebuilds, so long-horizon outcomes can accumulate (audit A07)."""
     try:
         with get_db_connection(read_only=True) as conn:
-            # a total order: with ORDER BY date alone the rows of one day came back in a different order on each read, the
-            # frame's content hash (the evidence cache key) changed every time and the evidence was recomputed on every rerun
+            # A total order keeps content fingerprints stable for callers without a known snapshot version.
             return conn.execute("SELECT date, ticker, price_close FROM marts.track_prices "
                                 "ORDER BY date, ticker, price_close").df()
     except Exception as e:
@@ -840,16 +839,50 @@ def _evidence_cached(_snapshots, _prices, data_key: str) -> dict:
         return {"ok": False, "label": f"Evidence not computable: {e}", "ic": None, "t_stat": None, "n_days": 0}
 
 
-def evidence(fallback_prices=None) -> dict:
-    """One evidence answer for Scanner, Stock Analysis and the snapshot job: same snapshots, same outcome series,
-    cache keyed on their content (A04)."""
-    from services.screener import frame_fingerprint
-    snaps, px = load_track_record(), evidence_prices(fallback_prices)
+class _EvidenceReadError(RuntimeError):
+    """A failed read must not become a reusable evidence answer."""
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _evidence_for_snapshot(version, track_file, model, has_fallback, _fallback_prices):
+    snaps, px = load_track_record(track_file), evidence_prices(_fallback_prices)
     error = snaps.attrs.get("error") or px.attrs.get("error")
     if error:
-        return {"ok": False, "label": f"Evidence not computable: stored history could not be read ({error}). Try again.",
+        # load_track_record also caches its result; retry the read on the next call.
+        load_track_record.clear()
+        raise _EvidenceReadError(str(error))
+    if _track_file_identity() != track_file:
+        raise _EvidenceReadError("track record changed during the read")
+    return _evidence_cached(snaps, px, (version, track_file, model, has_fallback))
+
+
+def _track_file_identity():
+    path = Path(DB_PATH).parent / "track_record.duckdb"
+    try:
+        stat = path.stat()
+    except FileNotFoundError:
+        return None
+    return (stat.st_mtime_ns, stat.st_size)
+
+
+def evidence(fallback_prices=None) -> dict:
+    """Share one evidence answer for the loaded snapshot and track record (R2-05)."""
+    from services.screener import frame_fingerprint, model_version
+    try:
+        _guard()
+        version = _expected()
+        if version is not None:
+            return _evidence_for_snapshot(version, _track_file_identity(), model_version(),
+                                          fallback_prices is not None, fallback_prices)
+        snaps, px = load_track_record(), evidence_prices(fallback_prices)
+        error = snaps.attrs.get("error") or px.attrs.get("error")
+        if error:
+            load_track_record.clear()
+            raise _EvidenceReadError(str(error))
+        return _evidence_cached(snaps, px, frame_fingerprint(snaps, px))
+    except (OSError, _EvidenceReadError) as e:
+        return {"ok": False, "label": f"Evidence not computable: stored history could not be read ({e}). Try again.",
                 "ic": None, "t_stat": None, "n_days": 0}
-    return _evidence_cached(snaps, px, frame_fingerprint(snaps, px))
 
 
 def track_record_ok(_prices, rows_key=None) -> bool:
@@ -1065,7 +1098,7 @@ def clear_snapshot_caches() -> None:
     from services import earnings, market_data, screener
     from ui import signal_hub
     for fn in (signal_hub._market, load_snapshot, load_track_record, load_etl_exceptions, load_ticker_provenance, load_data_health,
-               _evidence_cached, load_decision_snapshots, load_discovery, load_recorded_decision, load_etf_shares_snapshots,
+               _evidence_cached, _evidence_for_snapshot, load_decision_snapshots, load_discovery, load_recorded_decision, load_etf_shares_snapshots,
                screener.get_master_screener_data, market_data.fetch_macro_data, market_data.stored_macro,
                earnings.load_earnings_events,
                earnings.universe_reactions):

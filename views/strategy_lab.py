@@ -24,9 +24,9 @@ DEMO = f"{STATIC_QUALITY} (today's Quality ≥ 75 applied to past bars — looka
 _SKIP = ["^VIX", "SPY", "^GSPC", "^DJI", "^IXIC"]
 
 
-def _evidence_block(prices_full):
+def _evidence_block(prices_full, evidence_result=None):
     try:
-        ev = db.evidence(prices_full)
+        ev = evidence_result if evidence_result is not None else db.evidence(prices_full)
     except Exception as e:           # a read error is not "no history"
         ev = {"ok": False, "label": f"Evidence not computable: {e}"}
     head = evidence_headline(ev)
@@ -53,7 +53,7 @@ def render(ctx):
     reco_df = ctx['reco_df']
 
     render_header("activity", "Strategy Lab — Evidence & Experiments")
-    _evidence_block(prices_full)
+    _evidence_block(prices_full, ctx.get("evidence"))
     st.markdown("---")
 
     st.markdown("#### Compare timing rules on one stock")

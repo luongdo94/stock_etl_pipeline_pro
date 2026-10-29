@@ -105,18 +105,17 @@ def test_r2_buy_caption_uses_evidence_and_is_absent_without_buy(warehouse, monke
     def evidence(prices=None):
         calls.append(prices)
         if read_error:
-            raise OSError("stored evidence unavailable")
+            return {"ok": False, "label": "Evidence not computable: stored evidence unavailable"}
         return {"ok": True}
 
     monkeypatch.setattr(scanner, "render", render)
-    monkeypatch.setattr(db, "track_record_ok", lambda _prices, rows_key=None: False)
     monkeypatch.setattr(db, "evidence", evidence)
     at = _app("🔭 Stock Scanner").run()
     assert not at.exception, [e.value for e in at.exception]
     captions = [c.value for c in at.caption if "not an order" in c.value]
     assert len(captions) == int(buy)
     if buy:
-        assert captions[0].endswith("unavailable." if read_error else "Supported under this test.")
+        assert captions[0].endswith("Not computable." if read_error else "Supported under this test.")
         assert calls
 
 

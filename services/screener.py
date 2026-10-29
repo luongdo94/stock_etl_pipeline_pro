@@ -1,8 +1,6 @@
 """Cached Streamlit wrapper around core.screener.build_screener_table.
 
-Cache key (audit A04): DataFrames prefixed with _ are not hashed by Streamlit, so the key used to be a few row counts
-and a changed price or statement with the same row count served stale scores for up to an hour. The wrapper now
-computes a content fingerprint of every input frame plus the score / rule versions and passes it as a hashed argument.
+The loaded snapshot identity keys immutable input frames; callers without one use content fingerprints (A04).
 """
 import hashlib
 from pathlib import Path
@@ -49,9 +47,10 @@ def _cached_erps(_companies, _prices, _hist_fcf, _annual, macro, _sec_history, _
     return snapshot_implied_erps(_companies, _prices, _hist_fcf, _annual, macro, _sec_history, _estimates)
 
 
-def get_snapshot_erps(companies, prices, hist_fcf, annual, macro, sec_history=None, estimates=None):
+def get_snapshot_erps(companies, prices, hist_fcf, annual, macro, sec_history=None, estimates=None, snapshot_version=None):
     from datetime import date
-    key = frame_fingerprint(companies, prices, hist_fcf, annual, sec_history, estimates)
+    key = ("snapshot", snapshot_version, model_version()) if snapshot_version is not None else frame_fingerprint(
+        companies, prices, hist_fcf, annual, sec_history, estimates)
     return _cached_erps(companies, prices, hist_fcf, annual, macro, sec_history, estimates, key, date.today().isoformat())
 
 
@@ -65,11 +64,12 @@ def _cached_screener(_companies_df, _prices_df, _quarterly_fin, _annual_fin, _hi
 
 def get_master_screener_data(_companies_df, _prices_df, _quarterly_fin, _annual_fin, _hist_fcf=None,
                              risk_free_pct=None, hist_fcf_rows=None, _estimates=None, estimates_rows=None,
-                             track_record_ok=False, _earnings_cal=None, _sec_annual_history=None, macro=None):
+                             track_record_ok=False, _earnings_cal=None, _sec_annual_history=None, macro=None, snapshot_version=None):
     """Same signature as before (hist_fcf_rows / estimates_rows are accepted and ignored). The earnings calendar feeds
     the Decision's pre-earnings blackout; `today` is part of the key because that gate depends on the date."""
     from datetime import date
-    key = frame_fingerprint(_companies_df, _prices_df, _quarterly_fin, _annual_fin, _hist_fcf, _estimates, _earnings_cal, _sec_annual_history)
+    key = ("snapshot", snapshot_version, model_version()) if snapshot_version is not None else frame_fingerprint(
+        _companies_df, _prices_df, _quarterly_fin, _annual_fin, _hist_fcf, _estimates, _earnings_cal, _sec_annual_history)
     return _cached_screener(_companies_df, _prices_df, _quarterly_fin, _annual_fin, _hist_fcf, risk_free_pct,
                             _estimates, bool(track_record_ok), key, _earnings_cal=_earnings_cal,
                             today=date.today().isoformat(), _sec_annual_history=_sec_annual_history, macro=macro)

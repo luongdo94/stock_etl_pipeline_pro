@@ -127,7 +127,6 @@ def test_a06_overview_read_failure_is_not_not_held(monkeypatch):
     ui = UI()
     monkeypatch.setattr(us.st, "session_state", ui.session_state)
     monkeypatch.setattr(hd, "st", ui)
-    monkeypatch.setattr(hd, "load_track_record", lambda: pd.DataFrame())
     monkeypatch.setattr(hd, "load_ticker_provenance", lambda *a: {})
     monkeypatch.setattr(hd, "render_confidence_line", lambda *a: None)
     monkeypatch.setattr(hd, "layer_banner", lambda *a, **k: None)

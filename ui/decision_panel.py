@@ -79,10 +79,11 @@ def render_score_strip(scores):
 
 def render_decision_panel(*, ticker, meta, price, price_date, stop_loss, vin, relval, missing,
                           next_earnings, quality, snapshots, prices, holdings_loader, companies,
-                          scores=None, signal_conflict=None, decision=None):
+                          scores=None, signal_conflict=None, decision=None, evidence_result=None):
     """`decision`: the Decision the page already computed (DeepDive, the same one as the Scanner and the assistant) —
     shown as it is. Without it (other callers) the panel decides from its own inputs, as before."""
-    ev = _cached_evidence(snapshots, prices[["date", "ticker", "price_close"]])
+    ev = evidence_result if evidence_result is not None else _cached_evidence(
+        snapshots, prices[["date", "ticker", "price_close"]])
     if decision is not None:
         d = decision
     else:

@@ -66,7 +66,8 @@ def _select_group() -> str:
     saved = st.session_state.get("_sa_group")
     if "sa_group" not in st.session_state and saved in GROUPS:
         st.session_state["sa_group"] = saved
-    group = st.pills("Section", list(GROUPS), selection_mode="single", default=DEFAULT_GROUP, key="sa_group",
+    default = {} if "sa_group" in st.session_state else {"default": DEFAULT_GROUP}
+    group = st.pills("Section", list(GROUPS), selection_mode="single", key="sa_group", **default,
                      label_visibility="collapsed") or DEFAULT_GROUP
     st.session_state["_sa_group"] = group
     return group

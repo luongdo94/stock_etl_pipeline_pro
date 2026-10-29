@@ -495,7 +495,7 @@ def render(ctx):
         from core.track_record import evidence_headline
         from services.db import evidence
         try:
-            status = evidence_headline(evidence(ctx["prices_full"]))
+            status = evidence_headline(ctx["evidence"] if "evidence" in ctx else evidence(ctx["prices_full"]))
         except Exception:
             status = "unavailable"
         st.caption("BUY CANDIDATE means worth researching, not an order. "

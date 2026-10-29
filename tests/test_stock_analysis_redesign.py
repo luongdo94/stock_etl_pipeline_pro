@@ -94,7 +94,7 @@ def test_only_the_chosen_group_runs_and_the_answer_block_is_always_there(warehou
 
 
 @pytest.mark.smoke
-def test_the_chosen_group_and_widget_state_survive_other_tabs_and_tickers(warehouse):
+def test_the_chosen_group_and_widget_state_survive_other_tabs_and_tickers(warehouse, caplog):
     at = _app("🔬 Stock Analysis")
     at.session_state["deep_ticker_selector"] = "AAPL"
     at.session_state["sa_group"] = "Price & timing"
@@ -111,6 +111,8 @@ def test_the_chosen_group_and_widget_state_survive_other_tabs_and_tickers(wareho
     at.run()
     assert not at.exception, [e.value for e in at.exception]
     assert at.session_state["sa_group"] == "Price & timing"
+    assert at.session_state["deep_ticker_selector"] == "AAPL"
+    assert not any('widget with key "sa_group"' in r.message for r in caplog.records)
     at.session_state["deep_ticker_selector"] = "MSFT"
     at.run()
     assert at.session_state["sa_group"] == "Price & timing" and not at.exception
