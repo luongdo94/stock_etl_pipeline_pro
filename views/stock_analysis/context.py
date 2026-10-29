@@ -150,12 +150,14 @@ def build(ctx, deep_ticker):
     # Levels and the 52-week range always use the FULL price history — `df_deep` follows the
     # sidebar horizon (1M → "52-week high" was the 1-month high) and is only used for display.
     tm = get_tactical_metrics(_df_levels, cur_p, analyst_target=target_p)
-    ma_sig = str(latest_tech.get("ma_signal", meta.get("ma_signal", "NEUTRAL")))
+    ma_sig = str(latest_tech.get("ma_signal", meta.get("ma_signal", "N/A")))
+    if any(col in latest_tech.index and pd.isna(latest_tech[col]) for col in ("ma_20", "ma_50", "ma_200")):
+        ma_sig = "N/A"
 
     # TP1 is the technical target. (It used to take the ML Predictor's forecast when one had been run — an unvalidated
     # number leaking into this page.)
     tp1 = tm["tp1"]
-    tp2 = max(target_p, tm["tp2"]) if target_p > 0 else tm["tp2"]
+    tp2 = max(target_p, tm["tp2"]) if target_p > 0 and tm["tp2"] is not None else tm["tp2"]
 
     _estimate_rows = _fe[_fe["ticker"] == deep_ticker] if _fe is not None and not _fe.empty and "ticker" in _fe else None
     vin = valuation_inputs(meta, cur_p, ctx["hist_fcf_full"], deep_ticker, ctx["macro"], annual_fin, prices=_df_levels,
@@ -173,7 +175,7 @@ def build(ctx, deep_ticker):
     # data-gap notes of that panel do not change it)
     # Same Decision as the panel and the scanner (core.decision.decide); the Signal below reads its stance.
     from core.decision import BUY, RESEARCH, decide, load_rules, with_conflict
-    _d = decide(price=float(cur_p), vin=vin, stop_loss=tm["stop_loss"], meta=meta,
+    _d = decide(price=float(cur_p), vin=vin, stop_loss=tm["stop_loss"], stop_kind=tm.get("kinds", {}).get("s1"), meta=meta,
                 scores=scores,                      # true quality (None = unknown → no BUY)
                 price_date=pd.to_datetime(df_now["date"].iloc[-1]).date(), next_earnings=next_er,
                 track_record_ok=bool(ctx.get("track_record_ok", False)), rules=load_rules())
@@ -199,7 +201,7 @@ def build(ctx, deep_ticker):
     act_str = rating["action_label"]
     from core.signal_matrix import ACTION_COLOURS, action_description
     act_color = ACTION_COLOURS.get(act_str, rating["action_color"])
-    act_desc = action_description(act_str, rating, s1=tm["s1"], price=float(cur_p), rsi=tm["rsi"])
+    act_desc = action_description(act_str, rating, s1=tm["s1"], s1_kind=tm.get("kinds", {}).get("s1", "N/A"), price=float(cur_p), rsi=tm["rsi"])
 
     return DeepDive(ticker=deep_ticker, meta=meta, meta_enriched=meta_enriched, df_deep=df_deep,
                     df_fin=df_fin, cur_p=cur_p, target_p=target_p, upside=upside, z_score=z_score,

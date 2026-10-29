@@ -255,6 +255,7 @@ def _create_intermediate(conn):
             -- MA Trend Signal: Long-term trend (MA50 vs MA200) takes priority.
             -- MA20 vs MA50 is used as a secondary signal only when the long-term trend is ambiguous.
             CASE
+                WHEN ma_20 IS NULL OR ma_50 IS NULL OR ma_200 IS NULL THEN NULL
                 WHEN ma_50 > ma_200 AND ma_20 > ma_50  THEN 'STRONG BULL'  -- Golden Cross + short-term confirmation
                 WHEN ma_50 > ma_200 AND ma_20 <= ma_50 THEN 'BULLISH'      -- Golden Cross but short-term pulling back
                 WHEN ma_50 < ma_200 AND ma_20 < ma_50  THEN 'STRONG BEAR'  -- Death Cross + short-term confirmation

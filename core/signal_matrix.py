@@ -10,7 +10,7 @@ ACTION_COLOURS = SIGNAL_COLOURS
 GOOD = ("#2ecc71", "#00ffcc")
 
 
-def action_description(action, rating, *, s1, price, rsi):
+def action_description(action, rating, *, s1, price, rsi, s1_kind="N/A"):
     """One-paragraph reading of the Signal label."""
     if rating.get("overvalued") and action in ("NEUTRAL", "WEAKENING", "UNFAVOURABLE"):
         return ("The Decision Summary rates the price above even the bull-case DCF value, which holds this back: "
@@ -19,11 +19,12 @@ def action_description(action, rating, *, s1, price, rsi):
     if rating.get("clamped") and action == "NEUTRAL":
         return ("The Decision Summary calls this a buy candidate, so the context is not shown as unfavourable; the "
                 "weaker trend or quality readings above are the risks to monitor.")
+    level = f"€{s1:.2f} ({s1_kind})" if s1 is not None else f"N/A ({s1_kind})"
     if action == "STRONG SETUP":
-        return (f"Trend, quality, value and reward/risk all line up. Nearest support to watch: €{s1:.2f} "
+        return (f"Trend, quality, value and reward/risk all line up. S1: {level} "
                 f"(price €{price:.2f}). Whether to act is the Decision Summary's call.")
     if action == "FAVOURABLE":
-        return (f"More pillars support than oppose: constructive context with support near €{s1:.2f}. "
+        return (f"More pillars support than oppose: constructive context with S1 at {level}. "
                 f"Check the Decision Summary for price and risk.")
     if action == "UNFAVOURABLE":
         if rating["p_trend_c"] in ("#e74c3c", "#c0392b") and rating["p_val_c"] == "#e74c3c":
@@ -39,7 +40,7 @@ def action_description(action, rating, *, s1, price, rsi):
     return "Mixed signals across the pillars; nothing decisive either way."
 
 
-def rr_explainer(*, rr, price, stop, target, s1, rsi, w52_pos, pe, quality, overvalued=False):
+def rr_explainer(*, rr, price, stop, target, s1, rsi, w52_pos, pe, quality, overvalued=False, s1_kind="N/A"):
     """(level, colour, [bullets]) for the reward/risk pillar. `rr`, `stop` and `target` come from the
     Decision (thesis stop vs value); bands match the rating: 1.2 / 2.5. rr None = no usable value."""
     if overvalued:
@@ -67,7 +68,7 @@ def rr_explainer(*, rr, price, stop, target, s1, rsi, w52_pos, pe, quality, over
             b2 = f"P/E of {pe:.1f}x leaves little margin of safety if earnings disappoint."
         else:
             b2 = f"Price €{price:.2f} is already close to the base-case value, so little of the move is left."
-        b3 = f"A pullback toward the support zone €{s1 * 0.97:.2f}–€{s1:.2f} would widen the ratio."
+        b3 = f"A pullback toward S1 at €{s1:.2f} ({s1_kind}) would widen the ratio." if s1 is not None else "S1 is unavailable."
         return "LOW", "#e74c3c", [b1, b2, b3]
 
     if rr <= 2.5:
@@ -75,13 +76,13 @@ def rr_explainer(*, rr, price, stop, target, s1, rsi, w52_pos, pe, quality, over
               f"against {risk_pct:.1f}% to the thesis stop (€{stop:.2f}).")
         b2 = (f"Quality {quality:.0f}/100 underpins the thesis; the ratio is limited by price, not by the business."
               if quality >= 60 else
-              f"Price is at {w52_pos:.0f}% of its 52-week range with RSI {rsi:.1f}: no extreme either way.")
-        b3 = f"Scaling in near €{s1:.2f}–€{price:.2f} improves the blended ratio."
+              f"Price is at {w52_pos:.0f}% of its 52-week range with RSI {rsi:.1f}: no extreme either way." if w52_pos is not None else "52-week position is N/A.")
+        b3 = f"S1 is €{s1:.2f} ({s1_kind}); scaling in near it improves the blended ratio." if s1 is not None else "S1 is unavailable."
         return "MEDIUM", "#2ecc71", [b1, b2, b3]
 
     b1 = (f"Reward/risk is {rr:.2f}x: {rwrd_pct:+.1f}% to the base-case value (€{target:.2f}) against "
           f"{risk_pct:.1f}% to the thesis stop (€{stop:.2f}).")
-    b2 = (f"Price sits at {w52_pos:.0f}% of its 52-week range." if w52_pos < 25 else
-          f"The thesis stop at €{stop:.2f} sits below technical support while the value gap stays wide.")
+    b2 = (f"Price sits at {w52_pos:.0f}% of its 52-week range." if w52_pos is not None and w52_pos < 25 else
+          f"The thesis stop at €{stop:.2f} leaves a wide value gap.")
     b3 = "Sizing, costs and portfolio fit are in the Decision Summary above."
     return "HIGH", "#00ffcc", [b1, b2, b3]

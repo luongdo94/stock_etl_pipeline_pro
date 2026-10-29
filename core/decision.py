@@ -209,7 +209,7 @@ class Decision:
 
 def build_decision(*, price: float, base_value: Optional[float], bear_value: Optional[float],
                    bull_value: Optional[float] = None,
-                   stop_loss: Optional[float], currency: Optional[str] = None,
+                   stop_loss: Optional[float], stop_kind: Optional[str] = None, currency: Optional[str] = None,
                    country: Optional[str] = None, dividend_yield_pct=None,
                    missing_metrics=(), price_date: Optional[date] = None,
                    fundamentals_date: Optional[date] = None, next_earnings: Optional[date] = None,
@@ -447,13 +447,13 @@ def build_decision(*, price: float, base_value: Optional[float], bear_value: Opt
     invalidation = []
     if usable_value:
         invalidation.append(f"Close below the thesis stop at {thesis_stop:,.2f} "
-                            f"(wider of technical support and bear-case value, at least "
+                            f"(wider of {'technical stop derived from ' + (stop_kind or 'S1') + ' and ATR' if stop_loss else 'available inputs'} and bear-case value, at least "
                             f"{rules['risk'].get('min_stop_pct', 8.0):.0f}% below price).")
         invalidation.append(f"Price reaches base-case value {usable_value:,.2f} (thesis played out → reassess / take profit).")
         invalidation.append("Next results cut free cash flow or growth below the DCF assumptions.")
     else:
         if stop_loss and price and stop_loss < price:
-            invalidation.append(f"Technical: close below support at {stop_loss:,.2f}.")
+            invalidation.append(f"Technical: close below the stop at {stop_loss:,.2f}, derived from {stop_kind or 'S1'} and ATR.")
         invalidation.append("No DCF anchor — re-check relative valuation and quality after every report.")
 
     warnings = []
@@ -527,7 +527,7 @@ _DEDUCTION_NAMES = {"stock_based_comp": "stock-based compensation", "interest_pa
                     "lease_principal_paid": "lease principal"}
 
 
-def decide(*, price: float, vin: dict, stop_loss: Optional[float], meta, scores: Optional[dict] = None,
+def decide(*, price: float, vin: dict, stop_loss: Optional[float], meta, stop_kind: Optional[str] = None, scores: Optional[dict] = None,
            price_date: Optional[date] = None, next_earnings: Optional[date] = None,
            track_record_ok: bool = False, rules: Optional[dict] = None) -> Decision:
     """
@@ -549,7 +549,7 @@ def decide(*, price: float, vin: dict, stop_loss: Optional[float], meta, scores:
         elif statement <= date.today():
             statement = min(statement, basis_date)
     return build_decision(
-        price=float(price), base_value=vin["base"], bear_value=vin["bear"], bull_value=vin["bull"], stop_loss=stop_loss,
+        price=float(price), base_value=vin["base"], bear_value=vin["bear"], bull_value=vin["bull"], stop_loss=stop_loss, stop_kind=stop_kind,
         # listing currency for the FX cost; the reporting currency only when nothing about the listing is known
         currency=vin.get("trading_currency") or meta.get("trading_currency") or meta.get("currency"),
         trading_fx_rate=vin.get("trading_fx_rate"), country=meta.get("country"),

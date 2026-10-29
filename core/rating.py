@@ -101,7 +101,9 @@ def compute_institutional_rating(
         _rsi_known = False
     # Every pillar returns a label AND its colour from the same branch, so the UI can never show a
     # label that disagrees with the colour the action logic used.
-    if not _rsi_known:
+    if _ma_upper not in ("STRONG BULL", "BULLISH", "BEARISH", "STRONG BEAR", "NEUTRAL"):
+        p_trend, p_trend_c = "N/A — fewer than 200 sessions", "#95a5a6"
+    elif not _rsi_known:
         p_trend, p_trend_c = "N/A (RSI unknown)", "#95a5a6"   # unknown is not bearish evidence (K5-01)
     elif _ma_upper == "STRONG BULL" and latest_rsi < 70:
         p_trend, p_trend_c = "STRONG BULLISH", "#00ffcc"   # Golden Cross + RSI not overbought
@@ -171,9 +173,11 @@ def compute_institutional_rating(
         p_val, p_val_c = "AVERAGE", "#95a5a6"
 
     # ── PILLAR 4: 52-WEEK POSITION (context, not scored) ───────────────────
-    _is_canslim_breakout = w52_pos > 80 and _ma_upper == "STRONG BULL"
+    _is_canslim_breakout = w52_pos is not None and w52_pos > 80 and _ma_upper == "STRONG BULL"
     if _is_canslim_breakout:
         p_risk, p_risk_c = "BREAKOUT", "#3498db"         # new highs in a confirmed uptrend
+    elif w52_pos is None:
+        p_risk, p_risk_c = "N/A", "#95a5a6"
     elif w52_pos > 80:
         p_risk, p_risk_c = "NEAR 52W HIGH", "#95a5a6"    # momentum, but little room to the old ceiling
     elif w52_pos < 20:

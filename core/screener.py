@@ -184,7 +184,9 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
         _cov = min(_sc["quality_coverage"], _sc["value_coverage"])
 
         # ── Decision (single recommendation; identical logic to the Stock Analysis panel) ──
-        ma_sig = str(latest_p.get('ma_signal', 'NEUTRAL'))
+        ma_sig = str(latest_p.get('ma_signal', 'N/A'))
+        if any(col in latest_p.index and pd.isna(latest_p[col]) for col in ('ma_20', 'ma_50', 'ma_200')):
+            ma_sig = 'N/A'
         pe_v   = float(row.get('forward_pe') or row.get('pe_ratio') or 0)
         peg_v  = float(row.get('peg_ratio') or 0)
 
@@ -198,7 +200,7 @@ def build_screener_table(_companies_df, _prices_df, _quarterly_fin, _annual_fin,
                                 sec_annual_history=_sec_by.get(ticker),
                                 estimates=_est_by[ticker].iloc[0] if ticker in _est_by else None)
         _dec = decide(
-            price=float(cur_p), vin=_vin, stop_loss=_tm["stop_loss"], meta=row,
+            price=float(cur_p), vin=_vin, stop_loss=_tm["stop_loss"], stop_kind=_tm.get("kinds", {}).get("s1"), meta=row,
             scores={"quality": quality_raw, "value": value_score, "flags": _sc["flags"], "coverage": _cov,
                     "missing": _sc["missing"], "momentum": None if pd.isna(momentum) else momentum,
                     "adv_eur": _sc["adv_eur"] if pd.notnull(_sc["adv_eur"]) else None},

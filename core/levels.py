@@ -20,6 +20,17 @@ def _pivot_masks(df: "pd.DataFrame", half: int) -> tuple:
     return is_low, is_high
 
 
+def _reaction_magnitude(df, i, pivot, side):
+    """Exclude the pivot bar because its intraday range is not a subsequent reaction."""
+    future = df.iloc[i + 1:min(i + 11, len(df))]
+    if future.empty or pivot <= 0:
+        return None
+    extreme = future["price_high"].max() if side == "low" else future["price_low"].min()
+    if pd.isna(extreme):
+        return None
+    return (extreme - pivot if side == "low" else pivot - extreme) / pivot * 100
+
+
 def detect_swing_zones(ticker_prices: "pd.DataFrame", cur_p: float, lookback: int = 60, base_window: int = 5) -> dict:
     """
     Detect support and resistance ZONES (not levels) using advanced swing detection with:
@@ -77,8 +88,7 @@ def detect_swing_zones(ticker_prices: "pd.DataFrame", cur_p: float, lookback: in
     for i in np.flatnonzero(is_low).tolist():
         pivot_low = df.iloc[i]["price_low"]
         # Calculate reaction magnitude (how much price bounced from this low)
-        future_slice = df.iloc[i:min(i+10, len(df))]
-        reaction_magnitude = (future_slice["price_high"].max() - pivot_low) / pivot_low * 100 if len(future_slice) > 0 else 0
+        reaction_magnitude = _reaction_magnitude(df, i, pivot_low, "low")
 
         swing_lows.append({
             "price": pivot_low,
@@ -92,8 +102,7 @@ def detect_swing_zones(ticker_prices: "pd.DataFrame", cur_p: float, lookback: in
     for i in np.flatnonzero(is_high).tolist():
         pivot_high = df.iloc[i]["price_high"]
         # Calculate reaction magnitude (how much price dropped from this high)
-        future_slice = df.iloc[i:min(i+10, len(df))]
-        reaction_magnitude = (pivot_high - future_slice["price_low"].min()) / pivot_high * 100 if len(future_slice) > 0 else 0
+        reaction_magnitude = _reaction_magnitude(df, i, pivot_high, "high")
 
         swing_highs.append({
             "price": pivot_high,
@@ -157,14 +166,16 @@ def detect_swing_zones(ticker_prices: "pd.DataFrame", cur_p: float, lookback: in
         retest_score = min(len(zone) / 5.0, 1.0)  # Cap at 5 tests
         
         # Reaction magnitude: average bounce/drop
-        avg_reaction = sum(s["reaction_magnitude"] for s in zone) / len(zone)
-        reaction_score = min(avg_reaction / 10.0, 1.0)  # Cap at 10%
+        reactions = [s["reaction_magnitude"] for s in zone if s["reaction_magnitude"] is not None and pd.notna(s["reaction_magnitude"])]
+        reaction_score = min(sum(reactions) / len(reactions) / 10.0, 1.0) if reactions else None
         
         # Composite score
         strength = (recency_score * 0.30 + 
                    volume_score * 0.25 + 
                    retest_score * 0.25 + 
-                   reaction_score * 0.20)
+                   (reaction_score or 0) * 0.20)
+        if reaction_score is None:
+            strength /= 0.80
         
         return strength
     
@@ -190,17 +201,17 @@ def detect_swing_zones(ticker_prices: "pd.DataFrame", cur_p: float, lookback: in
     ]
     
     # ── STEP 5: Select best zones (nearest to current price with high strength) ─
-    # Support zones: below current price, sort by strength then proximity
+    # Support zones: below current price, sorted by proximity
     supports_below = [z for z in support_zones_scored if z["midpoint"] < cur_p]
     if supports_below:
-        # Sort by: strength (primary) then proximity to current price
-        supports_below.sort(key=lambda x: (-x["strength"], -x["midpoint"]), reverse=False)
+        # The nearest qualifying zone is the first level
+        supports_below.sort(key=lambda x: -x["midpoint"])
         s1 = supports_below[0]["midpoint"]
         
-        # S2: next strongest support zone below S1 (must be meaningfully lower)
+        # S2: next support zone below S1 (must be meaningfully lower)
         supports_below_s1 = [z for z in supports_below if z["midpoint"] < s1 * 0.97]
         if supports_below_s1:
-            supports_below_s1.sort(key=lambda x: (-x["strength"], -x["midpoint"]), reverse=False)
+            supports_below_s1.sort(key=lambda x: -x["midpoint"])
             s2 = supports_below_s1[0]["midpoint"]
         else:
             s2 = s1 * 0.97  # Fallback
@@ -208,17 +219,17 @@ def detect_swing_zones(ticker_prices: "pd.DataFrame", cur_p: float, lookback: in
         s1 = float(df["price_low"].min())
         s2 = s1 * 0.97
     
-    # Resistance zones: above current price, sort by strength then proximity
+    # Resistance zones: above current price, sorted by proximity
     resistances_above = [z for z in resistance_zones_scored if z["midpoint"] > cur_p]
     if resistances_above:
         # Sort by: strength (primary) then proximity to current price
-        resistances_above.sort(key=lambda x: (-x["strength"], x["midpoint"]), reverse=False)
+        resistances_above.sort(key=lambda x: x["midpoint"])
         r1 = resistances_above[0]["midpoint"]
         
-        # R2: next strongest resistance zone above R1 (must be meaningfully higher)
+        # R2: next resistance zone above R1 (must be meaningfully higher)
         resistances_above_r1 = [z for z in resistances_above if z["midpoint"] > r1 * 1.03]
         if resistances_above_r1:
-            resistances_above_r1.sort(key=lambda x: (-x["strength"], x["midpoint"]), reverse=False)
+            resistances_above_r1.sort(key=lambda x: x["midpoint"])
             r2 = resistances_above_r1[0]["midpoint"]
         else:
             r2 = r1 * 1.03  # Fallback
@@ -274,69 +285,65 @@ def get_tactical_metrics(ticker_prices: "pd.DataFrame", cur_p: float, analyst_ta
         (ticker_prices["price_high"] - ticker_prices["price_close"].shift(1)).abs(),
         (ticker_prices["price_low"] - ticker_prices["price_close"].shift(1)).abs(),
     ], axis=1).max(axis=1)
-    atr = float(_tr.tail(14).mean()) if len(_tr.dropna()) >= 5 else cur_p * 0.02
+    # A full ATR window is required; zero volatility cannot support projections or a stop.
+    atr_value = _tr.tail(14).mean() if len(_tr) >= 14 and _tr.tail(14).notna().all() else None
+    atr = float(atr_value) if atr_value is not None and pd.notna(atr_value) and atr_value > 0 else None
 
     df_252 = ticker_prices.tail(252)
     w52_hi = float(df_252["price_high"].max())
     w52_lo = float(df_252["price_low"].min())
 
-    pool_s, pool_r = [], []   # (price, source)
+    # Preserve the first source for duplicate prices, including strength and touches for zones.
+    pool_s, pool_r = [], []
     for sw, src in ((swing_20d, "20d"), (swing_60d, "60d"), (swing_252d, "252d")):
-        pool_s += [(p, f"zone {src}") for p, _st, _n in sw.get("support_zones", [])]
-        pool_r += [(p, f"zone {src}") for p, _st, _n in sw.get("resistance_zones", [])]
-    pool_s.append((w52_lo, "52-week low"))
-    pool_r.append((w52_hi, "52-week high"))
-    near = max(atr * 0.5, cur_p * 0.003)            # a "level" inside half an ATR is the price itself
-    supports = sorted({p: src for p, src in pool_s if p < cur_p - near}.items(), key=lambda x: -x[0])
-    resists = sorted({p: src for p, src in pool_r if p > cur_p + near}.items(), key=lambda x: x[0])
+        pool_s += [(p, f"zone {src}", st, n) for p, st, n in sw.get("support_zones", [])]
+        pool_r += [(p, f"zone {src}", st, n) for p, st, n in sw.get("resistance_zones", [])]
+    if not swing_20d.get("support_zones"):
+        pool_s.append((float(ticker_prices.tail(20)["price_low"].min()), "20-day low (no confirmed swing)", None, None))
+    if not swing_20d.get("resistance_zones"):
+        pool_r.append((float(ticker_prices.tail(20)["price_high"].max()), "20-day high (no confirmed swing)", None, None))
+    pool_s.append((w52_lo, "52-week low", None, None))
+    pool_r.append((w52_hi, "52-week high", None, None))
+    near = max((atr or 0) * 0.5, cur_p * 0.003)
+    def candidates(pool, direction):
+        unique = {}
+        for item in pool:
+            p = item[0]
+            if pd.notna(p) and (p < cur_p - near if direction < 0 else p > cur_p + near):
+                unique.setdefault(p, item)
+        return sorted(unique.values(), key=lambda item: direction * item[0])
 
-    def _ladder(levels, first, gaps, direction):
-        """Pick up to 3 levels moving away from price, each ≥ gap beyond the previous one."""
-        out, ref = [], first
-        for gap in gaps:
-            nxt = next(((p, src) for p, src in levels
-                        if (p <= ref * (1 - gap) if direction < 0 else p >= ref * (1 + gap))), None)
+    supports, resists = candidates(pool_s, -1), candidates(pool_r, 1)
+    missing = (None, "N/A (ATR unavailable or zero; no real level)", None, None)
+    def ladder(levels, direction):
+        out = []
+        ref = cur_p
+        for gap in (0, 0.03, 0.05):
+            nxt = next((item for item in levels if
+                        (item[0] <= ref * (1 - gap) if direction < 0 else item[0] >= ref * (1 + gap))), None)
             if nxt is None:
-                proj = ref - 2 * atr if direction < 0 else ref + 2 * atr
-                nxt = (proj, "projected (2×ATR, no real level)")
+                nxt = (ref + direction * max(2 * atr, ref * gap), "projected (2×ATR or minimum gap, no real level)", None, None) if atr is not None else missing
             out.append(nxt)
+            if nxt[0] is None:
+                out.extend([missing] * (3 - len(out)))
+                break
             ref = nxt[0]
         return out
 
-    # Level 1: the 20-day strongest zone if it is a real level on the right side, else the nearest one
-    s1_cand = swing_20d["s1"] if swing_20d["s1"] < cur_p - near else None
-    r1_cand = swing_20d["r1"] if swing_20d["r1"] > cur_p + near else None
-    first_s = (s1_cand, "zone 20d") if s1_cand else (supports[0] if supports else (cur_p - 2 * atr, "projected (2×ATR, no real level)"))
-    first_r = (r1_cand, "zone 20d") if r1_cand else (resists[0] if resists else (cur_p + 2 * atr, "projected (2×ATR — price discovery, no overhead resistance)"))
-    (s2, s2k), (s3, s3k) = _ladder(supports, first_s[0], (0.03, 0.05), -1)
-    (r2, r2k), (r3, r3k) = _ladder(resists, first_r[0], (0.03, 0.05), +1)
-    s1, s1k = first_s
-    r1, r1k = first_r
+    sl, rl = ladder(supports, -1), ladder(resists, 1)
+    (s1, s1k, _, _), (s2, s2k, _, _), (s3, s3k, _, _) = sl
+    (r1, r1k, _, _), (r2, r2k, _, _), (r3, r3k, _, _) = rl
 
-    # Derived levels. Stop: below the S1 zone AND at least 2×ATR below price (a stop inside the
-    # daily noise band — LVMH was at -1.8% — gets hit by ordinary volatility).
-    stop_loss = min(s1 * (1 - zone_width_20d * 1.5), cur_p - 2 * atr)
-    tp1       = r1 * (1 + zone_width_20d * 1.5)  # Target above R1 zone
-    tp2       = r2  # Use R2 zone midpoint
-    tp3       = r3  # Use R3 zone midpoint
-
-    # Risk/Reward
-    risk_dist    = cur_p - stop_loss
-    rr_disp_dist = tp1 - cur_p     # display: always uses tp1 (technical)
-
-    # rr_score: prefer analyst target when it is meaningfully above current price
-    if analyst_target > cur_p * 1.01:
-        rr_score_dist = analyst_target - cur_p
-    else:
-        rr_score_dist = r1 - cur_p  # fallback: technical resistance
-
-    rr_score = (rr_score_dist / risk_dist) if risk_dist > 0 else 0.0
-    rr       = (rr_disp_dist  / risk_dist) if risk_dist > 0 else 0.0
-
-    # 52-week position (needs a full year of history — callers pass the full series, not the
-    # sidebar-filtered window, otherwise "52-week" silently means "last month")
+    # Targets use zone midpoints consistently; the stop sits below the lower band edge
+    # and at least two ATR below price so ordinary volatility does not trigger it.
+    stop_loss = min(s1 * (1 - zone_width_20d * 1.5), cur_p - 2 * atr) if s1 is not None and atr is not None else None
+    tp1, tp2, tp3 = r1, r2, r3
+    risk_dist = cur_p - stop_loss if stop_loss is not None else None
+    rr = (tp1 - cur_p) / risk_dist if risk_dist and risk_dist > 0 and tp1 is not None else None
+    rr_target = analyst_target if analyst_target > cur_p * 1.01 else r1
+    rr_score = (rr_target - cur_p) / risk_dist if risk_dist and risk_dist > 0 and rr_target is not None else None
     w52_rng = w52_hi - w52_lo
-    w52_pos = ((cur_p - w52_lo) / w52_rng * 100) if w52_rng > 0 else 50.0
+    w52_pos = ((cur_p - w52_lo) / w52_rng * 100) if w52_rng > 0 else None
 
     return {
         "rsi":       rsi_val,
@@ -359,4 +366,6 @@ def get_tactical_metrics(ticker_prices: "pd.DataFrame", cur_p: float, analyst_ta
         "atr":       atr,
         # where each level comes from: "zone 20d/60d/252d", "52-week high/low" or "projected (...)"
         "kinds": {"s1": s1k, "s2": s2k, "s3": s3k, "r1": r1k, "r2": r2k, "r3": r3k},
+        "strengths": {k: v[2] for k, v in zip(("s1", "s2", "s3", "r1", "r2", "r3"), sl + rl)},
+        "touches": {k: v[3] for k, v in zip(("s1", "s2", "s3", "r1", "r2", "r3"), sl + rl)},
     }

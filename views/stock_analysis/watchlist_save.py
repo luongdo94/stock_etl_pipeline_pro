@@ -33,7 +33,7 @@ def _idea_version(frame, ticker):
 
 
 @st.fragment
-def _save_form(ticker, act_str, act_desc, s1, stop_loss, tp1, next_earnings):
+def _save_form(ticker, act_str, act_desc, s1, stop_loss, tp1, next_earnings, s1_kind="N/A", r1_kind="N/A"):
     pre = _draft_prefix(ticker)
     try:
         wl_df = load_watchlist()
@@ -48,8 +48,8 @@ def _save_form(ticker, act_str, act_desc, s1, stop_loss, tp1, next_earnings):
     conflict = baseline in st.session_state and _idea_version(wl_df, ticker) != st.session_state[baseline]
     if conflict:
         st.warning("This idea was changed elsewhere since you started editing")
-    defaults = {"Status": STATUSES[0], "Thesis": act_desc, "Catalyst": "", "Entry Target": float(s1),
-                "Invalidation Level": float(stop_loss), "Take Profit": float(tp1)}
+    defaults = {"Status": STATUSES[0], "Thesis": act_desc, "Catalyst": "", "Entry Target": float(s1) if s1 is not None else None,
+                "Invalidation Level": float(stop_loss) if stop_loss is not None else None, "Take Profit": float(tp1) if tp1 is not None else None}
     if saved is not None:
         for k in defaults:
             value = saved[k]
@@ -75,7 +75,7 @@ def _save_form(ticker, act_str, act_desc, s1, stop_loss, tp1, next_earnings):
             opt_inval = sticky(st.number_input, "Inval / Stop (€)", defaults["Invalidation Level"], pre + "inval", step=1.0)
         with k3:
             opt_tp = sticky(st.number_input, "Take Profit (€)", defaults["Take Profit"], pre + "tp", step=1.0)
-        st.caption(f"Next Earnings: **{next_earnings}** · the levels above are technical levels, not the Decision's thesis stop")
+        st.caption(f"Next Earnings: **{next_earnings}** · Entry: {s1_kind}; stop derived from S1 and ATR; take profit: {r1_kind}.")
     if saved is not None:
         st.caption(f"A saved idea for {ticker} exists: saving updates it (added {saved['Added Date']}, kept).")
     b1, b2, _ = st.columns([2, 1, 3])
@@ -117,4 +117,4 @@ def render(dd, ctx):
         next_earnings = "TBD"
     with st.expander("Save Idea to Watchlist Pipeline", expanded=False):
         if auth.can_use("save ideas to your watchlist", f"watchlist_save_{dd.ticker}"):
-            _save_form(dd.ticker, dd.act_str, dd.act_desc, dd.s1, dd.stop_loss, dd.tp1, next_earnings)
+            _save_form(dd.ticker, dd.act_str, dd.act_desc, dd.s1, dd.stop_loss, dd.tp1, next_earnings, dd.kinds.get("s1", "N/A"), dd.kinds.get("r1", "N/A"))

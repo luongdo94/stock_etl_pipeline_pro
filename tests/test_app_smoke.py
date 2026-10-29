@@ -496,3 +496,22 @@ def test_stock_valuation_leads_with_reverse_dcf_and_erp_source(warehouse):
     assert market_line < scenario_line
     assert any("Cost of equity" in c.value and "ERP" in c.value
                and ("configured (" in c.value or "market-implied" in c.value) for c in at.caption)
+
+
+@pytest.mark.smoke
+def test_stock_analysis_with_flat_prices_has_no_level_errors(warehouse, monkeypatch):
+    from core.levels import get_tactical_metrics
+    from core import screener
+    from views.stock_analysis import context
+
+    def flat_metrics(prices, cur_p, analyst_target=0.0):
+        flat = prices.copy()
+        for column in ("price_open", "price_high", "price_low", "price_close"):
+            flat[column] = cur_p
+        return get_tactical_metrics(flat, cur_p, analyst_target)
+
+    monkeypatch.setattr(context, "get_tactical_metrics", flat_metrics)
+    monkeypatch.setattr(screener, "get_tactical_metrics", flat_metrics)
+    at = _app("🔬 Stock Analysis").run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert any("52-Week Range" in m.value and "N/A" in m.value for m in at.markdown)

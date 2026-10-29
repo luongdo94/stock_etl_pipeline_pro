@@ -305,7 +305,7 @@ class TestUnreliableValuationNeverDrivesTrades:
                                     valuation_note="beyond range", today=date(2026, 1, 10))
         assert d.expected_return_pct is None and d.downside_pct is None and d.reward_risk is None
         assert not any("base-case value" in i for i in d.invalidation)
-        assert any("support" in i for i in d.invalidation)
+        assert any("close below the stop" in i for i in d.invalidation)   # the derived stop is a stop, not "support"
 
     def test_unreliable_value_is_hold_not_buy_or_avoid(self):
         for base in (300.0, 20.0):     # would be BUY or AVOID if trusted

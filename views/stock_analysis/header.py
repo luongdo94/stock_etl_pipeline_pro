@@ -45,6 +45,9 @@ def render(dd, ctx):
     render_confidence_line(load_ticker_provenance(dd.ticker), dd.vin)
 
     pos, lo, hi = dd.w52_pos, dd.tm["w52_lo"], dd.tm["w52_hi"]
+    if pos is None:
+        st.markdown("**52-Week Range:** N/A — the range is zero or unavailable.")
+        return
     zone = "Near Low" if pos < 20 else ("Near High" if pos > 80 else "Mid-Range")
     st.markdown(f"""
     <div style='background:var(--secondary-background-color, transparent); border:1px solid rgba(128,128,128,0.25);

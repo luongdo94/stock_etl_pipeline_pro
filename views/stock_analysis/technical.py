@@ -71,18 +71,23 @@ def render(dd, ctx):
         for _lvl, _val, _col, _w in (("S1", _s1, "#2ecc71", 1.2), ("R1", _r1, "#e74c3c", 1.2),
                                       ("S2", _s2, "#27ae60", 1.6), ("R2", _r2, "#c0392b", 1.6),
                                       ("S3", _s3, "#1b5e20", 2.4), ("R3", _r3, "#b71c1c", 2.4)):
+            if _val is None:
+                continue
             _src = _kinds.get(_lvl.lower(), "")
+            _strength = _tm.get("strengths", {}).get(_lvl.lower())
+            _touches = _tm.get("touches", {}).get(_lvl.lower())
+            _detail = f" · strength {_strength:.2f} · {_touches} touches" if _strength is not None else ""
             _proj = _src.startswith("projected")
             fig_tech.add_trace(go.Scatter(
                 x=[dates_range[0], dates_range[-1]], y=[_val, _val],
                 name=f"{_lvl} · {_src or 'zone'}",
-                hovertemplate=f"{_lvl} {'Support' if _lvl[0] == 'S' else 'Resistance'} €{_val:.2f} · {_src or 'zone'}<extra></extra>",
+                hovertemplate=f"{_lvl} {'Support' if _lvl[0] == 'S' else 'Resistance'} €{_val:.2f} · {_src or 'zone'}{_detail}<extra></extra>",
                 mode='lines',
                 line=dict(color='rgba(160,160,160,0.6)' if _proj else _col, width=1 if _proj else _w,
                           dash='dot' if _proj else ('dot' if _lvl.endswith('1') else 'dash')),
                 opacity=0.85), row=1, col=1)
             # real S1/R1 zones are bands (±½ zone width), not single prices
-            if _lvl in ("S1", "R1") and not _proj and _zw > 0:
+            if _lvl in ("S1", "R1") and _src.startswith("zone ") and _zw > 0:
                 fig_tech.add_hrect(y0=_val * (1 - _zw / 2), y1=_val * (1 + _zw / 2), line_width=0,
                                    fillcolor=_col, opacity=0.08, row=1, col=1)
         # 📈 AUTOMATED TRENDLINE (Linear Regression)

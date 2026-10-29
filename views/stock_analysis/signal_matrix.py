@@ -57,6 +57,7 @@ def render(dd, ctx):
     bg = _hex_rgb(dd.act_color)
     # Markdown ends an HTML block at a blank line and shows indented lines after it as code: with no rr_html the
     # `{rr_html}` line was blank and the closing </div> tags appeared on the page. Emit one unindented line per tag.
+    s1_display = f"€{dd.s1:.2f} ({dd.kinds.get('s1', 'N/A')})" if dd.s1 is not None else f"N/A ({dd.kinds.get('s1', 'unavailable')})"
     html = f"""
     <div style='background:var(--secondary-background-color, transparent); border:1px solid rgba(128,128,128,0.25); border-radius:12px; padding:20px; margin-bottom:25px;'>
         <div style='display:flex; justify-content:space-between; text-align:center; margin-bottom:20px; flex-wrap:wrap; gap:10px;'>{pillars}</div>
@@ -67,7 +68,7 @@ def render(dd, ctx):
             <div style='color:inherit; font-size:0.78em; margin-bottom:12px;'>Counted: {chips} &nbsp;·&nbsp; points {r['pts']:.1f}</div>
             <hr style='border:0; height:1px; background:linear-gradient(90deg, rgba(255,255,255,0.15), transparent); margin-bottom:15px;'>
             <div style='font-family:"Courier New", monospace; font-size:0.95em; background:var(--secondary-background-color, transparent); padding:12px; border-radius:6px;'>
-                <span style='color:#2ecc71;'><b>SUPPORT:</b> €{dd.s1:.2f} (price €{dd.cur_p:.2f})</span>
+                <span style='color:#2ecc71;'><b>S1:</b> {s1_display} (price €{dd.cur_p:.2f})</span>
             </div>
             {rr_html}
         </div>

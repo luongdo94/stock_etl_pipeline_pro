@@ -183,8 +183,8 @@ class TestTacticalMetrics:
         # Verify stop loss is below s1
         assert result['stop_loss'] < result['s1']
         
-        # Verify tp1 is above r1
-        assert result['tp1'] > result['r1']
+        # Targets use the resistance midpoints.
+        assert result['tp1'] == result['r1']
     
     def test_tactical_metrics_rr_calculation(self):
         """Test risk/reward calculation with new levels."""
@@ -237,7 +237,59 @@ def test_swing_levels_at_the_atr_window_boundary(n, flat):
                        "price_high": close + 1, "price_low": close - 1, "volume": 1e6})
     price = float(df.price_close.iloc[-1])
     m = levels.get_tactical_metrics(df, price)
-    assert np.isfinite(m["stop_loss"]) and np.isfinite(m["tp1"])
-    assert m["stop_loss"] < price < m["tp1"]
-    if flat:
-        assert m["stop_loss"] == pytest.approx(93.12) and m["tp1"] == pytest.approx(107.12)
+    if n < 14:
+        assert m["atr"] is None and m["stop_loss"] is None and m["rr"] is None
+    else:
+        assert m["stop_loss"] < price < m["tp1"]
+
+
+def test_nearest_zones_and_ordered_targets(monkeypatch):
+    """Strength describes a level but does not choose its place in the ladder."""
+    def zones(*args, **kwargs):
+        return {"zone_width": 0.03, "s1": 80, "r1": 110,
+                "support_zones": [(80, .80, 4), (97, .79, 2)],
+                "resistance_zones": [(110, .79, 2), (114, .80, 4)]}
+    monkeypatch.setattr(levels, "detect_swing_zones", zones)
+    df = pd.DataFrame({"date": pd.date_range("2024-01-01", periods=20),
+                       "price_close": 100., "price_high": 101., "price_low": 99., "volume": 1.})
+    m = get_tactical_metrics(df, 100.)
+    assert m["s1"] == 97 and m["s2"] == 80
+    assert m["r1"] == 110 and m["r2"] == 114
+    assert m["strengths"]["s1"] == .79 and m["touches"]["s1"] == 2
+    assert m["s3"] < m["s2"] < m["s1"] < 100 < m["r1"] < m["r2"] < m["r3"]
+    assert 100 < m["tp1"] < m["tp2"] < m["tp3"]
+    assert m["stop_loss"] < m["s1"] * (1 - m["zone_width"] / 2)
+
+
+def test_flat_and_short_history_have_no_invented_atr():
+    for n in (3, 20):
+        df = pd.DataFrame({"date": pd.date_range("2024-01-01", periods=n),
+                           "price_close": 100., "price_high": 100., "price_low": 100., "volume": 1.})
+        m = get_tactical_metrics(df, 100.)
+        assert m["atr"] is None and m["stop_loss"] is None
+        assert m["rr"] is None and m["rr_score"] is None and m["w52_pos"] is None
+        assert all(m[k] is None and "ATR" in m["kinds"][k] for k in ("s1", "s2", "s3", "r1", "r2", "r3"))
+
+
+def test_unconfirmed_extreme_and_reaction():
+    df = pd.DataFrame({"date": pd.date_range("2024-01-01", periods=20),
+                       "price_close": np.arange(20) + 100., "price_high": np.arange(20) + 101.,
+                       "price_low": np.arange(20) + 99., "volume": 1.})
+    m = get_tactical_metrics(df, 119.)
+    assert m["kinds"]["s1"] == "20-day low (no confirmed swing)"
+    bars = pd.DataFrame({"price_high": [120., 101.], "price_low": [100., 100.]})
+    assert levels._reaction_magnitude(bars, 0, 100., "low") == pytest.approx(1.)
+    assert levels._reaction_magnitude(bars, 1, 100., "low") is None
+
+
+def test_projected_level_and_unknown_trend_are_labelled():
+    from core.signal_matrix import action_description
+    from core.rating import compute_institutional_rating
+    from core.decision import build_decision
+    text = action_description("FAVOURABLE", {}, s1=96., s1_kind="projected (2×ATR)", price=100., rsi=50.)
+    assert "projected" in text
+    d = build_decision(price=100., base_value=None, bear_value=None, stop_loss=90., stop_kind="projected (2×ATR)")
+    assert any("stop" in text and "projected" in text for text in d.invalidation)
+    rating = compute_institutional_rating(ai_score=50, ma_sig="N/A", latest_rsi=50, upside=0,
+                                          pe_v=20, peg_v=1, sector="Industrials", w52_pos=None)
+    assert rating["p_trend"].startswith("N/A") and rating["p_trend_c"] == "#95a5a6"
