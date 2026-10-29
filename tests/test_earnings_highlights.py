@@ -253,3 +253,51 @@ def test_the_er_sheet_is_built_from_the_release_and_shows_only_checked_lines(war
     assert "iPhone" in sheet and "$50.3B" in sheet and "+13%" in sheet                  # the latest column, same-row YoY
     assert "$109.4B" in sheet and "$2.02" in sheet                                   # the header, read by rules
     assert "1 line(s) dropped" in sheet and "latest period" in sheet                  # Services: last year's column
+
+
+@pytest.mark.smoke
+def test_the_er_sheet_shows_tiles_points_and_guidance_against_the_previous_release(warehouse, monkeypatch):
+    """Round 2: KPI tiles, a bull and a bear point resting on verified lines, the guidance band by period with the
+    change from the previous release's guidance (read with the same checks), no exception."""
+    import json
+    from services import earnings as svc
+    events = svc.load_earnings_events(None)
+    last = events[(events["ticker"] == "AAPL") & events["eps_actual"].notna()].sort_values("earnings_ts").iloc[-1]
+    fdate = pd.Timestamp(last["earnings_ts"]).date()
+    now = ("Apple reports results. The Company posted quarterly revenue of $109.4 billion, up 16 percent year over "
+           "year. Diluted earnings per share was $2.02. • Billings grew 29% year over year to $2.34 billion "
+           "• Free cash flow of $865 million Guidance For the fiscal year 2026, Apple currently expects: • Service "
+           "revenue in the range of $5.150 billion to $5.170 billion")
+    before = ("Apple reports results. Guidance For the fiscal year 2026, Apple currently expects: • Service revenue in "
+              "the range of $5.180 billion to $5.220 billion")
+    monkeypatch.setattr(svc, "sec_press_release", lambda t, ua, index=0: (
+        (now, "https://sec.example/ex991.htm", fdate.isoformat()) if index == 0 else
+        (before, "https://sec.example/prev.htm", (fdate - pd.Timedelta(days=91)).isoformat())))
+    monkeypatch.setattr(svc, "sec_user_agent", lambda: "test")
+    item = lambda **kw: {"prior": None, "yoy": None, "source": "sentence", "kpi": False, **kw}      # noqa: E731
+    guide = item(label="Service revenue", kind="amount", metric="service_revenue", period="fiscal year 2026",
+                 value="5.150 to 5.170", quote="Service revenue in the range of $5.150 billion to $5.170 billion")
+    sheet = {"sections": [{"title": "Highlights", "items": [
+        item(label="Billings", kind="amount", metric="billings", value="2.34", yoy="29%", kpi=True,
+             quote="Billings grew 29% year over year to $2.34 billion"),
+        item(label="Free cash flow", kind="amount", metric="free_cash_flow", value="865", kpi=True,
+             quote="Free cash flow of $865 million")]}],
+        "key_updates": [], "guidance": [{**guide, "kpi": None}],
+        "points": [{"side": "bull", "title": "Billings +29%", "text": "Billings reached $2.34B.", "lines": ["Billings"]},
+                   {"side": "bear", "title": "Service guidance lowered", "text": "Now $5.15B–$5.17B.",
+                    "lines": ["Service revenue"]}]}
+    previous = {"guidance": [{**guide, "value": "5.180 to 5.220",
+                              "quote": "Service revenue in the range of $5.180 billion to $5.220 billion"}]}
+    monkeypatch.setattr(svc, "generate_er_sheet", lambda *a, schema=None, **k: json.dumps(previous if schema else sheet))
+    at = _app("🗓️ Earnings")
+    at.session_state["_kept::er_section"] = "Single stock"
+    at.session_state["active_ticker"] = "AAPL"
+    at.run()
+    at.button(key="er_sheet_build").click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    assert not at.error, [e.value for e in at.error]
+    sheet_html = next(m.value for m in at.markdown if "er-sheet" in m.value)
+    assert sheet_html.count("class='er-tile'") == 4                                    # revenue, EPS, 2 flagged lines
+    assert "Billings +29%" in sheet_html and "Service guidance lowered" in sheet_html  # both points kept
+    assert "fiscal year 2026" in sheet_html and "lowered from $5.18B–$5.22B" in sheet_html
+    assert "~0.8%" in sheet_html                                                       # FCF / revenue, computed

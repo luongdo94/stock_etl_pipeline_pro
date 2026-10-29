@@ -73,10 +73,13 @@ def _render_er_sheet(ticker, company, event_ts, language, summariser, model, cod
                         raise ValueError("The model's reply was not a valid sheet; please retry.")
                     header = header_lines(headline_figures(body),
                                           revenue_consensus_before(estimate_snaps, ticker, fdate), eps_consensus, language)
+                    previous, previous_source = _previous_guidance(ticker, company, fdate, language, summariser,
+                                                                   codex_model, effort, checked)
                     st.session_state[card_key] = compose(
                         checked, header, company=company, ticker=ticker, language=language, period=period_ended(body),
                         source=f"SEC 8-K earnings press release filed {fdate}: {where}", model=model,
-                        created_at=pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%d %H:%M UTC"))
+                        created_at=pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%d %H:%M UTC"),
+                        previous_guidance=previous, previous_source=previous_source)
                 st.session_state[slot] = card_key
         except Exception as exc:
             st.session_state.pop(slot, None)
@@ -93,6 +96,26 @@ def _render_er_sheet(ticker, company, event_ts, language, summariser, model, cod
             return
         if card_key in st.session_state:
             render_sheet(st.session_state[card_key])
+
+
+def _previous_guidance(ticker, company, fdate, language, summariser, codex_model, effort, checked):
+    """(guidance lines of the PREVIOUS earnings release, its source) for the comparison, or ([], reason). Only when the
+    current sheet has guidance, and only a release filed BEFORE the current one; its lines pass the same checks."""
+    from core.er_sheet import GUIDANCE_SCHEMA, build_guidance_prompt, validate_guidance
+    if not checked.get("guidance"):
+        return [], None
+    text, where, pdate = svc.sec_press_release(ticker, svc.sec_user_agent(), index=1)
+    if not text or not pdate or not fdate or str(pdate) >= str(fdate):
+        return [], f"previous release unavailable ({where})" if not text else None
+    body = svc.without_safe_harbor(text)
+    try:
+        with st.spinner("Reading the previous release's guidance..."):
+            raw = svc.generate_er_sheet(build_guidance_prompt(company, ticker, body, language),
+                                        svc.api_key() if summariser == "Cohere" else "", summariser=summariser,
+                                        model=codex_model, effort=effort, schema=GUIDANCE_SCHEMA)
+    except Exception as exc:                          # the sheet stands without the comparison; the reason is shown
+        return [], f"previous guidance not read: {type(exc).__name__}: {exc}"
+    return validate_guidance(raw, body), f"SEC 8-K earnings press release filed {pdate}: {where}"
 
 
 def _region_map(companies: pd.DataFrame) -> dict:

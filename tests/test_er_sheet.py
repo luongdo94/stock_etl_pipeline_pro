@@ -29,21 +29,23 @@ def _item(**kw):
 
 @pytest.mark.parametrize("item, shown, yoy", [
     (_item(label="Cloud revenue", value="30.7", yoy="103%", source="sentence",
-           quote="Google Cloud delivered record growth as revenues increased 103% to $30.7 billion"), "$30.7B", "103%"),
-    (_item(label="YouTube ads", value="11,207", prior="10,261", quote="YouTube ads 10,261 11,207"), "$11.2B", "+9%"),
+           quote="Google Cloud delivered record growth as revenues increased 103% to $30.7 billion"), "$30.7B",
+     "103% YoY"),
+    (_item(label="YouTube ads", value="11,207", prior="10,261", quote="YouTube ads 10,261 11,207"), "$11.2B", "+9% YoY"),
     (_item(label="Other Bets", value="(2,047)", prior="(1,426)", quote="Other Bets (1,426) (2,047)"), "($2.05B)", None),
-    (_item(label="Employees", kind="count", value="204,757", quote="Number of employees 190,167 204,757"), "204,757", None),
+    (_item(label="Employees", kind="count", value="204,757", quote="Number of employees 190,167 204,757"), "204,757",
+     "+8% YoY"),
     (_item(label="CapEx", value="(51,355)", prior="(23,953)",
            quote="Purchases of property and equipment (23,953) (51,355) (63,596) (131,953)"), "($51.4B)", None),
     (_item(label="United States", value="67,681", prior="48,758", yoy="39 %",
-           quote="United States $ 48,758 $ 67,681 $ 0 $ 67,681 39 % 0 % 39 %"), "$67.7B", "39%"),
+           quote="United States $ 48,758 $ 67,681 $ 0 $ 67,681 39 % 0 % 39 %"), "$67.7B", "39% YoY"),
 ])
 def test_a_line_is_shown_only_as_its_release_prints_it(item, shown, yoy):
     """Latest-period column, unit from the table header, losses in parentheses, yoy printed or from the same row
     (never for a loss or an outflow)."""
     line, why = s._check_item(item, _GOOGL)
     assert line is not None, why
-    assert (line["shown"], line["yoy"]) == (shown, yoy)
+    assert (line["shown"], line["change"]) == (shown, yoy)
 
 
 @pytest.mark.parametrize("item, reason", [
@@ -77,7 +79,7 @@ def test_the_sheet_keeps_sections_drops_growth_rate_lines_and_nil_rows():
         "key_updates": [{"text": "Lỗ $8.7B", "quote": "Not in the release at all"}], "guidance": []}
     out = s.validate_sheet(json.dumps(reply), _GOOGL)
     assert [i["label"] for i in out["sections"][0]["items"]] == ["Doanh thu"]
-    assert out["sections"][0]["items"][0]["yoy"] == "+25%"
+    assert out["sections"][0]["items"][0]["change"] == "+25% YoY"
     assert {d["what"] for d in out["dropped"]} >= {"YouTube ads", "Lỗ $8.7B"}
     assert s.validate_sheet("not json", _GOOGL)["dropped"][0]["reason"] == "invalid JSON"
 
@@ -112,7 +114,7 @@ def test_a_sentence_value_may_carry_its_unit_and_keeps_the_printed_digits(value,
     q = "Revenue grew 20% year over year to $2.08 billion"
     line, why = s._check_item(_item(value=value, source="sentence", yoy="20%", quote=q), "Highlights • " + q + " • x")
     assert line is not None, why
-    assert line["shown"] == shown and line["yoy"] == "20%"
+    assert line["shown"] == shown and line["change"] == "20% YoY"
 
 
 def test_a_guidance_range_and_a_percent_are_read_as_printed():
@@ -127,8 +129,10 @@ def test_a_guidance_range_and_a_percent_are_read_as_printed():
 
 def test_the_header_figures_are_not_repeated_in_the_sections():
     checked = {"sections": [{"title": "Headline", "items": [
-        {"label": "GAAP EPS", "value": 0.86, "kind": "per_share", "dollars": None, "shown": "$0.86", "yoy": None},
-        {"label": "Billings", "value": 2.34, "kind": "amount", "dollars": 2.34e9, "shown": "$2.34B", "yoy": None}]}],
+        {"label": "GAAP EPS", "value": 0.86, "kind": "per_share", "dollars": None, "shown": "$0.86", "change": None,
+         "metric": "eps", "quote": "q"},
+        {"label": "Billings", "value": 2.34, "kind": "amount", "dollars": 2.34e9, "shown": "$2.34B", "change": None,
+         "metric": "billings", "quote": "q"}]}],
         "key_updates": [], "guidance": [], "dropped": []}
     header = [{"label": "EPS", "value": 0.86, "shown": "$0.86"}]
     card = s.compose(checked, header, company="Fortinet", ticker="FTNT", language="en", period=None, source="x",
@@ -150,7 +154,7 @@ def test_guidance_names_its_period_as_the_release_does():
     out = s.validate_sheet({"sections": [], "key_updates": [], "guidance": [
         g("2.155 to 2.245", "fourth quarter of 2026"), g("8.125 to 8.215", "fiscal year 2026"),
         g("8.125 to 8.215", "fiscal year 2027")]}, text)
-    assert [x["label"] for x in out["guidance"]] == ["x (fourth quarter of 2026)", "x (fiscal year 2026)"]
+    assert [x["period"] for x in out["guidance"]] == ["fourth quarter of 2026", "fiscal year 2026"]
     assert out["dropped"][-1]["reason"] == "guidance period not stated where the figure is"
 
 
@@ -165,6 +169,7 @@ def test_a_range_in_the_reported_sections_is_refused():
 
 @pytest.mark.parametrize("period, quote_value, ok", [
     ("fourth quarter of 2026", "2.155 to 2.245", True),
+    ("third quarter of 2026", "2.155 to 2.245", False),      # nor the third quarter's
     ("fiscal year 2026", "2.155 to 2.245", False),           # a fourth-quarter range is not the fiscal year's
     ("fiscal year 2026", "3.54 to 3.58", True),               # five items below its lead-in, still that period
     ("fourth quarter of 2026", "3.54 to 3.58", False),
@@ -178,3 +183,102 @@ def test_a_guidance_line_takes_the_period_of_its_nearest_lead_in(period, quote_v
     quote = (f"Revenue in the range of ${quote_value.split(' to ')[0]} billion to ${quote_value.split(' to ')[1]} billion"
              if quote_value.startswith("2.") else "Diluted non-GAAP net income per share in the range of $3.54 to $3.58")
     assert s._period_supported(period, quote, text) is ok
+
+
+
+# ── round 2: balance sheet dates, ratios, guidance vs the previous guidance, points ───────────────────────────────────
+_FTNT_TABLES = (
+    "FORTINET, INC. CONDENSED CONSOLIDATED BALANCE SHEETS (Unaudited, in millions) September 30, 2026 December 31, 2025 "
+    "ASSETS Cash and cash equivalents $ 3,750.6 $ 2,495.3 Inventory 591.2 399.5 Deferred revenue 3,961.0 3,636.0 "
+    "CONDENSED CONSOLIDATED STATEMENTS OF INCOME (Unaudited, in millions) Three Months Ended Nine Months Ended "
+    "September 30, 2026 September 30, 2025 September 30, 2026 September 30, 2025 REVENUE: Product 765.0 559.3 "
+    "2,183.1 1,527.3 Service 1,313.4 1,165.6 3,792.8 3,367.3 Total revenue 2,078.4 1,724.9 5,975.9 4,894.6")
+
+
+@pytest.mark.parametrize("item, shown, change", [
+    (_item(label="Inventory", value="591.2", prior="399.5", quote="Inventory 591.2 399.5"), "$591M",
+     "+48% vs December 31, 2025"),                                               # a year-end column is named, not "QoQ"
+    (_item(label="Service revenue", value="1,313.4", prior="1,165.6", quote="Service 1,313.4 1,165.6 3,792.8 3,367.3"),
+     "$1.31B", "+13% YoY"),                                                      # newest column first, quarter not YTD
+])
+def test_date_headed_tables_read_the_latest_column_and_name_the_comparison(item, shown, change):
+    line, why = s._check_item(item, _FTNT_TABLES)
+    assert line is not None, why
+    assert (line["shown"], line["change"]) == (shown, change)
+
+
+def test_a_date_headed_table_refuses_the_older_or_the_year_to_date_column():
+    for value, quote in (("399.5", "Inventory 591.2 399.5"), ("3,792.8", "Service 1,313.4 1,165.6 3,792.8 3,367.3")):
+        line, why = s._check_item(_item(value=value, quote=quote), _FTNT_TABLES)
+        assert line is None and "latest period" in why
+
+
+def _line(label, metric, dollars, shown, kind="amount", change=None):
+    return {"label": label, "metric": metric, "value": dollars, "dollars": dollars, "shown": shown, "kind": kind,
+            "change": change, "kpi": False, "quote": label, "source": "sentence"}
+
+
+def test_cash_flow_ratios_come_from_verified_lines_only():
+    checked = {"sections": [{"title": "Cash", "items": [_line("FCF", "free_cash_flow", 865e6, "$865M"),
+                                                         _line("OCF", "operating_cash_flow", 946e6, "$946M")]}]}
+    r = s.ratios(checked, 2.0784e9, "en")
+    assert [(x["label"], x["shown"]) for x in r] == [("Free cash flow / revenue", "~41.6%"),
+                                                    ("Operating cash flow / revenue", "~45.5%")]
+    assert s.ratios(checked, None, "en") == [] and s.ratios({"sections": []}, 2e9, "en") == []
+
+
+def _guide(metric, lo, hi, period=("year", {"2026"}, None), kind="amount"):
+    return {"label": metric, "metric": metric, "kind": kind, "low": lo, "high": hi, "period_key": period}
+
+
+@pytest.mark.parametrize("now, before, verdict", [
+    ((5.15e9, 5.17e9), (5.18e9, 5.22e9), "lowered"),                           # FTNT service revenue FY26
+    ((8.125e9, 8.215e9), (8.05e9, 8.15e9), "raised"),
+    ((2.10e9, 2.12e9), (2.05e9, 2.15e9), "narrowed"),
+    ((2.00e9, 2.20e9), (2.05e9, 2.15e9), "widened"),
+    ((2.05e9, 2.15e9), (2.05e9, 2.15e9), "reaffirmed"),
+])
+def test_guidance_is_compared_with_the_previous_one_for_the_same_metric_and_period(now, before, verdict):
+    cur = [_guide("service_revenue", *now)]
+    out = s.compare_guidance(cur, [_guide("service_revenue", *before)])
+    assert out[0]["vs_previous"]["verdict"] == verdict
+
+
+def test_guidance_of_another_period_or_metric_is_never_compared():
+    cur = [_guide("revenue", 2.155e9, 2.245e9, ("quarter", {"2026"}, "q4")), _guide("other", 1, 2),
+           _guide("billings", 2.775e9, 2.925e9, ("quarter", {"2026"}, "q4"))]
+    prev = [_guide("revenue", 8.0e9, 8.1e9, ("year", {"2026"}, None)), _guide("other", 1, 3),
+            _guide("billings", 2.25e9, 2.35e9, ("quarter", {"2026"}, "q3"))]          # FTNT: Q2 release guided Q3
+    assert [g["vs_previous"] for g in s.compare_guidance(cur, prev)] == [None, None, None]
+
+
+@pytest.mark.parametrize("point, kept, reason", [
+    ({"side": "bull", "title": "Billings +29%", "text": "Billings reached $2.34B.", "lines": ["Billings"]}, True, None),
+    ({"side": "bear", "title": "Service guidance lowered", "text": "From $5.18B to $5.17B.", "lines": ["Service FY"]},
+     True, None),
+    ({"side": "bull", "title": "Billings +31%", "text": "Billings grew 31%.", "lines": ["Billings"]}, False,
+     "not one of the cited lines'"),
+    ({"side": "bull", "title": "Strong quarter", "text": "Demand is strong.", "lines": []}, False, "no verified line"),
+    ({"side": "bull", "title": "Billings +29%", "text": "A buy on billings.", "lines": ["Billings"]}, False, "advice"),
+])
+def test_a_point_rests_on_verified_lines_and_uses_only_their_figures(point, kept, reason):
+    lines = [_line("Billings", "billings", 2.34e9, "$2.34B", change="+29% YoY"),
+             {**_line("Service FY", "service_revenue", None, "$5.15B – $5.17B"),
+              "vs_previous": {"verdict": "lowered", "previous": "$5.18B–$5.22B"}}]
+    got, dropped = s.check_points([point], lines)
+    assert bool(got) is kept
+    if reason:
+        assert reason in dropped[0]["reason"]
+
+
+
+def test_a_point_may_use_the_release_digits_of_its_lines():
+    """FTNT: "Inventory rose to $591.2 million from $399.5 million" was dropped although both are the verified row's own
+    figures (shown rounded as $591M); a derived number is still refused."""
+    inv = {**_line("Inventory", "inventory", 591.2e6, "$591M", change="+48% vs December 31, 2025"),
+           "value": 591.2, "prior": 399.5}
+    ok, _ = s.check_points([{"side": "bear", "title": "Higher inventory",
+                             "text": "Inventory rose to $591.2 million from $399.5 million.", "lines": ["Inventory"]}], [inv])
+    bad, dropped = s.check_points([{"side": "bear", "title": "Higher inventory",
+                                    "text": "Inventory rose by $191.7 million.", "lines": ["Inventory"]}], [inv])
+    assert ok and not bad and "not one of the cited lines'" in dropped[0]["reason"]

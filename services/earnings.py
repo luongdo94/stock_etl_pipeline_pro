@@ -132,8 +132,9 @@ def html_to_text(html: str, limit: int = 15000) -> str:
     return re.sub(r"\s+", " ", text).strip()[:limit]
 
 
-def sec_press_release(ticker: str, user_agent: str):
-    """(text, url, filing_date) of the latest 8-K Item 2.02 earnings release (Exhibit 99.1), or (None, reason, None).
+def sec_press_release(ticker: str, user_agent: str, index: int = 0):
+    """(text, url, filing_date) of an 8-K Item 2.02 earnings release (Exhibit 99.1) — the latest (index 0) or an earlier
+    one (index 1 = the one before, for its guidance) — or (None, reason, None).
 
     The SEC asks every client to identify itself: `user_agent` must contain a contact e-mail (env SEC_USER_AGENT)."""
     if not user_agent:
@@ -145,9 +146,13 @@ def sec_press_release(ticker: str, user_agent: str):
         if not cik:
             return None, "ticker not found in the SEC company list", None
         sub = _sec_get(f"https://data.sec.gov/submissions/CIK{cik:010d}.json", user_agent).json()["filings"]["recent"]
+        seen = 0
         for form, items, acc, fdate, doc in zip(sub["form"], sub.get("items", [""] * len(sub["form"])),
                                                 sub["accessionNumber"], sub["filingDate"], sub["primaryDocument"]):
             if form == "8-K" and "2.02" in str(items):
+                if seen < index:
+                    seen += 1
+                    continue
                 acc_nd = acc.replace("-", "")
                 base = f"https://www.sec.gov/Archives/edgar/data/{cik}/{acc_nd}"
                 names = [i["name"] for i in _sec_get(f"{base}/index.json", user_agent).json()["directory"]["item"]]
@@ -276,15 +281,18 @@ def without_safe_harbor(text: str) -> str:
 COHERE_SHEET_TIMEOUT_S = 240     # a long release can take Cohere minutes; the user is told to try Codex instead
 
 
-def generate_er_sheet(prompt: str, api_key: str = "", *, summariser: str = "Cohere", model=None, effort=None) -> str:
-    """Return the model's raw JSON; core.er_sheet.validate_sheet checks every line against the release."""
+def generate_er_sheet(prompt: str, api_key: str = "", *, summariser: str = "Cohere", model=None, effort=None,
+                      schema=None) -> str:
+    """Return the model's raw JSON; core.er_sheet.validate_sheet (or validate_guidance with schema=GUIDANCE_SCHEMA, for
+    the previous release) checks every line against the release."""
     from services.auth import require_signed_in
     require_signed_in("build the ER sheet (language model)")
     from core.er_sheet import SHEET_SCHEMA
+    schema = schema or SHEET_SCHEMA
     if summariser == "Antigravity (local)":
-        return summarise_earnings_agy(prompt, model=model, effort=effort, schema=SHEET_SCHEMA, timeout=600)
+        return summarise_earnings_agy(prompt, model=model, effort=effort, schema=schema, timeout=600)
     if summariser == "Codex (local)":
-        return summarise_earnings_codex(prompt, model=model, effort=effort, schema=SHEET_SCHEMA, timeout=600)
+        return summarise_earnings_codex(prompt, model=model, effort=effort, schema=schema, timeout=600)
     if not api_key:
         raise ValueError("COHERE_API_KEY is not set")
     import cohere
