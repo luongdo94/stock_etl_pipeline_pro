@@ -228,19 +228,20 @@ def generate_er_sheet(prompt: str, api_key: str = "", *, summariser: str = "Cohe
 LIVE_COOLDOWN_S = 60        # per stock and session: one live request a minute (Yahoo / SEC fair use from a shared IP)
 
 
-def fetch_live_report(ticker: str, user_agent: str, *, earnings_dates=None, release=None) -> dict:
+def fetch_live_report(ticker: str, user_agent: str, *, earnings_dates=None, release=None, quote=None) -> dict:
     """The newest report of ONE stock, fetched now: Yahoo's earnings dates (EPS estimate / actual / surprise) and, for a
     US listing, the latest SEC 8-K earnings release. Nothing is written — the stored snapshot changes at the next ETL
     run. A failed request is reported as an error, never as "no report" (`events_error` / the release reason).
-    `earnings_dates(ticker)` / `release(ticker, ua)` are injectable for tests."""
+    `earnings_dates(ticker)` / `release(ticker, ua)` / `quote(ticker)` are injectable for tests."""
     from datetime import datetime, timezone
     from etl.earnings_events import COLUMNS, parse_earnings_dates
     fetched_at = datetime.now(timezone.utc)
     events, events_error = pd.DataFrame(columns=list(COLUMNS)), None
+    if earnings_dates is None or quote is None:
+        _forget_yahoo_cache()                         # yfinance caches responses for the process life (ER-01)
     try:
         if earnings_dates is None:
             import yfinance as yf
-            _forget_yahoo_cache()                     # yfinance caches responses for the process life (ER-01)
             raw = yf.Ticker(ticker).get_earnings_dates(limit=12)
         else:
             raw = earnings_dates(ticker)
@@ -249,10 +250,25 @@ def fetch_live_report(ticker: str, user_agent: str, *, earnings_dates=None, rele
         events = parse_earnings_dates(ticker, raw, now=fetched_at.replace(tzinfo=None))
     except Exception as e:
         events_error = f"Yahoo earnings dates unavailable: {type(e).__name__}: {str(e)[:120]}"
+    quote_fn, quote, quote_error = quote, None, None
+    try:
+        if quote_fn is None:
+            import yfinance as yf
+            info = yf.Ticker(ticker).info
+        else:
+            info = quote_fn(ticker)
+        if not isinstance(info, dict):
+            raise ValueError("unreadable Yahoo quote")
+        fields = ("regularMarketPrice", "regularMarketTime", "regularMarketPreviousClose",
+                  "preMarketPrice", "preMarketTime", "postMarketPrice", "postMarketTime", "currency")
+        quote = {key: info.get(key) for key in fields}
+    except Exception as exc:
+        quote_error = f"Yahoo quote unavailable: {type(exc).__name__}: {str(exc)[:120]}"
     text, where, fdate = (release or sec_press_release)(ticker, user_agent)
     from core.release_figures import headline_figures
     return {"ticker": ticker, "fetched_at": fetched_at, "events": events, "events_error": events_error,
-            "release": (text, where, fdate), "figures": headline_figures(text) if text else None}
+            "release": (text, where, fdate), "figures": headline_figures(text) if text else None,
+            "quote": quote, "quote_error": quote_error}
 
 
 def consensus_for_release(events: pd.DataFrame, ticker: str, filing_date):

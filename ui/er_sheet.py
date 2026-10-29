@@ -94,6 +94,54 @@ def _band(guidance, lab) -> str:
     return f"<h4>{_esc(lab['guidance'])}</h4><div class='er-band'>{cols}</div>"
 
 
+def _reaction(section):
+    """Keep links and model text safe at the HTML sink."""
+    from urllib.parse import urlsplit
+    vi = str(section.get("language", "")).lower() in ("vi", "vietnamese")
+    title = "Phản ứng giá và các yếu tố có thể tác động" if vi else "Price reaction and possible drivers"
+    caption = ("Các yếu tố có thể tác động được nêu từ báo cáo và tin tức, không phải nguyên nhân đã được chứng minh."
+               if vi else "Possible drivers named from the release and the news, not proven causes.")
+    live, stored = section.get("live") or {}, section.get("stored") or {}
+    parts = [f"<h4>{_esc(title)}</h4><small>{_esc(caption)}</small>"]
+    parts.append(f"<div><small>{_esc('Thời điểm công bố' if vi else 'Release time')}: "
+                 f"{_esc(section.get('event_ts'))} · {_esc('Ngày nộp 8-K' if vi else '8-K filed')}: "
+                 f"{_esc(section.get('filing_date'))}</small></div>")
+    if live.get("return") is not None:
+        label = {"after hours": "sau giờ giao dịch", "pre-market": "trước giờ giao dịch",
+                 "today's session": "phiên hôm nay"}.get(live.get("label"), live.get("label")) if vi else live.get("label")
+        parts.append(f"<div>{_esc('Tạm thời' if vi else 'Provisional')} · {_esc(label)}: "
+                     f"{live['return']:+.1%} · {_esc(live.get('time'))} · {_esc(live.get('currency') or '')}</div>")
+    else:
+        parts.append(f"<div>{_esc('Tạm thời' if vi else 'Provisional')}: N/A — {_esc(live.get('reason'))}</div>")
+    for key, en, vn in (("ret_1d", "Stored 1-day", "Đã lưu 1 ngày"),
+                        ("ret_2d", "Stored 2-day", "Đã lưu 2 ngày"),
+                        ("abn_2d", "2-day vs regional market", "2 ngày so với thị trường khu vực")):
+        value = stored.get(key)
+        parts.append(f"<div>{_esc(vn if vi else en)}: {_esc(f'{value:+.1%}' if value is not None else 'N/A')}</div>")
+    if section.get("direction"):
+        parts.append(f"<div>{_esc(section['direction'])}</div>")
+    news = {h['id']: h for h in section.get("headlines", [])}
+    for driver in section.get("drivers", []):
+        chips = []
+        for ref in driver.get("evidence", []):
+            if ref not in news:
+                chips.append(f"<small>{_esc(ref)}</small>")
+                continue
+            h = news[ref]
+            link = h.get("link", "")
+            try:
+                safe = urlsplit(link).scheme.lower() in ("https", "http")
+            except ValueError:
+                safe = False
+            name = _esc(h.get("title"))
+            name = f"<a href='{_esc(link)}' target='_blank' rel='noopener noreferrer'>{name}</a>" if safe else name
+            chips.append(f"<small>{name} · {_esc(h.get('source'))} · {_esc(h.get('published'))}</small>")
+        parts.append(f"<div class='er-point'>{_esc(driver['text'])}<br>{' · '.join(chips)}</div>")
+    if section.get("error"):
+        parts.append(f"<div>{_esc(section['error'])}</div>")
+    return "".join(parts)
+
+
 def html_of(card: dict) -> str:
     """The card as HTML (escaped); render() puts it on the page."""
     lab = card["labels"]
@@ -102,6 +150,8 @@ def html_of(card: dict) -> str:
     tiles = card.get("tiles") or card.get("header") or []
     if tiles:
         parts.append("<div class='er-tiles'>" + "".join(_tile(t, lab) for t in tiles) + "</div>")
+    if card.get("reaction"):
+        parts.append(_reaction(card["reaction"]))
     points = card.get("points") or []
     if points:
         parts.append("<div class='er-pair'>" + _points(points, "bull", lab) + _points(points, "bear", lab) + "</div>")

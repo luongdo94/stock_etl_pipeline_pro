@@ -242,7 +242,12 @@ def test_the_er_sheet_is_built_from_the_release_and_shows_only_checked_lines(war
         {"label": "Services", "kind": "amount", "value": "27,423", "prior": None, "yoy": None,
          "quote": "Services 27,423 30,100", "source": "table"}]}], "key_updates": [], "guidance": []}
     calls = []
-    monkeypatch.setattr(svc, "generate_er_sheet", lambda *a, **k: calls.append(k) or json.dumps(reply))
+    def generate(*a, **k):                    # the sheet calls are counted; the reaction call has its own schema
+        if k.get("schema") is None:
+            calls.append(k)
+            return json.dumps(reply)
+        return json.dumps({"drivers": []})
+    monkeypatch.setattr(svc, "generate_er_sheet", generate)
     at = _app("🗓️ Earnings")
     at.session_state["_kept::er_section"] = "Single stock"
     at.session_state["active_ticker"] = "AAPL"

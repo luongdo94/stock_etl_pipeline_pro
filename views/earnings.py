@@ -22,12 +22,14 @@ MIN_REGION = 15          # smaller regions are pooled so a "market" benchmark is
 
 
 def _render_er_sheet(ticker, company, event_ts, language, summariser, model, codex_model, effort, release_key,
-                     eps_consensus=None, estimate_snaps=None, data_error=None, clicked=False):
+                     eps_consensus=None, estimate_snaps=None, data_error=None, clicked=False, stored_reactions=None):
     """The sheet uses this report's SEC release so figures from different quarters or news cannot be mixed.
     The model points at each figure; core.er_sheet checks every line and code computes the consensus header."""
     from core.er_sheet import (SHEET_VERSION, build_sheet_prompt, compose, header_lines, period_ended,
                                revenue_consensus_before, validate_sheet)
     from core.release_figures import headline_figures
+    from core.er_reaction import (REACTION_SCHEMA, build_prompt, check_drivers, direction_line, evidence_lines,
+                                  live_reaction, window_headlines)
     from ui.er_sheet import render as render_sheet
 
     render_header("book", "ER sheet", level="####")
@@ -60,7 +62,9 @@ def _render_er_sheet(ticker, company, event_ts, language, summariser, model, cod
                 st.warning(reason)
             else:
                 body = svc.without_safe_harbor(text)
-                card_key = slot + "::" + svc.text_hash(text)
+                live = st.session_state.get(f"er_live::{ticker}") or {}
+                suffix = str(live.get("fetched_at") or "stored")
+                card_key = slot + "::" + svc.text_hash(text) + "::" + suffix
                 if card_key not in st.session_state:
                     with st.spinner("Reading the release (about 1-4 minutes)..."):
                         raw = svc.generate_er_sheet(build_sheet_prompt(company, ticker, body, language),
@@ -73,11 +77,45 @@ def _render_er_sheet(ticker, company, event_ts, language, summariser, model, cod
                                           revenue_consensus_before(estimate_snaps, ticker, fdate), eps_consensus, language)
                     previous, previous_source = _previous_guidance(ticker, company, fdate, language, summariser,
                                                                    codex_model, effort, checked)
-                    st.session_state[card_key] = compose(
+                    card = compose(
                         checked, header, company=company, ticker=ticker, language=language, period=period_ended(body),
                         source=f"SEC 8-K earnings press release filed {fdate}: {where}", model=model,
                         created_at=pd.Timestamp.now(tz="UTC").strftime("%Y-%m-%d %H:%M UTC"),
                         previous_guidance=previous, previous_source=previous_source)
+                    reaction = live_reaction(live.get("quote"), event_ts, ticker)
+                    if live.get("quote_error"):
+                        reaction["reason"] = live["quote_error"]
+                    stored = {}
+                    if stored_reactions is not None and not stored_reactions.empty:
+                        matches = stored_reactions[(stored_reactions["ticker"] == ticker) &
+                            (pd.to_datetime(stored_reactions["earnings_ts"], utc=True) == pd.Timestamp(event_ts))]
+                        if not matches.empty:
+                            row = matches.iloc[0]
+                            stored = {k: float(row[k]) if pd.notna(row.get(k)) else None
+                                      for k in ("ret_1d", "ret_2d", "abn_2d")}
+                    measured = next((x for x in (stored.get("ret_1d"), stored.get("ret_2d"),
+                                                   reaction.get("return")) if x is not None), None)
+                    section = {"live": reaction, "stored": stored, "direction": direction_line(header, measured, language),
+                               "drivers": [], "headlines": [], "language": language, "error": None,
+                               "event_ts": pd.Timestamp(event_ts).isoformat(), "filing_date": str(fdate)}
+                    if measured is not None:
+                        try:
+                            from services.news import stored_headlines
+                            headlines = window_headlines(stored_headlines(ticker, digest=True, days=7), event_ts, ticker)
+                            section["headlines"] = headlines
+                            raw_reaction = svc.generate_er_sheet(build_prompt(card, measured, headlines, language),
+                                svc.api_key() if summariser == "Cohere" else "", summariser=summariser,
+                                model=codex_model, effort=effort, schema=REACTION_SCHEMA)
+                            import json
+                            reply = json.loads(raw_reaction) if isinstance(raw_reaction, str) else raw_reaction
+                            if not isinstance(reply, dict) or not isinstance(reply.get("drivers"), list):
+                                raise ValueError("invalid reaction reply")
+                            section["drivers"], drops = check_drivers(reply["drivers"], evidence_lines(card), headlines, measured)
+                            card["dropped"].extend(drops)
+                        except Exception as exc:
+                            section["error"] = f"Possible drivers unavailable: {type(exc).__name__}: {exc}"
+                    card["reaction"] = section
+                    st.session_state[card_key] = card
                 st.session_state[slot] = card_key
         except Exception as exc:
             st.session_state.pop(slot, None)
@@ -88,7 +126,8 @@ def _render_er_sheet(ticker, company, event_ts, language, summariser, model, cod
     if card_key and release:
         text, where, fdate = release
         valid = (text and svc.release_matches_event(fdate, event_ts) and "no Exhibit 99 found" not in str(where)
-                 and card_key == slot + "::" + svc.text_hash(text))
+                 and card_key == slot + "::" + svc.text_hash(text) + "::"
+                 + str((st.session_state.get(f"er_live::{ticker}") or {}).get("fetched_at") or "stored"))
         if not valid:
             st.session_state.pop(slot, None)
             return
@@ -261,7 +300,7 @@ def _open_single_stock(ticker):
     st.session_state["_kept::er_section"] = "Single stock"
 
 
-def _live_report(t, events, snapshot, button_col):
+def _live_report(t, events, snapshot, button_col, company=None):
     """The "fetch now" button of the open stock. Its result stays in this session (the stored snapshot is unchanged
     until the next ETL run) and is merged into this stock's events, so the tiles and ER highlights use it.
     A newer snapshot replaces it: the ETL's later reading wins over an older live one (ER-05)."""
@@ -279,6 +318,14 @@ def _live_report(t, events, snapshot, button_col):
     if clicked and wait <= 0:                         # the cooldown is enforced, not only shown (ER-08)
         with st.spinner(f"Fetching {t}'s latest report from Yahoo and the SEC…"):
             live = svc.fetch_live_report(t, svc.sec_user_agent())
+            try:
+                from services.news import fetch_news_sentiment
+                news = fetch_news_sentiment(company or t, t, get_pipe=lambda: None, include_yahoo=True)
+                errors = [news.get("error"), news.get("history_error"),
+                          (news.get("yahoo") or {}).get("error"), (news.get("yahoo") or {}).get("history_error")]
+                live["news_error"] = "; ".join(str(x) for x in errors if x) or None
+            except Exception as exc:
+                live["news_error"] = f"News refresh failed: {type(exc).__name__}: {exc}"
         live["_at"], live["snapshot"] = _time.time(), snapshot
         # the consensus as STORED in the snapshot, not one the live fetch brought (ER-06)
         live["consensus"] = svc.consensus_for_release(events, t, live["release"][2])
@@ -291,6 +338,8 @@ def _live_report(t, events, snapshot, button_col):
     reported = ev[ev["eps_actual"].notna()].sort_values("earnings_ts") if not ev.empty else ev
     parts = [f"Live data for {t}, fetched {live['fetched_at']:%d %b %Y %H:%M} UTC (session only; the stored snapshot "
              "is unchanged until the next ETL run)."]
+    if live.get("news_error"):
+        parts.append("News refresh: " + live["news_error"])
     if live["events_error"]:
         parts.append(live["events_error"] + ".")
     elif reported.empty:
@@ -533,10 +582,10 @@ def render(ctx):
 
         ai_ok = auth.can_use("summarize ER highlights (uses a language model)", "er_highlights_access")
         live_col, sheet_col = st.columns(2)
-        events = _live_report(t, events, ctx.get("data_version"), live_col)
+        events = _live_report(t, events, ctx.get("data_version"), live_col, names.get(t, t))
         clicked = sheet_col.button("Summarize ER Highlight", key="er_sheet_build", width="stretch") if ai_ok else False
         _render_er_sheet(t, names.get(t, t), sheet_event, lang, summariser, model, codex_model, effort, sheet_key,
-                         eps_consensus=eps_cons, estimate_snaps=snaps, data_error=sheet_error, clicked=clicked)
+                         eps_consensus=eps_cons, estimate_snaps=snaps, data_error=sheet_error, clicked=clicked, stored_reactions=reactions)
         hist = events[events["ticker"] == t]
         rt = reactions[reactions["ticker"] == t].sort_values("reaction_day", ascending=False) if not reactions.empty else pd.DataFrame()
         b, mv, nxt = er.beat_summary(hist), er.expected_move(rt) if not rt.empty else {"n": 0, "median_abs": None, "max_abs": None}, er.next_event(hist)
