@@ -682,6 +682,10 @@ def extract_stock_prices(
         The pipeline also removes short histories from the watermarks; an empty dict bootstraps all of them.
     """
     end_date   = datetime.now()
+    # Start dates are whole days (00:00): yfinance localises a naive start in the exchange's timezone, and a start with
+    # a time of day that falls in a DST fall-back hour (01:00-02:00) raises AmbiguousTimeError for EVERY symbol. That
+    # stopped the ETL on 2026-10-30 01:00: now - 1825 days was 2021-10-31 01:02, the EU clock change.
+    day_start  = end_date.replace(hour=0, minute=0, second=0, microsecond=0)
     all_ticker_list = list(tickers.keys())
 
     # ── INCREMENTAL: Calculate per-ticker start dates ─────────────────────────
@@ -691,12 +695,12 @@ def extract_stock_prices(
         # (PERF-02): one stale or halted name (EA stopped at 2026-08-04) used to widen the download of every other
         # ticker to its date. Each ticker still starts at or before its own watermark minus the overlap buffer.
         buckets = watermark_buckets({t: d for t, d in watermarks.items() if t in tickers}, _overlap_days())
-        start_date = min((b[0] for b in buckets), default=end_date - timedelta(days=_overlap_days()))
+        start_date = min((b[0] for b in buckets), default=day_start - timedelta(days=_overlap_days()))
         new_tickers = [t for t in all_ticker_list if t not in watermarks]
         if new_tickers:
             # For brand-new tickers, we need to use the full lookback
             # We handle this by doing two separate downloads
-            full_start = end_date - timedelta(days=lookback_days)
+            full_start = day_start - timedelta(days=lookback_days)
             logger.info(f"  📦 {len(new_tickers)} new tickers detected → Full bootstrap ({lookback_days}d)")
         else:
             full_start = None
@@ -704,7 +708,7 @@ def extract_stock_prices(
             names = f" ({', '.join(b_tickers)})" if len(b_tickers) <= 5 else ""
             logger.info(f"  ⚡ {len(b_tickers)} existing tickers → Incremental from {b_start.date()}{names}")
     else:
-        start_date = end_date - timedelta(days=lookback_days)
+        start_date = day_start - timedelta(days=lookback_days)
         full_start = None
         new_tickers = []
         logger.info(f"🚀 FULL EXTRACT: Downloading {len(all_ticker_list)} tickers ({lookback_days}d history)...")

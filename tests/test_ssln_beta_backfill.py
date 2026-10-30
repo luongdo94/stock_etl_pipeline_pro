@@ -176,7 +176,9 @@ def test_backfill_uses_full_start_in_new_ticker_branch(monkeypatch):
     before = datetime.now()
     assert ex.extract_stock_prices({"SHORT": {}}, 730, watermarks={}).empty
     assert starts[0][0] == ["SHORT"]
-    assert abs((starts[0][1] - (before - timedelta(days=730))).total_seconds()) < 5
+    # a whole day (00:00): a start with a time of day can land in a DST fall-back hour and fail every symbol
+    expected = (before - timedelta(days=730)).replace(hour=0, minute=0, second=0, microsecond=0)
+    assert starts[0][1] == expected
 
 
 def test_full_refresh_preserves_attempts(tmp_path):

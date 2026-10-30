@@ -515,3 +515,36 @@ def test_fx_to_eur_scales_a_spaced_minor_unit(monkeypatch):
     from etl import extract
     monkeypatch.setitem(extract._FX_CACHE, "GBP", 1.17)
     assert extract.fx_to_eur(" GBp ") == pytest.approx(0.0117) and extract.fx_to_eur("GBP") == pytest.approx(1.17)
+
+
+@patch('etl.extract.yf.Ticker', side_effect=lambda *_a, **_k: _usd_ticker_stub())
+class TestStartDatesAreWholeDays:
+    """2026-10-30 01:02 minus 1825 days is 2021-10-31 01:02, inside the EU fall-back hour: yfinance raised
+    AmbiguousTimeError for every symbol and the ETL stopped ('FX download returned no data')."""
+
+    @patch('etl.extract.yf.download')
+    def test_bootstrap_and_fx_starts_have_no_time_of_day(self, mock_download, _mock_ticker):
+        import etl.extract as ex
+
+        class _Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return cls(2026, 10, 30, 1, 2, 27, 928486)
+
+        starts = []
+        base = _fake_download(_price_frame('2026-10-20', 3, [100.0, 101.0, 102.0]))
+
+        def _dl(tickers, start=None, end=None, **kwargs):
+            starts.append(start)
+            return base(tickers, start=start, end=end, **kwargs)
+        mock_download.side_effect = _dl
+
+        tickers = {"AAPL": {"name": "Apple", "sector": "Technology", "region": "US"},
+                   "MSFT": {"name": "Microsoft", "sector": "Technology", "region": "US"}}
+        with patch.object(ex, 'datetime', _Clock):
+            ex.extract_stock_prices(tickers, lookback_days=1825, watermarks={"MSFT": datetime(2026, 10, 26).date()})
+        assert starts and all(s is not None for s in starts)
+        for s in starts:
+            s = pd.Timestamp(s)
+            assert (s.hour, s.minute, s.second, s.microsecond) == (0, 0, 0, 0), s
+        assert pd.Timestamp("2021-10-31") in [pd.Timestamp(s) for s in starts]       # the bootstrap start itself
